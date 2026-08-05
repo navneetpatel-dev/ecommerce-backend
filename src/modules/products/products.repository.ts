@@ -16,6 +16,7 @@ export class ProductsRepository extends BaseRepository<Product> {
     search?: string;
     minPrice?: number;
     maxPrice?: number;
+    sort?: string;
     limit: number;
     offset: number;
   }) {
@@ -50,6 +51,17 @@ export class ProductsRepository extends BaseRepository<Product> {
       }
     }
 
+    let order: any = [['createdAt', 'DESC']];
+    if (filters.sort === 'trending' || filters.sort === 'popular' || filters.sort === 'rating') {
+      order = [['avgRating', 'DESC'], ['createdAt', 'DESC']];
+    } else if (filters.sort === 'price_asc') {
+      order = [['basePrice', 'ASC']];
+    } else if (filters.sort === 'price_desc') {
+      order = [['basePrice', 'DESC']];
+    } else if (filters.sort === 'newest') {
+      order = [['createdAt', 'DESC']];
+    }
+
     return this.model.findAndCountAll({
       where,
       limit: filters.limit,
@@ -60,7 +72,7 @@ export class ProductsRepository extends BaseRepository<Product> {
         'variants',
         'images',
       ],
-      order: [['createdAt', 'DESC']],
+      order,
     });
   }
 

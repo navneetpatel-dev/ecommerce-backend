@@ -55,6 +55,7 @@ export class ProductsService {
       search: query.search,
       minPrice: query.minPrice,
       maxPrice: query.maxPrice,
+      sort: query.sort,
       limit: query.limit,
       offset,
     });

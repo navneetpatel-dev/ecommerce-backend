@@ -25,6 +25,7 @@ export const GetProductsQuerySchema = z.object({
   search: z.string().optional(),
   minPrice: z.coerce.number().optional(),
   maxPrice: z.coerce.number().optional(),
+  sort: z.enum(['trending', 'price_asc', 'price_desc', 'newest', 'rating', 'popular']).optional(),
 });
 
 export const ApproveProductSchema = z.object({});
