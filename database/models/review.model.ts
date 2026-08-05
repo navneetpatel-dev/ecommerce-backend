@@ -19,8 +19,8 @@ export class Review extends Model<InferAttributes<Review>, InferCreationAttribut
   declare readonly deletedAt: CreationOptional<Date>;
 
   static associate(models: Record<string, any>) {
-    Review.belongsTo(models.Product, { foreignKey: 'productId' });
-    Review.belongsTo(models.User, { foreignKey: 'userId' });
+    Review.belongsTo(models.Product, { as: 'product', foreignKey: 'productId' });
+    Review.belongsTo(models.User, { as: 'user', foreignKey: 'userId' });
     Review.belongsTo(models.OrderItem, { foreignKey: 'orderItemId' });
     Review.hasMany(models.ReviewVote, { foreignKey: 'reviewId' });
   }
