@@ -21,8 +21,16 @@ app.use(requestIdMiddleware);
 app.use(helmet());
 app.use(
   cors({
-    origin: env.CLIENT_URL,
+    origin: [
+      env.CLIENT_URL,
+      'http://localhost:5173',
+      'http://localhost:3000',
+    ],
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+    exposedHeaders: ['Set-Cookie'],
+    optionsSuccessStatus: 200,
   }),
 );
 app.use(compression());
