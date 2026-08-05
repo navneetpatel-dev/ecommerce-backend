@@ -62,6 +62,10 @@ export class CartService {
 
     const items = await CartItem.findAll({
       where: { cartId: cart.id },
+      order: [
+        ['createdAt', 'ASC'],
+        ['id', 'ASC'],
+      ],
       include: [
         {
           model: ProductVariant,
