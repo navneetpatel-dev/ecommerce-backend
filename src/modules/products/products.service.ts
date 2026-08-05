@@ -60,8 +60,17 @@ export class ProductsService {
       offset,
     });
 
+    const mappedProducts = rows.map((p) => {
+      const plain: any = p.get({ plain: true });
+      const primaryImage = plain.images?.find((img: any) => img.isPrimary)?.url || plain.images?.[0]?.url || '';
+      return {
+        ...plain,
+        imageUrl: primaryImage,
+      };
+    });
+
     return {
-      products: rows,
+      products: mappedProducts,
       pagination: {
         total: count,
         page: query.page,
