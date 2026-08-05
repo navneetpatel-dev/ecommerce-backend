@@ -2,7 +2,19 @@ import { BaseRepository } from '@core/repository/BaseRepository';
 import { Product } from '@database/models/product.model';
 import { Category } from '@database/models/category.model';
 import { Vendor } from '@database/models/vendor.model';
-import { Op, WhereOptions } from 'sequelize';
+import { sequelize } from '@database/models';
+import { Op } from 'sequelize';
+
+const reviewCountLiteral = [
+  sequelize.literal(`(
+    SELECT COUNT(*)::int
+    FROM reviews AS r
+    WHERE r."productId" = "Product"."id"
+      AND r.status = 'APPROVED'
+      AND r."deletedAt" IS NULL
+  )`),
+  'reviewCount',
+] as const;
 
 export class ProductsRepository extends BaseRepository<Product> {
   constructor() {
@@ -71,9 +83,10 @@ export class ProductsRepository extends BaseRepository<Product> {
       where,
       limit: filters.limit,
       offset: filters.offset,
+      attributes: { include: [reviewCountLiteral] },
       include: [
         { model: Category },
-        { model: Vendor },
+        { model: Vendor, as: 'vendor' },
         'variants',
         'images',
       ],
@@ -84,9 +97,10 @@ export class ProductsRepository extends BaseRepository<Product> {
   async findBySlug(slug: string) {
     return this.model.findOne({
       where: { slug },
+      attributes: { include: [reviewCountLiteral] },
       include: [
         { model: Category },
-        { model: Vendor },
+        { model: Vendor, as: 'vendor' },
         'variants',
         'images',
       ],

@@ -14,7 +14,7 @@ export class ReviewsRepository extends BaseRepository<Review> {
     }
     return this.model.findAll({
       where,
-      include: ['user'],
+      include: [{ association: 'user', attributes: ['id', 'name'] }],
       order: [['createdAt', 'DESC']],
     });
   }
@@ -22,7 +22,7 @@ export class ReviewsRepository extends BaseRepository<Review> {
   async findByUser(userId: string) {
     return this.model.findAll({
       where: { userId },
-      include: ['product'],
+      include: [{ association: 'product', attributes: ['id', 'name', 'slug'] }],
       order: [['createdAt', 'DESC']],
     });
   }

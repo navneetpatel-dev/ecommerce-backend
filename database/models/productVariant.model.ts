@@ -16,7 +16,7 @@ export class ProductVariant extends Model<InferAttributes<ProductVariant>, Infer
   declare readonly deletedAt: CreationOptional<Date>;
 
   static associate(models: Record<string, any>) {
-    ProductVariant.belongsTo(models.Product, { foreignKey: 'productId' });
+    ProductVariant.belongsTo(models.Product, { as: 'product', foreignKey: 'productId' });
   }
 }
 

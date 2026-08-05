@@ -26,7 +26,7 @@ export class Product extends Model<InferAttributes<Product>, InferCreationAttrib
   declare images?: NonAttribute<ProductImage[]>;
 
   static associate(models: Record<string, any>) {
-    Product.belongsTo(models.Vendor, { foreignKey: 'vendorId' });
+    Product.belongsTo(models.Vendor, { as: 'vendor', foreignKey: 'vendorId' });
     Product.belongsTo(models.Category, { foreignKey: 'categoryId' });
     Product.hasMany(models.ProductVariant, { foreignKey: 'productId', as: 'variants' });
     Product.hasMany(models.ProductImage, { foreignKey: 'productId', as: 'images' });

@@ -3,8 +3,49 @@ import { ValidationError } from '@core/errors/ValidationError';
 import { cartRepository } from './cart.repository';
 import { CartItem } from '@database/models/cartItem.model';
 import { ProductVariant } from '@database/models/productVariant.model';
+import { Product } from '@database/models/product.model';
+import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
 import type { AddToCartRequest, UpdateCartItemRequest } from './cart.dto';
+
+function mapCartItem(item: CartItem & { variant?: ProductVariant & { product?: any } }) {
+  const variant = item.variant;
+  const product = variant?.product;
+  const images = product?.images ?? [];
+  const primaryImage =
+    images.find((img: any) => img.isPrimary)?.url || images[0]?.url || '';
+  const vendor = product?.vendor ?? product?.Vendor ?? null;
+
+  return {
+    id: item.id,
+    variantId: item.variantId,
+    quantity: item.quantity,
+    product: {
+      id: product?.id ?? '',
+      name: product?.name ?? 'Unknown product',
+      slug: product?.slug ?? '',
+      imageUrl: primaryImage,
+      price: Number(variant?.price ?? product?.basePrice ?? 0),
+      vendor: vendor
+        ? {
+            id: vendor.id,
+            businessName: vendor.businessName,
+            slug: vendor.slug,
+            logoUrl: vendor.logoUrl ?? null,
+          }
+        : {
+            id: product?.vendorId ?? 'unknown',
+            businessName: 'Marketplace',
+            slug: 'marketplace',
+            logoUrl: null,
+          },
+    },
+    variant: {
+      sku: variant?.sku ?? '',
+      attributes: variant?.attributes ?? {},
+    },
+  };
+}
 
 export class CartService {
   async getCart(userId: string | null, sessionId: string | null) {
@@ -16,21 +57,34 @@ export class CartService {
     }
 
     if (!cart) {
-      return { items: [], total: 0 };
+      return { id: null, items: [], total: 0 };
     }
 
     const items = await CartItem.findAll({
       where: { cartId: cart.id },
-      include: [{ model: ProductVariant, as: 'variant', include: ['product'] }],
+      include: [
+        {
+          model: ProductVariant,
+          as: 'variant',
+          include: [
+            {
+              model: Product,
+              as: 'product',
+              include: ['images', { model: Vendor, as: 'vendor' }],
+            },
+          ],
+        },
+      ],
     }) as (CartItem & { variant: ProductVariant & { product: any } })[];
 
-    const total = items.reduce((sum, item) => sum + Number(item.variant.price) * item.quantity, 0);
+    const mappedItems = items.map(mapCartItem);
+    const total = mappedItems.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
 
-    return { cart, items, total };
+    return { id: cart.id, items: mappedItems, total };
   }
 
   async addToCart(userId: string | null, sessionId: string | null, data: AddToCartRequest) {
-    return sequelize.transaction(async (t) => {
+    await sequelize.transaction(async (t) => {
       const variant = await ProductVariant.findByPk(data.variantId, { transaction: t });
       if (!variant) throw new NotFoundError('ProductVariant');
 
@@ -68,13 +122,13 @@ export class CartService {
           { transaction: t }
         );
       }
-
-      return this.getCart(userId, sessionId);
     });
+
+    return this.getCart(userId, sessionId);
   }
 
   async updateCartItem(userId: string | null, sessionId: string | null, itemId: string, data: UpdateCartItemRequest) {
-    return sequelize.transaction(async (t) => {
+    await sequelize.transaction(async (t) => {
       const itemResult = await CartItem.findByPk(itemId, {
         include: ['variant'],
         transaction: t,
@@ -89,9 +143,9 @@ export class CartService {
       }
 
       await item.update({ quantity: data.quantity }, { transaction: t });
-
-      return this.getCart(userId, sessionId);
     });
+
+    return this.getCart(userId, sessionId);
   }
 
   async removeFromCart(userId: string | null, sessionId: string | null, itemId: string) {

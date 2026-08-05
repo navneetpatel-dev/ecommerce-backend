@@ -6,6 +6,8 @@ import { Category } from '@database/models/category.model';
 import { Vendor } from '@database/models/vendor.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { ProductImage } from '@database/models/productImage.model';
+import { Review } from '@database/models/review.model';
+import { Product } from '@database/models/product.model';
 import { sequelize } from '@database/models';
 import type {
   CreateProductRequest,
@@ -22,6 +24,31 @@ function generateSlug(name: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '');
+}
+
+function mapProductResponse(product: Product, reviewCount = 0) {
+  const plain: any = typeof product.get === 'function' ? product.get({ plain: true }) : product;
+  const primaryImage =
+    plain.images?.find((img: any) => img.isPrimary)?.url || plain.images?.[0]?.url || plain.imageUrl || '';
+  const variants = (plain.variants ?? []).map((variant: any) => ({
+    ...variant,
+    price: Number(variant.price ?? 0),
+    stock: Number(variant.stock ?? 0),
+  }));
+  const stockFromVariants = variants.reduce((sum: number, variant: { stock: number }) => sum + variant.stock, 0);
+
+  return {
+    ...plain,
+    variants,
+    basePrice: Number(plain.basePrice ?? 0),
+    avgRating: Number(plain.avgRating ?? 0),
+    reviewCount: Number(plain.reviewCount ?? reviewCount ?? 0),
+    stock: Number(plain.stock ?? stockFromVariants),
+    imageUrl: primaryImage,
+    vendor: plain.vendor ?? plain.Vendor ?? null,
+    category: plain.category ?? plain.Category ?? null,
+    categoryName: plain.category?.name ?? plain.Category?.name ?? plain.categoryName,
+  };
 }
 
 export class ProductsService {
@@ -61,14 +88,7 @@ export class ProductsService {
       offset,
     });
 
-    const mappedProducts = rows.map((p) => {
-      const plain: any = p.get({ plain: true });
-      const primaryImage = plain.images?.find((img: any) => img.isPrimary)?.url || plain.images?.[0]?.url || '';
-      return {
-        ...plain,
-        imageUrl: primaryImage,
-      };
-    });
+    const mappedProducts = rows.map((p) => mapProductResponse(p));
 
     return {
       products: mappedProducts,
@@ -83,16 +103,19 @@ export class ProductsService {
 
   async getProductById(id: string) {
     const product = await productsRepository.findById(id, {
-      include: ['variants', 'images', { model: Category }, { model: Vendor }],
+      include: ['variants', 'images', { model: Category }, { model: Vendor, as: 'vendor' }],
     });
     if (!product) throw new NotFoundError('Product');
-    return product;
+    const reviewCount = await Review.count({
+      where: { productId: product.id, status: 'APPROVED' },
+    });
+    return mapProductResponse(product, reviewCount);
   }
 
   async getProductBySlug(slug: string) {
     const product = await productsRepository.findBySlug(slug);
     if (!product) throw new NotFoundError('Product');
-    return product;
+    return mapProductResponse(product);
   }
 
   async updateProduct(id: string, vendorId: string | null, data: UpdateProductRequest) {

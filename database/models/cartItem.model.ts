@@ -14,7 +14,7 @@ export class CartItem extends Model<InferAttributes<CartItem>, InferCreationAttr
 
   static associate(models: Record<string, any>) {
     CartItem.belongsTo(models.Cart, { foreignKey: 'cartId' });
-    CartItem.belongsTo(models.ProductVariant, { foreignKey: 'variantId' });
+    CartItem.belongsTo(models.ProductVariant, { as: 'variant', foreignKey: 'variantId' });
   }
 }
 

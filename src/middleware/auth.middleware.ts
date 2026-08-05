@@ -51,3 +51,38 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
     res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Invalid token' } });
   }
 };
+
+/** Attaches req.user when a valid Bearer token is present; otherwise continues as guest. */
+export const optionalAuthenticate = async (req: Request, res: Response, next: NextFunction) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    next();
+    return;
+  }
+
+  try {
+    const token = authHeader.split(' ')[1];
+    if (!token) {
+      next();
+      return;
+    }
+
+    const decoded = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
+    const user = await User.findByPk(decoded.sub, { include: [Role] });
+    if (user && user.status !== 'BLOCKED') {
+      req.user = {
+        id: user.id,
+        email: user.email,
+        roleId: user.roleId,
+        vendorId: user.vendorId,
+        role: { name: user.role?.name ?? 'CUSTOMER' },
+      };
+    }
+  } catch (err) {
+    logger.debug('optionalAuthenticate ignored invalid token', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  next();
+};

@@ -14,7 +14,7 @@ export class WishlistItem extends Model<InferAttributes<WishlistItem>, InferCrea
 
   static associate(models: Record<string, any>) {
     WishlistItem.belongsTo(models.Wishlist, { foreignKey: 'wishlistId' });
-    WishlistItem.belongsTo(models.Product, { foreignKey: 'productId' });
+    WishlistItem.belongsTo(models.Product, { as: 'product', foreignKey: 'productId' });
   }
 }
 
