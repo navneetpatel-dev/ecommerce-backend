@@ -1,0 +1,966 @@
+'use strict';
+
+const { v4: uuidv4 } = require('uuid');
+const bcrypt = require('bcrypt');
+
+// Stable image URLs using Unsplash Source API (always available)
+const CATEGORY_IMAGES = {
+  electronics: 'https://images.unsplash.com/photo-1498049794561-7780e7231661?w=400',
+  fashion: 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=400',
+  home: 'https://images.unsplash.com/photo-1484101403633-562f891dc89a?w=400',
+  sports: 'https://images.unsplash.com/photo-1461896836934-ffe607ba8211?w=400',
+  beauty: 'https://images.unsplash.com/photo-1596462502278-27bfdc403348?w=400',
+  books: 'https://images.unsplash.com/photo-1495446815901-a7297e633e8d?w=400',
+  toys: 'https://images.unsplash.com/photo-1515488042361-ee00e0ddd4e4?w=400',
+  food: 'https://images.unsplash.com/photo-1498837167922-ddd27525d352?w=400',
+  automotive: 'https://images.unsplash.com/photo-1449965408869-eaa3f722e40d?w=400',
+  jewelry: 'https://images.unsplash.com/photo-1515562141207-7a88fb7ce338?w=400',
+};
+
+const VENDOR_LOGOS = [
+  'https://images.unsplash.com/photo-1599305445671-ac291c95aaa9?w=200',
+  'https://images.unsplash.com/photo-1572044162444-ad60f128bdea?w=200',
+  'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=200',
+  'https://images.unsplash.com/photo-1611162618071-b39a2ec055fb?w=200',
+  'https://images.unsplash.com/photo-1614680376573-df3480f0c6ff?w=200',
+];
+
+const PRODUCT_IMAGES = {
+  electronics: [
+    'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600',
+    'https://images.unsplash.com/photo-1484788984921-03950022c9ef?w=600',
+    'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?w=600',
+    'https://images.unsplash.com/photo-1496181133206-80ce9b88a853?w=600',
+    'https://images.unsplash.com/photo-1527864550417-7fd91fc51a46?w=600',
+  ],
+  fashion: [
+    'https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=600',
+    'https://images.unsplash.com/photo-1576566588028-4147f3842f27?w=600',
+    'https://images.unsplash.com/photo-1583743814966-8936f5b7be1a?w=600',
+    'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=600',
+    'https://images.unsplash.com/photo-1503342217505-b0a15ec3261c?w=600',
+  ],
+  home: [
+    'https://images.unsplash.com/photo-1555041469-a586c61ea9bc?w=600',
+    'https://images.unsplash.com/photo-1586023492125-27b2c045efd7?w=600',
+    'https://images.unsplash.com/photo-1538688525198-9b88f6f53126?w=600',
+    'https://images.unsplash.com/photo-1554995207-c18c203602cb?w=600',
+    'https://images.unsplash.com/photo-1505691938895-1758d7feb511?w=600',
+  ],
+};
+
+// Helper functions
+function randomElement(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function randomInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function randomPrice(min, max) {
+  return (Math.random() * (max - min) + min).toFixed(2);
+}
+
+module.exports = {
+  async up(queryInterface) {
+    const now = new Date();
+    const passwordHash = await bcrypt.hash('Test@123', 12);
+
+    // Ensure all roles exist
+    console.log('Checking roles...');
+    const roleNames = ['SUPER_ADMIN', 'ADMIN_ORDER_MANAGER', 'ADMIN_CATALOG_MANAGER', 'VENDOR_OWNER', 'VENDOR_STAFF', 'CUSTOMER'];
+    const existingRoles = await queryInterface.sequelize.query(
+      `SELECT name FROM roles`,
+      { type: queryInterface.sequelize.QueryTypes.SELECT }
+    );
+    const existingRoleNames = existingRoles.map(r => r.name);
+    
+    const rolesToCreate = roleNames.filter(name => !existingRoleNames.includes(name));
+    if (rolesToCreate.length > 0) {
+      const roleInserts = rolesToCreate.map(name => ({
+        id: uuidv4(),
+        name: name,
+        createdAt: now,
+        updatedAt: now
+      }));
+      await queryInterface.bulkInsert('roles', roleInserts);
+      console.log(`✓ Created ${rolesToCreate.length} missing roles`);
+    }
+
+    // Get role IDs
+    const roles = await queryInterface.sequelize.query(
+      `SELECT id, name FROM roles`,
+      { type: queryInterface.sequelize.QueryTypes.SELECT }
+    );
+    const roleMap = {};
+    roles.forEach(r => roleMap[r.name] = r.id);
+
+    // 1. CREATE CATEGORIES (50 categories across different types)
+    console.log('Creating categories...');
+    const categories = [];
+    const categoryNames = {
+      electronics: ['Laptops', 'Smartphones', 'Tablets', 'Cameras', 'Audio', 'Gaming', 'Wearables', 'Accessories'],
+      fashion: ['Men Clothing', 'Women Clothing', 'Kids Clothing', 'Shoes', 'Bags', 'Watches', 'Sunglasses', 'Jackets'],
+      home: ['Furniture', 'Kitchen', 'Bedding', 'Decor', 'Lighting', 'Storage', 'Garden', 'Tools'],
+      sports: ['Fitness', 'Outdoor', 'Team Sports', 'Cycling', 'Water Sports', 'Winter Sports'],
+      beauty: ['Skincare', 'Makeup', 'Haircare', 'Fragrances', 'Bath & Body'],
+      books: ['Fiction', 'Non-Fiction', 'Children', 'Educational', 'Comics'],
+      toys: ['Action Figures', 'Dolls', 'Building Blocks', 'Educational', 'Board Games'],
+      food: ['Snacks', 'Beverages', 'Organic', 'Gourmet', 'Health Foods'],
+    };
+
+    for (const [parent, children] of Object.entries(categoryNames)) {
+      const parentId = uuidv4();
+      categories.push({
+        id: parentId,
+        name: parent.charAt(0).toUpperCase() + parent.slice(1),
+        slug: parent,
+        parentId: null,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      children.forEach(child => {
+        categories.push({
+          id: uuidv4(),
+          name: child,
+          slug: `${parent}-${child.toLowerCase().replace(/\s+/g, '-')}`,
+          parentId: parentId,
+          createdAt: now,
+          updatedAt: now,
+        });
+      });
+    }
+
+    await queryInterface.bulkInsert('categories', categories);
+    console.log(`✓ Created ${categories.length} categories`);
+
+    // 2. CREATE VENDORS (25 vendors)
+    console.log('Creating vendors...');
+    const vendors = [];
+    const vendorOwners = [];
+    const vendorStaff = [];
+    const vendorDocuments = [];
+    
+    const vendorNames = [
+      'TechWorld', 'FashionHub', 'HomeStyle', 'SportsPro', 'BeautyBoutique',
+      'BookStore', 'ToyLand', 'FoodMart', 'AutoZone', 'JewelCraft',
+      'GadgetGalaxy', 'StyleSavvy', 'DecorDen', 'FitnessFlex', 'GlamourGoods',
+      'PageTurner', 'PlayZone', 'GourmetGrove', 'CarCare', 'GemGallery',
+      'ElectroShop', 'TrendyThreads', 'CozyCorner', 'ActiveLife', 'PureBeauty'
+    ];
+
+    for (let i = 0; i < 25; i++) {
+      const vendorId = uuidv4();
+      const ownerId = uuidv4();
+      const staffId = uuidv4();
+
+      vendors.push({
+        id: vendorId,
+        businessName: vendorNames[i],
+        slug: vendorNames[i].toLowerCase().replace(/\s+/g, '-'),
+        gstNumber: `GST${String(i).padStart(10, '0')}`,
+        bankDetails: JSON.stringify({
+          accountNumber: `ACC${String(i).padStart(12, '0')}`,
+          ifscCode: `IFSC000${String(i).padStart(4, '0')}`,
+          accountHolderName: vendorNames[i],
+          bankName: 'Sample Bank',
+        }),
+        logoUrl: VENDOR_LOGOS[i % VENDOR_LOGOS.length],
+        bannerUrl: null,
+        description: `Leading provider of quality products - ${vendorNames[i]}`,
+        status: i < 22 ? 'APPROVED' : 'PENDING',
+        commissionRate: randomInt(5, 15),
+        performanceScore: Math.random() * 5,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      // Vendor Owner
+      vendorOwners.push({
+        id: ownerId,
+        email: `owner@${vendorNames[i].toLowerCase()}.com`,
+        passwordHash,
+        name: `${vendorNames[i]} Owner`,
+        phone: `+1555${String(i * 2).padStart(7, '0')}`,
+        status: 'ACTIVE',
+        roleId: roleMap.VENDOR_OWNER,
+        vendorId: vendorId,
+        emailVerified: true,
+        emailMarketingConsent: false,
+        emailSuppressed: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      // Vendor Staff
+      vendorStaff.push({
+        id: staffId,
+        email: `staff@${vendorNames[i].toLowerCase()}.com`,
+        passwordHash,
+        name: `${vendorNames[i]} Staff`,
+        phone: `+1555${String(i * 2 + 1).padStart(7, '0')}`,
+        status: 'ACTIVE',
+        roleId: roleMap.VENDOR_STAFF,
+        vendorId: vendorId,
+        emailVerified: true,
+        emailMarketingConsent: false,
+        emailSuppressed: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      // Vendor Documents
+      vendorDocuments.push({
+        id: uuidv4(),
+        vendorId: vendorId,
+        type: 'GST_CERT',
+        url: `https://example.com/docs/gst-cert-${vendorId}.pdf`,
+        verified: i < 22,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      vendorDocuments.push({
+        id: uuidv4(),
+        vendorId: vendorId,
+        type: 'PAN',
+        url: `https://example.com/docs/pan-${vendorId}.pdf`,
+        verified: i < 22,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      vendorDocuments.push({
+        id: uuidv4(),
+        vendorId: vendorId,
+        type: 'BANK_PROOF',
+        url: `https://example.com/docs/bank-proof-${vendorId}.pdf`,
+        verified: i < 22,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    await queryInterface.bulkInsert('vendors', vendors);
+    await queryInterface.bulkInsert('users', [...vendorOwners, ...vendorStaff]);
+    await queryInterface.bulkInsert('vendor_documents', vendorDocuments);
+    console.log(`✓ Created ${vendors.length} vendors with owners and staff`);
+
+    // 3. CREATE ADMIN USERS
+    console.log('Creating admin users...');
+    const adminUsers = [
+      {
+        id: uuidv4(),
+        email: 'orderadmin@ecommerce.com',
+        passwordHash,
+        name: 'Order Manager Admin',
+        phone: '+15551000001',
+        status: 'ACTIVE',
+        roleId: roleMap.ADMIN_ORDER_MANAGER,
+        vendorId: null,
+        emailVerified: true,
+        emailMarketingConsent: false,
+        emailSuppressed: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: uuidv4(),
+        email: 'catalogadmin@ecommerce.com',
+        passwordHash,
+        name: 'Catalog Manager Admin',
+        phone: '+15551000002',
+        status: 'ACTIVE',
+        roleId: roleMap.ADMIN_CATALOG_MANAGER,
+        vendorId: null,
+        emailVerified: true,
+        emailMarketingConsent: false,
+        emailSuppressed: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+
+    await queryInterface.bulkInsert('users', adminUsers);
+    console.log(`✓ Created ${adminUsers.length} admin users`);
+
+    // 4. CREATE CUSTOMERS (100 customers)
+    console.log('Creating customers...');
+    const customers = [];
+    const addresses = [];
+
+    for (let i = 0; i < 100; i++) {
+      const customerId = uuidv4();
+      
+      customers.push({
+        id: customerId,
+        email: `customer${i + 1}@example.com`,
+        passwordHash,
+        name: `Customer ${i + 1}`,
+        phone: `+1555${String(2000000 + i).padStart(7, '0')}`,
+        status: 'ACTIVE',
+        roleId: roleMap.CUSTOMER,
+        vendorId: null,
+        emailVerified: true,
+        emailMarketingConsent: i % 3 === 0,
+        emailSuppressed: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      // Create 2-3 addresses per customer
+      const numAddresses = randomInt(2, 3);
+      for (let j = 0; j < numAddresses; j++) {
+        addresses.push({
+          id: uuidv4(),
+          userId: customerId,
+          line1: `${randomInt(100, 9999)} Main Street`,
+          line2: j > 0 ? `Apt ${randomInt(1, 999)}` : null,
+          city: `City ${randomInt(1, 50)}`,
+          state: `State ${randomInt(1, 50)}`,
+          pincode: String(randomInt(10000, 99999)),
+          country: 'USA',
+          isDefault: j === 0,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    }
+
+    await queryInterface.bulkInsert('users', customers);
+    await queryInterface.bulkInsert('addresses', addresses);
+    console.log(`✓ Created ${customers.length} customers with ${addresses.length} addresses`);
+
+    // 5. CREATE SHIPPING ZONES AND RATES
+    console.log('Creating shipping zones and rates...');
+    const shippingZones = [];
+    const shippingRates = [];
+    
+    const zoneData = [
+      { name: 'USA-East', states: ['NY', 'NJ', 'PA', 'MA', 'CT'], pincodePrefixes: ['10', '11', '12', '13'] },
+      { name: 'USA-West', states: ['CA', 'WA', 'OR', 'NV'], pincodePrefixes: ['90', '91', '92', '93', '94'] },
+      { name: 'USA-Central', states: ['IL', 'IN', 'OH', 'MI'], pincodePrefixes: ['60', '61', '62'] },
+      { name: 'USA-South', states: ['TX', 'FL', 'GA', 'NC'], pincodePrefixes: ['75', '76', '77', '30', '31'] },
+      { name: 'USA-All', states: ['ALL'], pincodePrefixes: ['00'] },
+    ];
+    
+    zoneData.forEach(zone => {
+      const zoneId = uuidv4();
+      
+      shippingZones.push({
+        id: zoneId,
+        name: zone.name,
+        states: zone.states,
+        pincodePrefixes: zone.pincodePrefixes,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      // Add shipping rates for each vendor
+      vendors.slice(0, 22).forEach(vendor => {
+        ['STANDARD', 'EXPRESS'].forEach((method, idx) => {
+          shippingRates.push({
+            id: uuidv4(),
+            vendorId: vendor.id,
+            zoneId: zoneId,
+            method: method,
+            minWeightGrams: 0,
+            maxWeightGrams: idx === 0 ? 10000 : 5000,
+            price: idx === 0 ? 5.99 : 12.99,
+            estimatedDays: idx === 0 ? 7 : 3,
+            freeShippingThreshold: idx === 0 ? 50 : 100,
+            createdAt: now,
+            updatedAt: now,
+          });
+        });
+      });
+    });
+
+    await queryInterface.bulkInsert('shipping_zones', shippingZones);
+    await queryInterface.bulkInsert('shipping_rates', shippingRates);
+    console.log(`✓ Created ${shippingZones.length} shipping zones with ${shippingRates.length} rates`);
+
+    // 6. CREATE PRODUCTS (500 products)
+    console.log('Creating products (this may take a while)...');
+    const products = [];
+    const productVariants = [];
+    const productImages = [];
+    
+    const productCategories = categories.filter(c => c.parentId !== null);
+    const approvedVendors = vendors.filter(v => v.status === 'APPROVED');
+
+    for (let i = 0; i < 500; i++) {
+      const productId = uuidv4();
+      const category = randomElement(productCategories);
+      const vendor = randomElement(approvedVendors);
+      const basePrice = parseFloat(randomPrice(10, 500));
+      const status = i < 480 ? 'LIVE' : 'PENDING_APPROVAL';
+
+      products.push({
+        id: productId,
+        vendorId: vendor.id,
+        categoryId: category.id,
+        name: `Product ${i + 1} - ${category.name}`,
+        slug: `product-${i + 1}-${category.slug}`,
+        description: `High-quality ${category.name} product with excellent features and durability. Perfect for everyday use.`,
+        basePrice: basePrice,
+        status: status,
+        approvedById: status === 'LIVE' ? roleMap.SUPER_ADMIN : null,
+        rejectionNote: null,
+        tags: [category.name, 'Popular', 'Featured'],
+        avgRating: (Math.random() * 2 + 3).toFixed(2),
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      // Create 1-3 variants per product
+      const numVariants = randomInt(1, 3);
+      const variantTypes = ['Size', 'Color', 'Material'];
+      
+      for (let v = 0; v < numVariants; v++) {
+        const variantPrice = basePrice + (v * 10);
+        productVariants.push({
+          id: uuidv4(),
+          productId: productId,
+          sku: `SKU${String(i + 1).padStart(6, '0')}-V${v + 1}`,
+          price: variantPrice,
+          stock: randomInt(5, 200),
+          lowStockAt: 5,
+          attributes: JSON.stringify({ [variantTypes[v % 3]]: `Option ${v + 1}` }),
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+
+      // Create 2-4 images per product
+      const categoryType = Object.keys(categoryNames).find(k => 
+        categoryNames[k].some(child => child === category.name)
+      ) || 'electronics';
+      
+      const availableImages = PRODUCT_IMAGES[categoryType] || PRODUCT_IMAGES.electronics;
+      const numImages = randomInt(2, 4);
+      
+      for (let img = 0; img < numImages; img++) {
+        productImages.push({
+          id: uuidv4(),
+          productId: productId,
+          url: availableImages[img % availableImages.length],
+          isPrimary: img === 0,
+        });
+      }
+
+      if ((i + 1) % 50 === 0) {
+        console.log(`  Created ${i + 1}/500 products...`);
+      }
+    }
+
+    await queryInterface.bulkInsert('products', products);
+    await queryInterface.bulkInsert('product_variants', productVariants);
+    await queryInterface.bulkInsert('product_images', productImages);
+    console.log(`✓ Created ${products.length} products with ${productVariants.length} variants and ${productImages.length} images`);
+
+    // 7. CREATE COUPONS (20 coupons)
+    console.log('Creating coupons...');
+
+    // Use the first admin user as creator
+    const adminId = adminUsers[0].id;
+
+    const coupons = [];
+    const couponTypes = ['PERCENTAGE', 'FLAT'];
+    const couponCodes = [
+      'WELCOME10', 'SAVE20', 'SUMMER25', 'FLASH50', 'FIRSTORDER',
+      'LOYALTY15', 'MEGA30', 'CLEARANCE40', 'VIP25', 'SPECIAL35',
+      'NEWUSER20', 'RETURN10', 'BULK15', 'HOLIDAY50', 'WEEKEND20',
+      'FLASH30', 'SUPER25', 'DEAL40', 'PROMO15', 'EXTRA10'
+    ];
+
+    couponCodes.forEach((code, idx) => {
+      const type = couponTypes[idx % 2];
+      const startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const endDate = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
+      
+      coupons.push({
+        id: uuidv4(),
+        code: code,
+        type: type,
+        value: type === 'PERCENTAGE' ? randomInt(10, 50) : randomInt(5, 25),
+        maxDiscountCap: type === 'PERCENTAGE' ? randomInt(50, 200) : null,
+        minOrderValue: randomInt(20, 100),
+        minQuantity: null,
+        applicableScope: JSON.stringify({}),
+        excludedItems: JSON.stringify({}),
+        userRestriction: JSON.stringify({}),
+        usageLimitTotal: randomInt(100, 1000),
+        usageLimitPerUser: randomInt(1, 5),
+        usedCount: randomInt(0, 50),
+        startDate: startDate,
+        endDate: endDate,
+        stackable: idx % 3 === 0,
+        priority: randomInt(0, 10),
+        status: idx < 15 ? 'ACTIVE' : 'PAUSED',
+        createdById: adminId,
+        vendorId: null,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+
+    await queryInterface.bulkInsert('coupons', coupons);
+    console.log(`✓ Created ${coupons.length} coupons`);
+
+    // 8. CREATE ORDERS, SUB-ORDERS, AND ORDER ITEMS (200 orders)
+    console.log('Creating orders...');
+    const orders = [];
+    const subOrders = [];
+    const orderItems = [];
+    const couponUsages = [];
+    const shipments = [];
+    const commissionLedgers = [];
+    const returnRequests = [];
+
+    for (let i = 0; i < 200; i++) {
+      const orderId = uuidv4();
+      const customer = randomElement(customers);
+      const customerAddresses = addresses.filter(a => a.userId === customer.id);
+      const address = randomElement(customerAddresses);
+      const useCoupon = Math.random() > 0.7;
+      const coupon = useCoupon ? randomElement(coupons) : null;
+      
+      const orderDate = new Date(Date.now() - randomInt(1, 90) * 24 * 60 * 60 * 1000);
+      const statuses = ['PENDING', 'CONFIRMED', 'SHIPPED', 'DELIVERED', 'CANCELLED'];
+      const orderStatus = randomElement(statuses);
+
+      // Select 1-3 vendors for this order
+      const orderVendors = [];
+      const numVendors = randomInt(1, 3);
+      for (let v = 0; v < numVendors; v++) {
+        const vendor = randomElement(approvedVendors);
+        if (!orderVendors.find(ov => ov.id === vendor.id)) {
+          orderVendors.push(vendor);
+        }
+      }
+
+      let orderTotal = 0;
+      let orderDiscount = 0;
+
+      // Create sub-orders for each vendor
+      orderVendors.forEach((vendor, vendorIdx) => {
+        const subOrderId = uuidv4();
+        const vendorProducts = products.filter(p => p.vendorId === vendor.id && p.status === 'APPROVED');
+        const numItems = randomInt(1, 4);
+        let subOrderTotal = 0;
+
+        subOrders.push({
+          id: subOrderId,
+          orderId: orderId,
+          vendorId: vendor.id,
+          status: orderStatus,
+          subtotal: subOrderTotal,
+          commissionAmount: subOrderTotal * (vendor.commissionRate / 100),
+          trackingId: ['SHIPPED', 'DELIVERED'].includes(orderStatus) ? `TRACK${String(i).padStart(10, '0')}${vendorIdx}` : null,
+          createdAt: orderDate,
+          updatedAt: orderDate,
+        });
+
+        // Create order items
+        for (let item = 0; item < numItems; item++) {
+          const product = randomElement(vendorProducts);
+          if (!product) continue;
+
+          // Get a variant for this product
+          const variant = productVariants.find(v => v.productId === product.id);
+          if (!variant) continue;
+
+          const quantity = randomInt(1, 5);
+          const price = parseFloat(variant.price);
+          const itemTotal = price * quantity;
+          subOrderTotal += itemTotal;
+
+          const orderItemId = uuidv4();
+          orderItems.push({
+            id: orderItemId,
+            subOrderId: subOrderId,
+            variantId: variant.id,
+            productName: product.name,
+            quantity: quantity,
+            unitPrice: price,
+            createdAt: orderDate,
+            updatedAt: orderDate,
+          });
+
+          // Create return request for some delivered orders
+          if (orderStatus === 'DELIVERED' && Math.random() > 0.9) {
+            returnRequests.push({
+              id: uuidv4(),
+              orderItemId: orderItemId,
+              reason: randomElement(['DEFECTIVE', 'WRONG_ITEM', 'NOT_AS_DESCRIBED', 'CHANGED_MIND']),
+              status: randomElement(['PENDING', 'APPROVED', 'REJECTED', 'COMPLETED']),
+              description: 'Product not as expected',
+              refundAmount: itemTotal,
+              createdAt: new Date(orderDate.getTime() + 7 * 24 * 60 * 60 * 1000),
+              updatedAt: new Date(orderDate.getTime() + 7 * 24 * 60 * 60 * 1000),
+            });
+          }
+        }
+
+        orderTotal += subOrderTotal;
+
+        // Create shipment for shipped/delivered orders
+        if (['SHIPPED', 'DELIVERED'].includes(orderStatus)) {
+          shipments.push({
+            id: uuidv4(),
+            subOrderId: subOrderId,
+            carrier: randomElement(['FedEx', 'UPS', 'USPS', 'DHL']),
+            trackingNumber: `TRACK${String(i).padStart(10, '0')}${vendorIdx}`,
+            shippedAt: new Date(orderDate.getTime() + 2 * 24 * 60 * 60 * 1000),
+            estimatedDelivery: new Date(orderDate.getTime() + 7 * 24 * 60 * 60 * 1000),
+            deliveredAt: orderStatus === 'DELIVERED' ? new Date(orderDate.getTime() + 5 * 24 * 60 * 60 * 1000) : null,
+            createdAt: new Date(orderDate.getTime() + 2 * 24 * 60 * 60 * 1000),
+            updatedAt: new Date(orderDate.getTime() + 2 * 24 * 60 * 60 * 1000),
+          });
+        }
+
+        // Create commission ledger entries for completed orders
+        if (orderStatus === 'DELIVERED') {
+          const commissionAmount = subOrderTotal * (vendor.commissionRate / 100);
+          commissionLedgers.push({
+            id: uuidv4(),
+            vendorId: vendor.id,
+            subOrderId: subOrderId,
+            amount: subOrderTotal,
+            commissionRate: vendor.commissionRate,
+            commissionAmount: commissionAmount,
+            status: 'PENDING',
+            createdAt: new Date(orderDate.getTime() + 5 * 24 * 60 * 60 * 1000),
+            updatedAt: new Date(orderDate.getTime() + 5 * 24 * 60 * 60 * 1000),
+          });
+        }
+      });
+
+      // Apply coupon discount
+      if (coupon) {
+        if (coupon.type === 'PERCENTAGE') {
+          orderDiscount = Math.min((orderTotal * coupon.value) / 100, coupon.maxDiscount || Infinity);
+        } else {
+          orderDiscount = coupon.value;
+        }
+        
+        couponUsages.push({
+          id: uuidv4(),
+          couponId: coupon.id,
+          orderId: orderId,
+          userId: customer.id,
+          discountApplied: orderDiscount,
+          usedAt: orderDate,
+        });
+      }
+
+      const grandTotal = orderTotal - orderDiscount;
+
+      orders.push({
+        id: orderId,
+        userId: customer.id,
+        couponId: coupon ? coupon.id : null,
+        totalAmount: orderTotal,
+        discountTotal: orderDiscount,
+        status: orderStatus,
+        paymentStatus: orderStatus === 'CANCELLED' ? 'FAILED' : (orderStatus === 'PENDING' ? 'PENDING' : 'PAID'),
+        shippingAddressId: address.id,
+        razorpayOrderId: orderStatus !== 'CANCELLED' ? `order_${uuidv4().slice(0, 14)}` : null,
+        razorpayPaymentId: ['CONFIRMED', 'SHIPPED', 'DELIVERED'].includes(orderStatus) ? `pay_${uuidv4().slice(0, 14)}` : null,
+        createdAt: orderDate,
+        updatedAt: orderDate,
+      });
+
+      if ((i + 1) % 50 === 0) {
+        console.log(`  Created ${i + 1}/200 orders...`);
+      }
+    }
+
+    await queryInterface.bulkInsert('orders', orders);
+    await queryInterface.bulkInsert('sub_orders', subOrders);
+    
+    if (orderItems.length > 0) {
+      await queryInterface.bulkInsert('order_items', orderItems);
+    }
+    
+    if (couponUsages.length > 0) {
+      await queryInterface.bulkInsert('coupon_usages', couponUsages);
+    }
+    
+    if (shipments.length > 0) {
+      await queryInterface.bulkInsert('shipments', shipments);
+    }
+    
+    if (commissionLedgers.length > 0) {
+      await queryInterface.bulkInsert('commission_ledgers', commissionLedgers);
+    }
+    
+    if (returnRequests.length > 0) {
+      await queryInterface.bulkInsert('return_requests', returnRequests);
+    }
+    
+    console.log(`✓ Created ${orders.length} orders with sub-orders, items, and related data`);
+
+    // 9. CREATE PAYOUTS (30 payouts)
+    console.log('Creating payouts...');
+    const payouts = [];
+    
+    approvedVendors.slice(0, 15).forEach((vendor, idx) => {
+      payouts.push({
+        id: uuidv4(),
+        vendorId: vendor.id,
+        amount: randomInt(500, 5000),
+        status: idx % 3 === 0 ? 'PENDING' : (idx % 3 === 1 ? 'APPROVED' : 'COMPLETED'),
+        requestedAt: new Date(Date.now() - randomInt(10, 60) * 24 * 60 * 60 * 1000),
+        processedAt: idx % 3 === 2 ? new Date(Date.now() - randomInt(1, 30) * 24 * 60 * 60 * 1000) : null,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      // Create a second payout for some vendors
+      if (idx % 2 === 0) {
+        payouts.push({
+          id: uuidv4(),
+          vendorId: vendor.id,
+          amount: randomInt(300, 3000),
+          status: 'COMPLETED',
+          requestedAt: new Date(Date.now() - randomInt(61, 120) * 24 * 60 * 60 * 1000),
+          processedAt: new Date(Date.now() - randomInt(31, 90) * 24 * 60 * 60 * 1000),
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    });
+
+    await queryInterface.bulkInsert('payouts', payouts);
+    console.log(`✓ Created ${payouts.length} payouts`);
+
+    // 10. CREATE REVIEWS AND VOTES (300 reviews)
+    console.log('Creating reviews...');
+    const reviews = [];
+    const reviewVotes = [];
+
+    const deliveredOrders = orders.filter(o => o.status === 'DELIVERED');
+    
+    for (let i = 0; i < Math.min(300, deliveredOrders.length * 2); i++) {
+      const order = randomElement(deliveredOrders);
+      const orderItemsForOrder = orderItems.filter(oi => {
+        const subOrder = subOrders.find(so => so.id === oi.subOrderId);
+        return subOrder && subOrder.orderId === order.id;
+      });
+      
+      if (orderItemsForOrder.length === 0) continue;
+      
+      const orderItem = randomElement(orderItemsForOrder);
+      const reviewId = uuidv4();
+      const rating = randomInt(3, 5);
+      const reviewDate = new Date(order.createdAt.getTime() + randomInt(7, 30) * 24 * 60 * 60 * 1000);
+
+      reviews.push({
+        id: reviewId,
+        orderItemId: orderItem.id,
+        productId: orderItem.productId,
+        userId: order.userId,
+        rating: rating,
+        title: rating >= 4 ? 'Great product!' : 'Good value',
+        body: rating >= 4 ? 
+          'This product exceeded my expectations. Highly recommended!' :
+          'Decent product for the price. Works as advertised.',
+        createdAt: reviewDate,
+        updatedAt: reviewDate,
+      });
+
+      // Add votes for some reviews
+      if (Math.random() > 0.5) {
+        const numVotes = randomInt(1, 10);
+        for (let v = 0; v < numVotes; v++) {
+          const voter = randomElement(customers);
+          reviewVotes.push({
+            id: uuidv4(),
+            reviewId: reviewId,
+            userId: voter.id,
+            vote: Math.random() > 0.2 ? 'HELPFUL' : 'UNHELPFUL',
+            createdAt: new Date(reviewDate.getTime() + randomInt(1, 14) * 24 * 60 * 60 * 1000),
+            updatedAt: new Date(reviewDate.getTime() + randomInt(1, 14) * 24 * 60 * 60 * 1000),
+          });
+        }
+      }
+    }
+
+    await queryInterface.bulkInsert('reviews', reviews);
+    await queryInterface.bulkInsert('review_votes', reviewVotes);
+    console.log(`✓ Created ${reviews.length} reviews with ${reviewVotes.length} votes`);
+
+    // 11. CREATE CARTS AND CART ITEMS
+    console.log('Creating cart items...');
+    const carts = [];
+    const cartItems = [];
+
+    customers.slice(0, 50).forEach(customer => {
+      const cartId = uuidv4();
+      carts.push({
+        id: cartId,
+        userId: customer.id,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const numItems = randomInt(1, 8);
+      const approvedProducts = products.filter(p => p.status === 'APPROVED');
+      
+      for (let i = 0; i < numItems; i++) {
+        const product = randomElement(approvedProducts);
+        cartItems.push({
+          id: uuidv4(),
+          cartId: cartId,
+          productId: product.id,
+          variantId: null,
+          quantity: randomInt(1, 3),
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    });
+
+    await queryInterface.bulkInsert('carts', carts);
+    await queryInterface.bulkInsert('cart_items', cartItems);
+    console.log(`✓ Created ${carts.length} carts with ${cartItems.length} items`);
+
+    // 12. CREATE WISHLISTS AND WISHLIST ITEMS
+    console.log('Creating wishlist items...');
+    const wishlists = [];
+    const wishlistItems = [];
+
+    customers.slice(0, 60).forEach(customer => {
+      const wishlistId = uuidv4();
+      wishlists.push({
+        id: wishlistId,
+        userId: customer.id,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const numItems = randomInt(3, 15);
+      const approvedProducts = products.filter(p => p.status === 'APPROVED');
+      
+      for (let i = 0; i < numItems; i++) {
+        const product = randomElement(approvedProducts);
+        wishlistItems.push({
+          id: uuidv4(),
+          wishlistId: wishlistId,
+          productId: product.id,
+          priceAtAdd: parseFloat(product.basePrice),
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    });
+
+    await queryInterface.bulkInsert('wishlists', wishlists);
+    await queryInterface.bulkInsert('wishlist_items', wishlistItems);
+    console.log(`✓ Created ${wishlists.length} wishlists with ${wishlistItems.length} items`);
+
+    // 13. CREATE WALLET LEDGER ENTRIES
+    console.log('Creating wallet transactions...');
+    const walletLedgers = [];
+
+    customers.slice(0, 40).forEach(customer => {
+      const numTransactions = randomInt(3, 10);
+      let balance = 0;
+
+      for (let i = 0; i < numTransactions; i++) {
+        const type = randomElement(['CREDIT', 'DEBIT']);
+        const amount = parseFloat(randomPrice(10, 200));
+        
+        if (type === 'CREDIT') {
+          balance += amount;
+        } else if (balance >= amount) {
+          balance -= amount;
+        } else {
+          continue; // Skip debit if insufficient balance
+        }
+
+        walletLedgers.push({
+          id: uuidv4(),
+          userId: customer.id,
+          type: type,
+          amount: amount,
+          balance: balance,
+          description: type === 'CREDIT' ? 'Wallet top-up' : 'Order payment',
+          referenceType: type === 'DEBIT' ? 'ORDER' : null,
+          referenceId: type === 'DEBIT' ? randomElement(orders.filter(o => o.userId === customer.id))?.id || null : null,
+          createdAt: new Date(Date.now() - randomInt(1, 60) * 24 * 60 * 60 * 1000),
+          updatedAt: new Date(Date.now() - randomInt(1, 60) * 24 * 60 * 60 * 1000),
+        });
+      }
+    });
+
+    await queryInterface.bulkInsert('wallet_ledgers', walletLedgers);
+    console.log(`✓ Created ${walletLedgers.length} wallet transactions`);
+
+    console.log('\n========================================');
+    console.log('✅ SEEDING COMPLETED SUCCESSFULLY!');
+    console.log('========================================\n');
+    console.log('Summary:');
+    console.log(`  ${categories.length} categories`);
+    console.log(`  ${vendors.length} vendors`);
+    console.log(`  ${vendorOwners.length + vendorStaff.length} vendor users`);
+    console.log(`  ${adminUsers.length} admin users`);
+    console.log(`  ${customers.length} customers`);
+    console.log(`  ${addresses.length} addresses`);
+    console.log(`  ${products.length} products`);
+    console.log(`  ${productVariants.length} product variants`);
+    console.log(`  ${productImages.length} product images`);
+    console.log(`  ${coupons.length} coupons`);
+    console.log(`  ${orders.length} orders`);
+    console.log(`  ${subOrders.length} sub-orders`);
+    console.log(`  ${orderItems.length} order items`);
+    console.log(`  ${reviews.length} reviews`);
+    console.log(`  ${reviewVotes.length} review votes`);
+    console.log(`  ${carts.length} active carts`);
+    console.log(`  ${cartItems.length} cart items`);
+    console.log(`  ${wishlists.length} wishlists`);
+    console.log(`  ${wishlistItems.length} wishlist items`);
+    console.log(`  ${walletLedgers.length} wallet transactions`);
+    console.log(`  ${payouts.length} payouts`);
+    console.log(`  ${commissionLedgers.length} commission entries`);
+    console.log(`  ${returnRequests.length} return requests`);
+    console.log(`  ${shipments.length} shipments\n`);
+  },
+
+  async down(queryInterface) {
+    console.log('Removing all seeded data...');
+    
+    await queryInterface.bulkDelete('wallet_ledgers', {}, {});
+    await queryInterface.bulkDelete('wishlist_items', {}, {});
+    await queryInterface.bulkDelete('wishlists', {}, {});
+    await queryInterface.bulkDelete('cart_items', {}, {});
+    await queryInterface.bulkDelete('carts', {}, {});
+    await queryInterface.bulkDelete('review_votes', {}, {});
+    await queryInterface.bulkDelete('reviews', {}, {});
+    await queryInterface.bulkDelete('return_requests', {}, {});
+    await queryInterface.bulkDelete('shipments', {}, {});
+    await queryInterface.bulkDelete('commission_ledgers', {}, {});
+    await queryInterface.bulkDelete('payouts', {}, {});
+    await queryInterface.bulkDelete('coupon_usages', {}, {});
+    await queryInterface.bulkDelete('order_items', {}, {});
+    await queryInterface.bulkDelete('sub_orders', {}, {});
+    await queryInterface.bulkDelete('orders', {}, {});
+    await queryInterface.bulkDelete('coupons', {}, {});
+    await queryInterface.bulkDelete('product_images', {}, {});
+    await queryInterface.bulkDelete('product_variants', {}, {});
+    await queryInterface.bulkDelete('products', {}, {});
+    await queryInterface.bulkDelete('shipping_rates', {}, {});
+    await queryInterface.bulkDelete('shipping_zones', {}, {});
+    await queryInterface.bulkDelete('addresses', {}, {});
+    await queryInterface.bulkDelete('vendor_documents', {}, {});
+    await queryInterface.bulkDelete('users', { email: { [queryInterface.sequelize.Op.ne]: 'admin@ecommerce.com' } }, {});
+    await queryInterface.bulkDelete('vendors', {}, {});
+    await queryInterface.bulkDelete('categories', {}, {});
+    
+    console.log('✓ All seeded data removed');
+  },
+};

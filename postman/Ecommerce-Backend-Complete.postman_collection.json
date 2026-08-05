@@ -1,0 +1,4290 @@
+{
+  "info": {
+    "name": "E-Commerce API - Organized by Roles",
+    "_postman_id": "5f6ebc19-084d-4801-b34a-f4da5eaf5440",
+    "description": "# E-Commerce Multi-Vendor Platform API\n## Organized by User Roles\n\nThis collection is organized by the 6 user roles in the system for better navigation and testing.\n\n## \ud83c\udfad Roles Overview\n\n### \ud83c\udf10 Common (Public & Shared)\nEndpoints accessible to all users or shared functionality:\n- System health & monitoring\n- Authentication (login, register, password reset)\n- Search (products, autocomplete)\n- Notifications\n\n### \ud83d\udecd\ufe0f Customer (End Users)\nShopping and consumer-facing endpoints:\n- Browse & search products\n- Cart management\n- Checkout & payments\n- Order tracking\n- Wishlist & wallet\n- Returns & reviews\n\n### \ud83c\udfea Vendor (Merchants)\nBusiness owner and staff endpoints:\n- Product management (in Products folder)\n- Sub-order management\n- Inventory tracking\n- Payout viewing\n\n### \ud83d\udc68\u200d\ud83d\udcbc Admin (Order & Catalog Managers)\nAdministrative team endpoints:\n- Order management & refunds\n- Coupon management\n- Review moderation (in Reviews folder)\n\n### \u26a1 Super Admin (Full Control)\nPlatform administration endpoints:\n- User management\n- Vendor approval\n- Category management\n- Shipping & tax configuration\n- Commission & payout management\n- System settings\n\n## \ud83d\ude80 Quick Start\n1. Import this collection and environment file\n2. Run \"Health Check\" in Common folder\n3. Login using appropriate role credentials\n4. Navigate to your role's folder for relevant endpoints\n\n## \ud83d\udd11 Test Credentials\n\n**Super Admin:**\n- Email: admin@ecommerce.com\n- Password: Admin@123\n\n**Customer (Register new):**\n- Use \"Authentication \u2192 Register - Customer\"\n\n**Vendor (Apply & get approved):**\n- Use \"Vendors \u2192 Register Vendor\"\n- Then admin approves via \"Vendors \u2192 Approve Vendor\"\n\n## \ud83d\udcca Role Permissions\n\n| Role | Users | Vendors | Products | Orders | Settings |\n|------|-------|---------|----------|--------|----------|\n| SUPER_ADMIN | \u2705 All | \u2705 All | \u2705 All | \u2705 All | \u2705 All |\n| ADMIN_ORDER_MANAGER | \u274c | \u274c | \u274c | \u2705 Manage | \u274c |\n| ADMIN_CATALOG_MANAGER | \u274c | \u274c | \u2705 Approve | \u274c | \u274c |\n| VENDOR_OWNER | \u274c | \u2705 Own | \u2705 Own | \u2705 Own | \u274c |\n| VENDOR_STAFF | \u274c | \u274c | \u2705 Update | \u2705 View | \u274c |\n| CUSTOMER | \u274c | \u274c | \ud83d\udc41\ufe0f View | \u2705 Own | \u274c |\n\n## \ud83c\udfaf Testing Flow by Role\n\n**Customer Journey:**\n1. Common \u2192 Register/Login\n2. Customer \u2192 Browse Products\n3. Customer \u2192 Add to Cart\n4. Customer \u2192 Checkout\n5. Customer \u2192 Track Order\n6. Customer \u2192 Write Review\n\n**Vendor Journey:**\n1. Common \u2192 Register Vendor\n2. Super Admin \u2192 Approve Vendor\n3. Common \u2192 Login as Vendor\n4. Customer \u2192 Create Products (vendor endpoints)\n5. Vendor \u2192 Manage Sub-orders\n6. Vendor \u2192 Track Inventory\n\n**Admin Journey:**\n1. Common \u2192 Login as Admin\n2. Admin \u2192 Manage Orders\n3. Admin \u2192 Create Coupons\n4. Customer \u2192 Moderate Reviews\n\n## \ud83d\udca1 Notes\n- All endpoints include comprehensive tests\n- Automatic token management configured\n- Dynamic test data generation enabled\n- Newman CLI compatible for CI/CD\n\n## \ud83d\udcdd Version\nCollection Version: 2.0 (Role-based organization)\nLast Updated: 2026-08-03",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Generate dynamic test data",
+          "pm.environment.set('timestamp', new Date().toISOString());",
+          "pm.environment.set('randomEmail', `user${Math.random().toString(36).substring(7)}@example.com`);",
+          "pm.environment.set('randomString', Math.random().toString(36).substring(7));",
+          "pm.environment.set('randomNumber', Math.floor(Math.random() * 10000));",
+          "",
+          "// Check token expiry (optional)",
+          "const accessToken = pm.environment.get('accessToken');",
+          "if (!accessToken && pm.request.auth && pm.request.auth.type === 'bearer') {",
+          "    console.warn('\u26a0\ufe0f  No access token found. Please login first.');",
+          "}"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Global tests for all requests",
+          "pm.test('Response time is acceptable', function () {",
+          "    pm.expect(pm.response.responseTime).to.be.below(3000);",
+          "});",
+          "",
+          "if (pm.response.headers.has('Content-Type')) {",
+          "    pm.test('Content-Type is JSON', function () {",
+          "        pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+          "    });",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Common (Public & Shared)",
+      "item": [
+        {
+          "name": "System",
+          "description": "System health and status endpoints. Start here to verify the API is running.",
+          "item": [
+            {
+              "name": "Health Check",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/health",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "health"
+                  ]
+                },
+                "description": "Check system health and status of all services.\n\n**Purpose:** Verify that the API and all its dependencies (database, Redis, BullMQ queues) are operational.\n\n**Authentication:** None required\n\n**Response includes:**\n- Overall system status\n- Database connection status\n- Redis connection status\n- BullMQ queues status (email, sms, payout, notification)\n- Server uptime\n- Current environment\n\n**Use this to:**\n- Verify API is running before executing other requests\n- Monitor system health\n- Check service dependencies",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('Response time is acceptable', function () {",
+                      "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                      "});",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "    const jsonData = pm.response.json();",
+                      "    ",
+                      "    pm.test('Response has success status', function () {",
+                      "        pm.expect(jsonData).to.have.property('success');",
+                      "        pm.expect(jsonData.success).to.be.true;",
+                      "    });",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Authentication",
+          "description": "User authentication and authorization endpoints. Start with Register or Login to get access tokens.",
+          "item": [
+            {
+              "name": "Register - Customer",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/register",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "register"
+                  ]
+                },
+                "description": "Register a new customer account.\n\n**Authentication:** None required\n\n**Required Fields:**\n- email (unique, valid email)\n- password (min 8 characters)\n- name\n\n**Response:**\n- User object\n- Access token (JWT, expires in 15 minutes)\n- Refresh token (expires in 7 days)\n\n**Tokens are automatically stored** in environment variables for use in subsequent requests.\n\n**Default Role:** CUSTOMER\n\n**Example Success Response:**\n```json\n{\n  \"success\": true,\n  \"data\": {\n    \"user\": {\n      \"id\": \"uuid\",\n      \"email\": \"user@example.com\",\n      \"name\": \"John Doe\",\n      \"role\": \"CUSTOMER\"\n    },\n    \"accessToken\": \"jwt-token\",\n    \"refreshToken\": \"refresh-token\"\n  }\n}\n```",
+                "auth": {
+                  "type": "noauth"
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"{{randomEmail}}\",\n  \"password\": \"Test@123456\",\n  \"name\": \"Test User\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 201', function () {",
+                      "    pm.response.to.have.status(201);",
+                      "});",
+                      "",
+                      "pm.test('Response time is acceptable', function () {",
+                      "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                      "});",
+                      "",
+                      "if (pm.response.code === 201) {",
+                      "    const jsonData = pm.response.json();",
+                      "    ",
+                      "    pm.test('Response has success status', function () {",
+                      "        pm.expect(jsonData).to.have.property('success');",
+                      "        pm.expect(jsonData.success).to.be.true;",
+                      "    });",
+                      "    ",
+                      "    if (jsonData.data && jsonData.data.accessToken) {",
+                      "        pm.environment.set('accessToken', jsonData.data.accessToken);",
+                      "        console.log('accessToken stored:', jsonData.data.accessToken);",
+                      "    }",
+                      "    if (jsonData.data && jsonData.data.refreshToken) {",
+                      "        pm.environment.set('refreshToken', jsonData.data.refreshToken);",
+                      "        console.log('refreshToken stored:', jsonData.data.refreshToken);",
+                      "    }",
+                      "    if (jsonData.data && jsonData.data.user.id) {",
+                      "        pm.environment.set('userId', jsonData.data.user.id);",
+                      "        console.log('userId stored:', jsonData.data.user.id);",
+                      "    }",
+                      "    if (jsonData.data && jsonData.data.user.email) {",
+                      "        pm.environment.set('userEmail', jsonData.data.user.email);",
+                      "        console.log('userEmail stored:', jsonData.data.user.email);",
+                      "    }",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Login - Admin",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/login",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "login"
+                  ]
+                },
+                "description": "Authenticate with admin credentials.\n\n**Authentication:** None required\n\n**Required Fields:**\n- email\n- password\n\n**Response:**\n- User object with role information\n- Access token (stored automatically)\n- Refresh token (stored automatically)\n\n**Admin Credentials (after seeding):**\n- Email: admin@ecommerce.com\n- Password: Admin@123\n\n**Use this to:**\n- Get admin access for testing\n- Access protected admin endpoints\n- Manage the platform",
+                "auth": {
+                  "type": "noauth"
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"admin@ecommerce.com\",\n  \"password\": \"Admin@123\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('Response time is acceptable', function () {",
+                      "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                      "});",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "    const jsonData = pm.response.json();",
+                      "    ",
+                      "    pm.test('Response has success status', function () {",
+                      "        pm.expect(jsonData).to.have.property('success');",
+                      "        pm.expect(jsonData.success).to.be.true;",
+                      "    });",
+                      "    ",
+                      "    if (jsonData.data && jsonData.data.accessToken) {",
+                      "        pm.environment.set('accessToken', jsonData.data.accessToken);",
+                      "        console.log('accessToken stored:', jsonData.data.accessToken);",
+                      "    }",
+                      "    if (jsonData.data && jsonData.data.refreshToken) {",
+                      "        pm.environment.set('refreshToken', jsonData.data.refreshToken);",
+                      "        console.log('refreshToken stored:', jsonData.data.refreshToken);",
+                      "    }",
+                      "    if (jsonData.data && jsonData.data.user.id) {",
+                      "        pm.environment.set('adminId', jsonData.data.user.id);",
+                      "        console.log('adminId stored:', jsonData.data.user.id);",
+                      "    }",
+                      "    if (jsonData.data && jsonData.data.user.role) {",
+                      "        pm.environment.set('userRole', jsonData.data.user.role);",
+                      "        console.log('userRole stored:', jsonData.data.user.role);",
+                      "    }",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Login - Customer",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/login",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "login"
+                  ]
+                },
+                "description": "Authenticate with customer credentials.",
+                "auth": {
+                  "type": "noauth"
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"{{userEmail}}\",\n  \"password\": \"Test@123456\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('Response time is acceptable', function () {",
+                      "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                      "});",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "    const jsonData = pm.response.json();",
+                      "    ",
+                      "    pm.test('Response has success status', function () {",
+                      "        pm.expect(jsonData).to.have.property('success');",
+                      "        pm.expect(jsonData.success).to.be.true;",
+                      "    });",
+                      "    ",
+                      "    if (jsonData.data && jsonData.data.accessToken) {",
+                      "        pm.environment.set('accessToken', jsonData.data.accessToken);",
+                      "        console.log('accessToken stored:', jsonData.data.accessToken);",
+                      "    }",
+                      "    if (jsonData.data && jsonData.data.refreshToken) {",
+                      "        pm.environment.set('refreshToken', jsonData.data.refreshToken);",
+                      "        console.log('refreshToken stored:', jsonData.data.refreshToken);",
+                      "    }",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Refresh Token",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/refresh",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "refresh"
+                  ]
+                },
+                "description": "Get a new access token using refresh token.\n\n**Authentication:** None required (uses refresh token in body)\n\n**When to use:**\n- Access token has expired\n- Need to extend session\n\n**Note:** Refresh token is automatically sent from stored environment variable.",
+                "auth": {
+                  "type": "noauth"
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('Response time is acceptable', function () {",
+                      "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                      "});",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "    const jsonData = pm.response.json();",
+                      "    ",
+                      "    pm.test('Response has success status', function () {",
+                      "        pm.expect(jsonData).to.have.property('success');",
+                      "        pm.expect(jsonData.success).to.be.true;",
+                      "    });",
+                      "    ",
+                      "    if (jsonData.data && jsonData.data.accessToken) {",
+                      "        pm.environment.set('accessToken', jsonData.data.accessToken);",
+                      "        console.log('accessToken stored:', jsonData.data.accessToken);",
+                      "    }",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Logout",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/logout",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "logout"
+                  ]
+                },
+                "description": "Logout current user and invalidate tokens.\n\n**Authentication:** Required (Bearer token)\n\n**What happens:**\n- Current refresh token is invalidated\n- Client should discard access token\n\n**Note:** This request will clear stored tokens from environment."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "    // Clear tokens on successful logout",
+                      "    pm.environment.unset('accessToken');",
+                      "    pm.environment.unset('refreshToken');",
+                      "    console.log('\u2705 Tokens cleared');",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Change Password",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/change-password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "change-password"
+                  ]
+                },
+                "description": "Change password for authenticated user.\n\n**Authentication:** Required\n\n**Required Fields:**\n- currentPassword\n- newPassword (min 8 chars)\n- confirmPassword (must match newPassword)\n\n**Security:**\n- Old password is verified\n- New password must be different\n- Password strength validated",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"currentPassword\": \"Test@123456\",\n  \"newPassword\": \"NewTest@123456\",\n  \"confirmPassword\": \"NewTest@123456\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('Response time is acceptable', function () {",
+                      "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                      "});",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "    const jsonData = pm.response.json();",
+                      "    ",
+                      "    pm.test('Response has success status', function () {",
+                      "        pm.expect(jsonData).to.have.property('success');",
+                      "        pm.expect(jsonData.success).to.be.true;",
+                      "    });",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Forgot Password",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/forgot-password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "forgot-password"
+                  ]
+                },
+                "description": "Request password reset email.\n\n**Authentication:** None required\n\n**Required Fields:**\n- email\n\n**What happens:**\n- If email exists, a reset token is sent\n- Email contains reset link with token\n- Token expires in 1 hour\n\n**Note:** In development, check console logs for reset token if email is not configured.",
+                "auth": {
+                  "type": "noauth"
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"{{userEmail}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('Response time is acceptable', function () {",
+                      "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                      "});",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "    const jsonData = pm.response.json();",
+                      "    ",
+                      "    pm.test('Response has success status', function () {",
+                      "        pm.expect(jsonData).to.have.property('success');",
+                      "        pm.expect(jsonData.success).to.be.true;",
+                      "    });",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Reset Password",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/reset-password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "reset-password"
+                  ]
+                },
+                "description": "Reset password using reset token.\n\n**Authentication:** None required (uses token from email)\n\n**Required Fields:**\n- token (from email)\n- password (new password)\n- confirmPassword\n\n**Token Requirements:**\n- Must be valid\n- Must not be expired\n- Can only be used once",
+                "auth": {
+                  "type": "noauth"
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"token\": \"reset-token-from-email\",\n  \"password\": \"NewPassword@123\",\n  \"confirmPassword\": \"NewPassword@123\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "pm.test('Response time is acceptable', function () {",
+                      "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                      "});",
+                      "",
+                      "if (pm.response.code === 200) {",
+                      "    const jsonData = pm.response.json();",
+                      "    ",
+                      "    pm.test('Response has success status', function () {",
+                      "        pm.expect(jsonData).to.have.property('success');",
+                      "        pm.expect(jsonData.success).to.be.true;",
+                      "    });",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Search",
+          "description": "Product search",
+          "item": [
+            {
+              "name": "Search Products",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/search",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "search"
+                  ],
+                  "query": [
+                    {
+                      "key": "q",
+                      "value": "laptop"
+                    },
+                    {
+                      "key": "category",
+                      "value": "electronics"
+                    }
+                  ]
+                },
+                "description": "Search products",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Autocomplete",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/search/autocomplete",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "search",
+                    "autocomplete"
+                  ],
+                  "query": [
+                    {
+                      "key": "q",
+                      "value": "lap"
+                    }
+                  ]
+                },
+                "description": "Get search suggestions",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Notifications",
+          "description": "Notification management",
+          "item": [
+            {
+              "name": "Get Notification Logs",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/notifications/logs",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "notifications",
+                    "logs"
+                  ]
+                },
+                "description": "List notification logs"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Send Test Notification",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/notifications/test",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "notifications",
+                    "test"
+                  ]
+                },
+                "description": "Send test notification",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"type\": \"EMAIL\",\n  \"recipient\": \"test@example.com\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Customer (End Users)",
+      "item": [
+        {
+          "name": "Cart",
+          "description": "Shopping cart operations",
+          "item": [
+            {
+              "name": "Get My Cart",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/cart",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "cart"
+                  ]
+                },
+                "description": "Get current user's cart"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "    if (data.data?.id) pm.environment.set('cartId', data.data.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Add to Cart",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/cart/items",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "cart",
+                    "items"
+                  ]
+                },
+                "description": "Add item to cart",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"variantId\": \"{{variantId}}\",\n  \"quantity\": 2\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "    if (data.data?.id) pm.environment.set('cartItemId', data.data.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Update Cart Item",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/cart/items/{{cartItemId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "cart",
+                    "items",
+                    "{{cartItemId}}"
+                  ]
+                },
+                "description": "Update cart item quantity",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"quantity\": 3\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Remove from Cart",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/cart/items/{{cartItemId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "cart",
+                    "items",
+                    "{{cartItemId}}"
+                  ]
+                },
+                "description": "Remove item from cart"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Clear Cart",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/cart",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "cart"
+                  ]
+                },
+                "description": "Clear entire cart"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Checkout",
+          "description": "Checkout and order placement",
+          "item": [
+            {
+              "name": "Create Checkout",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/checkout",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "checkout"
+                  ]
+                },
+                "description": "Create checkout session",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"addressId\": \"{{addressId}}\",\n  \"paymentMethod\": \"RAZORPAY\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "    if (data.data?.orderId) pm.environment.set('orderId', data.data.orderId);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Payments",
+          "description": "Payment processing",
+          "item": [
+            {
+              "name": "Verify Payment",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/payments/verify",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "payments",
+                    "verify"
+                  ]
+                },
+                "description": "Verify Razorpay payment",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"orderId\": \"{{orderId}}\",\n  \"paymentId\": \"pay_xxx\",\n  \"signature\": \"sig_xxx\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Razorpay Webhook",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/payments/webhooks/razorpay",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "payments",
+                    "webhooks",
+                    "razorpay"
+                  ]
+                },
+                "description": "Handle Razorpay webhook",
+                "auth": {
+                  "type": "noauth"
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"event\": \"payment.captured\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Wishlist",
+          "description": "User wishlist management",
+          "item": [
+            {
+              "name": "Get My Wishlist",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/wishlist",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "wishlist"
+                  ]
+                },
+                "description": "Get wishlist items"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Add to Wishlist",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/wishlist/items",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "wishlist",
+                    "items"
+                  ]
+                },
+                "description": "Add product to wishlist",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"productId\": \"{{productId}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 201', () => pm.response.to.have.status(201));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Remove from Wishlist",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/wishlist/items/{{productId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "wishlist",
+                    "items",
+                    "{{productId}}"
+                  ]
+                },
+                "description": "Remove from wishlist"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Move to Cart",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/wishlist/items/{{productId}}/move-to-cart",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "wishlist",
+                    "items",
+                    "{{productId}}",
+                    "move-to-cart"
+                  ]
+                },
+                "description": "Move wishlist item to cart"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Wallet",
+          "description": "User wallet management",
+          "item": [
+            {
+              "name": "Get Wallet Balance",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/wallet/balance",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "wallet",
+                    "balance"
+                  ]
+                },
+                "description": "Get current wallet balance"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get Wallet Transactions",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/wallet/transactions",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "wallet",
+                    "transactions"
+                  ]
+                },
+                "description": "List wallet transaction history"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Returns",
+          "description": "Return request management",
+          "item": [
+            {
+              "name": "Create Return Request",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/returns",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "returns"
+                  ]
+                },
+                "description": "Request order return",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"orderId\": \"{{orderId}}\",\n  \"reason\": \"DEFECTIVE\",\n  \"description\": \"Item damaged\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json();",
+                      "    if (data.data?.id) pm.environment.set('returnRequestId', data.data.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get My Returns",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/returns",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "returns"
+                  ]
+                },
+                "description": "List my return requests"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Update Return Status",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/returns/{{returnRequestId}}/transition",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "returns",
+                    "{{returnRequestId}}",
+                    "transition"
+                  ]
+                },
+                "description": "Update return status",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"APPROVED\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Vendor (Merchants)",
+      "item": [
+        {
+          "name": "Products",
+          "description": "Product catalog management",
+          "item": [
+            {
+              "name": "Create Product (Vendor)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/products",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products"
+                  ]
+                },
+                "description": "Create new product",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Test Product\",\n  \"slug\": \"test-product-{{randomString}}\",\n  \"description\": \"Test product description\",\n  \"categoryId\": \"{{categoryId}}\",\n  \"basePrice\": 99.99\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "    if (data.data?.id) pm.environment.set('productId', data.data.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Update Product (Vendor)",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/products/{{productId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "{{productId}}"
+                  ]
+                },
+                "description": "Update product",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"description\": \"Updated description\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Delete Product (Vendor)",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/products/{{productId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "{{productId}}"
+                  ]
+                },
+                "description": "Delete product"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Submit for Approval",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/products/{{productId}}/submit",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "{{productId}}",
+                    "submit"
+                  ]
+                },
+                "description": "Submit product for admin approval"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Add Variant",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/products/{{productId}}/variants",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "{{productId}}",
+                    "variants"
+                  ]
+                },
+                "description": "Add product variant",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"sku\": \"SKU-{{randomString}}\",\n  \"price\": 99.99,\n  \"stock\": 100,\n  \"attributes\": {\n    \"size\": \"M\",\n    \"color\": \"Blue\"\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "    if (data.data?.id) pm.environment.set('variantId', data.data.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Update Variant",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/products/variants/{{variantId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "variants",
+                    "{{variantId}}"
+                  ]
+                },
+                "description": "Update variant",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"price\": 89.99\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Delete Variant",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/products/variants/{{variantId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "variants",
+                    "{{variantId}}"
+                  ]
+                },
+                "description": "Delete variant"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Add Image",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/products/{{productId}}/images",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "{{productId}}",
+                    "images"
+                  ]
+                },
+                "description": "Add product image",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"url\": \"https://example.com/image.jpg\",\n  \"isPrimary\": true\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Delete Image",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/products/images/{{imageId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "images",
+                    "{{imageId}}"
+                  ]
+                },
+                "description": "Delete product image"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Set Primary Image",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/products/images/{{imageId}}/primary",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "images",
+                    "{{imageId}}",
+                    "primary"
+                  ]
+                },
+                "description": "Set image as primary"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "SubOrders",
+          "description": "Vendor sub-order management",
+          "item": [
+            {
+              "name": "Get SubOrders (Vendor)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/suborders",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "suborders"
+                  ]
+                },
+                "description": "List vendor's suborders"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Update SubOrder Status",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/suborders/{{subOrderId}}/status",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "suborders",
+                    "{{subOrderId}}",
+                    "status"
+                  ]
+                },
+                "description": "Update suborder status",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"SHIPPED\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Inventory",
+          "description": "Stock management",
+          "item": [
+            {
+              "name": "Get Low Stock Items",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/inventory/low-stock",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "inventory",
+                    "low-stock"
+                  ]
+                },
+                "description": "List low stock products"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Update Stock",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/inventory/variants/{{variantId}}/stock",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "inventory",
+                    "variants",
+                    "{{variantId}}",
+                    "stock"
+                  ]
+                },
+                "description": "Update variant stock",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"stock\": 50,\n  \"operation\": \"SET\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Reviews",
+          "description": "Product reviews and ratings",
+          "item": [
+            {
+              "name": "Get Product Reviews",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/reviews/product/{{productId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "reviews",
+                    "product",
+                    "{{productId}}"
+                  ]
+                },
+                "description": "List product reviews",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get My Reviews",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/reviews/my-reviews",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "reviews",
+                    "my-reviews"
+                  ]
+                },
+                "description": "List my reviews"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Admin (Order & Catalog Managers)",
+      "item": [
+        {
+          "name": "Orders",
+          "description": "Order management",
+          "item": [
+            {
+              "name": "Create Order",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/orders",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "orders"
+                  ]
+                },
+                "description": "Create new order",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"addressId\": \"{{addressId}}\",\n  \"items\": [\n    {\n      \"variantId\": \"{{variantId}}\",\n      \"quantity\": 1\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "    if (data.data?.id) pm.environment.set('orderId', data.data.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get My Orders",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/orders",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "orders"
+                  ]
+                },
+                "description": "List user's orders"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get Order By ID",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/orders/{{orderId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "orders",
+                    "{{orderId}}"
+                  ]
+                },
+                "description": "Get order details"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Update Order Status",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/orders/{{orderId}}/status",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "orders",
+                    "{{orderId}}",
+                    "status"
+                  ]
+                },
+                "description": "Update order status",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"PROCESSING\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Coupons",
+          "description": "Coupon management",
+          "item": [
+            {
+              "name": "Create Coupon (Admin)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/coupons",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "coupons"
+                  ]
+                },
+                "description": "Create discount coupon",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"code\": \"SAVE20\",\n  \"type\": \"PERCENTAGE\",\n  \"value\": 20,\n  \"maxUses\": 100\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json();",
+                      "    if (data.data?.id) pm.environment.set('couponId', data.data.id);",
+                      "    if (data.data?.code) pm.environment.set('couponCode', data.data.code);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get All Coupons",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/coupons",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "coupons"
+                  ]
+                },
+                "description": "List all coupons"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Apply Coupon",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/coupons/apply",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "coupons",
+                    "apply"
+                  ]
+                },
+                "description": "Apply coupon to cart",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"code\": \"{{couponCode}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Remove Coupon",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/coupons/remove",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "coupons",
+                    "remove"
+                  ]
+                },
+                "description": "Remove applied coupon"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Products",
+          "description": "Product catalog management",
+          "item": [
+            {
+              "name": "Get All Products",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/products",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "10"
+                    }
+                  ]
+                },
+                "description": "List products with filters",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get Product By ID",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/products/{{productId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "{{productId}}"
+                  ]
+                },
+                "description": "Get product details",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get Product By Slug",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/products/slug/test-product",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "slug",
+                    "test-product"
+                  ]
+                },
+                "description": "Get product by slug",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Approve Product (Admin)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/products/{{productId}}/approve",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "{{productId}}",
+                    "approve"
+                  ]
+                },
+                "description": "Approve product"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Reject Product (Admin)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/products/{{productId}}/reject",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "{{productId}}",
+                    "reject"
+                  ]
+                },
+                "description": "Reject product",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"Poor quality images\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Archive Product (Admin)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/products/{{productId}}/archive",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "products",
+                    "{{productId}}",
+                    "archive"
+                  ]
+                },
+                "description": "Archive product"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Reviews",
+          "description": "Product reviews and ratings",
+          "item": [
+            {
+              "name": "Get Product Reviews",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/reviews/product/{{productId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "reviews",
+                    "product",
+                    "{{productId}}"
+                  ]
+                },
+                "description": "List product reviews",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get My Reviews",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/reviews/my-reviews",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "reviews",
+                    "my-reviews"
+                  ]
+                },
+                "description": "List my reviews"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Approve Review (Admin)",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/reviews/{{reviewId}}/approve",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "reviews",
+                    "{{reviewId}}",
+                    "approve"
+                  ]
+                },
+                "description": "Approve review"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Reject Review (Admin)",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/reviews/{{reviewId}}/reject",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "reviews",
+                    "{{reviewId}}",
+                    "reject"
+                  ]
+                },
+                "description": "Reject review"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Super Admin (Full Control)",
+      "item": [
+        {
+          "name": "Users",
+          "description": "User management endpoints",
+          "item": [
+            {
+              "name": "Get My Profile",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/users/profile",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "users",
+                    "profile"
+                  ]
+                },
+                "description": "Get authenticated user profile"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "    if (data.data?.id) pm.environment.set('userId', data.data.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Update My Profile",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/users/profile",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "users",
+                    "profile"
+                  ]
+                },
+                "description": "Update authenticated user profile",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Updated Name\",\n  \"phone\": \"+1234567890\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get All Users (Admin)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "users"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "10"
+                    }
+                  ]
+                },
+                "description": "List all users with pagination"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get User By ID (Admin)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/users/{{userId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "users",
+                    "{{userId}}"
+                  ]
+                },
+                "description": "Get specific user details"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Update User Status (Admin)",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/users/{{userId}}/status",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "users",
+                    "{{userId}}",
+                    "status"
+                  ]
+                },
+                "description": "Update user status",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"ACTIVE\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Delete User (Admin)",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/users/{{userId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "users",
+                    "{{userId}}"
+                  ]
+                },
+                "description": "Soft delete user"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Vendors",
+          "description": "Vendor management and onboarding",
+          "item": [
+            {
+              "name": "Register as Vendor",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/vendors/register",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "vendors",
+                    "register"
+                  ]
+                },
+                "description": "Register authenticated user as vendor",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"businessName\": \"Test Store\",\n  \"businessType\": \"RETAIL\",\n  \"description\": \"Test vendor store\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "    if (data.data?.id) pm.environment.set('vendorId', data.data.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get Vendor Dashboard",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/vendors/dashboard/summary",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "vendors",
+                    "dashboard",
+                    "summary"
+                  ]
+                },
+                "description": "Get vendor dashboard stats"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get All Vendors (Admin)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/vendors",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "vendors"
+                  ]
+                },
+                "description": "List all vendors with filters"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get Vendor By ID",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/vendors/{{vendorId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "vendors",
+                    "{{vendorId}}"
+                  ]
+                },
+                "description": "Get vendor details"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Update Vendor",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/vendors/{{vendorId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "vendors",
+                    "{{vendorId}}"
+                  ]
+                },
+                "description": "Update vendor information",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"description\": \"Updated description\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Approve Vendor (Admin)",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/vendors/{{vendorId}}/approve",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "vendors",
+                    "{{vendorId}}",
+                    "approve"
+                  ]
+                },
+                "description": "Approve vendor application",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"notes\": \"Approved\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Reject Vendor (Admin)",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/vendors/{{vendorId}}/reject",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "vendors",
+                    "{{vendorId}}",
+                    "reject"
+                  ]
+                },
+                "description": "Reject vendor application",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"Incomplete documents\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Suspend Vendor (Admin)",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/vendors/{{vendorId}}/suspend",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "vendors",
+                    "{{vendorId}}",
+                    "suspend"
+                  ]
+                },
+                "description": "Suspend vendor account",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"Policy violation\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Upload Document",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/vendors/{{vendorId}}/documents",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "vendors",
+                    "{{vendorId}}",
+                    "documents"
+                  ]
+                },
+                "description": "Upload vendor document",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"type\": \"BUSINESS_LICENSE\",\n  \"url\": \"https://example.com/doc.pdf\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "    if (data.data?.id) pm.environment.set('documentId', data.data.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get Vendor Documents",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/vendors/{{vendorId}}/documents",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "vendors",
+                    "{{vendorId}}",
+                    "documents"
+                  ]
+                },
+                "description": "List vendor documents"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Verify Document (Admin)",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/vendors/documents/{{documentId}}/verify",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "vendors",
+                    "documents",
+                    "{{documentId}}",
+                    "verify"
+                  ]
+                },
+                "description": "Verify vendor document"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Categories",
+          "description": "Product category management",
+          "item": [
+            {
+              "name": "Get All Categories",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/categories",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "categories"
+                  ]
+                },
+                "description": "List all categories",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get Category By ID",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/categories/{{categoryId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "categories",
+                    "{{categoryId}}"
+                  ]
+                },
+                "description": "Get category details",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Create Category (Admin)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/categories",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "categories"
+                  ]
+                },
+                "description": "Create new category",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Electronics\",\n  \"slug\": \"electronics\",\n  \"description\": \"Electronic items\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 201) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "    if (data.data?.id) pm.environment.set('categoryId', data.data.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Update Category (Admin)",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/categories/{{categoryId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "categories",
+                    "{{categoryId}}"
+                  ]
+                },
+                "description": "Update category",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"description\": \"Updated description\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Delete Category (Admin)",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/categories/{{categoryId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "categories",
+                    "{{categoryId}}"
+                  ]
+                },
+                "description": "Delete category"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                      "pm.test('Response time acceptable', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json();",
+                      "    pm.test('Has success status', () => pm.expect(data.success).to.be.true);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Shipping",
+          "description": "Shipping and tracking",
+          "item": [
+            {
+              "name": "Get Shipping Rates",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/shipping/rates",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "shipping",
+                    "rates"
+                  ],
+                  "query": [
+                    {
+                      "key": "postalCode",
+                      "value": "12345"
+                    },
+                    {
+                      "key": "weight",
+                      "value": "1.5"
+                    }
+                  ]
+                },
+                "description": "Calculate shipping rates"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Track Shipment",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/shipping/tracking/{{trackingNumber}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "shipping",
+                    "tracking",
+                    "{{trackingNumber}}"
+                  ]
+                },
+                "description": "Track shipment status",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Shipping Webhook",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/shipping/webhooks/fedex",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "shipping",
+                    "webhooks",
+                    "fedex"
+                  ]
+                },
+                "description": "Handle carrier webhook",
+                "auth": {
+                  "type": "noauth"
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"event\": \"delivered\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Tax",
+          "description": "Tax rules management",
+          "item": [
+            {
+              "name": "Get Tax Rules",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/tax/rules",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "tax",
+                    "rules"
+                  ]
+                },
+                "description": "List all tax rules"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Create Tax Rule (Admin)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/tax/rules",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "tax",
+                    "rules"
+                  ]
+                },
+                "description": "Create tax rule",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"country\": \"US\",\n  \"state\": \"CA\",\n  \"rate\": 7.25,\n  \"isCompound\": false\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 201', () => pm.response.to.have.status(201));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Update Tax Rule (Admin)",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/tax/rules/{{taxRuleId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "tax",
+                    "rules",
+                    "{{taxRuleId}}"
+                  ]
+                },
+                "description": "Update tax rule",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"rate\": 7.5\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Delete Tax Rule (Admin)",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/tax/rules/{{taxRuleId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "tax",
+                    "rules",
+                    "{{taxRuleId}}"
+                  ]
+                },
+                "description": "Delete tax rule"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Commissions & Payouts",
+          "description": "Commission tracking and payouts",
+          "item": [
+            {
+              "name": "Get Commissions",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/commissions",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "commissions"
+                  ]
+                },
+                "description": "List commission records"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get Vendor Commissions",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/commissions/vendor/{{vendorId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "commissions",
+                    "vendor",
+                    "{{vendorId}}"
+                  ]
+                },
+                "description": "Get vendor commissions"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get Payouts",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/payouts",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "payouts"
+                  ]
+                },
+                "description": "List payout history"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Process Payouts (Admin)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/payouts/process",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "payouts",
+                    "process"
+                  ]
+                },
+                "description": "Process pending payouts"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get Vendor Payouts",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/payouts/vendor/{{vendorId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "payouts",
+                    "vendor",
+                    "{{vendorId}}"
+                  ]
+                },
+                "description": "Get vendor payout history"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Admin",
+          "description": "Admin dashboard and analytics",
+          "item": [
+            {
+              "name": "Get Dashboard Stats",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/dashboard",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "dashboard"
+                  ]
+                },
+                "description": "Get admin dashboard statistics"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get Platform Analytics",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/analytics/platform",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "analytics",
+                    "platform"
+                  ]
+                },
+                "description": "Get platform-wide analytics"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

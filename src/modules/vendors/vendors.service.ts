@@ -1,0 +1,177 @@
+import { NotFoundError } from '@core/errors/NotFoundError';
+import { ValidationError } from '@core/errors/ValidationError';
+import { vendorsRepository } from './vendors.repository';
+import { VendorDocument } from '@database/models/vendorDocument.model';
+import { sequelize } from '@database/models';
+import type {
+  RegisterVendorRequest,
+  UpdateVendorRequest,
+  ApproveVendorRequest,
+  RejectVendorRequest,
+  SuspendVendorRequest,
+  GetVendorsQuery,
+  UploadDocumentRequest,
+} from './vendors.dto';
+
+function generateSlug(businessName: string): string {
+  return businessName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+}
+
+export class VendorsService {
+  async registerVendor(userId: string, data: RegisterVendorRequest) {
+    return sequelize.transaction(async (t) => {
+      const slug = generateSlug(data.businessName);
+      
+      // Check if slug already exists
+      const existing = await vendorsRepository.findBySlug(slug);
+      if (existing) {
+        throw new ValidationError('Business name already exists');
+      }
+
+      const vendor = await vendorsRepository.create({
+        ...data,
+        slug,
+        status: 'PENDING',
+      }, { transaction: t });
+
+      return vendor;
+    });
+  }
+
+  async getVendors(query: GetVendorsQuery) {
+    const offset = (query.page - 1) * query.limit;
+    const { rows, count } = await vendorsRepository.findWithFilters({
+      status: query.status,
+      search: query.search,
+      limit: query.limit,
+      offset,
+    });
+
+    return {
+      vendors: rows,
+      pagination: {
+        total: count,
+        page: query.page,
+        limit: query.limit,
+        totalPages: Math.ceil(count / query.limit),
+      },
+    };
+  }
+
+  async getVendorById(vendorId: string) {
+    const vendor = await vendorsRepository.findById(vendorId);
+    if (!vendor) throw new NotFoundError('Vendor');
+    return vendor;
+  }
+
+  async updateVendor(vendorId: string, data: UpdateVendorRequest) {
+    return sequelize.transaction(async (t) => {
+      const vendor = await vendorsRepository.findById(vendorId, { transaction: t });
+      if (!vendor) throw new NotFoundError('Vendor');
+
+      await vendorsRepository.update(vendorId, data, { transaction: t });
+      return this.getVendorById(vendorId);
+    });
+  }
+
+  async approveVendor(vendorId: string, data: ApproveVendorRequest) {
+    return sequelize.transaction(async (t) => {
+      const vendor = await vendorsRepository.findById(vendorId, { transaction: t });
+      if (!vendor) throw new NotFoundError('Vendor');
+      if (vendor.status !== 'PENDING') {
+        throw new ValidationError('Vendor is not in PENDING status');
+      }
+
+      await vendorsRepository.update(vendorId, {
+        status: 'APPROVED',
+        commissionRate: data.commissionRate ?? vendor.commissionRate,
+      }, { transaction: t });
+
+      // TODO: Send approval notification
+      return this.getVendorById(vendorId);
+    });
+  }
+
+  async rejectVendor(vendorId: string, data: RejectVendorRequest) {
+    return sequelize.transaction(async (t) => {
+      const vendor = await vendorsRepository.findById(vendorId, { transaction: t });
+      if (!vendor) throw new NotFoundError('Vendor');
+      if (vendor.status !== 'PENDING') {
+        throw new ValidationError('Vendor is not in PENDING status');
+      }
+
+      await vendorsRepository.update(vendorId, { status: 'REJECTED' }, { transaction: t });
+
+      // TODO: Send rejection notification with reason
+      return this.getVendorById(vendorId);
+    });
+  }
+
+  async suspendVendor(vendorId: string, data: SuspendVendorRequest) {
+    return sequelize.transaction(async (t) => {
+      const vendor = await vendorsRepository.findById(vendorId, { transaction: t });
+      if (!vendor) throw new NotFoundError('Vendor');
+
+      await vendorsRepository.update(vendorId, { status: 'SUSPENDED' }, { transaction: t });
+
+      // TODO: Send suspension notification with reason
+      return this.getVendorById(vendorId);
+    });
+  }
+
+  async uploadDocument(vendorId: string, data: UploadDocumentRequest) {
+    return sequelize.transaction(async (t) => {
+      const vendor = await vendorsRepository.findById(vendorId, { transaction: t });
+      if (!vendor) throw new NotFoundError('Vendor');
+
+      const document = await VendorDocument.create({
+        vendorId,
+        type: data.type,
+        url: data.url,
+        verified: false,
+      }, { transaction: t });
+
+      return document;
+    });
+  }
+
+  async getVendorDocuments(vendorId: string) {
+    const vendor = await vendorsRepository.findById(vendorId);
+    if (!vendor) throw new NotFoundError('Vendor');
+
+    return VendorDocument.findAll({ where: { vendorId } });
+  }
+
+  async verifyDocument(documentId: string) {
+    return sequelize.transaction(async (t) => {
+      const document = await VendorDocument.findByPk(documentId, { transaction: t });
+      if (!document) throw new NotFoundError('VendorDocument');
+
+      await document.update({ verified: true }, { transaction: t });
+      return document;
+    });
+  }
+
+  async getDashboardSummary(vendorId: string): Promise<{
+    revenue: number;
+    orders: number;
+    pendingPayouts: number;
+    performanceScore: number | null;
+  }> {
+    const vendor = await vendorsRepository.findById(vendorId);
+    if (!vendor) throw new NotFoundError('Vendor');
+
+    // TODO: Implement actual dashboard metrics
+    return {
+      revenue: 0,
+      orders: 0,
+      pendingPayouts: 0,
+      performanceScore: vendor.performanceScore,
+    };
+  }
+}
+
+export const vendorsService = new VendorsService();

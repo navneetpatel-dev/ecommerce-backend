@@ -1,0 +1,66 @@
+{
+  "info": {
+    "name": "E-Commerce Multi-Vendor Backend API",
+    "_postman_id": "ecommerce-backend-v1",
+    "description": "# E-Commerce Multi-Vendor Platform API\n\nComplete API collection for the multi-vendor e-commerce backend built with Node.js, Express, TypeScript 7, PostgreSQL, Redis, and BullMQ.\n\n## Features\n- Multi-vendor marketplace\n- Product catalog with variants\n- Shopping cart and checkout\n- Order management and tracking\n- Payment integration (Razorpay)\n- Review and rating system\n- Wishlist functionality\n- Commission and payout management\n- Admin dashboard\n\n## Getting Started\n1. Import this collection into Postman\n2. Import the environment file\n3. Set `baseUrl` to your API endpoint (e.g., http://localhost:3000)\n4. Run the \"Register\" or \"Login\" request to get authentication token\n5. Tokens are automatically stored and used in subsequent requests\n\n## Authentication\nMost endpoints require JWT authentication. The token is automatically:\n- Stored after successful login/register\n- Added to request headers\n- Refreshed when needed\n\n## Test Execution\nYou can run the entire collection using Collection Runner:\n1. Open Collection Runner\n2. Select this collection\n3. Select the environment\n4. Click \"Run\"\n\nAll tests will execute in sequence with proper data flow between requests.\n\n## Admin Credentials (After Seeding)\n- Email: admin@ecommerce.com\n- Password: Admin@123\n\n## Support\nFor issues or questions, refer to the project documentation.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Auto-refresh token if expired (optional)",
+          "// const accessToken = pm.environment.get('accessToken');",
+          "// if (!accessToken) {",
+          "//     console.log('No access token found. Please login first.');",
+          "// }",
+          "",
+          "// Set common headers",
+          "pm.request.headers.add({",
+          "    key: 'Content-Type',",
+          "    value: 'application/json'",
+          "});",
+          "",
+          "// Generate timestamp for requests that need it",
+          "pm.environment.set('timestamp', new Date().toISOString());"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Global test script - runs for all requests",
+          "pm.test('Response time is less than 2000ms', function () {",
+          "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+          "});",
+          "",
+          "pm.test('Response should be JSON', function () {",
+          "    pm.response.to.have.header('Content-Type');",
+          "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+          "});"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    }
+  ]
+}

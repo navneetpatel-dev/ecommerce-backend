@@ -1,0 +1,53 @@
+import { Router } from 'express';
+import { authRoutes } from '@modules/auth/auth.routes';
+import usersRoutes from '@modules/users/users.routes';
+import vendorsRoutes from '@modules/vendors/vendors.routes';
+import adminRoutes from '@modules/admin/admin.routes';
+import categoriesRoutes from '@modules/categories/categories.routes';
+import productsRoutes from '@modules/products/products.routes';
+import cartRoutes from '@modules/cart/cart.routes';
+import checkoutRoutes from '@modules/checkout/checkout.routes';
+import ordersRoutes from '@modules/orders/orders.routes';
+import subordersRoutes from '@modules/suborders/suborders.routes';
+import paymentsRoutes from '@modules/payments/payments.routes';
+import couponsRoutes from '@modules/coupons/coupons.routes';
+import commissionsRoutes from '@modules/commissions/commissions.routes';
+import payoutsRoutes from '@modules/payouts/payouts.routes';
+import shippingRoutes from '@modules/shipping/shipping.routes';
+import returnsRoutes from '@modules/returns/returns.routes';
+import walletRoutes from '@modules/wallet/wallet.routes';
+import taxRoutes from '@modules/tax/tax.routes';
+import reviewsRoutes from '@modules/reviews/reviews.routes';
+import wishlistRoutes from '@modules/wishlist/wishlist.routes';
+import searchRoutes from '@modules/search/search.routes';
+import notificationsRoutes from '@modules/notifications/notifications.routes';
+import inventoryRoutes from '@modules/inventory/inventory.routes';
+
+const router = Router();
+
+// Mount all module routes
+router.use('/auth', authRoutes);
+router.use('/users', usersRoutes);
+router.use('/vendors', vendorsRoutes);
+router.use('/admin', adminRoutes);
+router.use('/categories', categoriesRoutes);
+router.use('/products', productsRoutes);
+router.use('/cart', cartRoutes);
+router.use('/checkout', checkoutRoutes);
+router.use('/orders', ordersRoutes);
+router.use('/suborders', subordersRoutes);
+router.use('/payments', paymentsRoutes);
+router.use('/coupons', couponsRoutes);
+router.use('/commissions', commissionsRoutes);
+router.use('/payouts', payoutsRoutes);
+router.use('/shipping', shippingRoutes);
+router.use('/returns', returnsRoutes);
+router.use('/wallet', walletRoutes);
+router.use('/tax', taxRoutes);
+router.use('/reviews', reviewsRoutes);
+router.use('/wishlist', wishlistRoutes);
+router.use('/search', searchRoutes);
+router.use('/notifications', notificationsRoutes);
+router.use('/inventory', inventoryRoutes);
+
+export { router as routes };
