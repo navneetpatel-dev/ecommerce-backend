@@ -2,6 +2,8 @@ import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { productsRepository } from './products.repository';
+import { Category } from '@database/models/category.model';
+import { Vendor } from '@database/models/vendor.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { ProductImage } from '@database/models/productImage.model';
 import { sequelize } from '@database/models';
@@ -70,7 +72,7 @@ export class ProductsService {
 
   async getProductById(id: string) {
     const product = await productsRepository.findById(id, {
-      include: ['variants', 'images', 'category', 'vendor'],
+      include: ['variants', 'images', { model: Category }, { model: Vendor }],
     });
     if (!product) throw new NotFoundError('Product');
     return product;

@@ -33,7 +33,7 @@ export const initCategoryModel = (sequelize: Sequelize) => {
       updatedAt: DataTypes.DATE,
       deletedAt: DataTypes.DATE,
     },
-    { sequelize, tableName: 'categories', timestamps: true, paranoid: true },
+    { sequelize, tableName: 'categories', timestamps: true, paranoid: false },
   );
   return Category;
 };

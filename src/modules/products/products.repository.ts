@@ -1,5 +1,7 @@
 import { BaseRepository } from '@core/repository/BaseRepository';
 import { Product } from '@database/models/product.model';
+import { Category } from '@database/models/category.model';
+import { Vendor } from '@database/models/vendor.model';
 import { Op, WhereOptions } from 'sequelize';
 
 export class ProductsRepository extends BaseRepository<Product> {
@@ -52,7 +54,12 @@ export class ProductsRepository extends BaseRepository<Product> {
       where,
       limit: filters.limit,
       offset: filters.offset,
-      include: ['variants', 'images', 'category', 'vendor'],
+      include: [
+        { model: Category },
+        { model: Vendor },
+        'variants',
+        'images',
+      ],
       order: [['createdAt', 'DESC']],
     });
   }
@@ -60,7 +67,12 @@ export class ProductsRepository extends BaseRepository<Product> {
   async findBySlug(slug: string) {
     return this.model.findOne({
       where: { slug },
-      include: ['variants', 'images', 'category', 'vendor'],
+      include: [
+        { model: Category },
+        { model: Vendor },
+        'variants',
+        'images',
+      ],
     });
   }
 
