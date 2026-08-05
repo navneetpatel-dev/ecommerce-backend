@@ -16,6 +16,7 @@ export class ProductsRepository extends BaseRepository<Product> {
     search?: string;
     minPrice?: number;
     maxPrice?: number;
+    rating?: number;
     sort?: string;
     limit: number;
     offset: number;
@@ -49,6 +50,10 @@ export class ProductsRepository extends BaseRepository<Product> {
       if (filters.maxPrice !== undefined) {
         where.basePrice[Op.lte] = filters.maxPrice;
       }
+    }
+
+    if (filters.rating !== undefined) {
+      where.avgRating = { [Op.gte]: filters.rating };
     }
 
     let order: any = [['createdAt', 'DESC']];
