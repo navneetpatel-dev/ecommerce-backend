@@ -259,6 +259,26 @@ export class CheckoutService {
     data: CancelCheckoutRequest,
   ): Promise<{ restored: boolean; orderId: string }> {
     return sequelize.transaction(async (t) => {
+      // Lock first so concurrent cancel (modal dismiss + payment.failed + webhook)
+      // cannot both restore cart/stock.
+      const locked = await Order.findByPk(data.orderId, {
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+
+      if (!locked) {
+        throw new NotFoundError('Order');
+      }
+      if (locked.userId !== userId) {
+        throw new ForbiddenError('You do not have access to this order');
+      }
+      if (locked.paymentStatus === 'PAID') {
+        throw new ValidationError('Paid orders cannot be cancelled from checkout');
+      }
+      if (locked.status === 'CANCELLED') {
+        return { restored: false, orderId: locked.id };
+      }
+
       const orderResult = await Order.findByPk(data.orderId, {
         include: [
           {
@@ -275,18 +295,6 @@ export class CheckoutService {
       }
 
       const order = orderResult as OrderForRollback;
-      if (order.userId !== userId) {
-        throw new ForbiddenError('You do not have access to this order');
-      }
-
-      if (order.paymentStatus === 'PAID') {
-        throw new ValidationError('Paid orders cannot be cancelled from checkout');
-      }
-
-      if (order.status === 'CANCELLED') {
-        return { restored: false, orderId: order.id };
-      }
-
       const cart = await cartRepository.findOrCreateByUser(userId);
 
       for (const subOrder of order.subOrders ?? []) {

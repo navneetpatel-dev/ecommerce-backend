@@ -49,6 +49,12 @@ function mapCartItem(item: CartItem & { variant?: ProductVariant & { product?: a
 
 export class CartService {
   async getCart(userId: string | null, sessionId: string | null) {
+    // Logged-in requests still carry a guest session cookie — merge once so the
+    // badge doesn't flip between guest and user carts across auth/token changes.
+    if (userId && sessionId) {
+      await this.mergeGuestCartIntoUserCart(sessionId, userId);
+    }
+
     let cart;
     if (userId) {
       cart = await cartRepository.findByUserId(userId);
@@ -88,6 +94,10 @@ export class CartService {
   }
 
   async addToCart(userId: string | null, sessionId: string | null, data: AddToCartRequest) {
+    if (userId && sessionId) {
+      await this.mergeGuestCartIntoUserCart(sessionId, userId);
+    }
+
     await sequelize.transaction(async (t) => {
       const variant = await ProductVariant.findByPk(data.variantId, { transaction: t });
       if (!variant) throw new NotFoundError('ProductVariant');

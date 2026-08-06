@@ -34,8 +34,18 @@ type OrderForRollback = Order & {
 export class PaymentsService {
   private async restoreCancelledRazorpayOrder(razorpayOrderId: string) {
     await sequelize.transaction(async (t) => {
-      const orderResult = await Order.findOne({
+      const locked = await Order.findOne({
         where: { razorpayOrderId },
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+
+      if (!locked) return;
+      if (locked.status === 'CANCELLED' || locked.paymentStatus === 'PAID') {
+        return;
+      }
+
+      const orderResult = await Order.findByPk(locked.id, {
         include: [
           {
             model: SubOrder,
@@ -49,10 +59,6 @@ export class PaymentsService {
       if (!orderResult) return;
 
       const order = orderResult as OrderForRollback;
-      if (order.status === 'CANCELLED' || order.paymentStatus === 'PAID') {
-        return;
-      }
-
       const cart = await cartRepository.findOrCreateByUser(order.userId);
 
       for (const subOrder of order.subOrders ?? []) {
