@@ -26,8 +26,8 @@ export class User extends Model<InferAttributes<User>, InferCreationAttributes<U
   declare vendor?: NonAttribute<Vendor>;
 
   static associate(models: Record<string, any>) {
-    User.belongsTo(models.Role, { foreignKey: 'roleId' });
-    User.belongsTo(models.Vendor, { foreignKey: 'vendorId' });
+    User.belongsTo(models.Role, { foreignKey: 'roleId', as: 'role' });
+    User.belongsTo(models.Vendor, { foreignKey: 'vendorId', as: 'vendor' });
     User.hasMany(models.Address, { foreignKey: 'userId' });
   }
 }

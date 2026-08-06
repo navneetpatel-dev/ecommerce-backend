@@ -4,8 +4,9 @@ import { env } from '@config/env';
 import { User } from '@database/models/user.model';
 import { Role } from '@database/models/role.model';
 import { BEARER_PREFIX } from '@core/constants/http';
-import { ROLES, USER_STATUS } from '@core/constants/statuses';
+import { USER_STATUS } from '@core/constants/statuses';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
+import { roleNameOf } from '@utils/userRole';
 
 interface JwtPayload {
   sub: string;
@@ -26,7 +27,7 @@ async function loadUserFromBearer(authHeader: string) {
 
   try {
     const decoded = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
-    const user = await User.findByPk(decoded.sub, { include: [Role] });
+    const user = await User.findByPk(decoded.sub, { include: [{ model: Role, as: 'role' }] });
     if (!user || user.status === USER_STATUS.BLOCKED) {
       return {
         error: {
@@ -42,7 +43,7 @@ async function loadUserFromBearer(authHeader: string) {
         email: user.email,
         roleId: user.roleId,
         vendorId: user.vendorId,
-        role: { name: user.role?.name ?? ROLES.CUSTOMER },
+        role: { name: roleNameOf(user) },
       },
     };
   } catch (err) {

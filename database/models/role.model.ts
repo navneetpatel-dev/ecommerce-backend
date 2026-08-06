@@ -11,7 +11,7 @@ export class Role extends Model<InferAttributes<Role>, InferCreationAttributes<R
   declare readonly deletedAt: CreationOptional<Date>;
 
   static associate(models: Record<string, any>) {
-    Role.hasMany(models.User, { foreignKey: 'roleId' });
+    Role.hasMany(models.User, { foreignKey: 'roleId', as: 'users' });
     Role.belongsToMany(models.Permission, { through: 'RolePermissions', foreignKey: 'roleId' });
   }
 }

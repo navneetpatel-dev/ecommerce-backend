@@ -7,8 +7,8 @@ import { Role } from '@database/models/role.model';
 import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { COOKIES, REFRESH_TOKEN_TTL_MS } from '@core/constants/http';
 import { AUTH_COOKIE_PATH } from '@core/constants/apiPaths';
-import { ROLES } from '@core/constants/statuses';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
+import { roleNameOf } from '@utils/userRole';
 
 const COOKIE_OPTIONS = {
   httpOnly: true,
@@ -100,14 +100,15 @@ export const revokeOtherSessions = asyncHandler(async (req: Request, res: Respon
 });
 
 export const me = asyncHandler(async (req: Request, res: Response) => {
-  const user = await User.findByPk(req.user!.id, { include: [Role] });
+  const user = await User.findByPk(req.user!.id, { include: [{ model: Role, as: 'role' }] });
   if (!user) { res.status(404).json({ success: false, error: { message: 'User not found' } }); return; }
-  const permissions = await resolvePermissionsForUser({ roleId: user.roleId, role: { name: user.role?.name ?? ROLES.CUSTOMER } });
+  const roleName = roleNameOf(user);
+  const permissions = await resolvePermissionsForUser({ roleId: user.roleId, role: { name: roleName } });
   res.json(ok({
     id: user.id,
     email: user.email,
     name: user.name,
-    role: user.role?.name ?? ROLES.CUSTOMER,
+    role: roleName,
     vendorId: user.vendorId,
     permissions,
   }));

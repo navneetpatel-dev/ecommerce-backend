@@ -21,14 +21,14 @@ export class AuthRepository extends BaseRepository<User> {
 
   /** Email is globally unique (one account / role per email). */
   async findByEmail(email: string) {
-    return User.findOne({ where: { email }, include: [Role] });
+    return User.findOne({ where: { email }, include: [{ model: Role, as: 'role' }] });
   }
 
   /** Includes soft-deleted rows (for register-time reactivation). */
   async findByEmailIncludingDeleted(email: string) {
     return User.findOne({
       where: { email },
-      include: [Role],
+      include: [{ model: Role, as: 'role' }],
       paranoid: false,
     });
   }

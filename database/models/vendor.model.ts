@@ -23,7 +23,7 @@ export class Vendor extends Model<InferAttributes<Vendor>, InferCreationAttribut
   declare readonly deletedAt: CreationOptional<Date>;
 
   static associate(models: Record<string, any>) {
-    Vendor.hasMany(models.User, { foreignKey: 'vendorId' });
+    Vendor.hasMany(models.User, { foreignKey: 'vendorId', as: 'users' });
     Vendor.hasMany(models.Product, { foreignKey: 'vendorId' });
     Vendor.hasMany(models.VendorDocument, { foreignKey: 'vendorId' });
   }

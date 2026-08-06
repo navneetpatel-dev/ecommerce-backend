@@ -56,7 +56,7 @@ function serializeAddress(address: {
 
 function serializeProfile(user: any) {
   const plain = typeof user.get === 'function' ? user.get({ plain: true }) : user;
-  const roleName = plain.Role?.name ?? plain.role?.name ?? null;
+  const roleName = plain.role?.name ?? plain.Role?.name ?? null;
 
   return {
     id: plain.id,
@@ -73,8 +73,8 @@ function serializeProfile(user: any) {
 }
 
 const profileInclude = [
-  { model: Role },
-  { model: Vendor },
+  { model: Role, as: 'role' },
+  { model: Vendor, as: 'vendor' },
 ];
 
 export class UsersService {

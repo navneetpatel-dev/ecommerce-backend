@@ -14,6 +14,7 @@ import { clearPermissionCache, resolvePermissionsForUser } from '@middleware/rba
 import { PASSWORD_RESET_EXPIRY, REFRESH_TOKEN_TTL_MS } from '@core/constants/http';
 import { ROLES, USER_STATUS } from '@core/constants/statuses';
 import { ERROR_MESSAGES, ERROR_CODES } from '@core/constants/errors';
+import { roleNameOf } from '@utils/userRole';
 
 export type SessionDeviceMeta = {
   userAgent?: string | null;
@@ -38,11 +39,6 @@ export type LoginSuccess = {
 
 function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
-}
-
-function roleNameOf(user: User): string {
-  const nested = user.role ?? (user as User & { Role?: { name?: string } }).Role;
-  return nested?.name ?? ROLES.CUSTOMER;
 }
 
 function generateAccessToken(payload: JwtPayload): string {
