@@ -44,6 +44,8 @@ export const ERROR_MESSAGES = {
   VENDOR_NOT_PENDING: 'Vendor is not in PENDING status',
   PRODUCT_NAME_EXISTS: 'Product name already exists',
   CATEGORY_NAME_EXISTS: 'Category name already exists',
+  CATEGORY_HAS_SUBCATEGORIES: 'Cannot delete category with subcategories',
+  CATEGORY_HAS_PRODUCTS: 'Cannot delete category while products still use it',
   ITEMS_UNAVAILABLE: 'Some items in your cart are no longer available',
   VENDOR_UNAVAILABLE: 'This seller is currently unavailable',
   COUPON_INACTIVE: 'Coupon is not active',

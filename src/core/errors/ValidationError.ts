@@ -3,6 +3,13 @@ import { ERROR_CODES } from '@core/constants/errors';
 
 export class ValidationError extends AppError {
   constructor(details: unknown) {
-    super('Validation failed', 422, ERROR_CODES.VALIDATION_ERROR, details);
+    // Call sites pass either a human-readable string or field-level details.
+    const message = typeof details === 'string' ? details : 'Validation failed';
+    super(
+      message,
+      422,
+      ERROR_CODES.VALIDATION_ERROR,
+      typeof details === 'string' ? undefined : details,
+    );
   }
 }

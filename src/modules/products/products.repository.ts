@@ -77,6 +77,8 @@ export class ProductsRepository extends BaseRepository<Product> {
       where: buildListWhere(filters),
       limit: filters.limit,
       offset: filters.offset,
+      distinct: true,
+      col: 'id',
       attributes: { include: [reviewCountLiteral] },
       include: [
         { model: Category },

@@ -163,6 +163,8 @@ export class ReviewsService {
       order: [['createdAt', 'ASC']],
       limit: query.limit,
       offset,
+      distinct: true,
+      col: 'id',
     });
     return {
       reviews: rows,

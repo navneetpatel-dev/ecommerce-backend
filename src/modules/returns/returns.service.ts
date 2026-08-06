@@ -63,6 +63,8 @@ export class ReturnsService {
       order: [['createdAt', 'DESC']],
       limit: query.limit,
       offset,
+      distinct: true,
+      col: 'id',
     });
     return {
       returns: rows.map((row) => serializeReturn(row as ReturnRequest & { orderItem?: OrderItem })),

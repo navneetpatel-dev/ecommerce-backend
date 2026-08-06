@@ -1,5 +1,6 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 import { categoriesRepository } from './categories.repository';
 import { Category } from '@database/models/category.model';
 import { sequelize } from '@database/models';
@@ -18,10 +19,10 @@ export class CategoriesService {
   async createCategory(data: CreateCategoryRequest) {
     return sequelize.transaction(async (t: Transaction) => {
       const slug = generateSlug(data.name);
-      
+
       const existing = await categoriesRepository.findBySlug(slug);
       if (existing) {
-        throw new ValidationError('Category name already exists');
+        throw new ValidationError(ERROR_MESSAGES.CATEGORY_NAME_EXISTS);
       }
 
       if (data.parentId) {
@@ -33,6 +34,8 @@ export class CategoriesService {
         name: data.name,
         slug,
         parentId: data.parentId ?? null,
+        imageUrl: data.imageUrl?.trim() ? data.imageUrl.trim() : null,
+        ...(data.status ? { status: data.status } : {}),
       }, { transaction: t });
     });
   }
@@ -74,13 +77,13 @@ export class CategoriesService {
       const category = await categoriesRepository.findById(id, { transaction: t });
       if (!category) throw new NotFoundError('Category');
 
-      const updateData: any = {};
-      
+      const updateData: Record<string, unknown> = {};
+
       if (data.name) {
         const slug = generateSlug(data.name);
         const existing = await categoriesRepository.findBySlug(slug);
         if (existing && existing.id !== id) {
-          throw new ValidationError('Category name already exists');
+          throw new ValidationError(ERROR_MESSAGES.CATEGORY_NAME_EXISTS);
         }
         updateData.name = data.name;
         updateData.slug = slug;
@@ -95,6 +98,14 @@ export class CategoriesService {
         updateData.parentId = data.parentId;
       }
 
+      if (data.imageUrl !== undefined) {
+        updateData.imageUrl = data.imageUrl?.trim() ? data.imageUrl.trim() : null;
+      }
+
+      if (data.status !== undefined) {
+        updateData.status = data.status;
+      }
+
       await categoriesRepository.update(id, updateData, { transaction: t });
       return this.getCategoryById(id);
     });
@@ -105,13 +116,17 @@ export class CategoriesService {
       const category = await categoriesRepository.findWithChildren(id);
       if (!category) throw new NotFoundError('Category');
 
-      const categoryWithChildren = await Category.findByPk(id, { include: ['children'], transaction: t });
-      if (categoryWithChildren && (categoryWithChildren as any).children && (categoryWithChildren as any).children.length > 0) {
-        throw new ValidationError('Cannot delete category with subcategories');
+      const children = (category as Category & { children?: Category[] }).children ?? [];
+      if (children.length > 0) {
+        throw new ValidationError(ERROR_MESSAGES.CATEGORY_HAS_SUBCATEGORIES);
       }
 
-      // Soft delete - can be restored later
-      await categoriesRepository.softDelete(id, { transaction: t });
+      const productCount = await categoriesRepository.countProducts(id);
+      if (productCount > 0) {
+        throw new ValidationError(ERROR_MESSAGES.CATEGORY_HAS_PRODUCTS);
+      }
+
+      await categoriesRepository.delete(id, { transaction: t });
     });
   }
 }

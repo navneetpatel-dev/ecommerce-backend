@@ -36,6 +36,8 @@ export class UsersRepository extends BaseRepository<User> {
       where,
       limit: filters.limit,
       offset: filters.offset,
+      distinct: true,
+      col: 'id',
       include: ['role'],
       order: [['createdAt', 'DESC']],
     });
