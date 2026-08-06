@@ -8,7 +8,6 @@ import {
   UpdateUserStatusSchema,
   CreateAddressSchema,
   UpdateAddressSchema,
-  ConfirmEmailSchema,
   UploadAvatarSchema,
 } from './users.dto';
 
@@ -20,12 +19,6 @@ export const getProfile = asyncHandler(async (req: Request, res: Response) => {
 export const updateProfile = asyncHandler(async (req: Request, res: Response) => {
   const dto = UpdateUserProfileSchema.parse(req.body);
   const user = await usersService.updateProfile(req.user!.id, dto);
-  res.json(ok(user));
-});
-
-export const confirmEmail = asyncHandler(async (req: Request, res: Response) => {
-  const dto = ConfirmEmailSchema.parse(req.body);
-  const user = await usersService.confirmEmailChange(req.user!.id, dto.token);
   res.json(ok(user));
 });
 

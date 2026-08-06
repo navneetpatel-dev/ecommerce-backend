@@ -110,7 +110,6 @@ export class AuthService {
       emailMarketingConsent: false,
       emailSuppressed: false,
       avatarUrl: null,
-      pendingEmail: null,
     });
 
     const tokens = await generateTokens(user, meta);

@@ -9,7 +9,6 @@ import {
   UpdateUserStatusSchema,
   CreateAddressSchema,
   UpdateAddressSchema,
-  ConfirmEmailSchema,
   UploadAvatarSchema,
 } from './users.dto';
 
@@ -21,12 +20,6 @@ router.patch('/me', authenticate, validate(UpdateUserProfileSchema), usersContro
 router.delete('/me', authenticate, usersController.deleteOwnAccount);
 router.get('/me/export', authenticate, usersController.exportAccount);
 router.post('/me/avatar', authenticate, validate(UploadAvatarSchema), usersController.uploadAvatar);
-router.post(
-  '/me/confirm-email',
-  authenticate,
-  validate(ConfirmEmailSchema),
-  usersController.confirmEmail,
-);
 
 router.get('/profile', authenticate, usersController.getProfile);
 router.patch('/profile', authenticate, validate(UpdateUserProfileSchema), usersController.updateProfile);

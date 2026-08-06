@@ -1,9 +1,6 @@
-import jwt from 'jsonwebtoken';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { AppError } from '@core/errors';
-import { env } from '@config/env';
-import { logger } from '@core/logger';
 import {
   deleteObject,
   extractS3KeyFromUrl,
@@ -28,15 +25,8 @@ import type {
   GetUsersQuery,
   CreateAddressRequest,
   UpdateAddressRequest,
-  NotificationPrefs,
   UploadAvatarRequest,
 } from './users.dto';
-
-const DEFAULT_PREFS: NotificationPrefs = {
-  orderUpdates: true,
-  smsAlerts: false,
-  shippingNotifications: true,
-};
 
 function serializeAddress(address: {
   id: string;
@@ -62,15 +52,6 @@ function serializeAddress(address: {
   };
 }
 
-function normalizePrefs(raw: unknown): NotificationPrefs {
-  const prefs = (raw && typeof raw === 'object' ? raw : {}) as Partial<NotificationPrefs>;
-  return {
-    orderUpdates: prefs.orderUpdates ?? DEFAULT_PREFS.orderUpdates,
-    smsAlerts: prefs.smsAlerts ?? DEFAULT_PREFS.smsAlerts,
-    shippingNotifications: prefs.shippingNotifications ?? DEFAULT_PREFS.shippingNotifications,
-  };
-}
-
 function serializeProfile(user: any) {
   const plain = typeof user.get === 'function' ? user.get({ plain: true }) : user;
   const roleName = plain.Role?.name ?? plain.role?.name ?? null;
@@ -85,8 +66,6 @@ function serializeProfile(user: any) {
     emailVerified: Boolean(plain.emailVerified),
     emailMarketingConsent: Boolean(plain.emailMarketingConsent),
     avatarUrl: plain.avatarUrl ?? null,
-    pendingEmail: plain.pendingEmail ?? null,
-    notificationPrefs: normalizePrefs(plain.notificationPrefs),
     createdAt: plain.createdAt,
   };
 }
@@ -95,14 +74,6 @@ const profileInclude = [
   { model: Role },
   { model: Vendor },
 ];
-
-function issueEmailVerifyToken(userId: string, email: string) {
-  return jwt.sign(
-    { sub: userId, email, purpose: 'email-verify' },
-    env.JWT_SECRET,
-    { expiresIn: '24h' },
-  );
-}
 
 export class UsersService {
   async getProfile(userId: string) {
@@ -122,78 +93,8 @@ export class UsersService {
       if (data.emailMarketingConsent !== undefined) {
         patch.emailMarketingConsent = data.emailMarketingConsent;
       }
-      if (data.notificationPrefs !== undefined) {
-        patch.notificationPrefs = {
-          ...normalizePrefs(user.notificationPrefs),
-          ...data.notificationPrefs,
-        };
-      }
-
-      let emailVerificationToken: string | undefined;
-
-      if (data.email !== undefined) {
-        const nextEmail = data.email.trim().toLowerCase();
-        if (nextEmail !== user.email.toLowerCase()) {
-          const existing = await usersRepository.findOne(
-            { email: nextEmail } as any,
-            { transaction: t },
-          );
-          if (existing && existing.id !== userId) {
-            throw new ValidationError({ email: ['Email already in use'] });
-          }
-          patch.pendingEmail = nextEmail;
-          emailVerificationToken = issueEmailVerifyToken(userId, nextEmail);
-          logger.info('Email change requested', { userId, pendingEmail: nextEmail });
-        }
-      }
 
       await usersRepository.update(userId, patch as any, { transaction: t });
-      const updated = await usersRepository.findById(userId, {
-        include: profileInclude,
-        transaction: t,
-      });
-      const profile = serializeProfile(updated!);
-      return emailVerificationToken ? { ...profile, emailVerificationToken } : profile;
-    });
-  }
-
-  async confirmEmailChange(userId: string, token: string) {
-    let decoded: { sub: string; email: string; purpose: string };
-    try {
-      decoded = jwt.verify(token, env.JWT_SECRET) as { sub: string; email: string; purpose: string };
-    } catch {
-      throw new ValidationError({ token: ['Invalid or expired verification token'] });
-    }
-
-    if (decoded.purpose !== 'email-verify' || decoded.sub !== userId) {
-      throw new ValidationError({ token: ['Invalid verification token'] });
-    }
-
-    return sequelize.transaction(async (t: Transaction) => {
-      const user = await usersRepository.findById(userId, { transaction: t });
-      if (!user) throw new NotFoundError('User');
-      if (!user.pendingEmail || user.pendingEmail.toLowerCase() !== decoded.email.toLowerCase()) {
-        throw new ValidationError({ token: ['No matching pending email change'] });
-      }
-
-      const existing = await usersRepository.findOne(
-        { email: decoded.email } as any,
-        { transaction: t },
-      );
-      if (existing && existing.id !== userId) {
-        throw new ValidationError({ email: ['Email already in use'] });
-      }
-
-      await usersRepository.update(
-        userId,
-        {
-          email: decoded.email,
-          pendingEmail: null,
-          emailVerified: true,
-        } as any,
-        { transaction: t },
-      );
-
       const updated = await usersRepository.findById(userId, {
         include: profileInclude,
         transaction: t,
