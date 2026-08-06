@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { env } from '@config/env';
 import { User } from '@database/models/user.model';
 import { Role } from '@database/models/role.model';
+import { sequelize } from '@database/models';
 import { authRepository as repo } from './auth.repository';
 import { AuthTokens, JwtPayload } from './auth.types';
 import { RegisterRequest, LoginRequest } from './auth.dto';
@@ -106,9 +107,14 @@ function serializeSession(
 
 export class AuthService {
   async register(dto: RegisterRequest, meta: SessionDeviceMeta = {}): Promise<LoginSuccess> {
-    const existing = await repo.findByEmail(dto.email);
-    if (existing) {
+    const existing = await repo.findByEmailIncludingDeleted(dto.email);
+
+    if (existing && !existing.deletedAt) {
       throw new ValidationError({ email: [ERROR_MESSAGES.EMAIL_ALREADY_REGISTERED] });
+    }
+
+    if (existing?.deletedAt) {
+      return this.reactivateDeletedAccount(existing, dto, meta);
     }
 
     const customerRole = await Role.findOne({ where: { name: ROLES.CUSTOMER } });
@@ -145,6 +151,51 @@ export class AuthService {
       },
       ...tokens,
     };
+  }
+
+  /**
+   * Soft-deleted email registering again → restore the same row (keep role/vendor),
+   * set a new password, drop old sessions. Blocked accounts stay blocked.
+   */
+  private async reactivateDeletedAccount(
+    deleted: User,
+    dto: RegisterRequest,
+    meta: SessionDeviceMeta,
+  ): Promise<LoginSuccess> {
+    if (deleted.status === USER_STATUS.BLOCKED) {
+      throw new ForbiddenError(ERROR_MESSAGES.ACCOUNT_BLOCKED);
+    }
+
+    const passwordHash = await bcrypt.hash(dto.password, 12);
+
+    await sequelize.transaction(async (t) => {
+      await deleted.restore({ transaction: t });
+      await deleted.update(
+        {
+          passwordHash,
+          name: dto.name,
+          phone: dto.phone !== undefined ? dto.phone : deleted.phone,
+          status: USER_STATUS.ACTIVE,
+          emailVerified: false,
+          deletedBy: null,
+        } as any,
+        { transaction: t },
+      );
+      await repo.deleteRefreshTokensByUser(deleted.id);
+    });
+
+    const user = await repo.findByEmail(dto.email);
+    if (!user) {
+      throw new AppError(ERROR_MESSAGES.INTERNAL_ERROR, 500, ERROR_CODES.INTERNAL_ERROR);
+    }
+
+    logger.info('Reactivated soft-deleted account on register', {
+      userId: user.id,
+      email: user.email,
+      role: roleNameOf(user),
+    });
+
+    return this.issueSession(user, meta);
   }
 
   async login(dto: LoginRequest, meta: SessionDeviceMeta = {}): Promise<LoginSuccess> {

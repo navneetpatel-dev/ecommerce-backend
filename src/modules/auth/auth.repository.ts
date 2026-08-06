@@ -24,6 +24,15 @@ export class AuthRepository extends BaseRepository<User> {
     return User.findOne({ where: { email }, include: [Role] });
   }
 
+  /** Includes soft-deleted rows (for register-time reactivation). */
+  async findByEmailIncludingDeleted(email: string) {
+    return User.findOne({
+      where: { email },
+      include: [Role],
+      paranoid: false,
+    });
+  }
+
   async findRefreshToken(hash: string) {
     return RefreshToken.findOne({ where: { tokenHash: hash } });
   }
