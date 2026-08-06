@@ -12,6 +12,11 @@ import {
   UploadDocumentSchema,
 } from './vendors.dto';
 
+export const getPublicVendorBySlug = asyncHandler(async (req: Request, res: Response) => {
+  const vendor = await vendorsService.getPublicVendorProfile(req.params.slug!);
+  res.json(ok(vendor));
+});
+
 export const registerVendor = asyncHandler(async (req: Request, res: Response) => {
   const dto = RegisterVendorSchema.parse(req.body);
   const vendor = await vendorsService.registerVendor(req.user!.id, dto);

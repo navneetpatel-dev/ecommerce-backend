@@ -3,9 +3,11 @@ import { ValidationError } from '@core/errors/ValidationError';
 import { wishlistRepository } from './wishlist.repository';
 import { WishlistItem } from '@database/models/wishlistItem.model';
 import { Product } from '@database/models/product.model';
+import { Vendor } from '@database/models/vendor.model';
 import { CartItem } from '@database/models/cartItem.model';
 import { Cart } from '@database/models/cart.model';
 import { sequelize } from '@database/models';
+import { resolveItemAvailability, isProductCustomerVisible } from '@core/catalog/customerVisibility';
 
 function mapWishlistProduct(product: Product | null | undefined) {
   if (!product) return null;
@@ -18,15 +20,33 @@ function mapWishlistProduct(product: Product | null | undefined) {
     stock: Number(variant.stock ?? 0),
   }));
   const stockFromVariants = variants.reduce((sum: number, variant: { stock: number }) => sum + variant.stock, 0);
+  const vendor = plain.vendor ?? plain.Vendor ?? null;
+  const stock = Number(plain.stock ?? stockFromVariants);
+  const { isAvailable, unavailableReason } = resolveItemAvailability({
+    product: plain,
+    vendor,
+    stock,
+    quantity: 1,
+  });
 
   return {
     ...plain,
     variants,
     basePrice: Number(plain.basePrice ?? 0),
     avgRating: Number(plain.avgRating ?? 0),
-    stock: Number(plain.stock ?? stockFromVariants),
+    stock,
     imageUrl: primaryImage,
     isWishlisted: true,
+    vendor: vendor
+      ? {
+          id: String(vendor.id),
+          businessName: vendor.businessName,
+          slug: vendor.slug,
+          logoUrl: vendor.logoUrl ?? null,
+        }
+      : null,
+    isAvailable,
+    unavailableReason,
   };
 }
 
@@ -37,23 +57,27 @@ export class WishlistService {
       return { items: [] };
     }
 
+    // Unscoped product/vendor — report availability instead of silently dropping rows.
     const items = await WishlistItem.findAll({
       where: { wishlistId: wishlist.id },
       include: [{
         model: Product,
         as: 'product',
-        include: ['images', 'variants'],
+        include: ['images', 'variants', { model: Vendor, as: 'vendor' }],
       }],
     });
 
     return {
       items: items.map((item) => {
         const plain = item.get({ plain: true }) as any;
+        const product = mapWishlistProduct(plain.product);
         return {
           id: plain.id,
           productId: plain.productId,
           priceAtAdd: Number(plain.priceAtAdd ?? 0),
-          product: mapWishlistProduct(plain.product),
+          isAvailable: product?.isAvailable ?? false,
+          unavailableReason: product?.unavailableReason ?? null,
+          product,
         };
       }),
     };
@@ -61,8 +85,15 @@ export class WishlistService {
 
   async addToWishlist(userId: string, productId: string) {
     return sequelize.transaction(async (t) => {
-      const product = await Product.findByPk(productId, { transaction: t });
+      const product = await Product.findByPk(productId, {
+        include: [{ model: Vendor, as: 'vendor' }],
+        transaction: t,
+      });
       if (!product) throw new NotFoundError('Product');
+      const vendor = (product as any).vendor;
+      if (!isProductCustomerVisible(product, vendor)) {
+        throw new NotFoundError('Product');
+      }
 
       const wishlist = await wishlistRepository.findOrCreateByUserId(userId);
 

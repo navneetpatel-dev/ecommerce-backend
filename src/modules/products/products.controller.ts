@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { productsService } from './products.service';
+import { ADMIN_ROLES, ROLES } from '@core/constants/statuses';
 import {
   CreateProductSchema,
   UpdateProductSchema,
@@ -12,6 +13,17 @@ import {
   AddImageSchema,
 } from './products.dto';
 
+/** Admin/vendor dashboards stay unscoped; shoppers use customerVisible. */
+function isCatalogModerator(req: Request): boolean {
+  const role = req.user?.role?.name;
+  if (!role) return false;
+  return (
+    (ADMIN_ROLES as readonly string[]).includes(role) ||
+    role === ROLES.VENDOR_OWNER ||
+    role === ROLES.VENDOR_STAFF
+  );
+}
+
 export const createProduct = asyncHandler(async (req: Request, res: Response) => {
   const dto = CreateProductSchema.parse(req.body);
   const product = await productsService.createProduct(req.user!.vendorId, dto);
@@ -20,17 +32,23 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
 
 export const getProducts = asyncHandler(async (req: Request, res: Response) => {
   const query = GetProductsQuerySchema.parse(req.query);
-  const result = await productsService.getProducts(query);
+  const result = await productsService.getProducts(query, {
+    customerFacing: !isCatalogModerator(req),
+  });
   res.json(ok(result.products, { pagination: result.pagination }));
 });
 
 export const getProductById = asyncHandler(async (req: Request, res: Response) => {
-  const product = await productsService.getProductById(req.params.id!);
+  const product = await productsService.getProductById(req.params.id!, {
+    customerFacing: !isCatalogModerator(req),
+  });
   res.json(ok(product));
 });
 
 export const getProductBySlug = asyncHandler(async (req: Request, res: Response) => {
-  const product = await productsService.getProductBySlug(req.params.slug!);
+  const product = await productsService.getProductBySlug(req.params.slug!, {
+    customerFacing: !isCatalogModerator(req),
+  });
   res.json(ok(product));
 });
 

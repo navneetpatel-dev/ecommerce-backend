@@ -40,6 +40,13 @@ export class CategoriesService {
     return categoriesRepository.findTopLevel();
   }
 
+  async getProductCount(id: string) {
+    const category = await categoriesRepository.findById(id);
+    if (!category) throw new NotFoundError('Category');
+    const productCount = await categoriesRepository.countProducts(id);
+    return { categoryId: id, productCount };
+  }
+
   async getCategoryById(id: string) {
     const category = await categoriesRepository.findWithChildren(id);
     if (!category) throw new NotFoundError('Category');

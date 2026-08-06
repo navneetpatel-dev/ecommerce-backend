@@ -1,6 +1,7 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional, NonAttribute } from 'sequelize';
 import type { ProductVariant } from './productVariant.model';
 import type { ProductImage } from './productImage.model';
+import { PRODUCT_STATUS, VENDOR_STATUS, type ProductStatus } from '@core/constants/statuses';
 
 export class Product extends Model<InferAttributes<Product>, InferCreationAttributes<Product>> {
   declare id: CreationOptional<string>;
@@ -10,7 +11,7 @@ export class Product extends Model<InferAttributes<Product>, InferCreationAttrib
   declare slug: string;
   declare description: string;
   declare basePrice: number;
-  declare status: 'DRAFT' | 'PENDING_APPROVAL' | 'LIVE' | 'REJECTED' | 'ARCHIVED';
+  declare status: ProductStatus;
   declare approvedById: string | null;
   declare rejectionNote: string | null;
   declare tags: CreationOptional<string[]>;
@@ -30,6 +31,20 @@ export class Product extends Model<InferAttributes<Product>, InferCreationAttrib
     Product.belongsTo(models.Category, { foreignKey: 'categoryId' });
     Product.hasMany(models.ProductVariant, { foreignKey: 'productId', as: 'variants' });
     Product.hasMany(models.ProductImage, { foreignKey: 'productId', as: 'images' });
+
+    // Customer-facing catalog rule — define once; every shopper query uses this scope.
+    Product.addScope('customerVisible', {
+      where: { status: PRODUCT_STATUS.LIVE },
+      include: [
+        {
+          model: models.Vendor,
+          as: 'vendor',
+          required: true,
+          where: { status: VENDOR_STATUS.APPROVED },
+          attributes: ['id', 'businessName', 'slug', 'logoUrl', 'commissionRate'],
+        },
+      ],
+    });
   }
 }
 
@@ -44,8 +59,8 @@ export const initProductModel = (sequelize: Sequelize) => {
       description: { type: DataTypes.TEXT, allowNull: false },
       basePrice: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
       status: {
-        type: DataTypes.ENUM('DRAFT', 'PENDING_APPROVAL', 'LIVE', 'REJECTED', 'ARCHIVED'),
-        defaultValue: 'DRAFT',
+        type: DataTypes.ENUM(...(Object.values(PRODUCT_STATUS) as [string, ...string[]])),
+        defaultValue: PRODUCT_STATUS.DRAFT,
       },
       approvedById: { type: DataTypes.UUID, allowNull: true },
       rejectionNote: { type: DataTypes.TEXT, allowNull: true },

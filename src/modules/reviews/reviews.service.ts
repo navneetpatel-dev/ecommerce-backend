@@ -71,11 +71,13 @@ export class ReviewsService {
 
   async getProductReviews(productId: string, status: typeof REVIEW_STATUS.APPROVED | 'ALL' = REVIEW_STATUS.APPROVED) {
     if (status === REVIEW_STATUS.APPROVED) {
-      return reviewsRepository.findByProduct(productId, REVIEW_STATUS.APPROVED);
+      return reviewsRepository.findVisibleForProduct(productId);
     }
+    // Admin/moderation — unscoped
     return reviewsRepository.findByProduct(productId);
   }
 
+  /** Own reviews on account page — personal history, deliberately unscoped. */
   async getUserReviews(userId: string) {
     return reviewsRepository.findByUser(userId);
   }

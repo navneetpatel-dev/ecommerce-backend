@@ -2,6 +2,8 @@ import type { Transaction } from 'sequelize';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
+import { type UnavailableReason } from '@core/constants/statuses';
+import { resolveItemAvailability } from '@core/catalog/customerVisibility';
 import { cartRepository } from './cart.repository';
 import { MAX_CART_LINE_QUANTITY } from './cart.constants';
 import { Cart } from '@database/models/cart.model';
@@ -16,6 +18,8 @@ export type CartViewItem = {
   id: string;
   variantId: string;
   quantity: number;
+  isAvailable: boolean;
+  unavailableReason: UnavailableReason | null;
   product: {
     id: string;
     name: string;
@@ -49,11 +53,21 @@ function mapCartItem(item: CartItem & { variant?: ProductVariant & { product?: a
   const primaryImage =
     images.find((img: any) => img.isPrimary)?.url || images[0]?.url || '';
   const vendor = product?.vendor ?? product?.Vendor ?? null;
+  const quantity = Number(item.quantity);
+  const stock = Number(variant?.stock ?? 0);
+  const { isAvailable, unavailableReason } = resolveItemAvailability({
+    product,
+    vendor,
+    stock,
+    quantity,
+  });
 
   return {
     id: String(item.id),
     variantId: String(item.variantId),
-    quantity: Number(item.quantity),
+    quantity,
+    isAvailable,
+    unavailableReason,
     product: {
       id: String(product?.id ?? ''),
       name: product?.name ?? 'Unknown product',
@@ -99,6 +113,7 @@ export class CartService {
       return { id: null, items: [], total: 0 };
     }
 
+    // Unscoped Product/Vendor include — hidden items stay visible with isAvailable=false.
     const items = await CartItem.findAll({
       where: { cartId: cart.id },
       order: [
@@ -121,7 +136,9 @@ export class CartService {
     }) as (CartItem & { variant: ProductVariant & { product: any } })[];
 
     const mappedItems = items.map(mapCartItem);
-    const total = mappedItems.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
+    const total = mappedItems
+      .filter((item) => item.isAvailable)
+      .reduce((sum, item) => sum + item.product.price * item.quantity, 0);
 
     return { id: String(cart.id), items: mappedItems, total };
   }
@@ -145,8 +162,23 @@ export class CartService {
     data: AddToCartRequest,
   ): Promise<CartView> {
     await sequelize.transaction(async (t) => {
-      const variant = await ProductVariant.findByPk(data.variantId, { transaction: t });
+      const variant = await ProductVariant.findByPk(data.variantId, {
+        include: [{ model: Product, as: 'product', include: [{ model: Vendor, as: 'vendor' }] }],
+        transaction: t,
+      });
       if (!variant) throw new NotFoundError('ProductVariant');
+
+      const product = (variant as any).product;
+      const vendor = product?.vendor ?? product?.Vendor ?? null;
+      const availability = resolveItemAvailability({
+        product,
+        vendor,
+        stock: Number(variant.stock),
+        quantity: data.quantity,
+      });
+      if (!availability.isAvailable) {
+        throw new NotFoundError('Product');
+      }
 
       const quantity = clampQuantity(data.quantity, variant.stock);
       if (quantity < 1) {

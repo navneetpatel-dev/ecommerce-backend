@@ -1,6 +1,7 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
+import { AppError } from '@core/errors/AppError';
 import { Cart } from '@database/models/cart.model';
 import { CartItem } from '@database/models/cartItem.model';
 import { Order } from '@database/models/order.model';
@@ -18,6 +19,7 @@ import { cartService } from '@modules/cart/cart.service';
 import { getRatesForQuote } from '@modules/shipping/shipping.service';
 import { taxService } from '@modules/tax/tax.service';
 import { settingsService } from '@modules/settings/settings.service';
+import { resolveItemAvailability } from '@core/catalog/customerVisibility';
 import type {
   CancelCheckoutRequest,
   CreateCheckoutRequest,
@@ -29,8 +31,9 @@ import {
   PAYMENT_METHOD,
   COUPON_STATUS,
   COMMISSION_STATUS,
+  VENDOR_STATUS,
 } from '@core/constants/statuses';
-import { ERROR_MESSAGES } from '@core/constants/errors';
+import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 
 function groupBy<T>(array: T[], keyFn: (item: T) => string): Record<string, T[]> {
   return array.reduce((acc, item) => {
@@ -58,7 +61,10 @@ async function loadUserCart(userId: string, transaction?: any): Promise<CartWith
       include: [{
         model: ProductVariant,
         as: 'variant',
-        include: ['product'],
+        include: [{
+          association: 'product',
+          include: [{ model: Vendor, as: 'vendor' }],
+        }],
       }],
     }],
     transaction,
@@ -74,6 +80,34 @@ async function loadUserCart(userId: string, transaction?: any): Promise<CartWith
   }
 
   return cart;
+}
+
+function assertCartItemsAvailable(cart: CartWithItems) {
+  const unavailable = cart.items
+    .map((item) => {
+      const product = item.variant?.product;
+      const vendor = product?.vendor ?? product?.Vendor ?? null;
+      const availability = resolveItemAvailability({
+        product,
+        vendor,
+        stock: Number(item.variant?.stock ?? 0),
+        quantity: Number(item.quantity),
+      });
+      if (availability.isAvailable) return null;
+      return {
+        cartItemId: item.id,
+        variantId: item.variantId,
+        productName: product?.name ?? null,
+        unavailableReason: availability.unavailableReason,
+      };
+    })
+    .filter(Boolean);
+
+  if (unavailable.length > 0) {
+    throw new AppError(ERROR_MESSAGES.ITEMS_UNAVAILABLE, 422, ERROR_CODES.ITEMS_UNAVAILABLE, {
+      items: unavailable,
+    });
+  }
 }
 
 function requestedMethod(method?: string): 'STANDARD' | 'EXPRESS' {
@@ -114,6 +148,12 @@ async function getCouponDiscount(
   if (coupon.minOrderValue != null && subtotal < Number(coupon.minOrderValue)) {
     throw new ValidationError(`Minimum order value is ${coupon.minOrderValue}`);
   }
+  if (coupon.vendorId) {
+    const vendor = await Vendor.findByPk(coupon.vendorId);
+    if (!vendor || vendor.status !== VENDOR_STATUS.APPROVED) {
+      throw new AppError(ERROR_MESSAGES.VENDOR_UNAVAILABLE, 422, ERROR_CODES.VENDOR_UNAVAILABLE);
+    }
+  }
   const value = Number(coupon.value ?? 0);
   const discount = coupon.type === 'PERCENTAGE'
     ? Math.min(subtotal * value / 100, Number(coupon.maxDiscountCap ?? Infinity))
@@ -142,6 +182,8 @@ export class CheckoutService {
   }> {
     const cart = await loadUserCart(userId);
 
+    assertCartItemsAvailable(cart);
+
     const shippingAddress = await Address.findOne({
       where: { id: data.shippingAddressId, userId },
     });
@@ -149,7 +191,20 @@ export class CheckoutService {
       throw new NotFoundError('Shipping address');
     }
 
-    const itemsByVendor = groupBy(cart.items, (item) => item.variant.product.vendorId || 'platform');
+    // Quote only available lines — unavailable items are blocked above.
+    const availableItems = cart.items.filter((item) => {
+      const product = item.variant?.product;
+      const vendor = product?.vendor ?? product?.Vendor ?? null;
+      return resolveItemAvailability({
+        product,
+        vendor,
+        stock: Number(item.variant?.stock ?? 0),
+        quantity: Number(item.quantity),
+      }).isAvailable;
+    });
+    const quoteCart = { ...cart, items: availableItems } as CartWithItems;
+
+    const itemsByVendor = groupBy(quoteCart.items, (item) => item.variant.product.vendorId || 'platform');
     const vendorIds = Object.keys(itemsByVendor).filter((id) => id !== 'platform');
     const vendors = vendorIds.length
       ? await Vendor.findAll({ where: { id: vendorIds } })
@@ -232,6 +287,9 @@ export class CheckoutService {
     const order = await sequelize.transaction(async (t) => {
       const cart = await loadUserCart(userId, t);
 
+      // Hard-block at order creation — vendor/product can change between page load and place order.
+      assertCartItemsAvailable(cart);
+
       const shippingAddress = await Address.findOne({
         where: { id: data.shippingAddressId, userId },
         transaction: t,
@@ -243,9 +301,6 @@ export class CheckoutService {
 
       let subtotal = 0;
       for (const item of cart.items) {
-        if (item.variant.stock < item.quantity) {
-          throw new ValidationError(`${ERROR_MESSAGES.INSUFFICIENT_STOCK} for ${item.variant.product.name}`);
-        }
         subtotal += Number(item.variant.price) * item.quantity;
       }
 

@@ -28,6 +28,27 @@ function generateSlug(businessName: string): string {
 }
 
 export class VendorsService {
+  async getPublicVendorProfile(slug: string): Promise<{
+    id: string;
+    businessName: string;
+    slug: string;
+    logoUrl: string | null;
+    description: string | null;
+  }> {
+    const vendor = await vendorsRepository.findOne({
+      where: { slug, status: VENDOR_STATUS.APPROVED },
+    });
+    // Suspended/pending/missing are indistinguishable to shoppers — no reason leak.
+    if (!vendor) throw new NotFoundError('Vendor');
+    return {
+      id: vendor.id,
+      businessName: vendor.businessName,
+      slug: vendor.slug,
+      logoUrl: vendor.logoUrl,
+      description: vendor.description,
+    };
+  }
+
   async registerVendor(userId: string, data: RegisterVendorRequest) {
     return sequelize.transaction(async (t) => {
       const slug = generateSlug(data.businessName);

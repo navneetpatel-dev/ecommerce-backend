@@ -25,6 +25,7 @@ import webhooksRoutes from '@modules/webhooks/webhooks.routes';
 import helpRoutes from '@modules/help/help.routes';
 import auditRoutes from '@modules/audit/audit.routes';
 import settingsRoutes from '@modules/settings/settings.routes';
+import homepageRoutes from '@modules/homepage/homepage.routes';
 
 const router = Router();
 
@@ -53,5 +54,6 @@ router.use(API_MOUNTS.inventory, inventoryRoutes);
 router.use(API_MOUNTS.help, helpRoutes);
 router.use(API_MOUNTS.audit, auditRoutes);
 router.use(API_MOUNTS.settings, settingsRoutes);
+router.use(API_MOUNTS.homepage, homepageRoutes);
 
 export { router as routes };

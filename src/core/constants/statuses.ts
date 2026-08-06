@@ -39,6 +39,44 @@ export const VENDOR_STATUS = {
 export type VendorStatus = (typeof VENDOR_STATUS)[keyof typeof VENDOR_STATUS];
 export const VENDOR_STATUS_VALUES = Object.values(VENDOR_STATUS) as [VendorStatus, ...VendorStatus[]];
 
+/** Why a cart/wishlist line is not purchaseable (live catalog gate). */
+export const UNAVAILABLE_REASON = {
+  OUT_OF_STOCK: 'OUT_OF_STOCK',
+  PRODUCT_UNPUBLISHED: 'PRODUCT_UNPUBLISHED',
+  VENDOR_UNAVAILABLE: 'VENDOR_UNAVAILABLE',
+} as const;
+export type UnavailableReason = (typeof UNAVAILABLE_REASON)[keyof typeof UNAVAILABLE_REASON];
+
+export const CATEGORY_STATUS = {
+  ACTIVE: 'ACTIVE',
+  ARCHIVED: 'ARCHIVED',
+} as const;
+export type CategoryStatus = (typeof CATEGORY_STATUS)[keyof typeof CATEGORY_STATUS];
+export const CATEGORY_STATUS_VALUES = Object.values(CATEGORY_STATUS) as [CategoryStatus, ...CategoryStatus[]];
+
+export const PROMO_BANNER_STATUS = {
+  DRAFT: 'DRAFT',
+  ACTIVE: 'ACTIVE',
+  ARCHIVED: 'ARCHIVED',
+} as const;
+export type PromoBannerStatus = (typeof PROMO_BANNER_STATUS)[keyof typeof PROMO_BANNER_STATUS];
+export const PROMO_BANNER_STATUS_VALUES = Object.values(PROMO_BANNER_STATUS) as [
+  PromoBannerStatus,
+  ...PromoBannerStatus[],
+];
+
+export const PROMO_BANNER_LINK_TYPE = {
+  PRODUCT: 'PRODUCT',
+  CATEGORY: 'CATEGORY',
+  VENDOR: 'VENDOR',
+  URL: 'URL',
+} as const;
+export type PromoBannerLinkType = (typeof PROMO_BANNER_LINK_TYPE)[keyof typeof PROMO_BANNER_LINK_TYPE];
+export const PROMO_BANNER_LINK_TYPE_VALUES = Object.values(PROMO_BANNER_LINK_TYPE) as [
+  PromoBannerLinkType,
+  ...PromoBannerLinkType[],
+];
+
 export const USER_STATUS = {
   ACTIVE: 'ACTIVE',
   BLOCKED: 'BLOCKED',

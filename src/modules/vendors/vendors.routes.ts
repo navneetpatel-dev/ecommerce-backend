@@ -16,6 +16,9 @@ import {
 
 const router = Router();
 
+// Public storefront — APPROVED vendors only (404 otherwise)
+router.get('/slug/:slug', vendorsController.getPublicVendorBySlug);
+
 // Public vendor registration
 router.post('/register', authenticate, validate(RegisterVendorSchema), vendorsController.registerVendor);
 

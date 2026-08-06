@@ -20,6 +20,11 @@ export const getCategoryById = asyncHandler(async (req: Request, res: Response) 
   res.json(ok(category));
 });
 
+export const getCategoryProductCount = asyncHandler(async (req: Request, res: Response) => {
+  const result = await categoriesService.getProductCount(req.params.id!);
+  res.json(ok(result));
+});
+
 export const updateCategory = asyncHandler(async (req: Request, res: Response) => {
   const dto = UpdateCategorySchema.parse(req.body);
   const category = await categoriesService.updateCategory(req.params.id!, dto);

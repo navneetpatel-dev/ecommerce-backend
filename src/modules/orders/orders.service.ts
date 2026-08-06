@@ -67,6 +67,11 @@ export class OrdersService {
     };
   }
 
+  /**
+   * Order history is intentionally UNSCOPED.
+   * OrderItem.productName / unitPrice are frozen snapshots from checkout — later
+   * vendor suspension or product unpublish must not hide or rewrite past purchases.
+   */
   async getOrderById(id: string, userId?: string) {
     const order = await ordersRepository.findById(id, {
       include: orderDetailInclude,

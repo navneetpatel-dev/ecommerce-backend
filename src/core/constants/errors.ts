@@ -14,6 +14,9 @@ export const ERROR_CODES = {
   REFRESH_TOKEN_EXPIRED: 'REFRESH_TOKEN_EXPIRED',
   RAZORPAY_NOT_CONFIGURED: 'RAZORPAY_NOT_CONFIGURED',
   INVALID_SIGNATURE: 'INVALID_SIGNATURE',
+  ITEMS_UNAVAILABLE: 'ITEMS_UNAVAILABLE',
+  VENDOR_UNAVAILABLE: 'VENDOR_UNAVAILABLE',
+  COUPON_INACTIVE: 'COUPON_INACTIVE',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -39,4 +42,8 @@ export const ERROR_MESSAGES = {
   VENDOR_NOT_PENDING: 'Vendor is not in PENDING status',
   PRODUCT_NAME_EXISTS: 'Product name already exists',
   CATEGORY_NAME_EXISTS: 'Category name already exists',
+  ITEMS_UNAVAILABLE: 'Some items in your cart are no longer available',
+  VENDOR_UNAVAILABLE: 'This seller is currently unavailable',
+  COUPON_INACTIVE: 'Coupon is not active',
+  SHOP_UNAVAILABLE: 'This shop is currently unavailable',
 } as const;

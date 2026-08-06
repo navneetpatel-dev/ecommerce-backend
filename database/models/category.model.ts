@@ -1,4 +1,9 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import {
+  CATEGORY_STATUS,
+  CATEGORY_STATUS_VALUES,
+  type CategoryStatus,
+} from '@core/constants/statuses';
 
 export class Category extends Model<InferAttributes<Category>, InferCreationAttributes<Category>> {
   declare id: CreationOptional<string>;
@@ -6,6 +11,7 @@ export class Category extends Model<InferAttributes<Category>, InferCreationAttr
   declare slug: string;
   declare imageUrl: string | null;
   declare parentId: string | null;
+  declare status: CreationOptional<CategoryStatus>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -28,6 +34,11 @@ export const initCategoryModel = (sequelize: Sequelize) => {
       slug: { type: DataTypes.STRING, unique: true, allowNull: false },
       imageUrl: { type: DataTypes.STRING, allowNull: true },
       parentId: { type: DataTypes.UUID, allowNull: true },
+      status: {
+        type: DataTypes.ENUM(...CATEGORY_STATUS_VALUES),
+        allowNull: false,
+        defaultValue: CATEGORY_STATUS.ACTIVE,
+      },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

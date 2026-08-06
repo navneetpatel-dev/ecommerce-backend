@@ -75,9 +75,9 @@ export class ProductsService {
     });
   }
 
-  async getProducts(query: GetProductsQuery) {
+  async getProducts(query: GetProductsQuery, options: { customerFacing?: boolean } = {}) {
     const offset = (query.page - 1) * query.limit;
-    const { rows, count } = await productsRepository.findWithFilters({
+    const filters = {
       categoryId: query.categoryId,
       vendorId: query.vendorId,
       status: query.status,
@@ -88,7 +88,11 @@ export class ProductsService {
       sort: query.sort,
       limit: query.limit,
       offset,
-    });
+    };
+
+    const { rows, count } = options.customerFacing
+      ? await productsRepository.findVisibleList(filters)
+      : await productsRepository.findWithFilters(filters);
 
     const mappedProducts = rows.map((p) => mapProductResponse(p));
 
@@ -103,10 +107,12 @@ export class ProductsService {
     };
   }
 
-  async getProductById(id: string) {
-    const product = await productsRepository.findById(id, {
-      include: ['variants', 'images', { model: Category }, { model: Vendor, as: 'vendor' }],
-    });
+  async getProductById(id: string, options: { customerFacing?: boolean } = {}) {
+    const product = options.customerFacing
+      ? await productsRepository.findVisibleById(id)
+      : await productsRepository.findById(id, {
+          include: ['variants', 'images', { model: Category }, { model: Vendor, as: 'vendor' }],
+        });
     if (!product) throw new NotFoundError('Product');
     const reviewCount = await Review.count({
       where: { productId: product.id, status: REVIEW_STATUS.APPROVED },
@@ -114,8 +120,10 @@ export class ProductsService {
     return mapProductResponse(product, reviewCount);
   }
 
-  async getProductBySlug(slug: string) {
-    const product = await productsRepository.findBySlug(slug);
+  async getProductBySlug(slug: string, options: { customerFacing?: boolean } = {}) {
+    const product = options.customerFacing
+      ? await productsRepository.findVisibleBySlug(slug)
+      : await productsRepository.findBySlug(slug);
     if (!product) throw new NotFoundError('Product');
     return mapProductResponse(product);
   }

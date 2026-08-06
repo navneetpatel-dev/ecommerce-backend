@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import * as productsController from './products.controller';
-import { authenticate } from '@middleware/auth.middleware';
+import { authenticate, optionalAuthenticate } from '@middleware/auth.middleware';
 import { authorize } from '@middleware/rbac.middleware';
 import { checkOwnership } from '@middleware/ownership.middleware';
 import { validate } from '@middleware/validate.middleware';
@@ -17,10 +17,10 @@ import {
 
 const router = Router();
 
-// Public product browsing
-router.get('/', validate(GetProductsQuerySchema, 'query'), productsController.getProducts);
-router.get('/:id', productsController.getProductById);
-router.get('/slug/:slug', productsController.getProductBySlug);
+// Public product browsing (optional auth so vendor/admin dashboards stay unscoped)
+router.get('/', optionalAuthenticate, validate(GetProductsQuerySchema, 'query'), productsController.getProducts);
+router.get('/slug/:slug', optionalAuthenticate, productsController.getProductBySlug);
+router.get('/:id', optionalAuthenticate, productsController.getProductById);
 
 // Vendor product management
 router.post('/', authenticate, authorize(PERMISSIONS.PRODUCT_CREATE), validate(CreateProductSchema), productsController.createProduct);

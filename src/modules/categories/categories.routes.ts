@@ -10,6 +10,7 @@ const router = Router();
 
 // public category browsing
 router.get('/', categoriesController.getCategories);
+router.get('/:id/product-count', authenticate, authorize(PERMISSIONS.CATEGORY_MANAGE), categoriesController.getCategoryProductCount);
 router.get('/:id', categoriesController.getCategoryById);
 
 // admin category management

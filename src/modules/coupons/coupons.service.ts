@@ -3,11 +3,15 @@ import { CouponUsage } from '@database/models/couponUsage.model';
 import { Cart } from '@database/models/cart.model';
 import { CartItem } from '@database/models/cartItem.model';
 import { ProductVariant } from '@database/models/productVariant.model';
+import { Product } from '@database/models/product.model';
+import { Vendor } from '@database/models/vendor.model';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
+import { AppError } from '@core/errors/AppError';
 import type { CreateCouponRequest } from './coupons.dto';
-import { COUPON_STATUS } from '@core/constants/statuses';
-import { ERROR_MESSAGES } from '@core/constants/errors';
+import { COUPON_STATUS, VENDOR_STATUS } from '@core/constants/statuses';
+import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
+import { resolveItemAvailability } from '@core/catalog/customerVisibility';
 
 function computePreviewDiscount(coupon: Coupon, subtotal: number): number {
   const value = Number(coupon.value ?? 0);
@@ -20,8 +24,15 @@ function computePreviewDiscount(coupon: Coupon, subtotal: number): number {
   if (coupon.type === 'FLAT') {
     return Math.min(value, subtotal);
   }
-  // FREE_SHIPPING and others: cart preview cannot know shipping yet — report 0 and let checkout quote.
   return 0;
+}
+
+async function assertCouponVendorAvailable(coupon: Coupon) {
+  if (!coupon.vendorId) return;
+  const vendor = await Vendor.findByPk(coupon.vendorId);
+  if (!vendor || vendor.status !== VENDOR_STATUS.APPROVED) {
+    throw new AppError(ERROR_MESSAGES.VENDOR_UNAVAILABLE, 422, ERROR_CODES.VENDOR_UNAVAILABLE);
+  }
 }
 
 export const couponsService = {
@@ -48,6 +59,8 @@ export const couponsService = {
     if (!coupon || coupon.startDate > now || coupon.endDate < now) {
       throw new NotFoundError('Coupon');
     }
+    await assertCouponVendorAvailable(coupon);
+
     if (coupon.usageLimitTotal != null && (coupon.usedCount ?? 0) >= coupon.usageLimitTotal) {
       throw new ValidationError(ERROR_MESSAGES.COUPON_USAGE_LIMIT);
     }
@@ -64,11 +77,24 @@ export const couponsService = {
         {
           model: CartItem,
           as: 'items',
-          include: [{ model: ProductVariant, as: 'variant' }],
+          include: [{
+            model: ProductVariant,
+            as: 'variant',
+            include: [{ model: Product, as: 'product', include: [{ model: Vendor, as: 'vendor' }] }],
+          }],
         },
       ],
     });
-    const items = (cart as any)?.items ?? [];
+    const items = ((cart as any)?.items ?? []).filter((item: any) => {
+      const product = item.variant?.product;
+      const vendor = product?.vendor ?? product?.Vendor ?? null;
+      return resolveItemAvailability({
+        product,
+        vendor,
+        stock: Number(item.variant?.stock ?? 0),
+        quantity: Number(item.quantity ?? 0),
+      }).isAvailable;
+    });
     const subtotal = items.reduce(
       (sum: number, item: any) =>
         sum + Number(item.variant?.price ?? 0) * Number(item.quantity ?? 0),
