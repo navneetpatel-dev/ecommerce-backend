@@ -2,6 +2,7 @@ import { NotFoundError } from '@core/errors/NotFoundError';
 import { taxRepository } from './tax.repository';
 import { TaxRule } from '@database/models/taxRule.model';
 import { sequelize } from '@database/models';
+import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 
 export interface TaxCalculation {
   cgst: number;
@@ -65,8 +66,17 @@ export class TaxService {
     return 18.0;
   }
 
-  async getTaxRules() {
-    return TaxRule.findAll({ order: [['createdAt', 'DESC']] });
+  async getTaxRules(query: { page: number; limit: number }) {
+    const offset = paginationOffset(query.page, query.limit);
+    const { rows, count } = await TaxRule.findAndCountAll({
+      order: [['createdAt', 'DESC']],
+      limit: query.limit,
+      offset,
+    });
+    return {
+      rules: rows,
+      pagination: buildPaginationMeta(count, query.page, query.limit),
+    };
   }
 
   async createTaxRule(data: {

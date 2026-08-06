@@ -9,6 +9,7 @@ import { SubOrder } from '@database/models/subOrder.model';
 import { Order } from '@database/models/order.model';
 import { sequelize } from '@database/models';
 import type { Transaction } from 'sequelize';
+import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 
 type CreateReturnInput = {
   orderItemId: string;
@@ -55,12 +56,18 @@ export class ReturnsService {
     return rows.map((row) => serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }));
   }
 
-  async listAll() {
-    const rows = await ReturnRequest.findAll({
+  async listAll(query: { page: number; limit: number }) {
+    const offset = paginationOffset(query.page, query.limit);
+    const { rows, count } = await ReturnRequest.findAndCountAll({
       include: [{ model: OrderItem, as: 'orderItem', required: false }],
       order: [['createdAt', 'DESC']],
+      limit: query.limit,
+      offset,
     });
-    return rows.map((row) => serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }));
+    return {
+      returns: rows.map((row) => serializeReturn(row as ReturnRequest & { orderItem?: OrderItem })),
+      pagination: buildPaginationMeta(count, query.page, query.limit),
+    };
   }
 
   async create(userId: string, data: CreateReturnInput) {

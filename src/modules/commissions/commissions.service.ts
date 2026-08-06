@@ -1,4 +1,5 @@
 import { CommissionLedger } from '@database/models/commissionLedger.model';
+import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 
 function serializeCommission(row: CommissionLedger) {
   const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
@@ -11,12 +12,18 @@ function serializeCommission(row: CommissionLedger) {
 }
 
 export class CommissionsService {
-  async list(vendorId?: string | null) {
-    const rows = await CommissionLedger.findAll({
+  async list(query: { page: number; limit: number }, vendorId?: string | null) {
+    const offset = paginationOffset(query.page, query.limit);
+    const { rows, count } = await CommissionLedger.findAndCountAll({
       where: vendorId ? { vendorId } : undefined,
       order: [['createdAt', 'DESC']],
+      limit: query.limit,
+      offset,
     });
-    return rows.map((row) => serializeCommission(row));
+    return {
+      commissions: rows.map((row) => serializeCommission(row)),
+      pagination: buildPaginationMeta(count, query.page, query.limit),
+    };
   }
 
   async listByVendor(vendorId: string) {

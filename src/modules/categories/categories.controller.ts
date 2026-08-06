@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
+import { pageLimitQuerySchema } from '@core/http/pagination';
 import { categoriesService } from './categories.service';
 import { CreateCategorySchema, UpdateCategorySchema } from './categories.dto';
 
@@ -10,7 +11,14 @@ export const createCategory = asyncHandler(async (req: Request, res: Response) =
   res.status(201).json(ok(category));
 });
 
-export const getCategories = asyncHandler(async (_req: Request, res: Response) => {
+export const getCategories = asyncHandler(async (req: Request, res: Response) => {
+  // Storefront / vendor pickers omit page → full tree. Admin list passes page/limit.
+  if (req.query.page != null || req.query.limit != null) {
+    const query = pageLimitQuerySchema.parse(req.query);
+    const result = await categoriesService.getCategoriesPaginated(query);
+    res.json(ok(result.categories, { pagination: result.pagination }));
+    return;
+  }
   const categories = await categoriesService.getCategories();
   res.json(ok(categories));
 });

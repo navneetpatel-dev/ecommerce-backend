@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
+import { pageLimitQuerySchema } from '@core/http/pagination';
 import { shippingService } from './shipping.service';
 import { WebhookPayloadSchema } from './shipping.dto';
 
@@ -19,8 +20,10 @@ export const getShipmentByTracking = asyncHandler(async (req: Request, res: Resp
   res.json(ok(shipment));
 });
 
-export const listZones = asyncHandler(async (_req: Request, res: Response) => {
-  res.json(ok(await shippingService.listZones()));
+export const listZones = asyncHandler(async (req: Request, res: Response) => {
+  const query = pageLimitQuerySchema.parse(req.query);
+  const result = await shippingService.listZones(query);
+  res.json(ok(result.zones, { pagination: result.pagination }));
 });
 
 export const createZone = asyncHandler(async (req: Request, res: Response) => {

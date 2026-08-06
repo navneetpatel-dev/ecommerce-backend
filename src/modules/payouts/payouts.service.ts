@@ -3,6 +3,7 @@ import { Payout } from '@database/models/payout.model';
 import { sequelize } from '@database/models';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { COMMISSION_STATUS, PAYOUT_STATUS } from '@core/constants/statuses';
+import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 
 function serializePayout(row: Payout) {
   const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
@@ -13,12 +14,18 @@ function serializePayout(row: Payout) {
 }
 
 export class PayoutsService {
-  async list(vendorId?: string | null) {
-    const rows = await Payout.findAll({
+  async list(query: { page: number; limit: number }, vendorId?: string | null) {
+    const offset = paginationOffset(query.page, query.limit);
+    const { rows, count } = await Payout.findAndCountAll({
       where: vendorId ? { vendorId } : undefined,
       order: [['createdAt', 'DESC']],
+      limit: query.limit,
+      offset,
     });
-    return rows.map((row) => serializePayout(row));
+    return {
+      payouts: rows.map((row) => serializePayout(row)),
+      pagination: buildPaginationMeta(count, query.page, query.limit),
+    };
   }
 
   async listByVendor(vendorId: string, requesterVendorId?: string | null) {

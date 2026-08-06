@@ -5,6 +5,7 @@ import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { Op } from 'sequelize';
 import type { CreateZoneRequest, UpdateZoneRequest, CreateRateRequest } from './shipping.dto';
+import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 
 export type ShippingQuoteRate = {
   method: 'STANDARD' | 'EXPRESS';
@@ -81,8 +82,17 @@ export const shippingService = {
     return [...cheapestByMethod.values()];
   },
 
-  async listZones() {
-    return ShippingZone.findAll({ order: [['name', 'ASC']] });
+  async listZones(query: { page: number; limit: number }) {
+    const offset = paginationOffset(query.page, query.limit);
+    const { rows, count } = await ShippingZone.findAndCountAll({
+      order: [['name', 'ASC']],
+      limit: query.limit,
+      offset,
+    });
+    return {
+      zones: rows,
+      pagination: buildPaginationMeta(count, query.page, query.limit),
+    };
   },
 
   async createZone(dto: CreateZoneRequest, actorId: string) {

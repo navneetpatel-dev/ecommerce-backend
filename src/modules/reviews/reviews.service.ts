@@ -11,6 +11,7 @@ import { SubOrder } from '@database/models/subOrder.model';
 import { Product } from '@database/models/product.model';
 import { sequelize } from '@database/models';
 import { QueryTypes } from 'sequelize';
+import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 
 export class ReviewsService {
   async createReview(userId: string, data: {
@@ -154,8 +155,19 @@ export class ReviewsService {
     return review.update({ vendorResponse: response, vendorRespondedAt: new Date() });
   }
 
-  async listPending() {
-    return Review.findAll({ where: { status: REVIEW_STATUS.PENDING }, include: [{ model: Product, as: 'product' }], order: [['createdAt', 'ASC']] });
+  async listPending(query: { page: number; limit: number }) {
+    const offset = paginationOffset(query.page, query.limit);
+    const { rows, count } = await Review.findAndCountAll({
+      where: { status: REVIEW_STATUS.PENDING },
+      include: [{ model: Product, as: 'product' }],
+      order: [['createdAt', 'ASC']],
+      limit: query.limit,
+      offset,
+    });
+    return {
+      reviews: rows,
+      pagination: buildPaginationMeta(count, query.page, query.limit),
+    };
   }
 
   private async recalculateProductRating(productId: string, transaction: any) {

@@ -1,12 +1,14 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
+import { pageLimitQuerySchema } from '@core/http/pagination';
 import { taxService } from './tax.service';
 import { CreateTaxRuleSchema, UpdateTaxRuleSchema } from './tax.dto';
 
-export const listRules = asyncHandler(async (_req: Request, res: Response) => {
-  const rules = await taxService.getTaxRules();
-  res.json(ok(rules));
+export const listRules = asyncHandler(async (req: Request, res: Response) => {
+  const query = pageLimitQuerySchema.parse(req.query);
+  const result = await taxService.getTaxRules(query);
+  res.json(ok(result.rules, { pagination: result.pagination }));
 });
 
 export const createRule = asyncHandler(async (req: Request, res: Response) => {

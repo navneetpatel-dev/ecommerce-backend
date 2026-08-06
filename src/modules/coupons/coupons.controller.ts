@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
+import { pageLimitQuerySchema } from '@core/http/pagination';
 import { couponsService } from './coupons.service';
 import { CreateCouponSchema, ApplyCouponSchema } from './coupons.dto';
 
@@ -10,8 +11,10 @@ export const createCoupon = asyncHandler(async (req: Request, res: Response) => 
   res.status(201).json(ok(coupon));
 });
 
-export const listCoupons = asyncHandler(async (_req: Request, res: Response) => {
-  res.json(ok(await couponsService.listCoupons()));
+export const listCoupons = asyncHandler(async (req: Request, res: Response) => {
+  const query = pageLimitQuerySchema.parse(req.query);
+  const result = await couponsService.listCoupons(query);
+  res.json(ok(result.coupons, { pagination: result.pagination }));
 });
 
 export const applyCoupon = asyncHandler(async (req: Request, res: Response) => {

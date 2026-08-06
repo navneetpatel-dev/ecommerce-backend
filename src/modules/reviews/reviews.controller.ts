@@ -1,11 +1,14 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
+import { pageLimitQuerySchema } from '@core/http/pagination';
 import { reviewsService } from './reviews.service';
 import { CreateReviewSchema, VoteReviewSchema } from './reviews.dto';
 
-export const listPending = asyncHandler(async (_req: Request, res: Response) => {
-  res.json(ok(await reviewsService.listPending()));
+export const listPending = asyncHandler(async (req: Request, res: Response) => {
+  const query = pageLimitQuerySchema.parse(req.query);
+  const result = await reviewsService.listPending(query);
+  res.json(ok(result.reviews, { pagination: result.pagination }));
 });
 
 export const create = asyncHandler(async (req: Request, res: Response) => {

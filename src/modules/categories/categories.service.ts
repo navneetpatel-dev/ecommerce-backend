@@ -5,6 +5,7 @@ import { Category } from '@database/models/category.model';
 import { sequelize } from '@database/models';
 import type { Transaction } from 'sequelize';
 import type { CreateCategoryRequest, UpdateCategoryRequest } from './categories.dto';
+import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 
 function generateSlug(name: string): string {
   return name
@@ -38,6 +39,21 @@ export class CategoriesService {
 
   async getCategories() {
     return categoriesRepository.findTopLevel();
+  }
+
+  /** Flat top-level list for admin tables (paginated). */
+  async getCategoriesPaginated(query: { page: number; limit: number }) {
+    const offset = paginationOffset(query.page, query.limit);
+    const { rows, count } = await Category.findAndCountAll({
+      where: { parentId: null },
+      order: [['createdAt', 'DESC']],
+      limit: query.limit,
+      offset,
+    });
+    return {
+      categories: rows,
+      pagination: buildPaginationMeta(count, query.page, query.limit),
+    };
   }
 
   async getProductCount(id: string) {

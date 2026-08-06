@@ -12,6 +12,7 @@ import type { CreateCouponRequest } from './coupons.dto';
 import { COUPON_STATUS, VENDOR_STATUS } from '@core/constants/statuses';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { resolveItemAvailability } from '@core/catalog/customerVisibility';
+import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 
 function computePreviewDiscount(coupon: Coupon, subtotal: number): number {
   const value = Number(coupon.value ?? 0);
@@ -47,8 +48,17 @@ export const couponsService = {
     });
   },
 
-  async listCoupons() {
-    return Coupon.findAll({ order: [['createdAt', 'DESC']] });
+  async listCoupons(query: { page: number; limit: number }) {
+    const offset = paginationOffset(query.page, query.limit);
+    const { rows, count } = await Coupon.findAndCountAll({
+      order: [['createdAt', 'DESC']],
+      limit: query.limit,
+      offset,
+    });
+    return {
+      coupons: rows,
+      pagination: buildPaginationMeta(count, query.page, query.limit),
+    };
   },
 
   async applyCoupon(code: string, userId: string) {
