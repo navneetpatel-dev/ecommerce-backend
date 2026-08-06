@@ -33,6 +33,10 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
 
 export const login = asyncHandler(async (req: Request, res: Response) => {
   const result = await authService.login(req.body as any, deviceMeta(req));
+  if ('needsRoleSelection' in result && result.needsRoleSelection) {
+    res.status(200).json(ok(result));
+    return;
+  }
   res.cookie(COOKIES.REFRESH_TOKEN, result.refreshToken, COOKIE_OPTIONS);
   res.status(200).json(ok({ user: result.user, accessToken: result.accessToken }));
 });

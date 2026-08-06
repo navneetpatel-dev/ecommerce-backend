@@ -36,7 +36,7 @@ export const initUserModel = (sequelize: Sequelize) => {
   User.init(
     {
       id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
-      email: { type: DataTypes.STRING, unique: true, allowNull: false },
+      email: { type: DataTypes.STRING, allowNull: false },
       passwordHash: { type: DataTypes.STRING, allowNull: false },
       name: { type: DataTypes.STRING, allowNull: false },
       phone: { type: DataTypes.STRING, allowNull: true },
@@ -54,7 +54,20 @@ export const initUserModel = (sequelize: Sequelize) => {
       updatedAt: DataTypes.DATE,
       deletedAt: DataTypes.DATE,
     },
-    { sequelize, tableName: 'users', timestamps: true, paranoid: true },
+    {
+      sequelize,
+      tableName: 'users',
+      timestamps: true,
+      paranoid: true,
+      indexes: [
+        {
+          unique: true,
+          fields: ['email', 'roleId'],
+          name: 'users_email_role_id_unique',
+          where: { deletedAt: null },
+        },
+      ],
+    },
   );
   return User;
 };

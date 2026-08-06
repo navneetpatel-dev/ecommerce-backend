@@ -171,9 +171,22 @@ export const ROLES = {
   CUSTOMER: 'CUSTOMER',
 } as const;
 export type RoleName = (typeof ROLES)[keyof typeof ROLES];
+export const ROLE_VALUES = Object.values(ROLES) as [RoleName, ...RoleName[]];
+
+/** Human-readable role names for login account picker. */
+export const ROLE_LABELS: Record<RoleName, string> = {
+  [ROLES.SUPER_ADMIN]: 'Super Admin',
+  [ROLES.ADMIN_ORDER_MANAGER]: 'Order Manager',
+  [ROLES.ADMIN_CATALOG_MANAGER]: 'Catalog Manager',
+  [ROLES.VENDOR_OWNER]: 'Vendor Owner',
+  [ROLES.VENDOR_STAFF]: 'Vendor Staff',
+  [ROLES.CUSTOMER]: 'Customer',
+};
 
 export const ADMIN_ROLES = [
   ROLES.SUPER_ADMIN,
   ROLES.ADMIN_ORDER_MANAGER,
   ROLES.ADMIN_CATALOG_MANAGER,
 ] as const;
+
+export const VENDOR_ROLES = [ROLES.VENDOR_OWNER, ROLES.VENDOR_STAFF] as const;
