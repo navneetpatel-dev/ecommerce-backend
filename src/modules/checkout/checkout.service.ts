@@ -240,7 +240,7 @@ export class CheckoutService {
       };
     }
 
-    // COD / wallet / mixed — no Razorpay order; paymentStatus stays PENDING until fulfilled elsewhere
+    // COD — no Razorpay order; paymentStatus stays PENDING until fulfilled
     return { orderId: order.id };
   }
 }

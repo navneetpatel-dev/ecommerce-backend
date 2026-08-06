@@ -3,7 +3,7 @@ import { z } from 'zod';
 const PaymentMethodInput = z
   .string()
   .transform((value) => value.trim().toUpperCase())
-  .pipe(z.enum(['RAZORPAY', 'WALLET', 'MIXED', 'COD']));
+  .pipe(z.enum(['RAZORPAY', 'COD']));
 
 export const CreateCheckoutSchema = z
   .object({
@@ -11,7 +11,6 @@ export const CreateCheckoutSchema = z
     addressId: z.string().uuid().optional(),
     couponCode: z.string().optional().nullable(),
     paymentMethod: PaymentMethodInput.default('RAZORPAY'),
-    walletAmountToUse: z.number().min(0).optional().default(0),
     shippingMethodByVendor: z.record(z.string()).optional(),
   })
   .transform((body) => {
@@ -20,7 +19,6 @@ export const CreateCheckoutSchema = z
       shippingAddressId: shippingAddressId as string,
       couponCode: body.couponCode ?? undefined,
       paymentMethod: body.paymentMethod,
-      walletAmountToUse: body.walletAmountToUse ?? 0,
       shippingMethodByVendor: body.shippingMethodByVendor ?? {},
     };
   })
