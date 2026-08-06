@@ -6,6 +6,9 @@ export class RefreshToken extends Model<InferAttributes<RefreshToken>, InferCrea
   declare tokenHash: string;
   declare expiresAt: Date;
   declare family: string;
+  declare userAgent: string | null;
+  declare ipAddress: string | null;
+  declare lastUsedAt: Date | null;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -26,6 +29,9 @@ export const initRefreshTokenModel = (sequelize: Sequelize) => {
       tokenHash: { type: DataTypes.STRING, allowNull: false },
       expiresAt: { type: DataTypes.DATE, allowNull: false },
       family: { type: DataTypes.STRING, allowNull: false },
+      userAgent: { type: DataTypes.STRING(512), allowNull: true },
+      ipAddress: { type: DataTypes.STRING(64), allowNull: true },
+      lastUsedAt: { type: DataTypes.DATE, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

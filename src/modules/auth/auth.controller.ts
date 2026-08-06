@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
-import { authService } from './auth.service';
+import { authService, type SessionDeviceMeta } from './auth.service';
 
 const COOKIE_OPTIONS = {
   httpOnly: true,
@@ -11,14 +11,21 @@ const COOKIE_OPTIONS = {
   maxAge: 7 * 24 * 60 * 60 * 1000,
 };
 
+function deviceMeta(req: Request): SessionDeviceMeta {
+  return {
+    userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 512) : null,
+    ipAddress: req.ip || (req.socket?.remoteAddress ?? null),
+  };
+}
+
 export const register = asyncHandler(async (req: Request, res: Response) => {
-  const result = await authService.register(req.body as any);
+  const result = await authService.register(req.body as any, deviceMeta(req));
   res.cookie('refreshToken', result.refreshToken, COOKIE_OPTIONS);
   res.status(201).json(ok({ user: result.user, accessToken: result.accessToken }));
 });
 
 export const login = asyncHandler(async (req: Request, res: Response) => {
-  const result = await authService.login(req.body as any);
+  const result = await authService.login(req.body as any, deviceMeta(req));
   res.cookie('refreshToken', result.refreshToken, COOKIE_OPTIONS);
   res.status(200).json(ok({ user: result.user, accessToken: result.accessToken }));
 });
@@ -29,7 +36,7 @@ export const refresh = asyncHandler(async (req: Request, res: Response) => {
     res.status(401).json({ success: false, error: { code: 'REFRESH_REQUIRED', message: 'Refresh token required' } });
     return;
   }
-  const result = await authService.refreshToken(token);
+  const result = await authService.refreshToken(token, deviceMeta(req));
   res.cookie('refreshToken', result.refreshToken, COOKIE_OPTIONS);
   res.status(200).json(ok({ accessToken: result.accessToken }));
 });
@@ -44,7 +51,7 @@ export const logout = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const forgotPassword = asyncHandler(async (req: Request, res: Response) => {
-  const token = await authService.forgotPassword(req.body.email);
+  await authService.forgotPassword(req.body.email);
   res.status(200).json(ok({ message: 'If that email exists, a reset link has been sent' }));
 });
 
@@ -56,4 +63,28 @@ export const resetPassword = asyncHandler(async (req: Request, res: Response) =>
 export const changePassword = asyncHandler(async (req: Request, res: Response) => {
   await authService.changePassword(req.user!.id, req.body.currentPassword, req.body.newPassword);
   res.status(200).json(ok({ message: 'Password changed' }));
+});
+
+export const listSessions = asyncHandler(async (req: Request, res: Response) => {
+  const current = req.cookies?.refreshToken ?? null;
+  const sessions = await authService.listSessions(req.user!.id, current);
+  res.json(ok(sessions));
+});
+
+export const revokeSession = asyncHandler(async (req: Request, res: Response) => {
+  await authService.revokeSession(req.user!.id, req.params.family!);
+  res.status(204).send();
+});
+
+export const revokeOtherSessions = asyncHandler(async (req: Request, res: Response) => {
+  const current = req.cookies?.refreshToken;
+  if (!current) {
+    res.status(400).json({
+      success: false,
+      error: { code: 'SESSION_REQUIRED', message: 'Current session cookie required' },
+    });
+    return;
+  }
+  await authService.revokeOtherSessions(req.user!.id, current);
+  res.status(204).send();
 });

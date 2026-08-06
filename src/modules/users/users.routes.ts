@@ -8,15 +8,30 @@ import {
   GetUsersQuerySchema,
   UpdateUserStatusSchema,
   CreateAddressSchema,
+  UpdateAddressSchema,
+  ConfirmEmailSchema,
+  UploadAvatarSchema,
 } from './users.dto';
 
 const router = Router();
 
-// User's own profile
+// Own profile (aliases: /me and /profile)
+router.get('/me', authenticate, usersController.getProfile);
+router.patch('/me', authenticate, validate(UpdateUserProfileSchema), usersController.updateProfile);
+router.delete('/me', authenticate, usersController.deleteOwnAccount);
+router.get('/me/export', authenticate, usersController.exportAccount);
+router.post('/me/avatar', authenticate, validate(UploadAvatarSchema), usersController.uploadAvatar);
+router.post(
+  '/me/confirm-email',
+  authenticate,
+  validate(ConfirmEmailSchema),
+  usersController.confirmEmail,
+);
+
 router.get('/profile', authenticate, usersController.getProfile);
 router.patch('/profile', authenticate, validate(UpdateUserProfileSchema), usersController.updateProfile);
 
-// Addresses — must be registered before `/:id`
+// Addresses — before `/:id`
 router.get('/addresses', authenticate, usersController.listAddresses);
 router.post(
   '/addresses',
@@ -24,6 +39,14 @@ router.post(
   validate(CreateAddressSchema),
   usersController.createAddress,
 );
+router.patch(
+  '/addresses/:addressId',
+  authenticate,
+  validate(UpdateAddressSchema),
+  usersController.updateAddress,
+);
+router.delete('/addresses/:addressId', authenticate, usersController.deleteAddress);
+router.post('/addresses/:addressId/default', authenticate, usersController.setDefaultAddress);
 
 // Admin user management
 router.get('/', authenticate, authorize('users.view'), validate(GetUsersQuerySchema, 'query'), usersController.getUsers);

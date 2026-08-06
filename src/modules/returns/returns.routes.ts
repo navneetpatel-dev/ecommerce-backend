@@ -6,6 +6,7 @@ import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { z } from 'zod';
 import { validate } from '@middleware/validate.middleware';
+import { returnsService } from './returns.service';
 
 const CreateReturnRequestSchema = z.object({
   orderItemId: z.string().uuid(),
@@ -20,18 +21,18 @@ const TransitionReturnSchema = z.object({
 const router = Router();
 
 router.post('/', authenticate, validate(CreateReturnRequestSchema), asyncHandler(async (req, res) => {
-  // TODO: Implement return request creation
-  res.status(201).json(ok({ message: 'Return request created' }));
+  const created = await returnsService.create(req.user!.id, req.body);
+  res.status(201).json(ok(created));
 }));
 
-router.get('/', authenticate, asyncHandler(async (_req, res) => {
-  // TODO: Implement return request listing
-  res.json(ok([]));
+router.get('/', authenticate, asyncHandler(async (req, res) => {
+  const list = await returnsService.listForUser(req.user!.id);
+  res.json(ok(list));
 }));
 
 router.patch('/:id/transition', authenticate, authorize('returns.manage'), validate(TransitionReturnSchema), asyncHandler(async (req, res) => {
-  // TODO: Implement return status transition
-  res.json(ok({ message: 'Return status updated' }));
+  const updated = await returnsService.transition(req.params.id!, req.body.status, req.user!.id);
+  res.json(ok(updated));
 }));
 
 export default router;

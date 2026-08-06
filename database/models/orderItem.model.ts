@@ -15,8 +15,8 @@ export class OrderItem extends Model<InferAttributes<OrderItem>, InferCreationAt
   declare readonly deletedAt: CreationOptional<Date>;
 
   static associate(models: Record<string, any>) {
-    OrderItem.belongsTo(models.SubOrder, { foreignKey: 'subOrderId' });
-    OrderItem.belongsTo(models.ProductVariant, { foreignKey: 'variantId' });
+    OrderItem.belongsTo(models.SubOrder, { foreignKey: 'subOrderId', as: 'subOrder' });
+    OrderItem.belongsTo(models.ProductVariant, { foreignKey: 'variantId', as: 'variant' });
   }
 }
 

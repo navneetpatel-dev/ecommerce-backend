@@ -4,14 +4,18 @@ import crypto from 'crypto';
 import { env } from '@config/env';
 import { User } from '@database/models/user.model';
 import { Role } from '@database/models/role.model';
-import { AuthRepository } from './auth.repository';
+import { authRepository as repo } from './auth.repository';
 import { AuthTokens, JwtPayload } from './auth.types';
 import { RegisterRequest, LoginRequest } from './auth.dto';
 import { AppError, NotFoundError, ValidationError, ForbiddenError } from '@core/errors';
 import { logger } from '@core/logger';
 import { clearPermissionCache } from '@middleware/rbac.middleware';
 
-const repo = new AuthRepository();
+export type SessionDeviceMeta = {
+  userAgent?: string | null;
+  ipAddress?: string | null;
+  family?: string;
+};
 
 function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
@@ -21,13 +25,21 @@ function generateAccessToken(payload: JwtPayload): string {
   return jwt.sign(payload, env.JWT_SECRET, { expiresIn: env.JWT_ACCESS_EXPIRY } as jwt.SignOptions);
 }
 
-async function generateRefreshToken(userId: string): Promise<string> {
+async function generateRefreshToken(userId: string, meta: SessionDeviceMeta = {}): Promise<string> {
   const raw = crypto.randomBytes(40).toString('hex');
   const tokenHash = hashToken(raw);
-  const family = crypto.randomUUID();
+  const family = meta.family ?? crypto.randomUUID();
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-  await repo.createRefreshToken({ userId, tokenHash, expiresAt, family });
+  await repo.createRefreshToken({
+    userId,
+    tokenHash,
+    expiresAt,
+    family,
+    userAgent: meta.userAgent ?? null,
+    ipAddress: meta.ipAddress ?? null,
+    lastUsedAt: new Date(),
+  });
 
   return raw;
 }
@@ -41,14 +53,39 @@ function toUserPayload(user: User): JwtPayload {
   };
 }
 
-async function generateTokens(user: User): Promise<AuthTokens> {
+async function generateTokens(user: User, meta: SessionDeviceMeta = {}): Promise<AuthTokens> {
   const accessToken = generateAccessToken(toUserPayload(user));
-  const refreshToken = await generateRefreshToken(user.id);
+  const refreshToken = await generateRefreshToken(user.id, meta);
   return { accessToken, refreshToken };
 }
 
+function serializeSession(
+  token: {
+    family: string;
+    userAgent: string | null;
+    ipAddress: string | null;
+    createdAt: Date;
+    lastUsedAt: Date | null;
+    updatedAt: Date;
+  },
+  currentFamily: string | null,
+) {
+  return {
+    id: token.family,
+    family: token.family,
+    userAgent: token.userAgent,
+    ipAddress: token.ipAddress,
+    createdAt: token.createdAt,
+    lastUsedAt: token.lastUsedAt ?? token.updatedAt ?? token.createdAt,
+    isCurrent: Boolean(currentFamily && token.family === currentFamily),
+  };
+}
+
 export class AuthService {
-  async register(dto: RegisterRequest): Promise<{ user: { id: string; email: string; name: string; role: string }; accessToken: string; refreshToken: string }> {
+  async register(
+    dto: RegisterRequest,
+    meta: SessionDeviceMeta = {},
+  ): Promise<{ user: { id: string; email: string; name: string; role: string }; accessToken: string; refreshToken: string }> {
     const existing = await repo.findByEmail(dto.email);
     if (existing) {
       throw new ValidationError({ email: ['Email already registered'] });
@@ -72,9 +109,11 @@ export class AuthService {
       emailVerified: false,
       emailMarketingConsent: false,
       emailSuppressed: false,
+      avatarUrl: null,
+      pendingEmail: null,
     });
 
-    const tokens = await generateTokens(user);
+    const tokens = await generateTokens(user, meta);
 
     return {
       user: { id: user.id, email: user.email, name: user.name, role: 'CUSTOMER' },
@@ -82,7 +121,10 @@ export class AuthService {
     };
   }
 
-  async login(dto: LoginRequest): Promise<{ user: { id: string; email: string; name: string; role: string }; accessToken: string; refreshToken: string }> {
+  async login(
+    dto: LoginRequest,
+    meta: SessionDeviceMeta = {},
+  ): Promise<{ user: { id: string; email: string; name: string; role: string }; accessToken: string; refreshToken: string }> {
     const user = await repo.findByEmail(dto.email);
     if (!user) {
       throw new ValidationError({ email: ['Invalid credentials'] });
@@ -97,7 +139,7 @@ export class AuthService {
       throw new ValidationError({ email: ['Invalid credentials'] });
     }
 
-    const tokens = await generateTokens(user);
+    const tokens = await generateTokens(user, meta);
 
     return {
       user: {
@@ -110,7 +152,7 @@ export class AuthService {
     };
   }
 
-  async refreshToken(rawToken: string) {
+  async refreshToken(rawToken: string, meta: SessionDeviceMeta = {}) {
     const tokenHash = hashToken(rawToken);
     const token = await repo.findRefreshToken(tokenHash);
 
@@ -130,12 +172,46 @@ export class AuthService {
     }
 
     clearPermissionCache();
-    return generateTokens(user);
+    return generateTokens(user, {
+      family: token.family,
+      userAgent: meta.userAgent ?? token.userAgent,
+      ipAddress: meta.ipAddress ?? token.ipAddress,
+    });
   }
 
   async logout(rawToken: string) {
     const tokenHash = hashToken(rawToken);
     await repo.deleteRefreshToken(tokenHash);
+  }
+
+  async listSessions(userId: string, currentRawToken?: string | null) {
+    const tokens = await repo.listRefreshTokensByUser(userId);
+    let currentFamily: string | null = null;
+    if (currentRawToken) {
+      const current = await repo.findRefreshToken(hashToken(currentRawToken));
+      currentFamily = current?.family ?? null;
+    }
+
+    const byFamily = new Map<string, (typeof tokens)[number]>();
+    for (const token of tokens) {
+      if (!byFamily.has(token.family)) {
+        byFamily.set(token.family, token);
+      }
+    }
+
+    return [...byFamily.values()].map((token) => serializeSession(token, currentFamily));
+  }
+
+  async revokeSession(userId: string, family: string) {
+    await repo.deleteRefreshTokensByFamily(userId, family);
+  }
+
+  async revokeOtherSessions(userId: string, currentRawToken: string) {
+    const current = await repo.findRefreshToken(hashToken(currentRawToken));
+    if (!current || current.userId !== userId) {
+      throw new ValidationError({ session: ['Current session not found'] });
+    }
+    await repo.deleteRefreshTokensExceptFamily(userId, current.family);
   }
 
   async forgotPassword(email: string) {

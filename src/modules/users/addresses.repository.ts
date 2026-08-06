@@ -7,13 +7,14 @@ export class AddressesRepository extends BaseRepository<Address> {
     super(Address);
   }
 
-  findByUserId(userId: string) {
+  findByUserId(userId: string, options?: RepositoryOptions) {
     return this.model.findAll({
       where: { userId } as any,
       order: [
         ['isDefault', 'DESC'],
         ['createdAt', 'DESC'],
       ],
+      transaction: options?.transaction,
     });
   }
 

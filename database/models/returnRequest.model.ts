@@ -19,9 +19,9 @@ export class ReturnRequest extends Model<InferAttributes<ReturnRequest>, InferCr
   declare readonly deletedAt: CreationOptional<Date>;
 
   static associate(models: Record<string, any>) {
-    ReturnRequest.belongsTo(models.SubOrder, { foreignKey: 'subOrderId' });
-    ReturnRequest.belongsTo(models.OrderItem, { foreignKey: 'orderItemId' });
-    ReturnRequest.belongsTo(models.User, { foreignKey: 'userId' });
+    ReturnRequest.belongsTo(models.SubOrder, { foreignKey: 'subOrderId', as: 'subOrder' });
+    ReturnRequest.belongsTo(models.OrderItem, { foreignKey: 'orderItemId', as: 'orderItem' });
+    ReturnRequest.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
   }
 }
 

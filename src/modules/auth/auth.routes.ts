@@ -15,4 +15,8 @@ router.post('/forgot-password', validate(ForgotPasswordSchema), authRateLimiter,
 router.post('/reset-password', validate(ResetPasswordSchema), controller.resetPassword);
 router.post('/change-password', authenticate, validate(ChangePasswordSchema), controller.changePassword);
 
+router.get('/sessions', authenticate, controller.listSessions);
+router.delete('/sessions/:family', authenticate, controller.revokeSession);
+router.delete('/sessions', authenticate, controller.revokeOtherSessions);
+
 export { router as authRoutes };

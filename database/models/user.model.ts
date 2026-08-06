@@ -14,6 +14,13 @@ export class User extends Model<InferAttributes<User>, InferCreationAttributes<U
   declare emailVerified: CreationOptional<boolean>;
   declare emailMarketingConsent: CreationOptional<boolean>;
   declare emailSuppressed: CreationOptional<boolean>;
+  declare avatarUrl: string | null;
+  declare pendingEmail: string | null;
+  declare notificationPrefs: CreationOptional<{
+    orderUpdates: boolean;
+    smsAlerts: boolean;
+    shippingNotifications: boolean;
+  }>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -45,6 +52,17 @@ export const initUserModel = (sequelize: Sequelize) => {
       emailVerified: { type: DataTypes.BOOLEAN, defaultValue: false },
       emailMarketingConsent: { type: DataTypes.BOOLEAN, defaultValue: false },
       emailSuppressed: { type: DataTypes.BOOLEAN, defaultValue: false },
+      avatarUrl: { type: DataTypes.STRING, allowNull: true },
+      pendingEmail: { type: DataTypes.STRING, allowNull: true },
+      notificationPrefs: {
+        type: DataTypes.JSONB,
+        allowNull: false,
+        defaultValue: {
+          orderUpdates: true,
+          smsAlerts: false,
+          shippingNotifications: true,
+        },
+      },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },
