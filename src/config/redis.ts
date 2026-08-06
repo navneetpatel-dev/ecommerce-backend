@@ -8,14 +8,30 @@ export const redisClient = new Redis(env.REDIS_URL, {
     return null;
   },
   lazyConnect: true,
+  enableOfflineQueue: false,
 });
 
 redisClient.on('error', () => {});
 
-export async function connectRedis(): Promise<void> {
+export async function connectRedis(): Promise<boolean> {
   try {
-    await redisClient.connect();
+    if (redisClient.status === 'wait' || redisClient.status === 'end') {
+      await redisClient.connect();
+    }
+    const pong = await Promise.race([
+      redisClient.ping(),
+      new Promise<string>((_, reject) =>
+        setTimeout(() => reject(new Error('Redis ping timeout')), 1500),
+      ),
+    ]);
+    if (pong !== 'PONG') {
+      throw new Error(`Unexpected redis response: ${pong}`);
+    }
+    return true;
   } catch (err) {
-    logger.warn('Redis not available — continuing without cache', { error: (err as Error).message });
+    logger.warn('Redis not available — continuing without cache', {
+      error: (err as Error).message,
+    });
+    return false;
   }
 }

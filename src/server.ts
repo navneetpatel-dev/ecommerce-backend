@@ -9,14 +9,18 @@ async function bootstrap() {
   await connectDatabase();
   logger.info('Database connected');
 
-  await connectRedis();
-  logger.info('Redis connected');
-
-  try {
-    await connectQueues();
-    logger.info('BullMQ queues connected');
-  } catch (error) {
-    logger.warn('BullMQ queues connection failed - continuing without queues', { error });
+  const redisOk = await connectRedis();
+  if (redisOk) {
+    logger.info('Redis connected');
+    try {
+      await connectQueues();
+    } catch (error) {
+      logger.warn('BullMQ queues unavailable — continuing without background jobs', {
+        error: error instanceof Error ? error.message : error,
+      });
+    }
+  } else {
+    logger.warn('Skipping BullMQ queues because Redis is unavailable');
   }
 
   const server = app.listen(env.PORT, () => {

@@ -1,65 +1,115 @@
-import { Queue, QueueEvents } from 'bullmq';
+import { Queue, QueueEvents, type ConnectionOptions } from 'bullmq';
 import { env } from './env';
 import { logger } from '@core/logger';
+import { redisClient } from './redis';
 
-// parse redis url for connection
 const redisUrl = new URL(env.REDIS_URL);
-const redisConnection = {
-  host: redisUrl.hostname,
-  port: parseInt(redisUrl.port) || 6379,
+
+/** BullMQ requires maxRetriesPerRequest: null on its ioredis connection. */
+const redisConnection: ConnectionOptions = {
+  host: redisUrl.hostname || '127.0.0.1',
+  port: Number(redisUrl.port || 6379),
   password: redisUrl.password || undefined,
+  maxRetriesPerRequest: null,
+  enableReadyCheck: false,
 };
 
-// define all queues
-export const emailQueue = new Queue('email', { connection: redisConnection });
-export const smsQueue = new Queue('sms', { connection: redisConnection });
-export const payoutQueue = new Queue('payout', { connection: redisConnection });
-export const notificationQueue = new Queue('notification', { connection: redisConnection });
+const QUEUE_NAMES = ['email', 'sms', 'payout', 'notification'] as const;
+type QueueName = (typeof QUEUE_NAMES)[number];
 
-// queue events for monitoring
-const emailQueueEvents = new QueueEvents('email', { connection: redisConnection });
-const smsQueueEvents = new QueueEvents('sms', { connection: redisConnection });
-const payoutQueueEvents = new QueueEvents('payout', { connection: redisConnection });
-const notificationQueueEvents = new QueueEvents('notification', { connection: redisConnection });
+let queuesReady = false;
 
-// export queues for easy access
+const queueInstances = {} as Partial<Record<QueueName, Queue>>;
+const queueEventInstances = {} as Partial<Record<QueueName, QueueEvents>>;
+
+function ensureQueue(name: QueueName): Queue {
+  const existing = queueInstances[name];
+  if (existing) return existing;
+  const queue = new Queue(name, { connection: redisConnection });
+  queueInstances[name] = queue;
+  return queue;
+}
+
+function ensureQueueEvents(name: QueueName): QueueEvents {
+  const existing = queueEventInstances[name];
+  if (existing) return existing;
+  const events = new QueueEvents(name, { connection: redisConnection });
+  queueEventInstances[name] = events;
+  return events;
+}
+
+/** Lazy accessors — queues are only created after Redis is confirmed reachable. */
 export const queues = {
-  email: emailQueue,
-  sms: smsQueue,
-  payout: payoutQueue,
-  notification: notificationQueue,
+  get email() {
+    return ensureQueue('email');
+  },
+  get sms() {
+    return ensureQueue('sms');
+  },
+  get payout() {
+    return ensureQueue('payout');
+  },
+  get notification() {
+    return ensureQueue('notification');
+  },
 };
 
-// export queue events
 export const queueEvents = {
-  email: emailQueueEvents,
-  sms: smsQueueEvents,
-  payout: payoutQueueEvents,
-  notification: notificationQueueEvents,
+  get email() {
+    return ensureQueueEvents('email');
+  },
+  get sms() {
+    return ensureQueueEvents('sms');
+  },
+  get payout() {
+    return ensureQueueEvents('payout');
+  },
+  get notification() {
+    return ensureQueueEvents('notification');
+  },
 };
 
-// connect to queues
-export async function connectQueues(): Promise<void> {
+async function redisIsReachable(): Promise<boolean> {
   try {
-    // wait for all queues to be ready with timeout
-    const timeout = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Queue connection timeout')), 5000)
-    );
-    
-    await Promise.race([
-      Promise.all([
-        emailQueue.waitUntilReady(),
-        smsQueue.waitUntilReady(),
-        payoutQueue.waitUntilReady(),
-        notificationQueue.waitUntilReady(),
-      ]),
-      timeout
+    const status = redisClient.status;
+    if (status === 'wait' || status === 'end') {
+      await redisClient.connect();
+    }
+    const pong = await Promise.race([
+      redisClient.ping(),
+      new Promise<string>((_, reject) =>
+        setTimeout(() => reject(new Error('Redis ping timeout')), 1500),
+      ),
     ]);
-    
-    logger.info('BullMQ queues connected', {
-      queues: Object.keys(queues),
-    });
+    return pong === 'PONG';
+  } catch {
+    return false;
+  }
+}
+
+export async function connectQueues(): Promise<void> {
+  const reachable = await redisIsReachable();
+  if (!reachable) {
+    queuesReady = false;
+    throw new Error('Redis unavailable — skipping BullMQ queues');
+  }
+
+  try {
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Queue connection timeout')), 5000),
+    );
+
+    await Promise.race([
+      Promise.all(QUEUE_NAMES.map((name) => ensureQueue(name).waitUntilReady())),
+      timeout,
+    ]);
+
+    queuesReady = true;
+    logger.info('BullMQ queues connected', { queues: [...QUEUE_NAMES] });
   } catch (error) {
+    queuesReady = false;
+    // Best-effort cleanup of half-open queue clients
+    await closeQueues().catch(() => undefined);
     logger.error('Failed to connect BullMQ queues', {
       error: error instanceof Error ? error.message : 'Unknown error',
     });
@@ -67,31 +117,44 @@ export async function connectQueues(): Promise<void> {
   }
 }
 
-// check queue health status
-export async function checkQueuesHealth(): Promise<{ status: string; message: string; queues: Record<string, string> }> {
+export function areQueuesReady(): boolean {
+  return queuesReady;
+}
+
+export async function checkQueuesHealth(): Promise<{
+  status: string;
+  message: string;
+  queues: Record<string, string>;
+}> {
+  if (!queuesReady) {
+    return {
+      status: 'down',
+      message: 'Queues not connected (Redis optional in development)',
+      queues: {},
+    };
+  }
+
   try {
     const queueStatuses: Record<string, string> = {};
-    
-    const timeout = new Promise<void>((_, reject) => 
-      setTimeout(() => reject(new Error('Queue health check timeout')), 2000)
-    );
-    
-    const checkPromise = (async () => {
-      for (const [name, queue] of Object.entries(queues)) {
-        try {
-          // lightweight check using job counts with timeout
-          await queue.getJobCounts();
-          queueStatuses[name] = 'up';
-        } catch {
-          queueStatuses[name] = 'down';
+
+    await Promise.race([
+      (async () => {
+        for (const name of QUEUE_NAMES) {
+          try {
+            await ensureQueue(name).getJobCounts();
+            queueStatuses[name] = 'up';
+          } catch {
+            queueStatuses[name] = 'down';
+          }
         }
-      }
-    })();
-    
-    await Promise.race([checkPromise, timeout]);
-    
-    const allUp = Object.values(queueStatuses).every(status => status === 'up');
-    
+      })(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Queue health check timeout')), 2000),
+      ),
+    ]);
+
+    const allUp = Object.values(queueStatuses).every((status) => status === 'up');
+
     return {
       status: allUp ? 'up' : 'degraded',
       message: allUp ? 'All queues operational' : 'Some queues are down',
@@ -106,17 +169,22 @@ export async function checkQueuesHealth(): Promise<{ status: string; message: st
   }
 }
 
-// graceful shutdown
 export async function closeQueues(): Promise<void> {
-  await Promise.all([
-    emailQueue.close(),
-    smsQueue.close(),
-    payoutQueue.close(),
-    notificationQueue.close(),
-    emailQueueEvents.close(),
-    smsQueueEvents.close(),
-    payoutQueueEvents.close(),
-    notificationQueueEvents.close(),
-  ]);
-  logger.info('BullMQ queues closed');
+  const closers: Promise<unknown>[] = [];
+
+  for (const name of QUEUE_NAMES) {
+    const queue = queueInstances[name];
+    const events = queueEventInstances[name];
+    if (queue) closers.push(queue.close());
+    if (events) closers.push(events.close());
+    delete queueInstances[name];
+    delete queueEventInstances[name];
+  }
+
+  if (closers.length) {
+    await Promise.allSettled(closers);
+    logger.info('BullMQ queues closed');
+  }
+
+  queuesReady = false;
 }
