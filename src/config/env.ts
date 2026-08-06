@@ -27,6 +27,8 @@ const envSchema = z.object({
   AWS_SECRET_ACCESS_KEY: z.string().optional(),
   AWS_REGION: z.string().default('ap-south-1'),
   S3_BUCKET: z.string().default('ecommerce-uploads'),
+  /** Optional CDN / public base for object URLs (no trailing slash). */
+  S3_PUBLIC_BASE_URL: z.string().url().optional(),
 
   RAZORPAY_KEY_ID: z.string().optional(),
   RAZORPAY_KEY_SECRET: z.string().optional(),

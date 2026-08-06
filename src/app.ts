@@ -1,5 +1,4 @@
 import express from 'express';
-import path from 'path';
 import helmet from 'helmet';
 import cors from 'cors';
 import compression from 'compression';
@@ -45,8 +44,6 @@ app.use('/api/webhooks', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
 app.use(mongoSanitize());
-
-app.use('/uploads', express.static(path.resolve(process.cwd(), 'uploads')));
 
 app.use(globalRateLimiter);
 

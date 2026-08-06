@@ -20,6 +20,7 @@
     "docker:prod:down": "docker-compose -f docker-compose.prod.yml down"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1104.0",
     "@types/cookie-parser": "^1.4.10",
     "bcrypt": "^5.1.1",
     "bullmq": "^5.34.0",

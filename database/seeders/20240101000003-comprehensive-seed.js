@@ -643,41 +643,6 @@ module.exports = {
     await queryInterface.bulkInsert('wishlist_items', wishlistItems);
     console.log(`✓ Created ${wishlists.length} wishlists with ${wishlistItems.length} items`);
 
-    // ─── WALLET LEDGERS (45 users) ───────────────────────────
-    console.log('Creating wallet transactions...');
-    const walletLedgers = [];
-    for (const customer of customers.slice(0, 45)) {
-      const numTxns = randomInt(3, 12);
-      let balance = 0;
-      for (let t = 0; t < numTxns; t++) {
-        const type = randomElement(['CREDIT', 'CREDIT', 'CREDIT', 'DEBIT']);
-        const amount = randomPrice(50, 500);
-        if (type === 'CREDIT') {
-          balance += amount;
-          walletLedgers.push({
-            id: uuidv4(), userId: customer.id, type, amount, balanceAfter: Math.round(balance * 100) / 100,
-            referenceType: 'TOPUP', referenceId: uuidv4(),
-            description: 'Wallet top-up', expiresAt: null,
-            createdAt: new Date(Date.now() - randomInt(1, 90) * 24 * 60 * 60 * 1000),
-            updatedAt: new Date(Date.now() - randomInt(1, 90) * 24 * 60 * 60 * 1000),
-          });
-        } else if (balance >= amount) {
-          balance -= amount;
-          const customerOrders = orders.filter(o => o.userId === customer.id);
-          walletLedgers.push({
-            id: uuidv4(), userId: customer.id, type, amount, balanceAfter: Math.round(balance * 100) / 100,
-            referenceType: 'ORDER', referenceId: customerOrders.length ? randomElement(customerOrders).id : uuidv4(),
-            description: 'Order payment via wallet',
-            expiresAt: null,
-            createdAt: new Date(Date.now() - randomInt(1, 90) * 24 * 60 * 60 * 1000),
-            updatedAt: new Date(Date.now() - randomInt(1, 90) * 24 * 60 * 60 * 1000),
-          });
-        }
-      }
-    }
-    await queryInterface.bulkInsert('wallet_ledgers', walletLedgers);
-    console.log(`✓ Created ${walletLedgers.length} wallet transactions`);
-
     // ─── TAX RULES ──────────────────────────────────────────
     console.log('Creating tax rules...');
     const taxRules = [];
@@ -729,7 +694,6 @@ module.exports = {
     console.log(`  ${cartItems.length} cart items`);
     console.log(`  ${wishlists.length} wishlists`);
     console.log(`  ${wishlistItems.length} wishlist items`);
-    console.log(`  ${walletLedgers.length} wallet transactions`);
     console.log(`  ${taxRules.length} tax rules`);
     console.log(`  ${shippingZones.length} shipping zones`);
     console.log(`  ${shippingRates.length} shipping rates\n`);
@@ -744,7 +708,7 @@ module.exports = {
   async down(queryInterface) {
     console.log('Removing all seeded data...');
     const tables = [
-      'wallet_ledgers', 'wishlist_items', 'wishlists', 'cart_items', 'carts',
+      'wishlist_items', 'wishlists', 'cart_items', 'carts',
       'review_votes', 'reviews', 'return_requests', 'shipments', 'commission_ledgers',
       'payouts', 'coupon_usages', 'order_items', 'sub_orders', 'orders',
       'coupons', 'product_images', 'product_variants', 'products',

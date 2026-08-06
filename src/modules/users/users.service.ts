@@ -1,10 +1,15 @@
-import fs from 'fs/promises';
-import path from 'path';
 import jwt from 'jsonwebtoken';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
+import { AppError } from '@core/errors';
 import { env } from '@config/env';
 import { logger } from '@core/logger';
+import {
+  deleteObject,
+  extractS3KeyFromUrl,
+  isS3Configured,
+  uploadObject,
+} from '@config/s3';
 import { usersRepository } from './users.repository';
 import { addressesRepository } from './addresses.repository';
 import { authRepository } from '../auth/auth.repository';
@@ -14,7 +19,6 @@ import { Order } from '@database/models/order.model';
 import { Review } from '@database/models/review.model';
 import { Wishlist } from '@database/models/wishlist.model';
 import { WishlistItem } from '@database/models/wishlistItem.model';
-import { WalletLedger } from '@database/models/walletLedger.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { sequelize } from '@database/models';
 import type { Transaction } from 'sequelize';
@@ -199,6 +203,14 @@ export class UsersService {
   }
 
   async uploadAvatar(userId: string, data: UploadAvatarRequest) {
+    if (!isS3Configured()) {
+      throw new AppError(
+        'Profile photo upload requires AWS S3. Configure AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, and S3_BUCKET.',
+        503,
+        'S3_NOT_CONFIGURED',
+      );
+    }
+
     const match = /^data:image\/(png|jpeg|jpg|webp);base64,(.+)$/i.exec(data.dataUrl);
     if (!match) {
       throw new ValidationError({ dataUrl: ['Invalid image data URL'] });
@@ -206,18 +218,26 @@ export class UsersService {
 
     const extRaw = match[1]!.toLowerCase();
     const ext = extRaw === 'jpg' ? 'jpeg' : extRaw;
+    const contentType = `image/${ext}`;
     const buffer = Buffer.from(match[2]!, 'base64');
     if (buffer.byteLength > 1.5 * 1024 * 1024) {
       throw new ValidationError({ dataUrl: ['Image must be under 1.5MB'] });
     }
 
-    const dir = path.resolve(process.cwd(), 'uploads', 'avatars');
-    await fs.mkdir(dir, { recursive: true });
-    const filename = `${userId}.${ext === 'jpeg' ? 'jpg' : ext}`;
-    await fs.writeFile(path.join(dir, filename), buffer);
+    const user = await usersRepository.findById(userId);
+    if (!user) throw new NotFoundError('User');
 
-    const avatarUrl = `/uploads/avatars/${filename}?t=${Date.now()}`;
+    const fileExt = ext === 'jpeg' ? 'jpg' : ext;
+    const key = `avatars/${userId}/${Date.now()}.${fileExt}`;
+    const avatarUrl = await uploadObject({ key, body: buffer, contentType });
+
+    const previousKey = extractS3KeyFromUrl(user.avatarUrl);
     await usersRepository.update(userId, { avatarUrl } as any);
+
+    if (previousKey && previousKey.startsWith('avatars/')) {
+      await deleteObject(previousKey);
+    }
+
     const updated = await usersRepository.findById(userId, { include: profileInclude });
     return serializeProfile(updated!);
   }
@@ -226,7 +246,7 @@ export class UsersService {
     const user = await usersRepository.findById(userId, { include: profileInclude });
     if (!user) throw new NotFoundError('User');
 
-    const [addresses, orders, reviews, returns, walletTx, wishlists] = await Promise.all([
+    const [addresses, orders, reviews, returns, wishlists] = await Promise.all([
       addressesRepository.findByUserId(userId),
       Order.findAll({
         where: { userId },
@@ -235,11 +255,6 @@ export class UsersService {
       }),
       Review.findAll({ where: { userId }, order: [['createdAt', 'DESC']] }),
       ReturnRequest.findAll({ where: { userId }, order: [['createdAt', 'DESC']] }),
-      WalletLedger.findAll({
-        where: { userId },
-        order: [['createdAt', 'DESC']],
-        limit: 200,
-      }),
       Wishlist.findAll({
         where: { userId },
         include: [{ model: WishlistItem, as: 'items' }],
@@ -253,7 +268,6 @@ export class UsersService {
       orders,
       reviews,
       returns,
-      walletTransactions: walletTx,
       wishlists,
     };
   }

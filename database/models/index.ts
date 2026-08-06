@@ -27,11 +27,11 @@ import { initShippingZoneModel, ShippingZone } from './shippingZone.model';
 import { initShippingRateModel, ShippingRate } from './shippingRate.model';
 import { initShipmentModel, Shipment } from './shipment.model';
 import { initReturnRequestModel, ReturnRequest } from './returnRequest.model';
-import { initWalletLedgerModel, WalletLedger } from './walletLedger.model';
 import { initTaxRuleModel, TaxRule } from './taxRule.model';
 import { initNotificationLogModel, NotificationLog } from './notificationLog.model';
 import { initAuditLogModel, AuditLog } from './auditLog.model';
 import { initWebhookEventModel, WebhookEvent } from './webhookEvent.model';
+import { initHelpTicketModel, HelpTicket } from './helpTicket.model';
 
 const models = {
   Role: initRoleModel(sequelize),
@@ -62,11 +62,11 @@ const models = {
   ShippingRate: initShippingRateModel(sequelize),
   Shipment: initShipmentModel(sequelize),
   ReturnRequest: initReturnRequestModel(sequelize),
-  WalletLedger: initWalletLedgerModel(sequelize),
   TaxRule: initTaxRuleModel(sequelize),
   NotificationLog: initNotificationLogModel(sequelize),
   AuditLog: initAuditLogModel(sequelize),
   WebhookEvent: initWebhookEventModel(sequelize),
+  HelpTicket: initHelpTicketModel(sequelize),
 };
 
 Object.values(models).forEach((model: any) => {
@@ -83,5 +83,5 @@ export {
   Coupon, CouponUsage, CommissionLedger, Payout,
   Review, ReviewVote, Wishlist, WishlistItem,
   ShippingZone, ShippingRate, Shipment, ReturnRequest,
-  WalletLedger, TaxRule, NotificationLog, AuditLog, WebhookEvent,
+  TaxRule, NotificationLog, AuditLog, WebhookEvent, HelpTicket,
 };
