@@ -12,7 +12,7 @@ import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { WebhookEvent } from '@database/models/webhookEvent.model';
 import { cartService } from '@modules/cart/cart.service';
 import { ORDER_STATUS, PAYMENT_STATUS, COMMISSION_STATUS } from '@core/constants/statuses';
-import { ERROR_MESSAGES, } from '@core/constants/errors';
+import { ERROR_MESSAGES, ERROR_CODES } from '@core/constants/errors';
 import { RAZORPAY_MIN_AMOUNT_PAISE } from '@core/constants/http';
 
 export type RazorpayCheckoutPayload = {
@@ -94,7 +94,7 @@ export class PaymentsService {
 
   async createRazorpayOrderForOrder(order: Order): Promise<RazorpayCheckoutPayload> {
     if (!razorpayConfigured || !env.RAZORPAY_KEY_ID) {
-      throw new AppError(ERROR_MESSAGES.RAZORPAY_NOT_CONFIGURED, 503, 'RAZORPAY_NOT_CONFIGURED');
+      throw new AppError(ERROR_MESSAGES.RAZORPAY_NOT_CONFIGURED, 503, ERROR_CODES.RAZORPAY_NOT_CONFIGURED);
     }
 
     // Amount always from the Order row — never from the client
@@ -129,7 +129,7 @@ export class PaymentsService {
     razorpaySignature: string;
   }): { verified: true } {
     if (!env.RAZORPAY_KEY_SECRET) {
-      throw new AppError(ERROR_MESSAGES.RAZORPAY_NOT_CONFIGURED, 503, 'RAZORPAY_NOT_CONFIGURED');
+      throw new AppError(ERROR_MESSAGES.RAZORPAY_NOT_CONFIGURED, 503, ERROR_CODES.RAZORPAY_NOT_CONFIGURED);
     }
 
     const expected = crypto
@@ -138,7 +138,7 @@ export class PaymentsService {
       .digest('hex');
 
     if (!safeTimingEqual(expected, input.razorpaySignature)) {
-      throw new AppError('Signature mismatch', 400, 'INVALID_SIGNATURE');
+      throw new AppError('Signature mismatch', 400, ERROR_CODES.INVALID_SIGNATURE);
     }
 
     return { verified: true };
@@ -149,10 +149,10 @@ export class PaymentsService {
    */
   async handleRazorpayWebhook(rawBody: Buffer | string, signature: string | undefined) {
     if (!env.RAZORPAY_WEBHOOK_SECRET) {
-      throw new AppError('Razorpay webhook secret is not configured', 503, 'RAZORPAY_NOT_CONFIGURED');
+      throw new AppError('Razorpay webhook secret is not configured', 503, ERROR_CODES.RAZORPAY_NOT_CONFIGURED);
     }
     if (!signature) {
-      throw new AppError('Missing webhook signature', 400, 'INVALID_SIGNATURE');
+      throw new AppError('Missing webhook signature', 400, ERROR_CODES.INVALID_SIGNATURE);
     }
 
     const bodyString = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : String(rawBody);
@@ -162,7 +162,7 @@ export class PaymentsService {
       .digest('hex');
 
     if (!safeTimingEqual(expected, signature)) {
-      throw new AppError('Invalid signature', 400, 'INVALID_SIGNATURE');
+      throw new AppError('Invalid signature', 400, ERROR_CODES.INVALID_SIGNATURE);
     }
 
     const event = JSON.parse(bodyString) as {

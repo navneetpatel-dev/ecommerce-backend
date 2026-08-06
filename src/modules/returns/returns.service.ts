@@ -1,7 +1,7 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ValidationError } from '@core/errors/ValidationError';
-import { ORDER_STATUS, RETURN_STATUS, type ReturnStatus } from '@core/constants/statuses';
+import { ORDER_STATUS, RETURN_STATUS, type ReturnReason, type ReturnStatus } from '@core/constants/statuses';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { OrderItem } from '@database/models/orderItem.model';
@@ -12,7 +12,7 @@ import type { Transaction } from 'sequelize';
 
 type CreateReturnInput = {
   orderItemId: string;
-  reasonCode: 'DAMAGED' | 'WRONG_ITEM' | 'NOT_AS_DESCRIBED' | 'NO_LONGER_NEEDED' | 'OTHER';
+  reasonCode: ReturnReason;
   reason: string;
 };
 

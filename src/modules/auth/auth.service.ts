@@ -12,6 +12,7 @@ import { logger } from '@core/logger';
 import { clearPermissionCache, resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { REFRESH_TOKEN_TTL_MS, PASSWORD_RESET_EXPIRY } from '@core/constants/http';
 import { ROLES, USER_STATUS } from '@core/constants/statuses';
+import { ERROR_MESSAGES, ERROR_CODES } from '@core/constants/errors';
 
 export type SessionDeviceMeta = {
   userAgent?: string | null;
@@ -95,7 +96,7 @@ export class AuthService {
 
     const customerRole = await Role.findOne({ where: { name: ROLES.CUSTOMER } });
     if (!customerRole) {
-      throw new AppError('Default role not found', 500, 'CONFIG_ERROR');
+      throw new AppError('Default role not found', 500, ERROR_CODES.CONFIG_ERROR);
     }
 
     const passwordHash = await bcrypt.hash(dto.password, 12);
@@ -161,18 +162,18 @@ export class AuthService {
     const token = await repo.findRefreshToken(tokenHash);
 
     if (!token) {
-      throw new AppError('Invalid refresh token', 401, 'INVALID_REFRESH_TOKEN');
+      throw new AppError('Invalid refresh token', 401, ERROR_CODES.INVALID_REFRESH_TOKEN);
     }
 
     if (token.expiresAt < new Date()) {
-      throw new AppError('Refresh token expired', 401, 'REFRESH_TOKEN_EXPIRED');
+      throw new AppError('Refresh token expired', 401, ERROR_CODES.REFRESH_TOKEN_EXPIRED);
     }
 
     await repo.deleteRefreshToken(tokenHash);
 
     const user = await repo.findById(token.userId);
     if (!user || user.status === USER_STATUS.BLOCKED) {
-      throw new AppError('User not found or blocked', 401, 'UNAUTHORIZED');
+      throw new AppError(ERROR_MESSAGES.USER_NOT_FOUND_OR_BLOCKED, 401, ERROR_CODES.UNAUTHORIZED);
     }
 
     clearPermissionCache();

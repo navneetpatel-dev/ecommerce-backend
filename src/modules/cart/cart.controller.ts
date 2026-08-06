@@ -25,12 +25,18 @@ function clearGuestSessionCookie(res: Response) {
   res.clearCookie(COOKIES.SESSION_ID, base);
 }
 
-function resolveCartIdentity(req: Request, res: Response) {
+function resolveCartIdentity(
+  req: Request,
+  res: Response,
+  options: { mintGuestSession?: boolean } = {},
+) {
+  const mintGuestSession = options.mintGuestSession !== false;
   const userId = req.user?.id ?? null;
   let sessionId = (req.cookies?.[COOKIES.SESSION_ID] as string | undefined) ?? null;
 
-  // Guests need a stable anonymous id. Logged-in users should not mint a new guest cart.
-  if (!userId && !sessionId) {
+  // Guests need a stable anonymous id on mutating routes. Reads should not mint a new
+  // empty guest cart (e.g. unauthenticated refresh after login cleared the old cookie).
+  if (!userId && !sessionId && mintGuestSession) {
     sessionId = randomUUID();
     res.cookie(COOKIES.SESSION_ID, sessionId, SESSION_COOKIE);
   }
@@ -54,7 +60,7 @@ async function absorbGuestCartIfNeeded(
 }
 
 export const getCart = asyncHandler(async (req: Request, res: Response) => {
-  const { userId, sessionId } = resolveCartIdentity(req, res);
+  const { userId, sessionId } = resolveCartIdentity(req, res, { mintGuestSession: false });
   await absorbGuestCartIfNeeded(req, res, userId, sessionId);
   const cart = await cartService.getCart(userId, userId ? null : sessionId);
   res.json(ok(cart));

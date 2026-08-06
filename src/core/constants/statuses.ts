@@ -66,6 +66,16 @@ export const RETURN_STATUS = {
 export type ReturnStatus = (typeof RETURN_STATUS)[keyof typeof RETURN_STATUS];
 export const RETURN_STATUS_VALUES = Object.values(RETURN_STATUS) as [ReturnStatus, ...ReturnStatus[]];
 
+export const RETURN_REASON = {
+  DAMAGED: 'DAMAGED',
+  WRONG_ITEM: 'WRONG_ITEM',
+  NOT_AS_DESCRIBED: 'NOT_AS_DESCRIBED',
+  NO_LONGER_NEEDED: 'NO_LONGER_NEEDED',
+  OTHER: 'OTHER',
+} as const;
+export type ReturnReason = (typeof RETURN_REASON)[keyof typeof RETURN_REASON];
+export const RETURN_REASON_VALUES = Object.values(RETURN_REASON) as [ReturnReason, ...ReturnReason[]];
+
 export const SHIPMENT_STATUS = {
   PENDING: 'PENDING',
   PICKED_UP: 'PICKED_UP',

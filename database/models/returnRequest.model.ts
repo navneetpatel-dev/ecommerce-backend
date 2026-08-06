@@ -1,4 +1,11 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import {
+  RETURN_REASON_VALUES,
+  RETURN_STATUS,
+  RETURN_STATUS_VALUES,
+  type ReturnReason,
+  type ReturnStatus,
+} from '@core/constants/statuses';
 
 export class ReturnRequest extends Model<InferAttributes<ReturnRequest>, InferCreationAttributes<ReturnRequest>> {
   declare id: CreationOptional<string>;
@@ -6,8 +13,8 @@ export class ReturnRequest extends Model<InferAttributes<ReturnRequest>, InferCr
   declare orderItemId: string;
   declare userId: string;
   declare reason: string;
-  declare reasonCode: 'DAMAGED' | 'WRONG_ITEM' | 'NOT_AS_DESCRIBED' | 'NO_LONGER_NEEDED' | 'OTHER';
-  declare status: 'REQUESTED' | 'APPROVED' | 'REJECTED' | 'PICKUP_SCHEDULED' | 'RECEIVED' | 'REFUNDED' | 'CLOSED';
+  declare reasonCode: ReturnReason;
+  declare status: ReturnStatus;
   declare refundAmount: number | null;
   declare resolvedById: string | null;
   declare resolvedAt: Date | null;
@@ -34,12 +41,12 @@ export const initReturnRequestModel = (sequelize: Sequelize) => {
       userId: { type: DataTypes.UUID, allowNull: false },
       reason: { type: DataTypes.TEXT, allowNull: false },
       reasonCode: {
-        type: DataTypes.ENUM('DAMAGED', 'WRONG_ITEM', 'NOT_AS_DESCRIBED', 'NO_LONGER_NEEDED', 'OTHER'),
+        type: DataTypes.ENUM(...RETURN_REASON_VALUES),
         allowNull: false,
       },
       status: {
-        type: DataTypes.ENUM('REQUESTED', 'APPROVED', 'REJECTED', 'PICKUP_SCHEDULED', 'RECEIVED', 'REFUNDED', 'CLOSED'),
-        defaultValue: 'REQUESTED',
+        type: DataTypes.ENUM(...RETURN_STATUS_VALUES),
+        defaultValue: RETURN_STATUS.REQUESTED,
       },
       refundAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       resolvedById: { type: DataTypes.UUID, allowNull: true },

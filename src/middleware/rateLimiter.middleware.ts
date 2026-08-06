@@ -1,5 +1,6 @@
 import rateLimit, { type Options } from 'express-rate-limit';
 import { env } from '@config/env';
+import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 
 const isDev = env.NODE_ENV === 'development';
 
@@ -7,8 +8,8 @@ const jsonRateLimitHandler: Options['handler'] = (_req, res, _next, options) => 
   res.status(options.statusCode).json({
     success: false,
     error: {
-      code: 'RATE_LIMITED',
-      message: options.message?.toString() || 'Too many requests, please try again later.',
+      code: ERROR_CODES.RATE_LIMITED,
+      message: options.message?.toString() || ERROR_MESSAGES.RATE_LIMITED,
     },
   });
 };
@@ -19,7 +20,7 @@ export const globalRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: jsonRateLimitHandler,
-  message: 'Too many requests, please try again later.',
+  message: ERROR_MESSAGES.RATE_LIMITED,
 });
 
 /** Failed auth attempts only (successful logins are skipped). */

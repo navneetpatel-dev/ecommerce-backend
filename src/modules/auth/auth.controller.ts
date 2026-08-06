@@ -8,6 +8,7 @@ import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { COOKIES, REFRESH_TOKEN_TTL_MS } from '@core/constants/http';
 import { AUTH_COOKIE_PATH } from '@core/constants/apiPaths';
 import { ROLES } from '@core/constants/statuses';
+import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 
 const COOKIE_OPTIONS = {
   httpOnly: true,
@@ -39,7 +40,10 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
 export const refresh = asyncHandler(async (req: Request, res: Response) => {
   const token = req.cookies?.[COOKIES.REFRESH_TOKEN] || req.body?.refreshToken;
   if (!token) {
-    res.status(401).json({ success: false, error: { code: 'REFRESH_REQUIRED', message: 'Refresh token required' } });
+    res.status(401).json({
+      success: false,
+      error: { code: ERROR_CODES.REFRESH_REQUIRED, message: ERROR_MESSAGES.REFRESH_REQUIRED },
+    });
     return;
   }
   const result = await authService.refreshToken(token, deviceMeta(req));
@@ -87,7 +91,7 @@ export const revokeOtherSessions = asyncHandler(async (req: Request, res: Respon
   if (!current) {
     res.status(400).json({
       success: false,
-      error: { code: 'SESSION_REQUIRED', message: 'Current session cookie required' },
+      error: { code: ERROR_CODES.SESSION_REQUIRED, message: ERROR_MESSAGES.SESSION_REQUIRED },
     });
     return;
   }

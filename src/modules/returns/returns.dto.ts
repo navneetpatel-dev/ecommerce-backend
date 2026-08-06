@@ -1,9 +1,9 @@
 import { z } from 'zod';
-import { RETURN_STATUS_VALUES } from '@core/constants/statuses';
+import { RETURN_REASON_VALUES, RETURN_STATUS_VALUES } from '@core/constants/statuses';
 
 export const CreateReturnRequestSchema = z.object({
   orderItemId: z.string().uuid(),
-  reasonCode: z.enum(['DAMAGED', 'WRONG_ITEM', 'NOT_AS_DESCRIBED', 'NO_LONGER_NEEDED', 'OTHER']),
+  reasonCode: z.enum(RETURN_REASON_VALUES),
   reason: z.string().min(1),
 });
 
