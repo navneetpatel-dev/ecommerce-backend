@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { ROLE_VALUES } from '@core/constants/statuses';
 
 export const RegisterSchema = z.object({
   email: z.string().email(),
@@ -11,8 +10,6 @@ export const RegisterSchema = z.object({
 export const LoginSchema = z.object({
   email: z.string().email(),
   password: z.string(),
-  /** When the same email exists under multiple roles, client resubmits with the chosen role. */
-  role: z.enum(ROLE_VALUES).optional(),
 });
 
 export const RefreshSchema = z.object({

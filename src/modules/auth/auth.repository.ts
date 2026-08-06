@@ -19,24 +19,9 @@ export class AuthRepository extends BaseRepository<User> {
     super(User);
   }
 
-  /** @deprecated Prefer findAllByEmail / findByEmailAndRole — email is unique per role, not globally. */
+  /** Email is globally unique (one account / role per email). */
   async findByEmail(email: string) {
     return User.findOne({ where: { email }, include: [Role] });
-  }
-
-  async findAllByEmail(email: string) {
-    return User.findAll({ where: { email }, include: [Role] });
-  }
-
-  async findByEmailAndRoleId(email: string, roleId: string) {
-    return User.findOne({ where: { email, roleId }, include: [Role] });
-  }
-
-  async findByEmailAndRoleName(email: string, roleName: string) {
-    return User.findOne({
-      where: { email },
-      include: [{ model: Role, where: { name: roleName }, required: true }],
-    });
   }
 
   async findRefreshToken(hash: string) {

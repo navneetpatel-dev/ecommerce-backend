@@ -1,6 +1,7 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ValidationError } from '@core/errors/ValidationError';
+import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { ordersRepository } from './orders.repository';
 import { sequelize } from '@database/models';
 import { OrderItem } from '@database/models/orderItem.model';
@@ -48,7 +49,7 @@ export class OrdersService {
   }
 
   async getOrders(userId: string | null, query: GetOrdersQuery) {
-    const offset = (query.page - 1) * query.limit;
+    const offset = paginationOffset(query.page, query.limit);
     const { rows, count } = await ordersRepository.findWithFilters({
       userId: userId ?? undefined,
       status: query.status,
@@ -58,12 +59,7 @@ export class OrdersService {
 
     return {
       orders: rows.map(mapOrderResponse),
-      pagination: {
-        total: count,
-        page: query.page,
-        limit: query.limit,
-        totalPages: Math.ceil(count / query.limit),
-      },
+      pagination: buildPaginationMeta(count, query.page, query.limit),
     };
   }
 

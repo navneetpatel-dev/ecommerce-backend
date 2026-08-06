@@ -1,6 +1,7 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { AppError } from '@core/errors';
+import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import {
   deleteObject,
   extractS3KeyFromUrl,
@@ -294,7 +295,7 @@ export class UsersService {
   }
 
   async getUsers(query: GetUsersQuery) {
-    const offset = (query.page - 1) * query.limit;
+    const offset = paginationOffset(query.page, query.limit);
     const { rows, count } = await usersRepository.findWithFilters({
       roleId: query.roleId,
       status: query.status,
@@ -305,12 +306,7 @@ export class UsersService {
 
     return {
       users: rows.map(serializeProfile),
-      pagination: {
-        total: count,
-        page: query.page,
-        limit: query.limit,
-        totalPages: Math.ceil(count / query.limit),
-      },
+      pagination: buildPaginationMeta(count, query.page, query.limit),
     };
   }
 

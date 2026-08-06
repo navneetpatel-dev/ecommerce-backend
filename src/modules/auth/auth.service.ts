@@ -10,8 +10,8 @@ import { RegisterRequest, LoginRequest } from './auth.dto';
 import { AppError, NotFoundError, ValidationError, ForbiddenError } from '@core/errors';
 import { logger } from '@core/logger';
 import { clearPermissionCache, resolvePermissionsForUser } from '@middleware/rbac.middleware';
-import { REFRESH_TOKEN_TTL_MS, PASSWORD_RESET_EXPIRY } from '@core/constants/http';
-import { ROLES, ROLE_LABELS, USER_STATUS, type RoleName } from '@core/constants/statuses';
+import { PASSWORD_RESET_EXPIRY, REFRESH_TOKEN_TTL_MS } from '@core/constants/http';
+import { ROLES, USER_STATUS } from '@core/constants/statuses';
 import { ERROR_MESSAGES, ERROR_CODES } from '@core/constants/errors';
 
 export type SessionDeviceMeta = {
@@ -30,21 +30,18 @@ export type AuthUserPayload = {
 };
 
 export type LoginSuccess = {
-  needsRoleSelection?: false;
   user: AuthUserPayload;
   accessToken: string;
   refreshToken: string;
 };
 
-export type LoginRoleSelection = {
-  needsRoleSelection: true;
-  accounts: Array<{ role: RoleName; label: string }>;
-};
-
-export type LoginResult = LoginSuccess | LoginRoleSelection;
-
 function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function roleNameOf(user: User): string {
+  const nested = user.role ?? (user as User & { Role?: { name?: string } }).Role;
+  return nested?.name ?? ROLES.CUSTOMER;
 }
 
 function generateAccessToken(payload: JwtPayload): string {
@@ -107,25 +104,16 @@ function serializeSession(
   };
 }
 
-function roleNameOf(user: User): RoleName {
-  const nested = user.role ?? (user as User & { Role?: { name?: string } }).Role;
-  return (nested?.name ?? ROLES.CUSTOMER) as RoleName;
-}
-
 export class AuthService {
-  async register(
-    dto: RegisterRequest,
-    meta: SessionDeviceMeta = {},
-  ): Promise<LoginSuccess> {
+  async register(dto: RegisterRequest, meta: SessionDeviceMeta = {}): Promise<LoginSuccess> {
+    const existing = await repo.findByEmail(dto.email);
+    if (existing) {
+      throw new ValidationError({ email: [ERROR_MESSAGES.EMAIL_ALREADY_REGISTERED] });
+    }
+
     const customerRole = await Role.findOne({ where: { name: ROLES.CUSTOMER } });
     if (!customerRole) {
       throw new AppError('Default role not found', 500, ERROR_CODES.CONFIG_ERROR);
-    }
-
-    // Same email may exist for other roles; block only duplicate CUSTOMER accounts.
-    const existingCustomer = await repo.findByEmailAndRoleId(dto.email, customerRole.id);
-    if (existingCustomer) {
-      throw new ValidationError({ email: [ERROR_MESSAGES.EMAIL_ALREADY_REGISTERED] });
     }
 
     const passwordHash = await bcrypt.hash(dto.password, 12);
@@ -159,56 +147,21 @@ export class AuthService {
     };
   }
 
-  async login(dto: LoginRequest, meta: SessionDeviceMeta = {}): Promise<LoginResult> {
-    if (dto.role) {
-      const user = await repo.findByEmailAndRoleName(dto.email, dto.role);
-      if (!user) {
-        throw new ValidationError({ email: [ERROR_MESSAGES.INVALID_CREDENTIALS] });
-      }
-      return this.completeLogin(user, dto.password, meta);
-    }
-
-    const candidates = await repo.findAllByEmail(dto.email);
-    if (candidates.length === 0) {
+  async login(dto: LoginRequest, meta: SessionDeviceMeta = {}): Promise<LoginSuccess> {
+    const user = await repo.findByEmail(dto.email);
+    if (!user) {
       throw new ValidationError({ email: [ERROR_MESSAGES.INVALID_CREDENTIALS] });
     }
 
-    const matched: User[] = [];
-    for (const candidate of candidates) {
-      if (candidate.status === USER_STATUS.BLOCKED) continue;
-      const valid = await bcrypt.compare(dto.password, candidate.passwordHash);
-      if (valid) matched.push(candidate);
-    }
-
-    if (matched.length === 0) {
-      const anyBlocked = candidates.every((c) => c.status === USER_STATUS.BLOCKED);
-      if (anyBlocked && candidates.length > 0) {
-        throw new ForbiddenError(ERROR_MESSAGES.ACCOUNT_BLOCKED);
-      }
-      throw new ValidationError({ email: [ERROR_MESSAGES.INVALID_CREDENTIALS] });
-    }
-
-    if (matched.length > 1) {
-      return {
-        needsRoleSelection: true,
-        accounts: matched.map((user) => {
-          const role = roleNameOf(user);
-          return { role, label: ROLE_LABELS[role] };
-        }),
-      };
-    }
-
-    return this.issueSession(matched[0]!, meta);
-  }
-
-  private async completeLogin(user: User, password: string, meta: SessionDeviceMeta): Promise<LoginSuccess> {
     if (user.status === USER_STATUS.BLOCKED) {
       throw new ForbiddenError(ERROR_MESSAGES.ACCOUNT_BLOCKED);
     }
-    const valid = await bcrypt.compare(password, user.passwordHash);
+
+    const valid = await bcrypt.compare(dto.password, user.passwordHash);
     if (!valid) {
       throw new ValidationError({ email: [ERROR_MESSAGES.INVALID_CREDENTIALS] });
     }
+
     return this.issueSession(user, meta);
   }
 
@@ -237,7 +190,7 @@ export class AuthService {
     const token = await repo.findRefreshToken(tokenHash);
 
     if (!token) {
-      throw new AppError('Invalid refresh token', 401, ERROR_CODES.INVALID_REFRESH_TOKEN);
+      throw new AppError(ERROR_MESSAGES.INVALID_TOKEN, 401, ERROR_CODES.INVALID_REFRESH_TOKEN);
     }
 
     if (token.expiresAt < new Date()) {
@@ -295,26 +248,23 @@ export class AuthService {
   }
 
   async forgotPassword(email: string) {
-    const users = await repo.findAllByEmail(email);
-    if (users.length === 0) {
+    const user = await repo.findByEmail(email);
+    if (!user) {
       logger.info('Password reset requested for unknown email', { email });
       return;
     }
 
-    // Token is bound to a specific user id — emit one per matching role account.
-    for (const user of users) {
-      if (user.status === USER_STATUS.BLOCKED) continue;
-      const token = jwt.sign(
-        { sub: user.id, purpose: 'password-reset' },
-        env.JWT_SECRET,
-        { expiresIn: PASSWORD_RESET_EXPIRY },
-      );
-      logger.info('Password reset token generated', {
-        email: user.email,
-        role: roleNameOf(user),
-        token,
-      });
+    if (user.status === USER_STATUS.BLOCKED) {
+      logger.info('Password reset requested for blocked account', { email });
+      return;
     }
+
+    const token = jwt.sign(
+      { sub: user.id, purpose: 'password-reset' },
+      env.JWT_SECRET,
+      { expiresIn: PASSWORD_RESET_EXPIRY },
+    );
+    logger.info('Password reset token generated', { email: user.email, role: roleNameOf(user), token });
   }
 
   async resetPassword(resetToken: string, newPassword: string) {

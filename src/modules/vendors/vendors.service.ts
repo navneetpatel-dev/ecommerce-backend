@@ -6,6 +6,7 @@ import {
   COMMISSION_STATUS,
 } from '@core/constants/statuses';
 import { ERROR_MESSAGES } from '@core/constants/errors';
+import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { vendorsRepository } from './vendors.repository';
 import { VendorDocument } from '@database/models/vendorDocument.model';
 import { sequelize } from '@database/models';
@@ -70,7 +71,7 @@ export class VendorsService {
   }
 
   async getVendors(query: GetVendorsQuery) {
-    const offset = (query.page - 1) * query.limit;
+    const offset = paginationOffset(query.page, query.limit);
     const { rows, count } = await vendorsRepository.findWithFilters({
       status: query.status,
       search: query.search,
@@ -80,12 +81,7 @@ export class VendorsService {
 
     return {
       vendors: rows,
-      pagination: {
-        total: count,
-        page: query.page,
-        limit: query.limit,
-        totalPages: Math.ceil(count / query.limit),
-      },
+      pagination: buildPaginationMeta(count, query.page, query.limit),
     };
   }
 
@@ -116,6 +112,8 @@ export class VendorsService {
       await vendorsRepository.update(vendorId, {
         status: VENDOR_STATUS.APPROVED,
         commissionRate: data.commissionRate ?? vendor.commissionRate,
+        rejectionReason: null,
+        suspensionReason: null,
       }, { transaction: t });
 
       // TODO: Send approval notification
@@ -131,7 +129,10 @@ export class VendorsService {
         throw new ValidationError(ERROR_MESSAGES.VENDOR_NOT_PENDING);
       }
 
-      await vendorsRepository.update(vendorId, { status: VENDOR_STATUS.REJECTED }, { transaction: t });
+      await vendorsRepository.update(vendorId, {
+        status: VENDOR_STATUS.REJECTED,
+        rejectionReason: data.reason,
+      }, { transaction: t });
 
       // TODO: Send rejection notification with reason
       return this.getVendorById(vendorId);
@@ -143,7 +144,10 @@ export class VendorsService {
       const vendor = await vendorsRepository.findById(vendorId, { transaction: t });
       if (!vendor) throw new NotFoundError('Vendor');
 
-      await vendorsRepository.update(vendorId, { status: VENDOR_STATUS.SUSPENDED }, { transaction: t });
+      await vendorsRepository.update(vendorId, {
+        status: VENDOR_STATUS.SUSPENDED,
+        suspensionReason: data.reason,
+      }, { transaction: t });
 
       // TODO: Send suspension notification with reason
       return this.getVendorById(vendorId);

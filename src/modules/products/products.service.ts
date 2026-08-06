@@ -3,6 +3,7 @@ import { ValidationError } from '@core/errors/ValidationError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { PRODUCT_STATUS, REVIEW_STATUS } from '@core/constants/statuses';
 import { ERROR_MESSAGES } from '@core/constants/errors';
+import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { productsRepository } from './products.repository';
 import { Category } from '@database/models/category.model';
 import { Vendor } from '@database/models/vendor.model';
@@ -76,7 +77,7 @@ export class ProductsService {
   }
 
   async getProducts(query: GetProductsQuery, options: { customerFacing?: boolean } = {}) {
-    const offset = (query.page - 1) * query.limit;
+    const offset = paginationOffset(query.page, query.limit);
     const filters = {
       categoryId: query.categoryId,
       vendorId: query.vendorId,
@@ -98,12 +99,7 @@ export class ProductsService {
 
     return {
       products: mappedProducts,
-      pagination: {
-        total: count,
-        page: query.page,
-        limit: query.limit,
-        totalPages: Math.ceil(count / query.limit),
-      },
+      pagination: buildPaginationMeta(count, query.page, query.limit),
     };
   }
 
@@ -194,7 +190,11 @@ export class ProductsService {
         throw new ValidationError('Product is not pending approval');
       }
 
-      await productsRepository.update(id, { status: PRODUCT_STATUS.LIVE, approvedById: adminId }, { transaction: t });
+      await productsRepository.update(id, {
+        status: PRODUCT_STATUS.LIVE,
+        approvedById: adminId,
+        rejectionNote: null,
+      }, { transaction: t });
       return this.getProductById(id);
     });
   }

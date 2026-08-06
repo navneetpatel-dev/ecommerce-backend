@@ -17,7 +17,6 @@ export const ERROR_CODES = {
   ITEMS_UNAVAILABLE: 'ITEMS_UNAVAILABLE',
   VENDOR_UNAVAILABLE: 'VENDOR_UNAVAILABLE',
   COUPON_INACTIVE: 'COUPON_INACTIVE',
-  ROLE_SELECTION_REQUIRED: 'ROLE_SELECTION_REQUIRED',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -42,7 +41,6 @@ export const ERROR_MESSAGES = {
   INVALID_CREDENTIALS: 'Invalid credentials',
   EMAIL_ALREADY_REGISTERED: 'Email already registered',
   ACCOUNT_BLOCKED: 'Account is blocked',
-  ROLE_SELECTION_REQUIRED: 'Select which account to sign in with',
   VENDOR_NOT_PENDING: 'Vendor is not in PENDING status',
   PRODUCT_NAME_EXISTS: 'Product name already exists',
   CATEGORY_NAME_EXISTS: 'Category name already exists',

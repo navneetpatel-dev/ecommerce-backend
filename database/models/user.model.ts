@@ -62,8 +62,8 @@ export const initUserModel = (sequelize: Sequelize) => {
       indexes: [
         {
           unique: true,
-          fields: ['email', 'roleId'],
-          name: 'users_email_role_id_unique',
+          fields: ['email'],
+          name: 'users_email_unique',
           where: { deletedAt: null },
         },
       ],

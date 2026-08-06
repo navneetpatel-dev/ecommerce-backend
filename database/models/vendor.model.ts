@@ -11,6 +11,8 @@ export class Vendor extends Model<InferAttributes<Vendor>, InferCreationAttribut
   declare bannerUrl: string | null;
   declare description: string | null;
   declare status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'SUSPENDED';
+  declare rejectionReason: string | null;
+  declare suspensionReason: string | null;
   declare commissionRate: CreationOptional<number>;
   declare performanceScore: CreationOptional<number>;
   declare createdBy: string | null;
@@ -40,6 +42,8 @@ export const initVendorModel = (sequelize: Sequelize) => {
       bannerUrl: { type: DataTypes.STRING, allowNull: true },
       description: { type: DataTypes.TEXT, allowNull: true },
       status: { type: DataTypes.ENUM('PENDING', 'APPROVED', 'REJECTED', 'SUSPENDED'), defaultValue: 'PENDING' },
+      rejectionReason: { type: DataTypes.TEXT, allowNull: true },
+      suspensionReason: { type: DataTypes.TEXT, allowNull: true },
       commissionRate: { type: DataTypes.DECIMAL(5, 2), defaultValue: 10.0 },
       performanceScore: { type: DataTypes.DECIMAL(5, 2), defaultValue: 0 },
       createdBy: { type: DataTypes.UUID, allowNull: true },
