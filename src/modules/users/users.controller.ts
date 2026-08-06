@@ -2,7 +2,12 @@ import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { usersService } from './users.service';
-import { UpdateUserProfileSchema, GetUsersQuerySchema, UpdateUserStatusSchema } from './users.dto';
+import {
+  UpdateUserProfileSchema,
+  GetUsersQuerySchema,
+  UpdateUserStatusSchema,
+  CreateAddressSchema,
+} from './users.dto';
 
 export const getProfile = asyncHandler(async (req: Request, res: Response) => {
   const user = await usersService.getProfile(req.user!.id);
@@ -13,6 +18,17 @@ export const updateProfile = asyncHandler(async (req: Request, res: Response) =>
   const dto = UpdateUserProfileSchema.parse(req.body);
   const user = await usersService.updateProfile(req.user!.id, dto);
   res.json(ok(user));
+});
+
+export const listAddresses = asyncHandler(async (req: Request, res: Response) => {
+  const addresses = await usersService.listAddresses(req.user!.id);
+  res.json(ok(addresses));
+});
+
+export const createAddress = asyncHandler(async (req: Request, res: Response) => {
+  const dto = CreateAddressSchema.parse(req.body);
+  const address = await usersService.createAddress(req.user!.id, dto);
+  res.status(201).json(ok(address));
 });
 
 export const getUsers = asyncHandler(async (req: Request, res: Response) => {

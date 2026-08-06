@@ -22,6 +22,7 @@ import wishlistRoutes from '@modules/wishlist/wishlist.routes';
 import searchRoutes from '@modules/search/search.routes';
 import notificationsRoutes from '@modules/notifications/notifications.routes';
 import inventoryRoutes from '@modules/inventory/inventory.routes';
+import webhooksRoutes from '@modules/webhooks/webhooks.routes';
 
 const router = Router();
 
@@ -37,6 +38,7 @@ router.use('/checkout', checkoutRoutes);
 router.use('/orders', ordersRoutes);
 router.use('/suborders', subordersRoutes);
 router.use('/payments', paymentsRoutes);
+router.use('/webhooks', webhooksRoutes);
 router.use('/coupons', couponsRoutes);
 router.use('/commissions', commissionsRoutes);
 router.use('/payouts', payoutsRoutes);

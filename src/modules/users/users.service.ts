@@ -1,8 +1,38 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { usersRepository } from './users.repository';
+import { addressesRepository } from './addresses.repository';
 import { sequelize } from '@database/models';
 import type { Transaction } from 'sequelize';
-import type { UpdateUserProfileRequest, UpdateUserStatusRequest, GetUsersQuery } from './users.dto';
+import type {
+  UpdateUserProfileRequest,
+  UpdateUserStatusRequest,
+  GetUsersQuery,
+  CreateAddressRequest,
+} from './users.dto';
+
+function serializeAddress(address: {
+  id: string;
+  userId: string;
+  line1: string;
+  line2: string | null;
+  city: string;
+  state: string;
+  country: string;
+  pincode: string;
+  isDefault: boolean;
+}) {
+  return {
+    id: address.id,
+    userId: address.userId,
+    line1: address.line1,
+    line2: address.line2,
+    city: address.city,
+    state: address.state,
+    country: address.country,
+    pincode: address.pincode,
+    isDefault: Boolean(address.isDefault),
+  };
+}
 
 export class UsersService {
   async getProfile(userId: string) {
@@ -18,6 +48,38 @@ export class UsersService {
 
       await usersRepository.update(userId, data, { transaction: t });
       return this.getProfile(userId);
+    });
+  }
+
+  async listAddresses(userId: string) {
+    const addresses = await addressesRepository.findByUserId(userId);
+    return addresses.map(serializeAddress);
+  }
+
+  async createAddress(userId: string, data: CreateAddressRequest) {
+    return sequelize.transaction(async (t: Transaction) => {
+      const existing = await addressesRepository.findByUserId(userId);
+      const makeDefault = Boolean(data.isDefault) || existing.length === 0;
+
+      if (makeDefault) {
+        await addressesRepository.clearDefaultsForUser(userId, { transaction: t });
+      }
+
+      const address = await addressesRepository.create(
+        {
+          userId,
+          line1: data.line1,
+          line2: data.line2 ?? null,
+          city: data.city,
+          state: data.state,
+          country: data.country || 'India',
+          pincode: data.pincode,
+          isDefault: makeDefault,
+        } as any,
+        { transaction: t },
+      );
+
+      return serializeAddress(address);
     });
   }
 
@@ -63,7 +125,6 @@ export class UsersService {
       const user = await usersRepository.findById(userId, { transaction: t });
       if (!user) throw new NotFoundError('User');
 
-      // Soft delete - can be restored later
       await usersRepository.softDelete(userId, { transaction: t });
     });
   }

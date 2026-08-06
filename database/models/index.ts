@@ -31,6 +31,7 @@ import { initWalletLedgerModel, WalletLedger } from './walletLedger.model';
 import { initTaxRuleModel, TaxRule } from './taxRule.model';
 import { initNotificationLogModel, NotificationLog } from './notificationLog.model';
 import { initAuditLogModel, AuditLog } from './auditLog.model';
+import { initWebhookEventModel, WebhookEvent } from './webhookEvent.model';
 
 const models = {
   Role: initRoleModel(sequelize),
@@ -65,6 +66,7 @@ const models = {
   TaxRule: initTaxRuleModel(sequelize),
   NotificationLog: initNotificationLogModel(sequelize),
   AuditLog: initAuditLogModel(sequelize),
+  WebhookEvent: initWebhookEventModel(sequelize),
 };
 
 Object.values(models).forEach((model: any) => {
@@ -81,5 +83,5 @@ export {
   Coupon, CouponUsage, CommissionLedger, Payout,
   Review, ReviewVote, Wishlist, WishlistItem,
   ShippingZone, ShippingRate, Shipment, ReturnRequest,
-  WalletLedger, TaxRule, NotificationLog, AuditLog,
+  WalletLedger, TaxRule, NotificationLog, AuditLog, WebhookEvent,
 };
