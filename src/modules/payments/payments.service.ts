@@ -3,8 +3,15 @@ import { env } from '@config/env';
 import { razorpay, razorpayConfigured } from '@config/razorpay';
 import { AppError } from '@core/errors/AppError';
 import { ValidationError } from '@core/errors/ValidationError';
+import { sequelize } from '@database/models';
 import { Order } from '@database/models/order.model';
+import { SubOrder } from '@database/models/subOrder.model';
+import { OrderItem } from '@database/models/orderItem.model';
+import { ProductVariant } from '@database/models/productVariant.model';
+import { CartItem } from '@database/models/cartItem.model';
+import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { WebhookEvent } from '@database/models/webhookEvent.model';
+import { cartRepository } from '@modules/cart/cart.repository';
 
 export type RazorpayCheckoutPayload = {
   razorpayOrderId: string;
@@ -20,7 +27,83 @@ function safeTimingEqual(a: string, b: string): boolean {
   return crypto.timingSafeEqual(aBuf, bBuf);
 }
 
+type OrderForRollback = Order & {
+  subOrders?: (SubOrder & { items?: OrderItem[] })[];
+};
+
 export class PaymentsService {
+  private async restoreCancelledRazorpayOrder(razorpayOrderId: string) {
+    await sequelize.transaction(async (t) => {
+      const orderResult = await Order.findOne({
+        where: { razorpayOrderId },
+        include: [
+          {
+            model: SubOrder,
+            as: 'subOrders',
+            include: [{ model: OrderItem, as: 'items' }],
+          },
+        ],
+        transaction: t,
+      });
+
+      if (!orderResult) return;
+
+      const order = orderResult as OrderForRollback;
+      if (order.status === 'CANCELLED' || order.paymentStatus === 'PAID') {
+        return;
+      }
+
+      const cart = await cartRepository.findOrCreateByUser(order.userId);
+
+      for (const subOrder of order.subOrders ?? []) {
+        for (const item of subOrder.items ?? []) {
+          const variant = await ProductVariant.findByPk(item.variantId, { transaction: t });
+          if (variant) {
+            await variant.increment('stock', {
+              by: item.quantity,
+              transaction: t,
+            });
+          }
+
+          const existing = await CartItem.findOne({
+            where: { cartId: cart.id, variantId: item.variantId },
+            transaction: t,
+          });
+
+          if (existing) {
+            await existing.update(
+              { quantity: existing.quantity + item.quantity },
+              { transaction: t },
+            );
+          } else {
+            await CartItem.create(
+              {
+                cartId: cart.id,
+                variantId: item.variantId,
+                quantity: item.quantity,
+              },
+              { transaction: t },
+            );
+          }
+        }
+
+        await subOrder.update({ status: 'CANCELLED' }, { transaction: t });
+        await CommissionLedger.destroy({
+          where: { subOrderId: subOrder.id, status: 'PENDING' },
+          transaction: t,
+        });
+      }
+
+      await order.update(
+        {
+          status: 'CANCELLED',
+          paymentStatus: 'FAILED',
+        },
+        { transaction: t },
+      );
+    });
+  }
+
   async createRazorpayOrderForOrder(order: Order): Promise<RazorpayCheckoutPayload> {
     if (!razorpayConfigured || !env.RAZORPAY_KEY_ID) {
       throw new AppError('Razorpay is not configured', 503, 'RAZORPAY_NOT_CONFIGURED');
@@ -128,10 +211,7 @@ export class PaymentsService {
     if (event.event === 'payment.failed') {
       const payment = event.payload?.payment?.entity;
       if (payment?.order_id) {
-        await Order.update(
-          { paymentStatus: 'FAILED' },
-          { where: { razorpayOrderId: payment.order_id, paymentStatus: 'PENDING' } },
-        );
+        await this.restoreCancelledRazorpayOrder(payment.order_id);
       }
     }
 

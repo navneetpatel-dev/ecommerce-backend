@@ -1,5 +1,6 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
+import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { Cart } from '@database/models/cart.model';
 import { CartItem } from '@database/models/cartItem.model';
 import { Order } from '@database/models/order.model';
@@ -11,7 +12,12 @@ import { Address } from '@database/models/address.model';
 import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
 import { paymentsService } from '@modules/payments/payments.service';
-import type { CreateCheckoutRequest, CheckoutQuoteRequest } from './checkout.dto';
+import { cartRepository } from '@modules/cart/cart.repository';
+import type {
+  CancelCheckoutRequest,
+  CreateCheckoutRequest,
+  CheckoutQuoteRequest,
+} from './checkout.dto';
 
 function groupBy<T>(array: T[], keyFn: (item: T) => string): Record<string, T[]> {
   return array.reduce((acc, item) => {
@@ -24,6 +30,10 @@ function groupBy<T>(array: T[], keyFn: (item: T) => string): Record<string, T[]>
 
 type CartWithItems = Cart & {
   items: (CartItem & { variant: ProductVariant & { product: any } })[];
+};
+
+type OrderForRollback = Order & {
+  subOrders?: (SubOrder & { items?: OrderItem[] })[];
 };
 
 async function loadUserCart(userId: string, transaction?: any): Promise<CartWithItems> {
@@ -242,6 +252,93 @@ export class CheckoutService {
 
     // COD — no Razorpay order; paymentStatus stays PENDING until fulfilled
     return { orderId: order.id };
+  }
+
+  async cancelPendingCheckout(
+    userId: string,
+    data: CancelCheckoutRequest,
+  ): Promise<{ restored: boolean; orderId: string }> {
+    return sequelize.transaction(async (t) => {
+      const orderResult = await Order.findByPk(data.orderId, {
+        include: [
+          {
+            model: SubOrder,
+            as: 'subOrders',
+            include: [{ model: OrderItem, as: 'items' }],
+          },
+        ],
+        transaction: t,
+      });
+
+      if (!orderResult) {
+        throw new NotFoundError('Order');
+      }
+
+      const order = orderResult as OrderForRollback;
+      if (order.userId !== userId) {
+        throw new ForbiddenError('You do not have access to this order');
+      }
+
+      if (order.paymentStatus === 'PAID') {
+        throw new ValidationError('Paid orders cannot be cancelled from checkout');
+      }
+
+      if (order.status === 'CANCELLED') {
+        return { restored: false, orderId: order.id };
+      }
+
+      const cart = await cartRepository.findOrCreateByUser(userId);
+
+      for (const subOrder of order.subOrders ?? []) {
+        for (const item of subOrder.items ?? []) {
+          const variant = await ProductVariant.findByPk(item.variantId, { transaction: t });
+          if (variant) {
+            await variant.increment('stock', {
+              by: item.quantity,
+              transaction: t,
+            });
+          }
+
+          const existing = await CartItem.findOne({
+            where: { cartId: cart.id, variantId: item.variantId },
+            transaction: t,
+          });
+
+          if (existing) {
+            await existing.update(
+              { quantity: existing.quantity + item.quantity },
+              { transaction: t },
+            );
+          } else {
+            await CartItem.create(
+              {
+                cartId: cart.id,
+                variantId: item.variantId,
+                quantity: item.quantity,
+              },
+              { transaction: t },
+            );
+          }
+        }
+
+        await subOrder.update({ status: 'CANCELLED' }, { transaction: t });
+
+        await CommissionLedger.destroy({
+          where: { subOrderId: subOrder.id, status: 'PENDING' },
+          transaction: t,
+        });
+      }
+
+      await order.update(
+        {
+          status: 'CANCELLED',
+          paymentStatus: 'FAILED',
+        },
+        { transaction: t },
+      );
+
+      return { restored: true, orderId: order.id };
+    });
   }
 }
 

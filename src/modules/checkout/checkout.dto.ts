@@ -44,5 +44,10 @@ export const CheckoutQuoteSchema = z
     path: ['shippingAddressId'],
   });
 
+export const CancelCheckoutSchema = z.object({
+  orderId: z.string().uuid(),
+});
+
 export type CreateCheckoutRequest = z.infer<typeof CreateCheckoutSchema>;
 export type CheckoutQuoteRequest = z.infer<typeof CheckoutQuoteSchema>;
+export type CancelCheckoutRequest = z.infer<typeof CancelCheckoutSchema>;
