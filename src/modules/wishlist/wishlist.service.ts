@@ -7,6 +7,29 @@ import { CartItem } from '@database/models/cartItem.model';
 import { Cart } from '@database/models/cart.model';
 import { sequelize } from '@database/models';
 
+function mapWishlistProduct(product: Product | null | undefined) {
+  if (!product) return null;
+  const plain: any = typeof product.get === 'function' ? product.get({ plain: true }) : product;
+  const primaryImage =
+    plain.images?.find((img: any) => img.isPrimary)?.url || plain.images?.[0]?.url || '';
+  const variants = (plain.variants ?? []).map((variant: any) => ({
+    ...variant,
+    price: Number(variant.price ?? 0),
+    stock: Number(variant.stock ?? 0),
+  }));
+  const stockFromVariants = variants.reduce((sum: number, variant: { stock: number }) => sum + variant.stock, 0);
+
+  return {
+    ...plain,
+    variants,
+    basePrice: Number(plain.basePrice ?? 0),
+    avgRating: Number(plain.avgRating ?? 0),
+    stock: Number(plain.stock ?? stockFromVariants),
+    imageUrl: primaryImage,
+    isWishlisted: true,
+  };
+}
+
 export class WishlistService {
   async getWishlist(userId: string) {
     const wishlist = await wishlistRepository.findByUserId(userId);
@@ -23,7 +46,17 @@ export class WishlistService {
       }],
     });
 
-    return { wishlist, items };
+    return {
+      items: items.map((item) => {
+        const plain = item.get({ plain: true }) as any;
+        return {
+          id: plain.id,
+          productId: plain.productId,
+          priceAtAdd: Number(plain.priceAtAdd ?? 0),
+          product: mapWishlistProduct(plain.product),
+        };
+      }),
+    };
   }
 
   async addToWishlist(userId: string, productId: string) {
@@ -33,14 +66,21 @@ export class WishlistService {
 
       const wishlist = await wishlistRepository.findOrCreateByUserId(userId);
 
-      // Check if already in wishlist
+      // Include soft-deleted rows — unique (wishlistId, productId) survives soft delete
       const existing = await WishlistItem.findOne({
         where: { wishlistId: wishlist.id, productId },
+        paranoid: false,
         transaction: t,
       });
 
-      if (existing) {
+      if (existing && !existing.deletedAt) {
         throw new ValidationError('Product already in wishlist');
+      }
+
+      if (existing?.deletedAt) {
+        await existing.restore({ transaction: t });
+        await existing.update({ priceAtAdd: Number(product.basePrice) }, { transaction: t });
+        return existing;
       }
 
       const item = await WishlistItem.create({
