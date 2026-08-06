@@ -12,12 +12,14 @@ export const createOrder = asyncHandler(async (req: Request, res: Response) => {
 
 export const getOrders = asyncHandler(async (req: Request, res: Response) => {
   const query = GetOrdersQuerySchema.parse(req.query);
-  const result = await ordersService.getOrders(req.user!.id, query);
+  const isAdmin = ['SUPER_ADMIN', 'ADMIN_ORDER_MANAGER', 'ADMIN_CATALOG_MANAGER'].includes(req.user!.role.name);
+  const result = await ordersService.getOrders(isAdmin ? null : req.user!.id, query);
   res.json(ok(result.orders, { pagination: result.pagination }));
 });
 
 export const getOrderById = asyncHandler(async (req: Request, res: Response) => {
-  const order = await ordersService.getOrderById(req.params.id!, req.user!.id);
+  const isAdmin = ['SUPER_ADMIN', 'ADMIN_ORDER_MANAGER', 'ADMIN_CATALOG_MANAGER'].includes(req.user!.role.name);
+  const order = await ordersService.getOrderById(req.params.id!, isAdmin ? undefined : req.user!.id);
   res.json(ok(order));
 });
 

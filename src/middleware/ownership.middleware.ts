@@ -19,7 +19,11 @@ export const checkOwnership = (resourceType: ResourceType) => {
       return next(new ForbiddenError('Authentication required'));
     }
 
-    if (user.role.name === 'SUPER_ADMIN') {
+    if (
+      user.role.name === 'SUPER_ADMIN' ||
+      user.role.name === 'ADMIN_CATALOG_MANAGER' ||
+      user.role.name === 'ADMIN_ORDER_MANAGER'
+    ) {
       return next();
     }
 

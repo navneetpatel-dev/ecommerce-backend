@@ -143,6 +143,17 @@ export class ReviewsService {
     });
   }
 
+  async respondToReview(reviewId: string, vendorId: string | null, response: string) {
+    const review = await Review.findByPk(reviewId, { include: [{ model: Product, as: 'product' }] });
+    if (!review) throw new NotFoundError('Review');
+    if (!vendorId || (review as any).product?.vendorId !== vendorId) throw new ForbiddenError('Not your product review');
+    return review.update({ vendorResponse: response, vendorRespondedAt: new Date() });
+  }
+
+  async listPending() {
+    return Review.findAll({ where: { status: 'PENDING' }, include: [{ model: Product, as: 'product' }], order: [['createdAt', 'ASC']] });
+  }
+
   private async recalculateProductRating(productId: string, transaction: any) {
     const [result] = await sequelize.query<{ avg: string; count: string }>(
       `SELECT AVG(rating)::numeric(3,2) as avg, COUNT(*) as count 

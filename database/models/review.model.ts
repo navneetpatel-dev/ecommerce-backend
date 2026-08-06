@@ -11,6 +11,8 @@ export class Review extends Model<InferAttributes<Review>, InferCreationAttribut
   declare status: 'PENDING' | 'APPROVED' | 'REJECTED';
   declare helpfulCount: CreationOptional<number>;
   declare unhelpfulCount: CreationOptional<number>;
+  declare vendorResponse: string | null;
+  declare vendorRespondedAt: Date | null;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -39,6 +41,8 @@ export const initReviewModel = (sequelize: Sequelize) => {
       status: { type: DataTypes.ENUM('PENDING', 'APPROVED', 'REJECTED'), defaultValue: 'PENDING' },
       helpfulCount: { type: DataTypes.INTEGER, defaultValue: 0 },
       unhelpfulCount: { type: DataTypes.INTEGER, defaultValue: 0 },
+      vendorResponse: { type: DataTypes.TEXT, allowNull: true },
+      vendorRespondedAt: { type: DataTypes.DATE, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

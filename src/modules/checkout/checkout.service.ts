@@ -10,9 +10,14 @@ import { ProductVariant } from '@database/models/productVariant.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { Address } from '@database/models/address.model';
 import { Vendor } from '@database/models/vendor.model';
+import { Coupon } from '@database/models/coupon.model';
+import { CouponUsage } from '@database/models/couponUsage.model';
 import { sequelize } from '@database/models';
 import { paymentsService } from '@modules/payments/payments.service';
 import { cartService } from '@modules/cart/cart.service';
+import { getRatesForQuote } from '@modules/shipping/shipping.service';
+import { taxService } from '@modules/tax/tax.service';
+import { settingsService } from '@modules/settings/settings.service';
 import type {
   CancelCheckoutRequest,
   CreateCheckoutRequest,
@@ -63,9 +68,53 @@ async function loadUserCart(userId: string, transaction?: any): Promise<CartWith
   return cart;
 }
 
-function shippingCostForMethod(method?: string): number {
+function requestedMethod(method?: string): 'STANDARD' | 'EXPRESS' {
   const normalized = (method || 'STANDARD').toUpperCase();
-  return normalized === 'EXPRESS' ? 100 : 50;
+  if (normalized !== 'STANDARD' && normalized !== 'EXPRESS') {
+    throw new ValidationError(`Unsupported shipping method: ${method}`);
+  }
+  return normalized;
+}
+
+function lineWeightGrams(item: CartItem & { variant: ProductVariant & { product: any } }) {
+  return item.quantity * Number(item.variant.weightGrams ?? 500);
+}
+
+function vendorOriginState(vendor: Vendor | undefined): string {
+  return String(vendor?.state ?? '').trim();
+}
+
+async function getCouponDiscount(
+  code: string | undefined,
+  userId: string,
+  subtotal: number,
+  shippingTotal: number,
+) {
+  if (!code) return { coupon: null, discount: 0 };
+  const coupon = await Coupon.findOne({ where: { code: code.toUpperCase(), status: 'ACTIVE' } });
+  const now = new Date();
+  if (!coupon || coupon.startDate > now || coupon.endDate < now) {
+    throw new ValidationError('Coupon is invalid or expired');
+  }
+  if (coupon.usageLimitTotal != null && coupon.usedCount >= coupon.usageLimitTotal) {
+    throw new ValidationError('Coupon usage limit reached');
+  }
+  if (coupon.usageLimitPerUser != null) {
+    const userUsage = await CouponUsage.count({ where: { couponId: coupon.id, userId } });
+    if (userUsage >= coupon.usageLimitPerUser) throw new ValidationError('Coupon usage limit reached');
+  }
+  if (coupon.minOrderValue != null && subtotal < Number(coupon.minOrderValue)) {
+    throw new ValidationError(`Minimum order value is ${coupon.minOrderValue}`);
+  }
+  const value = Number(coupon.value ?? 0);
+  const discount = coupon.type === 'PERCENTAGE'
+    ? Math.min(subtotal * value / 100, Number(coupon.maxDiscountCap ?? Infinity))
+    : coupon.type === 'FLAT'
+      ? Math.min(value, subtotal)
+      : coupon.type === 'FREE_SHIPPING'
+        ? shippingTotal
+        : 0;
+  return { coupon, discount: Math.max(0, Math.round(discount * 100) / 100) };
 }
 
 export class CheckoutService {
@@ -99,17 +148,32 @@ export class CheckoutService {
       : [];
     const vendorMap = Object.fromEntries(vendors.map((v) => [v.id, v]));
 
-    let grandTotal = 0;
-    const vendorBreakdowns = Object.entries(itemsByVendor).map(([vendorId, items]) => {
+    const vendorBreakdowns = await Promise.all(Object.entries(itemsByVendor).map(async ([vendorId, items]) => {
       const subtotal = items.reduce(
         (sum, item) => sum + Number(item.variant.price) * item.quantity,
         0,
       );
-      const shippingCost = shippingCostForMethod(data.shippingMethodByVendor[vendorId]);
-      const total = subtotal + shippingCost;
-      grandTotal += total;
-
       const vendor = vendorMap[vendorId];
+      const method = requestedMethod(data.shippingMethodByVendor[vendorId]);
+      const rates = await getRatesForQuote({
+        pincode: shippingAddress.pincode,
+        state: shippingAddress.state,
+        weightGrams: items.reduce((sum, item) => sum + lineWeightGrams(item), 0),
+        method,
+      });
+      const rate = rates.find((candidate) => candidate.method === method);
+      if (!rate) throw new ValidationError(`No ${method} shipping rate is available`);
+      const shippingCost = rate.freeShippingThreshold != null && subtotal >= rate.freeShippingThreshold
+        ? 0
+        : rate.cost;
+      const categoryId = items[0]!.variant.product.categoryId;
+      const gstPercentage = await taxService.getGstRate(categoryId);
+      const tax = taxService.calculateTax({
+        vendorStateCode: vendorOriginState(vendor),
+        shippingStateCode: shippingAddress.state,
+        taxableAmount: subtotal,
+        gstPercentage,
+      });
       return {
         vendorId,
         vendor: vendor
@@ -129,16 +193,27 @@ export class CheckoutService {
         })),
         subtotal,
         shippingCost,
-        tax: { cgst: 0, sgst: 0, igst: 0, total: 0 },
+        tax: { cgst: tax.cgst, sgst: tax.sgst, igst: tax.igst, total: tax.total },
         discount: 0,
-        total,
+        total: subtotal + shippingCost + tax.total,
       };
-    });
+    }));
+    const subtotal = vendorBreakdowns.reduce((sum, breakdown) => sum + breakdown.subtotal, 0);
+    const shippingTotal = vendorBreakdowns.reduce((sum, breakdown) => sum + breakdown.shippingCost, 0);
+    const taxTotal = vendorBreakdowns.reduce((sum, breakdown) => sum + breakdown.tax.total, 0);
+    const { coupon, discount } = await getCouponDiscount(data.couponCode, userId, subtotal, shippingTotal);
+    if (discount) {
+      const target = vendorBreakdowns[vendorBreakdowns.length - 1];
+      if (target) {
+        target.discount = discount;
+        target.total = Math.max(0, target.total - discount);
+      }
+    }
 
     return {
       vendorBreakdowns,
-      grandTotal,
-      appliedCoupon: null as { code: string; discount: number } | null,
+      grandTotal: Math.max(0, subtotal + shippingTotal + taxTotal - discount),
+      appliedCoupon: coupon ? { code: coupon.code, discount } : null,
     };
   }
 
@@ -166,22 +241,51 @@ export class CheckoutService {
         subtotal += Number(item.variant.price) * item.quantity;
       }
 
-      // Shipping (server-side; never trust client amounts)
       const itemsByVendor = groupBy(cart.items, (item) => item.variant.product.vendorId || 'platform');
+      const vendorIds = Object.keys(itemsByVendor).filter((id) => id !== 'platform');
+      const vendors = vendorIds.length ? await Vendor.findAll({ where: { id: vendorIds }, transaction: t }) : [];
+      const vendorMap = Object.fromEntries(vendors.map((vendor) => [vendor.id, vendor]));
+      const settings = await settingsService.getPlatformSettings();
+      const vendorCharges: Record<string, { shippingCost: number; taxAmount: number; subtotal: number }> = {};
       let shippingTotal = 0;
-      for (const vendorId of Object.keys(itemsByVendor)) {
-        shippingTotal += shippingCostForMethod(data.shippingMethodByVendor[vendorId]);
+      let taxTotal = 0;
+      for (const [vendorId, items] of Object.entries(itemsByVendor)) {
+        const method = requestedMethod(data.shippingMethodByVendor[vendorId]);
+        const vendorSubtotal = items.reduce((sum, item) => sum + Number(item.variant.price) * item.quantity, 0);
+        const rates = await getRatesForQuote({
+          pincode: shippingAddress.pincode,
+          state: shippingAddress.state,
+          weightGrams: items.reduce((sum, item) => sum + lineWeightGrams(item), 0),
+          method,
+        });
+        const rate = rates.find((candidate) => candidate.method === method);
+        if (!rate) throw new ValidationError(`No ${method} shipping rate is available`);
+        const shippingCost = rate.freeShippingThreshold != null && vendorSubtotal >= rate.freeShippingThreshold
+          ? 0
+          : rate.cost;
+        const gstPercentage = await taxService.getGstRate(items[0]!.variant.product.categoryId);
+        const taxAmount = taxService.calculateTax({
+          vendorStateCode: vendorOriginState(vendorMap[vendorId]),
+          shippingStateCode: shippingAddress.state,
+          taxableAmount: vendorSubtotal,
+          gstPercentage,
+        }).total;
+        vendorCharges[vendorId] = { shippingCost, taxAmount, subtotal: vendorSubtotal };
+        shippingTotal += shippingCost;
+        taxTotal += taxAmount;
       }
-
-      // Coupon integration pending
-      const discountTotal = 0;
-      const couponId = null;
+      const { coupon, discount: discountTotal } = await getCouponDiscount(
+        data.couponCode,
+        userId,
+        subtotal,
+        shippingTotal,
+      );
 
       const orderRow = await Order.create({
         userId,
         shippingAddressId: data.shippingAddressId,
-        couponId,
-        totalAmount: subtotal + shippingTotal - discountTotal,
+        couponId: coupon?.id ?? null,
+        totalAmount: subtotal + shippingTotal + taxTotal - discountTotal,
         discountTotal,
         status: 'PENDING',
         paymentStatus: 'PENDING',
@@ -190,12 +294,11 @@ export class CheckoutService {
       }, { transaction: t });
 
       for (const [vendorId, items] of Object.entries(itemsByVendor)) {
-        const subOrderTotal = items.reduce(
-          (sum, item) => sum + Number(item.variant.price) * item.quantity,
-          0,
-        );
+        const charges = vendorCharges[vendorId]!;
+        const subOrderTotal = charges.subtotal;
 
-        const commissionRate = 10.0;
+        const vendor = vendorMap[vendorId];
+        const commissionRate = Number(vendor?.commissionRate ?? settings.defaultCommissionRate);
         const commissionAmount = subOrderTotal * (commissionRate / 100);
 
         const subOrder = await SubOrder.create({
@@ -203,6 +306,8 @@ export class CheckoutService {
           vendorId: vendorId === 'platform' ? null : vendorId,
           status: 'PENDING',
           subtotal: subOrderTotal,
+          shippingCost: charges.shippingCost,
+          taxAmount: charges.taxAmount,
           commissionAmount,
           trackingId: null,
         }, { transaction: t });
@@ -232,6 +337,19 @@ export class CheckoutService {
             status: 'PENDING',
           }, { transaction: t });
         }
+      }
+
+      if (coupon) {
+        await coupon.increment('usedCount', { by: 1, transaction: t });
+        await CouponUsage.create({
+          couponId: coupon.id,
+          userId,
+          orderId: orderRow.id,
+          discountApplied: discountTotal,
+          createdBy: userId,
+          updatedBy: userId,
+          deletedBy: null,
+        }, { transaction: t });
       }
 
       await CartItem.destroy({

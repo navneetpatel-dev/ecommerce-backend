@@ -9,7 +9,7 @@ import { AuthTokens, JwtPayload } from './auth.types';
 import { RegisterRequest, LoginRequest } from './auth.dto';
 import { AppError, NotFoundError, ValidationError, ForbiddenError } from '@core/errors';
 import { logger } from '@core/logger';
-import { clearPermissionCache } from '@middleware/rbac.middleware';
+import { clearPermissionCache, resolvePermissionsForUser } from '@middleware/rbac.middleware';
 
 export type SessionDeviceMeta = {
   userAgent?: string | null;
@@ -85,7 +85,7 @@ export class AuthService {
   async register(
     dto: RegisterRequest,
     meta: SessionDeviceMeta = {},
-  ): Promise<{ user: { id: string; email: string; name: string; role: string }; accessToken: string; refreshToken: string }> {
+  ): Promise<{ user: { id: string; email: string; name: string; role: string; vendorId: string | null; permissions: string[] }; accessToken: string; refreshToken: string }> {
     const existing = await repo.findByEmail(dto.email);
     if (existing) {
       throw new ValidationError({ email: ['Email already registered'] });
@@ -115,7 +115,7 @@ export class AuthService {
     const tokens = await generateTokens(user, meta);
 
     return {
-      user: { id: user.id, email: user.email, name: user.name, role: 'CUSTOMER' },
+      user: { id: user.id, email: user.email, name: user.name, role: 'CUSTOMER', vendorId: user.vendorId, permissions: [] },
       ...tokens,
     };
   }
@@ -123,7 +123,7 @@ export class AuthService {
   async login(
     dto: LoginRequest,
     meta: SessionDeviceMeta = {},
-  ): Promise<{ user: { id: string; email: string; name: string; role: string }; accessToken: string; refreshToken: string }> {
+  ): Promise<{ user: { id: string; email: string; name: string; role: string; vendorId: string | null; permissions: string[] }; accessToken: string; refreshToken: string }> {
     const user = await repo.findByEmail(dto.email);
     if (!user) {
       throw new ValidationError({ email: ['Invalid credentials'] });
@@ -140,12 +140,15 @@ export class AuthService {
 
     const tokens = await generateTokens(user, meta);
 
+    const permissions = await resolvePermissionsForUser({ roleId: user.roleId, role: { name: user.role?.name ?? 'CUSTOMER' } });
     return {
       user: {
         id: user.id,
         email: user.email,
         name: user.name,
         role: user.role?.name ?? 'CUSTOMER',
+        vendorId: user.vendorId,
+        permissions,
       },
       ...tokens,
     };

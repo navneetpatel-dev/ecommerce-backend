@@ -3,6 +3,7 @@ import * as usersController from './users.controller';
 import { authenticate } from '@middleware/auth.middleware';
 import { authorize } from '@middleware/rbac.middleware';
 import { validate } from '@middleware/validate.middleware';
+import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import {
   UpdateUserProfileSchema,
   GetUsersQuerySchema,
@@ -42,9 +43,9 @@ router.delete('/addresses/:addressId', authenticate, usersController.deleteAddre
 router.post('/addresses/:addressId/default', authenticate, usersController.setDefaultAddress);
 
 // Admin user management
-router.get('/', authenticate, authorize('users.view'), validate(GetUsersQuerySchema, 'query'), usersController.getUsers);
-router.get('/:id', authenticate, authorize('users.view'), usersController.getUserById);
-router.patch('/:id/status', authenticate, authorize('users.update'), validate(UpdateUserStatusSchema), usersController.updateUserStatus);
-router.delete('/:id', authenticate, authorize('users.delete'), usersController.deleteUser);
+router.get('/', authenticate, authorize(PERMISSIONS.USER_MANAGE), validate(GetUsersQuerySchema, 'query'), usersController.getUsers);
+router.get('/:id', authenticate, authorize(PERMISSIONS.USER_MANAGE), usersController.getUserById);
+router.patch('/:id/status', authenticate, authorize(PERMISSIONS.USER_MANAGE), validate(UpdateUserStatusSchema), usersController.updateUserStatus);
+router.delete('/:id', authenticate, authorize(PERMISSIONS.USER_MANAGE), usersController.deleteUser);
 
 export default router;

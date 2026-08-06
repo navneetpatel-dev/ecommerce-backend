@@ -7,6 +7,7 @@ export class ProductVariant extends Model<InferAttributes<ProductVariant>, Infer
   declare attributes: CreationOptional<Record<string, string>>;
   declare price: number;
   declare stock: CreationOptional<number>;
+  declare weightGrams: CreationOptional<number>;
   declare lowStockAt: CreationOptional<number>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
@@ -29,6 +30,7 @@ export const initProductVariantModel = (sequelize: Sequelize) => {
       attributes: { type: DataTypes.JSONB, defaultValue: {} },
       price: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
       stock: { type: DataTypes.INTEGER, defaultValue: 0 },
+      weightGrams: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 500 },
       lowStockAt: { type: DataTypes.INTEGER, defaultValue: 5 },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },

@@ -4,6 +4,7 @@ import { authenticate } from '@middleware/auth.middleware';
 import { authorize } from '@middleware/rbac.middleware';
 import { checkOwnership } from '@middleware/ownership.middleware';
 import { validate } from '@middleware/validate.middleware';
+import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import {
   CreateProductSchema,
   UpdateProductSchema,
@@ -22,24 +23,24 @@ router.get('/:id', productsController.getProductById);
 router.get('/slug/:slug', productsController.getProductBySlug);
 
 // Vendor product management
-router.post('/', authenticate, authorize('products.create'), validate(CreateProductSchema), productsController.createProduct);
-router.patch('/:id', authenticate, authorize('products.update'), checkOwnership('product'), validate(UpdateProductSchema), productsController.updateProduct);
-router.delete('/:id', authenticate, authorize('products.delete'), checkOwnership('product'), productsController.deleteProduct);
-router.post('/:id/submit', authenticate, authorize('products.submit'), checkOwnership('product'), productsController.submitForApproval);
+router.post('/', authenticate, authorize(PERMISSIONS.PRODUCT_CREATE), validate(CreateProductSchema), productsController.createProduct);
+router.patch('/:id', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE), checkOwnership('product'), validate(UpdateProductSchema), productsController.updateProduct);
+router.delete('/:id', authenticate, authorize(PERMISSIONS.PRODUCT_DELETE, PERMISSIONS.PRODUCT_MANAGE), checkOwnership('product'), productsController.deleteProduct);
+router.post('/:id/submit', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE), checkOwnership('product'), productsController.submitForApproval);
 
 // Admin product approval
-router.post('/:id/approve', authenticate, authorize('products.approve'), productsController.approveProduct);
-router.post('/:id/reject', authenticate, authorize('products.approve'), validate(RejectProductSchema), productsController.rejectProduct);
-router.post('/:id/archive', authenticate, authorize('products.archive'), productsController.archiveProduct);
+router.post('/:id/approve', authenticate, authorize(PERMISSIONS.PRODUCT_APPROVE), productsController.approveProduct);
+router.post('/:id/reject', authenticate, authorize(PERMISSIONS.PRODUCT_APPROVE), validate(RejectProductSchema), productsController.rejectProduct);
+router.post('/:id/archive', authenticate, authorize(PERMISSIONS.PRODUCT_MANAGE), productsController.archiveProduct);
 
 // Variant management
-router.post('/:id/variants', authenticate, authorize('products.update'), validate(AddVariantSchema), productsController.addVariant);
-router.patch('/variants/:variantId', authenticate, authorize('products.update'), validate(UpdateVariantSchema), productsController.updateVariant);
-router.delete('/variants/:variantId', authenticate, authorize('products.update'), productsController.deleteVariant);
+router.post('/:id/variants', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE), validate(AddVariantSchema), productsController.addVariant);
+router.patch('/variants/:variantId', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE), validate(UpdateVariantSchema), productsController.updateVariant);
+router.delete('/variants/:variantId', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE), productsController.deleteVariant);
 
 // Image management
-router.post('/:id/images', authenticate, authorize('products.update'), validate(AddImageSchema), productsController.addImage);
-router.delete('/images/:imageId', authenticate, authorize('products.update'), productsController.deleteImage);
-router.patch('/images/:imageId/primary', authenticate, authorize('products.update'), productsController.setPrimaryImage);
+router.post('/:id/images', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE), validate(AddImageSchema), productsController.addImage);
+router.delete('/images/:imageId', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE), productsController.deleteImage);
+router.patch('/images/:imageId/primary', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE), productsController.setPrimaryImage);
 
 export default router;

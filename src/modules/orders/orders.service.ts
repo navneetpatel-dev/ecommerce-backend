@@ -1,5 +1,6 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
+import { ValidationError } from '@core/errors/ValidationError';
 import { ordersRepository } from './orders.repository';
 import { sequelize } from '@database/models';
 import { OrderItem } from '@database/models/orderItem.model';
@@ -29,6 +30,7 @@ function mapOrderResponse(order: any) {
       ...sub,
       subtotal: Number(sub.subtotal ?? 0),
       shippingCost: Number(sub.shippingCost ?? 0),
+      taxAmount: Number(sub.taxAmount ?? 0),
       items: (sub.items ?? []).map((item: any) => ({
         ...item,
         unitPrice: Number(item.unitPrice ?? 0),
@@ -40,20 +42,9 @@ function mapOrderResponse(order: any) {
 
 export class OrdersService {
   async createOrder(userId: string, data: CreateOrderRequest) {
-    return sequelize.transaction(async (t) => {
-      // TODO: Implement full order creation with cart splitting logic
-      const order = await ordersRepository.create({
-        userId,
-        shippingAddressId: data.shippingAddressId,
-        couponId: data.couponId ?? null,
-        totalAmount: 0,
-        discountTotal: 0,
-        status: 'PENDING',
-        paymentStatus: 'PENDING',
-      }, { transaction: t });
-
-      return order;
-    });
+    void userId;
+    void data;
+    throw new ValidationError('Use /api/checkout to place orders');
   }
 
   async getOrders(userId: string | null, query: GetOrdersQuery) {

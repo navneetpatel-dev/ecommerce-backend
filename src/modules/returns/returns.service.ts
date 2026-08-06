@@ -49,6 +49,14 @@ export class ReturnsService {
     return rows.map((row) => serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }));
   }
 
+  async listAll() {
+    const rows = await ReturnRequest.findAll({
+      include: [{ model: OrderItem, as: 'orderItem', required: false }],
+      order: [['createdAt', 'DESC']],
+    });
+    return rows.map((row) => serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }));
+  }
+
   async create(userId: string, data: CreateReturnInput) {
     return sequelize.transaction(async (t: Transaction) => {
       const orderItem = await OrderItem.findByPk(data.orderItemId, {

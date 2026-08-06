@@ -1,36 +1,30 @@
-// Shipping module - Shipping rate calculation and carrier integration
 import { Router } from 'express';
 import { authenticate } from '@middleware/auth.middleware';
-import { asyncHandler } from '@core/http/asyncHandler';
-import { ok } from '@core/http/ApiResponse';
-import { z } from 'zod';
+import { authorize } from '@middleware/rbac.middleware';
 import { validate } from '@middleware/validate.middleware';
-
-const GetShippingRatesSchema = z.object({
-  pincode: z.string(),
-  weight: z.coerce.number(),
-  method: z.enum(['STANDARD', 'EXPRESS']).optional(),
-});
+import { PERMISSIONS } from '@core/permissions/permissionKeys';
+import {
+  GetShippingRatesSchema,
+  CreateZoneSchema,
+  UpdateZoneSchema,
+  CreateRateSchema,
+} from './shipping.dto';
+import * as shippingController from './shipping.controller';
 
 const router = Router();
 
-router.get('/rates', validate(GetShippingRatesSchema, 'query'), asyncHandler(async (req, res) => {
-  // TODO: Implement shipping rate calculation
-  const rates = [
-    { method: 'STANDARD', cost: 50, estimatedDays: 5 },
-    { method: 'EXPRESS', cost: 100, estimatedDays: 2 },
-  ];
-  res.json(ok(rates));
-}));
+router.get('/rates', validate(GetShippingRatesSchema, 'query'), shippingController.getRates);
 
-router.get('/tracking/:trackingNumber', asyncHandler(async (req, res) => {
-  // TODO: Implement tracking lookup
-  res.json(ok({ status: 'IN_TRANSIT', lastUpdate: new Date() }));
-}));
+router.get('/tracking/:trackingNumber', shippingController.getShipmentByTracking);
 
-router.post('/webhooks/:carrier', asyncHandler(async (req, res) => {
-  // TODO: Implement carrier webhook handling
-  res.status(200).json({ received: true });
-}));
+router.get('/zones', authenticate, authorize(PERMISSIONS.SHIPPING_MANAGE), shippingController.listZones);
+router.post('/zones', authenticate, authorize(PERMISSIONS.SHIPPING_MANAGE), validate(CreateZoneSchema), shippingController.createZone);
+router.patch('/zones/:id', authenticate, authorize(PERMISSIONS.SHIPPING_MANAGE), validate(UpdateZoneSchema), shippingController.updateZone);
+router.delete('/zones/:id', authenticate, authorize(PERMISSIONS.SHIPPING_MANAGE), shippingController.deleteZone);
+
+router.get(['/rates/admin', '/admin/rates'], authenticate, authorize(PERMISSIONS.SHIPPING_MANAGE), shippingController.listAdminRates);
+router.post('/rates', authenticate, authorize(PERMISSIONS.SHIPPING_MANAGE), validate(CreateRateSchema), shippingController.createRate);
+
+router.post('/webhooks/:carrier', shippingController.processWebhook);
 
 export default router;

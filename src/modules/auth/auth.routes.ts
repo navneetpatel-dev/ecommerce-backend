@@ -14,6 +14,7 @@ router.post('/logout', authenticate, controller.logout);
 router.post('/forgot-password', validate(ForgotPasswordSchema), authRateLimiter, controller.forgotPassword);
 router.post('/reset-password', validate(ResetPasswordSchema), controller.resetPassword);
 router.post('/change-password', authenticate, validate(ChangePasswordSchema), controller.changePassword);
+router.get('/me', authenticate, controller.me);
 
 router.get('/sessions', authenticate, controller.listSessions);
 router.delete('/sessions/:family', authenticate, controller.revokeSession);

@@ -11,7 +11,37 @@ import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
 import type { AddToCartRequest, UpdateCartItemRequest } from './cart.dto';
 
-function mapCartItem(item: CartItem & { variant?: ProductVariant & { product?: any } }) {
+export type CartViewItem = {
+  id: string;
+  variantId: string;
+  quantity: number;
+  product: {
+    id: string;
+    name: string;
+    slug: string;
+    imageUrl: string;
+    price: number;
+    vendor: {
+      id: string;
+      businessName: string;
+      slug: string;
+      logoUrl: string | null;
+    };
+  };
+  variant: {
+    sku: string;
+    attributes: Record<string, string>;
+    weightGrams: number;
+  };
+};
+
+export type CartView = {
+  id: string | null;
+  items: CartViewItem[];
+  total: number;
+};
+
+function mapCartItem(item: CartItem & { variant?: ProductVariant & { product?: any } }): CartViewItem {
   const variant = item.variant;
   const product = variant?.product;
   const images = product?.images ?? [];
@@ -20,24 +50,24 @@ function mapCartItem(item: CartItem & { variant?: ProductVariant & { product?: a
   const vendor = product?.vendor ?? product?.Vendor ?? null;
 
   return {
-    id: item.id,
-    variantId: item.variantId,
-    quantity: item.quantity,
+    id: String(item.id),
+    variantId: String(item.variantId),
+    quantity: Number(item.quantity),
     product: {
-      id: product?.id ?? '',
+      id: String(product?.id ?? ''),
       name: product?.name ?? 'Unknown product',
       slug: product?.slug ?? '',
       imageUrl: primaryImage,
       price: Number(variant?.price ?? product?.basePrice ?? 0),
       vendor: vendor
         ? {
-            id: vendor.id,
+            id: String(vendor.id),
             businessName: vendor.businessName,
             slug: vendor.slug,
             logoUrl: vendor.logoUrl ?? null,
           }
         : {
-            id: product?.vendorId ?? 'unknown',
+            id: String(product?.vendorId ?? 'unknown'),
             businessName: 'Marketplace',
             slug: 'marketplace',
             logoUrl: null,
@@ -45,7 +75,8 @@ function mapCartItem(item: CartItem & { variant?: ProductVariant & { product?: a
     },
     variant: {
       sku: variant?.sku ?? '',
-      attributes: variant?.attributes ?? {},
+      attributes: (variant?.attributes ?? {}) as Record<string, string>,
+      weightGrams: Number(variant?.weightGrams ?? 500),
     },
   };
 }
@@ -55,7 +86,7 @@ function clampQuantity(desired: number, stock: number) {
 }
 
 export class CartService {
-  async getCart(userId: string | null, sessionId: string | null) {
+  async getCart(userId: string | null, sessionId: string | null): Promise<CartView> {
     let cart;
     if (userId) {
       cart = await cartRepository.findByUserId(userId);
@@ -91,7 +122,7 @@ export class CartService {
     const mappedItems = items.map(mapCartItem);
     const total = mappedItems.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
 
-    return { id: cart.id, items: mappedItems, total };
+    return { id: String(cart.id), items: mappedItems, total };
   }
 
   /**
@@ -107,7 +138,11 @@ export class CartService {
     return this.mergeGuestCartIntoUserCart(sessionId, userId);
   }
 
-  async addToCart(userId: string | null, sessionId: string | null, data: AddToCartRequest) {
+  async addToCart(
+    userId: string | null,
+    sessionId: string | null,
+    data: AddToCartRequest,
+  ): Promise<CartView> {
     await sequelize.transaction(async (t) => {
       const variant = await ProductVariant.findByPk(data.variantId, { transaction: t });
       if (!variant) throw new NotFoundError('ProductVariant');
@@ -158,7 +193,7 @@ export class CartService {
     sessionId: string | null,
     itemId: string,
     data: UpdateCartItemRequest,
-  ) {
+  ): Promise<CartView> {
     await sequelize.transaction(async (t) => {
       const itemResult = await CartItem.findByPk(itemId, {
         include: ['variant'],
@@ -180,7 +215,11 @@ export class CartService {
     return this.getCart(userId, sessionId);
   }
 
-  async removeFromCart(userId: string | null, sessionId: string | null, itemId: string) {
+  async removeFromCart(
+    userId: string | null,
+    sessionId: string | null,
+    itemId: string,
+  ): Promise<CartView> {
     const item = await CartItem.findByPk(itemId);
     if (!item) throw new NotFoundError('CartItem');
 

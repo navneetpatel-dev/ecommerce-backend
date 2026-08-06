@@ -5,6 +5,7 @@ export class Vendor extends Model<InferAttributes<Vendor>, InferCreationAttribut
   declare businessName: string;
   declare slug: string;
   declare gstNumber: string | null;
+  declare state: string | null;
   declare bankDetails: Record<string, unknown>;
   declare logoUrl: string | null;
   declare bannerUrl: string | null;
@@ -33,6 +34,7 @@ export const initVendorModel = (sequelize: Sequelize) => {
       businessName: { type: DataTypes.STRING, allowNull: false },
       slug: { type: DataTypes.STRING, unique: true, allowNull: false },
       gstNumber: { type: DataTypes.STRING, allowNull: true },
+      state: { type: DataTypes.STRING, allowNull: true },
       bankDetails: { type: DataTypes.JSONB, allowNull: false },
       logoUrl: { type: DataTypes.STRING, allowNull: true },
       bannerUrl: { type: DataTypes.STRING, allowNull: true },

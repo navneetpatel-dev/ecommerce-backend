@@ -2,12 +2,13 @@ import { Request, Response, NextFunction } from 'express';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { sequelize } from '@config/db';
 import { QueryTypes } from 'sequelize';
+import { PERMISSION_KEYS, type PermissionKey } from '@core/permissions/permissionKeys';
 
 const rolePermissionCache = new Map<string, Set<string>>();
 
-async function loadPermissionsForRole(roleId: string): Promise<Set<string>> {
+export async function loadPermissionsForRole(roleId: string): Promise<Set<string>> {
   const rows = await sequelize.query<{ key: string }>(
-    `SELECT p.key FROM permissions p
+    `SELECT p.key from permissions p
      INNER JOIN "RolePermissions" rp ON rp."permissionId" = p.id
      WHERE rp."roleId" = :roleId`,
     { replacements: { roleId }, type: QueryTypes.SELECT },
@@ -17,7 +18,27 @@ async function loadPermissionsForRole(roleId: string): Promise<Set<string>> {
   return perms;
 }
 
-export const authorize = (permissionKey: string) => {
+export async function resolvePermissionsForUser(user: {
+  roleId: string;
+  role: { name: string };
+}): Promise<PermissionKey[]> {
+  if (user.role.name === 'SUPER_ADMIN') {
+    return [...PERMISSION_KEYS];
+  }
+  let perms = rolePermissionCache.get(user.roleId);
+  if (!perms) {
+    perms = await loadPermissionsForRole(user.roleId);
+  }
+  return [...perms].filter((k): k is PermissionKey =>
+    (PERMISSION_KEYS as readonly string[]).includes(k),
+  );
+}
+
+/**
+ * Require at least one of the given permission keys.
+ * SUPER_ADMIN always passes.
+ */
+export const authorize = (...permissionKeys: PermissionKey[]) => {
   return async (req: Request, _res: Response, next: NextFunction) => {
     const user = req.user;
     if (!user) {
@@ -28,16 +49,22 @@ export const authorize = (permissionKey: string) => {
       return next();
     }
 
+    if (permissionKeys.length === 0) {
+      return next(new ForbiddenError('Missing permission'));
+    }
+
     let perms = rolePermissionCache.get(user.roleId);
     if (!perms) {
       perms = await loadPermissionsForRole(user.roleId);
     }
 
-    if (perms.has(permissionKey)) {
+    if (permissionKeys.some((key) => perms!.has(key))) {
       return next();
     }
 
-    return next(new ForbiddenError(`Missing permission: ${permissionKey}`));
+    return next(
+      new ForbiddenError(`Missing permission: ${permissionKeys.join(' or ')}`),
+    );
   };
 };
 

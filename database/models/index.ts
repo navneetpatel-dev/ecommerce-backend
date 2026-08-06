@@ -32,6 +32,7 @@ import { initNotificationLogModel, NotificationLog } from './notificationLog.mod
 import { initAuditLogModel, AuditLog } from './auditLog.model';
 import { initWebhookEventModel, WebhookEvent } from './webhookEvent.model';
 import { initHelpTicketModel, HelpTicket } from './helpTicket.model';
+import { initPlatformSettingModel, PlatformSetting } from './platformSetting.model';
 
 const models = {
   Role: initRoleModel(sequelize),
@@ -67,6 +68,7 @@ const models = {
   AuditLog: initAuditLogModel(sequelize),
   WebhookEvent: initWebhookEventModel(sequelize),
   HelpTicket: initHelpTicketModel(sequelize),
+  PlatformSetting: initPlatformSettingModel(sequelize),
 };
 
 Object.values(models).forEach((model: any) => {
@@ -84,4 +86,5 @@ export {
   Review, ReviewVote, Wishlist, WishlistItem,
   ShippingZone, ShippingRate, Shipment, ReturnRequest,
   TaxRule, NotificationLog, AuditLog, WebhookEvent, HelpTicket,
+  PlatformSetting,
 };

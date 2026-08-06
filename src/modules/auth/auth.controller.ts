@@ -2,6 +2,9 @@ import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { authService, type SessionDeviceMeta } from './auth.service';
+import { User } from '@database/models/user.model';
+import { Role } from '@database/models/role.model';
+import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 
 const COOKIE_OPTIONS = {
   httpOnly: true,
@@ -87,4 +90,18 @@ export const revokeOtherSessions = asyncHandler(async (req: Request, res: Respon
   }
   await authService.revokeOtherSessions(req.user!.id, current);
   res.status(204).send();
+});
+
+export const me = asyncHandler(async (req: Request, res: Response) => {
+  const user = await User.findByPk(req.user!.id, { include: [Role] });
+  if (!user) { res.status(404).json({ success: false, error: { message: 'User not found' } }); return; }
+  const permissions = await resolvePermissionsForUser({ roleId: user.roleId, role: { name: user.role?.name ?? 'CUSTOMER' } });
+  res.json(ok({
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role?.name ?? 'CUSTOMER',
+    vendorId: user.vendorId,
+    permissions,
+  }));
 });

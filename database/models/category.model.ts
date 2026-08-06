@@ -4,6 +4,7 @@ export class Category extends Model<InferAttributes<Category>, InferCreationAttr
   declare id: CreationOptional<string>;
   declare name: string;
   declare slug: string;
+  declare imageUrl: string | null;
   declare parentId: string | null;
   declare createdBy: string | null;
   declare updatedBy: string | null;
@@ -25,6 +26,7 @@ export const initCategoryModel = (sequelize: Sequelize) => {
       id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
       name: { type: DataTypes.STRING, allowNull: false },
       slug: { type: DataTypes.STRING, unique: true, allowNull: false },
+      imageUrl: { type: DataTypes.STRING, allowNull: true },
       parentId: { type: DataTypes.UUID, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },

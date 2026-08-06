@@ -22,6 +22,8 @@ import notificationsRoutes from '@modules/notifications/notifications.routes';
 import inventoryRoutes from '@modules/inventory/inventory.routes';
 import webhooksRoutes from '@modules/webhooks/webhooks.routes';
 import helpRoutes from '@modules/help/help.routes';
+import auditRoutes from '@modules/audit/audit.routes';
+import settingsRoutes from '@modules/settings/settings.routes';
 
 const router = Router();
 
@@ -49,5 +51,7 @@ router.use('/search', searchRoutes);
 router.use('/notifications', notificationsRoutes);
 router.use('/inventory', inventoryRoutes);
 router.use('/help', helpRoutes);
+router.use('/audit', auditRoutes);
+router.use('/settings', settingsRoutes);
 
 export { router as routes };

@@ -149,9 +149,9 @@ module.exports = {
     const allLeaves = [];
     for (const [parent, children] of Object.entries(categoryNames)) {
       const parentId = uuidv4();
-      categories.push({ id: parentId, name: parent.charAt(0).toUpperCase() + parent.slice(1), slug: parent, parentId: null, createdAt: now, updatedAt: now });
+      categories.push({ id: parentId, name: parent.charAt(0).toUpperCase() + parent.slice(1), slug: parent, imageUrl: CATEGORY_COVERS[parent], parentId: null, createdAt: now, updatedAt: now });
       for (const child of children) {
-        const leaf = { id: uuidv4(), name: child, slug: `${parent}-${slugify(child)}`, parentId, createdAt: now, updatedAt: now };
+        const leaf = { id: uuidv4(), name: child, slug: `${parent}-${slugify(child)}`, imageUrl: CATEGORY_COVERS[parent], parentId, createdAt: now, updatedAt: now };
         categories.push(leaf);
         allLeaves.push(leaf);
       }
@@ -175,9 +175,11 @@ module.exports = {
     for (let i = 0; i < 25; i++) {
       const vendorId = uuidv4();
       const approved = i < 22;
+      const vendorStates = ['Karnataka', 'Maharashtra', 'Delhi', 'Tamil Nadu', 'Gujarat'];
       vendors.push({
         id: vendorId, businessName: vendorNames[i], slug: slugify(vendorNames[i]),
         gstNumber: `29AABC${String(i).padStart(4, '0')}N1Z${i + 1}`,
+        state: vendorStates[i % vendorStates.length],
         bankDetails: JSON.stringify({ accountNumber: `000${String(i).padStart(12, '0')}`, ifscCode: `SBIN00${String(i).padStart(4, '0')}`, accountHolderName: vendorNames[i], bankName: 'State Bank of India' }),
         logoUrl: VENDOR_LOGOS[i % VENDOR_LOGOS.length], bannerUrl: null,
         description: `${vendorNames[i]} — premium quality products with fast shipping.`,

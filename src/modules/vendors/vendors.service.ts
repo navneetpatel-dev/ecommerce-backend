@@ -3,6 +3,7 @@ import { ValidationError } from '@core/errors/ValidationError';
 import { vendorsRepository } from './vendors.repository';
 import { VendorDocument } from '@database/models/vendorDocument.model';
 import { sequelize } from '@database/models';
+import { QueryTypes } from 'sequelize';
 import type {
   RegisterVendorRequest,
   UpdateVendorRequest,
@@ -156,20 +157,50 @@ export class VendorsService {
   }
 
   async getDashboardSummary(vendorId: string): Promise<{
-    revenue: number;
-    orders: number;
+    todayOrders: number;
+    pendingShipments: number;
+    monthRevenue: number;
     pendingPayouts: number;
     performanceScore: number | null;
   }> {
     const vendor = await vendorsRepository.findById(vendorId);
     if (!vendor) throw new NotFoundError('Vendor');
 
-    // TODO: Implement actual dashboard metrics
+    const [today] = await sequelize.query<{ orders: string }>(
+      `SELECT COUNT(*)::int AS orders
+       FROM sub_orders
+       WHERE "vendorId" = :vendorId
+         AND status <> 'CANCELLED'
+         AND "createdAt" >= date_trunc('day', NOW())`,
+      { replacements: { vendorId }, type: QueryTypes.SELECT },
+    );
+    const [pending] = await sequelize.query<{ shipments: string }>(
+      `SELECT COUNT(*)::int AS shipments
+       FROM sub_orders
+       WHERE "vendorId" = :vendorId
+         AND status IN ('PENDING', 'CONFIRMED')`,
+      { replacements: { vendorId }, type: QueryTypes.SELECT },
+    );
+    const [month] = await sequelize.query<{ revenue: string | null }>(
+      `SELECT COALESCE(SUM(subtotal), 0)::numeric AS revenue
+       FROM sub_orders
+       WHERE "vendorId" = :vendorId
+         AND status <> 'CANCELLED'
+         AND "createdAt" >= date_trunc('month', NOW())`,
+      { replacements: { vendorId }, type: QueryTypes.SELECT },
+    );
+    const [payout] = await sequelize.query<{ pending: string | null }>(
+      `SELECT COALESCE(SUM("saleAmount" - "commissionAmount"), 0)::numeric AS pending
+       FROM commission_ledgers
+       WHERE "vendorId" = :vendorId AND status = 'PENDING'`,
+      { replacements: { vendorId }, type: QueryTypes.SELECT },
+    );
     return {
-      revenue: 0,
-      orders: 0,
-      pendingPayouts: 0,
-      performanceScore: vendor.performanceScore,
+      todayOrders: Number(today?.orders ?? 0),
+      pendingShipments: Number(pending?.shipments ?? 0),
+      monthRevenue: Number(month?.revenue ?? 0),
+      pendingPayouts: Number(payout?.pending ?? 0),
+      performanceScore: vendor.performanceScore == null ? null : Number(vendor.performanceScore),
     };
   }
 }

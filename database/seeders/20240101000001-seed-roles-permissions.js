@@ -1,5 +1,10 @@
 'use strict';
 
+/**
+ * Must match `src/core/permissions/permissionKeys.ts` PERMISSIONS values
+ * (and ROLE_PERMISSIONS assignments). Keys stay as string arrays here since this is JS.
+ */
+
 const { v4: uuidv4 } = require('uuid');
 
 const ROLE_IDS = {

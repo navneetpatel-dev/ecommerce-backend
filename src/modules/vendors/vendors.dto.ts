@@ -3,6 +3,7 @@ import { z } from 'zod';
 export const RegisterVendorSchema = z.object({
   businessName: z.string().min(1),
   gstNumber: z.string().optional(),
+  state: z.string().min(2).optional(),
   bankDetails: z.record(z.unknown()),
   description: z.string().optional(),
 });
@@ -10,6 +11,7 @@ export const RegisterVendorSchema = z.object({
 export const UpdateVendorSchema = z.object({
   businessName: z.string().min(1).optional(),
   gstNumber: z.string().optional(),
+  state: z.string().min(2).optional(),
   bankDetails: z.record(z.unknown()).optional(),
   description: z.string().optional(),
   logoUrl: z.string().url().optional(),
