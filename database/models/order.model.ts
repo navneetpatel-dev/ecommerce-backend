@@ -19,9 +19,9 @@ export class Order extends Model<InferAttributes<Order>, InferCreationAttributes
   declare readonly deletedAt: CreationOptional<Date>;
 
   static associate(models: Record<string, any>) {
-    Order.belongsTo(models.User, { foreignKey: 'userId' });
-    Order.belongsTo(models.Coupon, { foreignKey: 'couponId' });
-    Order.belongsTo(models.Address, { foreignKey: 'shippingAddressId' });
+    Order.belongsTo(models.User, { as: 'user', foreignKey: 'userId' });
+    Order.belongsTo(models.Coupon, { as: 'coupon', foreignKey: 'couponId' });
+    Order.belongsTo(models.Address, { as: 'shippingAddress', foreignKey: 'shippingAddressId' });
     Order.hasMany(models.SubOrder, { foreignKey: 'orderId', as: 'subOrders' });
   }
 }

@@ -17,7 +17,7 @@ export const getOrders = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const getOrderById = asyncHandler(async (req: Request, res: Response) => {
-  const order = await ordersService.getOrderById(req.params.id!);
+  const order = await ordersService.getOrderById(req.params.id!, req.user!.id);
   res.json(ok(order));
 });
 

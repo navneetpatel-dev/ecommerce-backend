@@ -27,7 +27,12 @@ export class OrdersRepository extends BaseRepository<Order> {
       where,
       limit: filters.limit,
       offset: filters.offset,
-      include: ['subOrders', 'user'],
+      include: [
+        {
+          association: 'subOrders',
+          include: ['items', 'vendor'],
+        },
+      ],
       order: [['createdAt', 'DESC']],
     });
   }

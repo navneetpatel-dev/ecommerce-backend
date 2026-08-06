@@ -16,9 +16,10 @@ export class SubOrder extends Model<InferAttributes<SubOrder>, InferCreationAttr
   declare readonly deletedAt: CreationOptional<Date>;
 
   static associate(models: Record<string, any>) {
-    SubOrder.belongsTo(models.Order, { foreignKey: 'orderId' });
-    SubOrder.belongsTo(models.Vendor, { foreignKey: 'vendorId' });
+    SubOrder.belongsTo(models.Order, { as: 'order', foreignKey: 'orderId' });
+    SubOrder.belongsTo(models.Vendor, { as: 'vendor', foreignKey: 'vendorId' });
     SubOrder.hasMany(models.OrderItem, { foreignKey: 'subOrderId', as: 'items' });
+    SubOrder.hasOne(models.Shipment, { foreignKey: 'subOrderId', as: 'shipment' });
   }
 }
 
