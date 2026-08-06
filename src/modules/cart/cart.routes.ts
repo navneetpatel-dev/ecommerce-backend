@@ -1,10 +1,12 @@
 import { Router } from 'express';
 import * as cartController from './cart.controller';
 import { validate } from '@middleware/validate.middleware';
-import { optionalAuthenticate } from '@middleware/auth.middleware';
+import { authenticate, optionalAuthenticate } from '@middleware/auth.middleware';
 import { AddToCartSchema, UpdateCartItemSchema } from './cart.dto';
 
 const router = Router();
+
+router.post('/merge', authenticate, cartController.mergeGuestCart);
 
 router.use(optionalAuthenticate);
 

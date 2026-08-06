@@ -12,7 +12,7 @@ import { Address } from '@database/models/address.model';
 import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
 import { paymentsService } from '@modules/payments/payments.service';
-import { cartRepository } from '@modules/cart/cart.repository';
+import { cartService } from '@modules/cart/cart.service';
 import type {
   CancelCheckoutRequest,
   CreateCheckoutRequest,
@@ -295,38 +295,16 @@ export class CheckoutService {
       }
 
       const order = orderResult as OrderForRollback;
-      const cart = await cartRepository.findOrCreateByUser(userId);
+      const restoreLines: Array<{ variantId: string; quantity: number }> = [];
 
       for (const subOrder of order.subOrders ?? []) {
         for (const item of subOrder.items ?? []) {
-          const variant = await ProductVariant.findByPk(item.variantId, { transaction: t });
-          if (variant) {
-            await variant.increment('stock', {
-              by: item.quantity,
-              transaction: t,
-            });
-          }
-
-          const existing = await CartItem.findOne({
-            where: { cartId: cart.id, variantId: item.variantId },
+          restoreLines.push({ variantId: item.variantId, quantity: item.quantity });
+          await ProductVariant.increment('stock', {
+            by: item.quantity,
+            where: { id: item.variantId },
             transaction: t,
           });
-
-          if (existing) {
-            await existing.update(
-              { quantity: existing.quantity + item.quantity },
-              { transaction: t },
-            );
-          } else {
-            await CartItem.create(
-              {
-                cartId: cart.id,
-                variantId: item.variantId,
-                quantity: item.quantity,
-              },
-              { transaction: t },
-            );
-          }
         }
 
         await subOrder.update({ status: 'CANCELLED' }, { transaction: t });
@@ -336,6 +314,8 @@ export class CheckoutService {
           transaction: t,
         });
       }
+
+      await cartService.restoreItemsToUserCart(userId, restoreLines, t);
 
       await order.update(
         {

@@ -8,10 +8,9 @@ import { Order } from '@database/models/order.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { OrderItem } from '@database/models/orderItem.model';
 import { ProductVariant } from '@database/models/productVariant.model';
-import { CartItem } from '@database/models/cartItem.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { WebhookEvent } from '@database/models/webhookEvent.model';
-import { cartRepository } from '@modules/cart/cart.repository';
+import { cartService } from '@modules/cart/cart.service';
 
 export type RazorpayCheckoutPayload = {
   razorpayOrderId: string;
@@ -59,38 +58,16 @@ export class PaymentsService {
       if (!orderResult) return;
 
       const order = orderResult as OrderForRollback;
-      const cart = await cartRepository.findOrCreateByUser(order.userId);
+      const restoreLines: Array<{ variantId: string; quantity: number }> = [];
 
       for (const subOrder of order.subOrders ?? []) {
         for (const item of subOrder.items ?? []) {
-          const variant = await ProductVariant.findByPk(item.variantId, { transaction: t });
-          if (variant) {
-            await variant.increment('stock', {
-              by: item.quantity,
-              transaction: t,
-            });
-          }
-
-          const existing = await CartItem.findOne({
-            where: { cartId: cart.id, variantId: item.variantId },
+          restoreLines.push({ variantId: item.variantId, quantity: item.quantity });
+          await ProductVariant.increment('stock', {
+            by: item.quantity,
+            where: { id: item.variantId },
             transaction: t,
           });
-
-          if (existing) {
-            await existing.update(
-              { quantity: existing.quantity + item.quantity },
-              { transaction: t },
-            );
-          } else {
-            await CartItem.create(
-              {
-                cartId: cart.id,
-                variantId: item.variantId,
-                quantity: item.quantity,
-              },
-              { transaction: t },
-            );
-          }
         }
 
         await subOrder.update({ status: 'CANCELLED' }, { transaction: t });
@@ -99,6 +76,8 @@ export class PaymentsService {
           transaction: t,
         });
       }
+
+      await cartService.restoreItemsToUserCart(order.userId, restoreLines, t);
 
       await order.update(
         {

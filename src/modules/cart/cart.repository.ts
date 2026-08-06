@@ -1,6 +1,6 @@
+import type { Transaction } from 'sequelize';
 import { BaseRepository } from '@core/repository/BaseRepository';
 import { Cart } from '@database/models/cart.model';
-import { CartItem } from '@database/models/cartItem.model';
 
 export class CartRepository extends BaseRepository<Cart> {
   constructor() {
@@ -21,18 +21,20 @@ export class CartRepository extends BaseRepository<Cart> {
     });
   }
 
-  async findOrCreateByUser(userId: string) {
+  async findOrCreateByUser(userId: string, transaction?: Transaction) {
     const [cart] = await this.model.findOrCreate({
       where: { userId },
       defaults: { userId },
+      transaction,
     });
     return cart;
   }
 
-  async findOrCreateBySession(sessionId: string) {
+  async findOrCreateBySession(sessionId: string, transaction?: Transaction) {
     const [cart] = await this.model.findOrCreate({
       where: { sessionId },
       defaults: { sessionId },
+      transaction,
     });
     return cart;
   }
