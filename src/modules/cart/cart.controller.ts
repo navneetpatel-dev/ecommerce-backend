@@ -4,13 +4,14 @@ import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { cartService } from './cart.service';
 import { AddToCartSchema, UpdateCartItemSchema } from './cart.dto';
+import { COOKIES, GUEST_SESSION_TTL_MS } from '@core/constants/http';
 
 const SESSION_COOKIE = {
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
   sameSite: 'lax' as const,
   path: '/',
-  maxAge: 30 * 24 * 60 * 60 * 1000,
+  maxAge: GUEST_SESSION_TTL_MS,
 };
 
 function clearGuestSessionCookie(res: Response) {
@@ -20,18 +21,18 @@ function clearGuestSessionCookie(res: Response) {
     sameSite: 'lax' as const,
     secure: process.env.NODE_ENV === 'production',
   };
-  res.clearCookie('sessionId', { ...base, httpOnly: true });
-  res.clearCookie('sessionId', base);
+  res.clearCookie(COOKIES.SESSION_ID, { ...base, httpOnly: true });
+  res.clearCookie(COOKIES.SESSION_ID, base);
 }
 
 function resolveCartIdentity(req: Request, res: Response) {
   const userId = req.user?.id ?? null;
-  let sessionId = (req.cookies?.sessionId as string | undefined) ?? null;
+  let sessionId = (req.cookies?.[COOKIES.SESSION_ID] as string | undefined) ?? null;
 
   // Guests need a stable anonymous id. Logged-in users should not mint a new guest cart.
   if (!userId && !sessionId) {
     sessionId = randomUUID();
-    res.cookie('sessionId', sessionId, SESSION_COOKIE);
+    res.cookie(COOKIES.SESSION_ID, sessionId, SESSION_COOKIE);
   }
 
   return { userId, sessionId };
@@ -61,7 +62,7 @@ export const getCart = asyncHandler(async (req: Request, res: Response) => {
 
 export const mergeGuestCart = asyncHandler(async (req: Request, res: Response) => {
   const userId = req.user!.id;
-  const sessionId = (req.cookies?.sessionId as string | undefined) ?? null;
+  const sessionId = (req.cookies?.[COOKIES.SESSION_ID] as string | undefined) ?? null;
 
   if (sessionId) {
     await cartService.mergeGuestCartIfPresent(sessionId, userId);

@@ -1,5 +1,11 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
+import {
+  VENDOR_STATUS,
+  ORDER_STATUS,
+  COMMISSION_STATUS,
+} from '@core/constants/statuses';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 import { vendorsRepository } from './vendors.repository';
 import { VendorDocument } from '@database/models/vendorDocument.model';
 import { sequelize } from '@database/models';
@@ -35,7 +41,7 @@ export class VendorsService {
       const vendor = await vendorsRepository.create({
         ...data,
         slug,
-        status: 'PENDING',
+        status: VENDOR_STATUS.PENDING,
       }, { transaction: t });
 
       return vendor;
@@ -82,12 +88,12 @@ export class VendorsService {
     return sequelize.transaction(async (t) => {
       const vendor = await vendorsRepository.findById(vendorId, { transaction: t });
       if (!vendor) throw new NotFoundError('Vendor');
-      if (vendor.status !== 'PENDING') {
-        throw new ValidationError('Vendor is not in PENDING status');
+      if (vendor.status !== VENDOR_STATUS.PENDING) {
+        throw new ValidationError(ERROR_MESSAGES.VENDOR_NOT_PENDING);
       }
 
       await vendorsRepository.update(vendorId, {
-        status: 'APPROVED',
+        status: VENDOR_STATUS.APPROVED,
         commissionRate: data.commissionRate ?? vendor.commissionRate,
       }, { transaction: t });
 
@@ -100,11 +106,11 @@ export class VendorsService {
     return sequelize.transaction(async (t) => {
       const vendor = await vendorsRepository.findById(vendorId, { transaction: t });
       if (!vendor) throw new NotFoundError('Vendor');
-      if (vendor.status !== 'PENDING') {
-        throw new ValidationError('Vendor is not in PENDING status');
+      if (vendor.status !== VENDOR_STATUS.PENDING) {
+        throw new ValidationError(ERROR_MESSAGES.VENDOR_NOT_PENDING);
       }
 
-      await vendorsRepository.update(vendorId, { status: 'REJECTED' }, { transaction: t });
+      await vendorsRepository.update(vendorId, { status: VENDOR_STATUS.REJECTED }, { transaction: t });
 
       // TODO: Send rejection notification with reason
       return this.getVendorById(vendorId);
@@ -116,7 +122,7 @@ export class VendorsService {
       const vendor = await vendorsRepository.findById(vendorId, { transaction: t });
       if (!vendor) throw new NotFoundError('Vendor');
 
-      await vendorsRepository.update(vendorId, { status: 'SUSPENDED' }, { transaction: t });
+      await vendorsRepository.update(vendorId, { status: VENDOR_STATUS.SUSPENDED }, { transaction: t });
 
       // TODO: Send suspension notification with reason
       return this.getVendorById(vendorId);
@@ -170,30 +176,40 @@ export class VendorsService {
       `SELECT COUNT(*)::int AS orders
        FROM sub_orders
        WHERE "vendorId" = :vendorId
-         AND status <> 'CANCELLED'
+         AND status <> :cancelled
          AND "createdAt" >= date_trunc('day', NOW())`,
-      { replacements: { vendorId }, type: QueryTypes.SELECT },
+      { replacements: { vendorId, cancelled: ORDER_STATUS.CANCELLED }, type: QueryTypes.SELECT },
     );
     const [pending] = await sequelize.query<{ shipments: string }>(
       `SELECT COUNT(*)::int AS shipments
        FROM sub_orders
        WHERE "vendorId" = :vendorId
-         AND status IN ('PENDING', 'CONFIRMED')`,
-      { replacements: { vendorId }, type: QueryTypes.SELECT },
+         AND status IN (:pending, :confirmed)`,
+      {
+        replacements: {
+          vendorId,
+          pending: ORDER_STATUS.PENDING,
+          confirmed: ORDER_STATUS.CONFIRMED,
+        },
+        type: QueryTypes.SELECT,
+      },
     );
     const [month] = await sequelize.query<{ revenue: string | null }>(
       `SELECT COALESCE(SUM(subtotal), 0)::numeric AS revenue
        FROM sub_orders
        WHERE "vendorId" = :vendorId
-         AND status <> 'CANCELLED'
+         AND status <> :cancelled
          AND "createdAt" >= date_trunc('month', NOW())`,
-      { replacements: { vendorId }, type: QueryTypes.SELECT },
+      { replacements: { vendorId, cancelled: ORDER_STATUS.CANCELLED }, type: QueryTypes.SELECT },
     );
     const [payout] = await sequelize.query<{ pending: string | null }>(
       `SELECT COALESCE(SUM("saleAmount" - "commissionAmount"), 0)::numeric AS pending
        FROM commission_ledgers
-       WHERE "vendorId" = :vendorId AND status = 'PENDING'`,
-      { replacements: { vendorId }, type: QueryTypes.SELECT },
+       WHERE "vendorId" = :vendorId AND status = :pending`,
+      {
+        replacements: { vendorId, pending: COMMISSION_STATUS.PENDING },
+        type: QueryTypes.SELECT,
+      },
     );
     return {
       todayOrders: Number(today?.orders ?? 0),

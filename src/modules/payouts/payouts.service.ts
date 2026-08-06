@@ -2,6 +2,7 @@ import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { Payout } from '@database/models/payout.model';
 import { sequelize } from '@database/models';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
+import { COMMISSION_STATUS, PAYOUT_STATUS } from '@core/constants/statuses';
 
 function serializePayout(row: Payout) {
   const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
@@ -34,7 +35,7 @@ export class PayoutsService {
   async process(actorId: string) {
     return sequelize.transaction(async (transaction) => {
       const ledgers = await CommissionLedger.findAll({
-        where: { status: 'PENDING' },
+        where: { status: COMMISSION_STATUS.PENDING },
         transaction,
         lock: transaction.LOCK.UPDATE,
       });
@@ -61,14 +62,14 @@ export class PayoutsService {
               amount: group.amount,
               periodStart: group.start,
               periodEnd: group.end,
-              status: 'PENDING',
+              status: PAYOUT_STATUS.PENDING,
               createdBy: actorId,
             },
             { transaction },
           ),
         );
         await CommissionLedger.update(
-          { status: 'SETTLED', updatedBy: actorId },
+          { status: COMMISSION_STATUS.SETTLED, updatedBy: actorId },
           { where: { id: group.rows.map((row) => row.id) }, transaction },
         );
       }

@@ -1,9 +1,10 @@
 import { z } from 'zod';
+import { PAYMENT_METHOD_VALUES } from '@core/constants/statuses';
 
 const PaymentMethodInput = z
   .string()
   .transform((value) => value.trim().toUpperCase())
-  .pipe(z.enum(['RAZORPAY', 'COD']));
+  .pipe(z.enum(PAYMENT_METHOD_VALUES));
 
 export const CreateCheckoutSchema = z
   .object({

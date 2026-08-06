@@ -3,6 +3,8 @@ import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { sequelize } from '@config/db';
 import { QueryTypes } from 'sequelize';
+import { ROLES } from '@core/constants/statuses';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 
 type ResourceType = 'product' | 'suborder' | 'vendor';
 
@@ -16,13 +18,13 @@ export const checkOwnership = (resourceType: ResourceType) => {
   return async (req: Request, _res: Response, next: NextFunction) => {
     const user = req.user;
     if (!user) {
-      return next(new ForbiddenError('Authentication required'));
+      return next(new ForbiddenError(ERROR_MESSAGES.AUTH_REQUIRED));
     }
 
     if (
-      user.role.name === 'SUPER_ADMIN' ||
-      user.role.name === 'ADMIN_CATALOG_MANAGER' ||
-      user.role.name === 'ADMIN_ORDER_MANAGER'
+      user.role.name === ROLES.SUPER_ADMIN ||
+      user.role.name === ROLES.ADMIN_CATALOG_MANAGER ||
+      user.role.name === ROLES.ADMIN_ORDER_MANAGER
     ) {
       return next();
     }

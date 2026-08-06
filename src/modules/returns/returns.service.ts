@@ -1,6 +1,8 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ValidationError } from '@core/errors/ValidationError';
+import { ORDER_STATUS, RETURN_STATUS, type ReturnStatus } from '@core/constants/statuses';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { OrderItem } from '@database/models/orderItem.model';
 import { SubOrder } from '@database/models/subOrder.model';
@@ -14,13 +16,17 @@ type CreateReturnInput = {
   reason: string;
 };
 
-type TransitionStatus =
-  | 'APPROVED'
-  | 'REJECTED'
-  | 'PICKUP_SCHEDULED'
-  | 'RECEIVED'
-  | 'REFUNDED'
-  | 'CLOSED';
+const RESOLVED_BY_STATUSES: ReturnStatus[] = [
+  RETURN_STATUS.APPROVED,
+  RETURN_STATUS.REJECTED,
+  RETURN_STATUS.REFUNDED,
+  RETURN_STATUS.CLOSED,
+];
+const RESOLVED_AT_STATUSES: ReturnStatus[] = [
+  RETURN_STATUS.REJECTED,
+  RETURN_STATUS.REFUNDED,
+  RETURN_STATUS.CLOSED,
+];
 
 function serializeReturn(row: ReturnRequest | (ReturnRequest & { orderItem?: OrderItem })) {
   const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
@@ -77,9 +83,9 @@ export class ReturnsService {
       };
 
       if (item.subOrder.order.userId !== userId) {
-        throw new ForbiddenError('Not your order');
+        throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_ORDER);
       }
-      if (item.subOrder.status !== 'DELIVERED') {
+      if (item.subOrder.status !== ORDER_STATUS.DELIVERED) {
         throw new ForbiddenError('Item must be delivered before requesting a return');
       }
 
@@ -98,7 +104,7 @@ export class ReturnsService {
           userId,
           reason: data.reason,
           reasonCode: data.reasonCode,
-          status: 'REQUESTED',
+          status: RETURN_STATUS.REQUESTED,
           refundAmount: null,
           resolvedById: null,
           resolvedAt: null,
@@ -113,7 +119,7 @@ export class ReturnsService {
     });
   }
 
-  async transition(id: string, status: TransitionStatus, actorId: string) {
+  async transition(id: string, status: ReturnStatus, actorId: string) {
     return sequelize.transaction(async (t: Transaction) => {
       const row = await ReturnRequest.findByPk(id, { transaction: t });
       if (!row) throw new NotFoundError('ReturnRequest');
@@ -121,12 +127,8 @@ export class ReturnsService {
       await row.update(
         {
           status,
-          resolvedById: ['APPROVED', 'REJECTED', 'REFUNDED', 'CLOSED'].includes(status)
-            ? actorId
-            : row.resolvedById,
-          resolvedAt: ['REJECTED', 'REFUNDED', 'CLOSED'].includes(status)
-            ? new Date()
-            : row.resolvedAt,
+          resolvedById: RESOLVED_BY_STATUSES.includes(status) ? actorId : row.resolvedById,
+          resolvedAt: RESOLVED_AT_STATUSES.includes(status) ? new Date() : row.resolvedAt,
           updatedBy: actorId,
         },
         { transaction: t },

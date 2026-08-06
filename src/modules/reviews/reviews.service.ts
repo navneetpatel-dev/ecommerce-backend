@@ -1,6 +1,8 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ValidationError } from '@core/errors/ValidationError';
+import { REVIEW_STATUS, ORDER_STATUS } from '@core/constants/statuses';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 import { reviewsRepository } from './reviews.repository';
 import { Review } from '@database/models/review.model';
 import { ReviewVote } from '@database/models/reviewVote.model';
@@ -35,9 +37,9 @@ export class ReviewsService {
       const orderItem = orderItemResult as OrderItem & { subOrder: SubOrder & { order: any } };
 
       if (orderItem.subOrder.order.userId !== userId) {
-        throw new ForbiddenError('Not your order');
+        throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_ORDER);
       }
-      if (orderItem.subOrder.status !== 'DELIVERED') {
+      if (orderItem.subOrder.status !== ORDER_STATUS.DELIVERED) {
         throw new ForbiddenError('Item not yet delivered');
       }
 
@@ -58,7 +60,7 @@ export class ReviewsService {
         rating: data.rating,
         title: data.title ?? null,
         body: data.body,
-        status: 'PENDING', // Set to APPROVED if auto-approve mode
+        status: REVIEW_STATUS.PENDING, // Set to APPROVED if auto-approve mode
         helpfulCount: 0,
         unhelpfulCount: 0,
       }, { transaction: t });
@@ -67,9 +69,9 @@ export class ReviewsService {
     });
   }
 
-  async getProductReviews(productId: string, status: 'APPROVED' | 'ALL' = 'APPROVED') {
-    if (status === 'APPROVED') {
-      return reviewsRepository.findByProduct(productId, 'APPROVED');
+  async getProductReviews(productId: string, status: typeof REVIEW_STATUS.APPROVED | 'ALL' = REVIEW_STATUS.APPROVED) {
+    if (status === REVIEW_STATUS.APPROVED) {
+      return reviewsRepository.findByProduct(productId, REVIEW_STATUS.APPROVED);
     }
     return reviewsRepository.findByProduct(productId);
   }
@@ -124,7 +126,7 @@ export class ReviewsService {
       const review = await Review.findByPk(reviewId, { transaction: t });
       if (!review) throw new NotFoundError('Review');
 
-      await review.update({ status: 'APPROVED' }, { transaction: t });
+      await review.update({ status: REVIEW_STATUS.APPROVED }, { transaction: t });
 
       // Recalculate product rating
       await this.recalculateProductRating(review.productId, t);
@@ -138,7 +140,7 @@ export class ReviewsService {
       const review = await Review.findByPk(reviewId, { transaction: t });
       if (!review) throw new NotFoundError('Review');
 
-      await review.update({ status: 'REJECTED' }, { transaction: t });
+      await review.update({ status: REVIEW_STATUS.REJECTED }, { transaction: t });
       return review;
     });
   }
@@ -151,15 +153,15 @@ export class ReviewsService {
   }
 
   async listPending() {
-    return Review.findAll({ where: { status: 'PENDING' }, include: [{ model: Product, as: 'product' }], order: [['createdAt', 'ASC']] });
+    return Review.findAll({ where: { status: REVIEW_STATUS.PENDING }, include: [{ model: Product, as: 'product' }], order: [['createdAt', 'ASC']] });
   }
 
   private async recalculateProductRating(productId: string, transaction: any) {
     const [result] = await sequelize.query<{ avg: string; count: string }>(
       `SELECT AVG(rating)::numeric(3,2) as avg, COUNT(*) as count 
-       FROM reviews WHERE product_id = :productId AND status = 'APPROVED'`,
+       FROM reviews WHERE product_id = :productId AND status = :status`,
       {
-        replacements: { productId },
+        replacements: { productId, status: REVIEW_STATUS.APPROVED },
         type: QueryTypes.SELECT,
         transaction,
       }

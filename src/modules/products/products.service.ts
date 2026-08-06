@@ -1,6 +1,8 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
+import { PRODUCT_STATUS, REVIEW_STATUS } from '@core/constants/statuses';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 import { productsRepository } from './products.repository';
 import { Category } from '@database/models/category.model';
 import { Vendor } from '@database/models/vendor.model';
@@ -58,14 +60,14 @@ export class ProductsService {
       
       const existing = await productsRepository.findBySlug(slug);
       if (existing) {
-        throw new ValidationError('Product name already exists');
+        throw new ValidationError(ERROR_MESSAGES.PRODUCT_NAME_EXISTS);
       }
 
       const product = await productsRepository.create({
         ...data,
         slug,
         vendorId,
-        status: 'DRAFT',
+        status: PRODUCT_STATUS.DRAFT,
         avgRating: 0,
       }, { transaction: t });
 
@@ -107,7 +109,7 @@ export class ProductsService {
     });
     if (!product) throw new NotFoundError('Product');
     const reviewCount = await Review.count({
-      where: { productId: product.id, status: 'APPROVED' },
+      where: { productId: product.id, status: REVIEW_STATUS.APPROVED },
     });
     return mapProductResponse(product, reviewCount);
   }
@@ -124,7 +126,7 @@ export class ProductsService {
       if (!product) throw new NotFoundError('Product');
 
       if (vendorId && product.vendorId !== vendorId) {
-        throw new ForbiddenError('Not your product');
+        throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_PRODUCT);
       }
 
       const updateData: any = { ...data };
@@ -133,7 +135,7 @@ export class ProductsService {
         const slug = generateSlug(data.name);
         const existing = await productsRepository.findBySlug(slug);
         if (existing && existing.id !== id) {
-          throw new ValidationError('Product name already exists');
+          throw new ValidationError(ERROR_MESSAGES.PRODUCT_NAME_EXISTS);
         }
         updateData.slug = slug;
       }
@@ -149,7 +151,7 @@ export class ProductsService {
       if (!product) throw new NotFoundError('Product');
 
       if (vendorId && product.vendorId !== vendorId) {
-        throw new ForbiddenError('Not your product');
+        throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_PRODUCT);
       }
 
       // Soft delete - can be restored later
@@ -163,14 +165,14 @@ export class ProductsService {
       if (!product) throw new NotFoundError('Product');
 
       if (product.vendorId !== vendorId) {
-        throw new ForbiddenError('Not your product');
+        throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_PRODUCT);
       }
 
-      if (product.status !== 'DRAFT') {
+      if (product.status !== PRODUCT_STATUS.DRAFT) {
         throw new ValidationError('Product is not in DRAFT status');
       }
 
-      await productsRepository.update(id, { status: 'PENDING_APPROVAL' }, { transaction: t });
+      await productsRepository.update(id, { status: PRODUCT_STATUS.PENDING_APPROVAL }, { transaction: t });
       return this.getProductById(id);
     });
   }
@@ -180,11 +182,11 @@ export class ProductsService {
       const product = await productsRepository.findById(id, { transaction: t });
       if (!product) throw new NotFoundError('Product');
 
-      if (product.status !== 'PENDING_APPROVAL') {
+      if (product.status !== PRODUCT_STATUS.PENDING_APPROVAL) {
         throw new ValidationError('Product is not pending approval');
       }
 
-      await productsRepository.update(id, { status: 'LIVE', approvedById: adminId }, { transaction: t });
+      await productsRepository.update(id, { status: PRODUCT_STATUS.LIVE, approvedById: adminId }, { transaction: t });
       return this.getProductById(id);
     });
   }
@@ -194,12 +196,12 @@ export class ProductsService {
       const product = await productsRepository.findById(id, { transaction: t });
       if (!product) throw new NotFoundError('Product');
 
-      if (product.status !== 'PENDING_APPROVAL') {
+      if (product.status !== PRODUCT_STATUS.PENDING_APPROVAL) {
         throw new ValidationError('Product is not pending approval');
       }
 
       await productsRepository.update(id, {
-        status: 'REJECTED',
+        status: PRODUCT_STATUS.REJECTED,
         rejectionNote: data.rejectionNote,
       }, { transaction: t });
 
@@ -212,7 +214,7 @@ export class ProductsService {
       const product = await productsRepository.findById(id, { transaction: t });
       if (!product) throw new NotFoundError('Product');
 
-      await productsRepository.update(id, { status: 'ARCHIVED' }, { transaction: t });
+      await productsRepository.update(id, { status: PRODUCT_STATUS.ARCHIVED }, { transaction: t });
       return this.getProductById(id);
     });
   }

@@ -11,6 +11,9 @@ import { ProductVariant } from '@database/models/productVariant.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { WebhookEvent } from '@database/models/webhookEvent.model';
 import { cartService } from '@modules/cart/cart.service';
+import { ORDER_STATUS, PAYMENT_STATUS, COMMISSION_STATUS } from '@core/constants/statuses';
+import { ERROR_MESSAGES, } from '@core/constants/errors';
+import { RAZORPAY_MIN_AMOUNT_PAISE } from '@core/constants/http';
 
 export type RazorpayCheckoutPayload = {
   razorpayOrderId: string;
@@ -40,7 +43,7 @@ export class PaymentsService {
       });
 
       if (!locked) return;
-      if (locked.status === 'CANCELLED' || locked.paymentStatus === 'PAID') {
+      if (locked.status === ORDER_STATUS.CANCELLED || locked.paymentStatus === PAYMENT_STATUS.PAID) {
         return;
       }
 
@@ -70,9 +73,9 @@ export class PaymentsService {
           });
         }
 
-        await subOrder.update({ status: 'CANCELLED' }, { transaction: t });
+        await subOrder.update({ status: ORDER_STATUS.CANCELLED }, { transaction: t });
         await CommissionLedger.destroy({
-          where: { subOrderId: subOrder.id, status: 'PENDING' },
+          where: { subOrderId: subOrder.id, status: COMMISSION_STATUS.PENDING },
           transaction: t,
         });
       }
@@ -81,8 +84,8 @@ export class PaymentsService {
 
       await order.update(
         {
-          status: 'CANCELLED',
-          paymentStatus: 'FAILED',
+          status: ORDER_STATUS.CANCELLED,
+          paymentStatus: PAYMENT_STATUS.FAILED,
         },
         { transaction: t },
       );
@@ -91,12 +94,12 @@ export class PaymentsService {
 
   async createRazorpayOrderForOrder(order: Order): Promise<RazorpayCheckoutPayload> {
     if (!razorpayConfigured || !env.RAZORPAY_KEY_ID) {
-      throw new AppError('Razorpay is not configured', 503, 'RAZORPAY_NOT_CONFIGURED');
+      throw new AppError(ERROR_MESSAGES.RAZORPAY_NOT_CONFIGURED, 503, 'RAZORPAY_NOT_CONFIGURED');
     }
 
     // Amount always from the Order row — never from the client
     const amountInPaise = Math.round(Number(order.totalAmount) * 100);
-    if (amountInPaise < 100) {
+    if (amountInPaise < RAZORPAY_MIN_AMOUNT_PAISE) {
       throw new ValidationError('Order amount below Razorpay minimum');
     }
 
@@ -126,7 +129,7 @@ export class PaymentsService {
     razorpaySignature: string;
   }): { verified: true } {
     if (!env.RAZORPAY_KEY_SECRET) {
-      throw new AppError('Razorpay is not configured', 503, 'RAZORPAY_NOT_CONFIGURED');
+      throw new AppError(ERROR_MESSAGES.RAZORPAY_NOT_CONFIGURED, 503, 'RAZORPAY_NOT_CONFIGURED');
     }
 
     const expected = crypto
@@ -186,7 +189,7 @@ export class PaymentsService {
       const payment = event.payload?.payment?.entity;
       if (payment?.order_id && payment?.id) {
         await Order.update(
-          { paymentStatus: 'PAID', razorpayPaymentId: payment.id, status: 'CONFIRMED' },
+          { paymentStatus: PAYMENT_STATUS.PAID, razorpayPaymentId: payment.id, status: ORDER_STATUS.CONFIRMED },
           { where: { razorpayOrderId: payment.order_id } },
         );
         // ORDER_CONFIRMATION notification can be queued here when notifications are wired

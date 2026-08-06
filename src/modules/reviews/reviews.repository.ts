@@ -1,13 +1,14 @@
 import { BaseRepository } from '@core/repository/BaseRepository';
 import { Review } from '@database/models/review.model';
 import { WhereOptions } from 'sequelize';
+import type { ReviewStatus } from '@core/constants/statuses';
 
 export class ReviewsRepository extends BaseRepository<Review> {
   constructor() {
     super(Review);
   }
 
-  async findByProduct(productId: string, status?: 'PENDING' | 'APPROVED' | 'REJECTED') {
+  async findByProduct(productId: string, status?: ReviewStatus) {
     const where: WhereOptions<Review> = { productId };
     if (status) {
       where.status = status;

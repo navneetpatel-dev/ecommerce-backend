@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { USER_STATUS_VALUES } from '@core/constants/statuses';
 
 export const UpdateUserProfileSchema = z.object({
   name: z.string().min(1).max(120).optional(),
@@ -13,14 +14,14 @@ export const UploadAvatarSchema = z.object({
 });
 
 export const UpdateUserStatusSchema = z.object({
-  status: z.enum(['ACTIVE', 'BLOCKED']),
+  status: z.enum(USER_STATUS_VALUES),
 });
 
 export const GetUsersQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(100).default(20),
   roleId: z.string().uuid().optional(),
-  status: z.enum(['ACTIVE', 'BLOCKED']).optional(),
+  status: z.enum(USER_STATUS_VALUES).optional(),
   search: z.string().optional(),
 });
 

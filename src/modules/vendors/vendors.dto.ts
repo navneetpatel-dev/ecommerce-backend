@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { VENDOR_STATUS_VALUES } from '@core/constants/statuses';
+import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from '@core/constants/http';
 
 export const RegisterVendorSchema = z.object({
   businessName: z.string().min(1),
@@ -32,8 +34,8 @@ export const SuspendVendorSchema = z.object({
 
 export const GetVendorsQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
-  limit: z.coerce.number().int().positive().max(100).default(20),
-  status: z.enum(['PENDING', 'APPROVED', 'REJECTED', 'SUSPENDED']).optional(),
+  limit: z.coerce.number().int().positive().max(MAX_PAGE_LIMIT).default(DEFAULT_PAGE_LIMIT),
+  status: z.enum(VENDOR_STATUS_VALUES).optional(),
   search: z.string().optional(),
 });
 

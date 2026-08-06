@@ -1,6 +1,7 @@
 import { BaseRepository } from '@core/repository/BaseRepository';
 import { Vendor } from '@database/models/vendor.model';
 import { Op, WhereOptions } from 'sequelize';
+import type { VendorStatus } from '@core/constants/statuses';
 
 export class VendorsRepository extends BaseRepository<Vendor> {
   constructor() {
@@ -8,7 +9,7 @@ export class VendorsRepository extends BaseRepository<Vendor> {
   }
 
   async findWithFilters(filters: {
-    status?: 'PENDING' | 'APPROVED' | 'REJECTED' | 'SUSPENDED';
+    status?: VendorStatus;
     search?: string;
     limit: number;
     offset: number;

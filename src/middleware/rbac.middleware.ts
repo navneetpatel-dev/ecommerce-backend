@@ -3,6 +3,8 @@ import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { sequelize } from '@config/db';
 import { QueryTypes } from 'sequelize';
 import { PERMISSION_KEYS, type PermissionKey } from '@core/permissions/permissionKeys';
+import { ROLES } from '@core/constants/statuses';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 
 const rolePermissionCache = new Map<string, Set<string>>();
 
@@ -22,7 +24,7 @@ export async function resolvePermissionsForUser(user: {
   roleId: string;
   role: { name: string };
 }): Promise<PermissionKey[]> {
-  if (user.role.name === 'SUPER_ADMIN') {
+  if (user.role.name === ROLES.SUPER_ADMIN) {
     return [...PERMISSION_KEYS];
   }
   let perms = rolePermissionCache.get(user.roleId);
@@ -42,10 +44,10 @@ export const authorize = (...permissionKeys: PermissionKey[]) => {
   return async (req: Request, _res: Response, next: NextFunction) => {
     const user = req.user;
     if (!user) {
-      return next(new ForbiddenError('Authentication required'));
+      return next(new ForbiddenError(ERROR_MESSAGES.AUTH_REQUIRED));
     }
 
-    if (user.role.name === 'SUPER_ADMIN') {
+    if (user.role.name === ROLES.SUPER_ADMIN) {
       return next();
     }
 

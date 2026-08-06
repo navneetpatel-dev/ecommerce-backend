@@ -23,6 +23,14 @@ import type {
   CreateCheckoutRequest,
   CheckoutQuoteRequest,
 } from './checkout.dto';
+import {
+  ORDER_STATUS,
+  PAYMENT_STATUS,
+  PAYMENT_METHOD,
+  COUPON_STATUS,
+  COMMISSION_STATUS,
+} from '@core/constants/statuses';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 
 function groupBy<T>(array: T[], keyFn: (item: T) => string): Record<string, T[]> {
   return array.reduce((acc, item) => {
@@ -57,12 +65,12 @@ async function loadUserCart(userId: string, transaction?: any): Promise<CartWith
   });
 
   if (!cartResult) {
-    throw new ValidationError('Cart is empty');
+    throw new ValidationError(ERROR_MESSAGES.CART_EMPTY);
   }
 
   const cart = cartResult as CartWithItems;
   if (!cart.items || cart.items.length === 0) {
-    throw new ValidationError('Cart is empty');
+    throw new ValidationError(ERROR_MESSAGES.CART_EMPTY);
   }
 
   return cart;
@@ -91,17 +99,17 @@ async function getCouponDiscount(
   shippingTotal: number,
 ) {
   if (!code) return { coupon: null, discount: 0 };
-  const coupon = await Coupon.findOne({ where: { code: code.toUpperCase(), status: 'ACTIVE' } });
+  const coupon = await Coupon.findOne({ where: { code: code.toUpperCase(), status: COUPON_STATUS.ACTIVE } });
   const now = new Date();
   if (!coupon || coupon.startDate > now || coupon.endDate < now) {
     throw new ValidationError('Coupon is invalid or expired');
   }
   if (coupon.usageLimitTotal != null && coupon.usedCount >= coupon.usageLimitTotal) {
-    throw new ValidationError('Coupon usage limit reached');
+    throw new ValidationError(ERROR_MESSAGES.COUPON_USAGE_LIMIT);
   }
   if (coupon.usageLimitPerUser != null) {
     const userUsage = await CouponUsage.count({ where: { couponId: coupon.id, userId } });
-    if (userUsage >= coupon.usageLimitPerUser) throw new ValidationError('Coupon usage limit reached');
+    if (userUsage >= coupon.usageLimitPerUser) throw new ValidationError(ERROR_MESSAGES.COUPON_USAGE_LIMIT);
   }
   if (coupon.minOrderValue != null && subtotal < Number(coupon.minOrderValue)) {
     throw new ValidationError(`Minimum order value is ${coupon.minOrderValue}`);
@@ -236,7 +244,7 @@ export class CheckoutService {
       let subtotal = 0;
       for (const item of cart.items) {
         if (item.variant.stock < item.quantity) {
-          throw new ValidationError(`Insufficient stock for ${item.variant.product.name}`);
+          throw new ValidationError(`${ERROR_MESSAGES.INSUFFICIENT_STOCK} for ${item.variant.product.name}`);
         }
         subtotal += Number(item.variant.price) * item.quantity;
       }
@@ -287,8 +295,8 @@ export class CheckoutService {
         couponId: coupon?.id ?? null,
         totalAmount: subtotal + shippingTotal + taxTotal - discountTotal,
         discountTotal,
-        status: 'PENDING',
-        paymentStatus: 'PENDING',
+        status: ORDER_STATUS.PENDING,
+        paymentStatus: PAYMENT_STATUS.PENDING,
         razorpayOrderId: null,
         razorpayPaymentId: null,
       }, { transaction: t });
@@ -304,7 +312,7 @@ export class CheckoutService {
         const subOrder = await SubOrder.create({
           orderId: orderRow.id,
           vendorId: vendorId === 'platform' ? null : vendorId,
-          status: 'PENDING',
+          status: ORDER_STATUS.PENDING,
           subtotal: subOrderTotal,
           shippingCost: charges.shippingCost,
           taxAmount: charges.taxAmount,
@@ -334,7 +342,7 @@ export class CheckoutService {
             saleAmount: subOrderTotal,
             commissionRate,
             commissionAmount,
-            status: 'PENDING',
+            status: COMMISSION_STATUS.PENDING,
           }, { transaction: t });
         }
       }
@@ -360,7 +368,7 @@ export class CheckoutService {
       return orderRow;
     });
 
-    if (data.paymentMethod === 'RAZORPAY') {
+    if (data.paymentMethod === PAYMENT_METHOD.RAZORPAY) {
       const razorpay = await paymentsService.createRazorpayOrderForOrder(order);
       return {
         orderId: order.id,
@@ -388,12 +396,12 @@ export class CheckoutService {
         throw new NotFoundError('Order');
       }
       if (locked.userId !== userId) {
-        throw new ForbiddenError('You do not have access to this order');
+        throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_ORDER);
       }
-      if (locked.paymentStatus === 'PAID') {
+      if (locked.paymentStatus === PAYMENT_STATUS.PAID) {
         throw new ValidationError('Paid orders cannot be cancelled from checkout');
       }
-      if (locked.status === 'CANCELLED') {
+      if (locked.status === ORDER_STATUS.CANCELLED) {
         return { restored: false, orderId: locked.id };
       }
 
@@ -425,10 +433,10 @@ export class CheckoutService {
           });
         }
 
-        await subOrder.update({ status: 'CANCELLED' }, { transaction: t });
+        await subOrder.update({ status: ORDER_STATUS.CANCELLED }, { transaction: t });
 
         await CommissionLedger.destroy({
-          where: { subOrderId: subOrder.id, status: 'PENDING' },
+          where: { subOrderId: subOrder.id, status: COMMISSION_STATUS.PENDING },
           transaction: t,
         });
       }
@@ -437,8 +445,8 @@ export class CheckoutService {
 
       await order.update(
         {
-          status: 'CANCELLED',
-          paymentStatus: 'FAILED',
+          status: ORDER_STATUS.CANCELLED,
+          paymentStatus: PAYMENT_STATUS.FAILED,
         },
         { transaction: t },
       );

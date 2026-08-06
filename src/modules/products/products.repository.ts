@@ -4,13 +4,14 @@ import { Category } from '@database/models/category.model';
 import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
 import { Op } from 'sequelize';
+import { PRODUCT_STATUS, REVIEW_STATUS, type ProductStatus } from '@core/constants/statuses';
 
 const reviewCountLiteral = [
   sequelize.literal(`(
     SELECT COUNT(*)::int
     FROM reviews AS r
     WHERE r."productId" = "Product"."id"
-      AND r.status = 'APPROVED'
+      AND r.status = '${REVIEW_STATUS.APPROVED}'
       AND r."deletedAt" IS NULL
   )`),
   'reviewCount',
@@ -24,7 +25,7 @@ export class ProductsRepository extends BaseRepository<Product> {
   async findWithFilters(filters: {
     categoryId?: string;
     vendorId?: string;
-    status?: 'DRAFT' | 'PENDING_APPROVAL' | 'LIVE' | 'REJECTED' | 'ARCHIVED';
+    status?: ProductStatus;
     search?: string;
     minPrice?: number;
     maxPrice?: number;
@@ -109,7 +110,7 @@ export class ProductsRepository extends BaseRepository<Product> {
 
   async findLiveByVendor(vendorId: string) {
     return this.model.findAll({
-      where: { vendorId, status: 'LIVE' },
+      where: { vendorId, status: PRODUCT_STATUS.LIVE },
       include: ['variants', 'images'],
     });
   }

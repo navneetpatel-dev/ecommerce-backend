@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { RETURN_STATUS_VALUES } from '@core/constants/statuses';
 
 export const CreateReturnRequestSchema = z.object({
   orderItemId: z.string().uuid(),
@@ -7,7 +8,7 @@ export const CreateReturnRequestSchema = z.object({
 });
 
 export const TransitionReturnSchema = z.object({
-  status: z.enum(['APPROVED', 'REJECTED', 'PICKUP_SCHEDULED', 'RECEIVED', 'REFUNDED', 'CLOSED']),
+  status: z.enum(RETURN_STATUS_VALUES),
 });
 
 export type CreateReturnRequest = z.infer<typeof CreateReturnRequestSchema>;

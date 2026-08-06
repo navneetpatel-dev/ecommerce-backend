@@ -27,6 +27,7 @@ import type {
   UpdateAddressRequest,
   UploadAvatarRequest,
 } from './users.dto';
+import { MAX_AVATAR_BYTES } from '@core/constants/http';
 
 function serializeAddress(address: {
   id: string;
@@ -121,7 +122,7 @@ export class UsersService {
     const ext = extRaw === 'jpg' ? 'jpeg' : extRaw;
     const contentType = `image/${ext}`;
     const buffer = Buffer.from(match[2]!, 'base64');
-    if (buffer.byteLength > 1.5 * 1024 * 1024) {
+    if (buffer.byteLength > MAX_AVATAR_BYTES) {
       throw new ValidationError({ dataUrl: ['Image must be under 1.5MB'] });
     }
 

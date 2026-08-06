@@ -4,6 +4,9 @@ import { env } from '@config/env';
 import { User } from '@database/models/user.model';
 import { Role } from '@database/models/role.model';
 import { logger } from '@core/logger';
+import { BEARER_PREFIX } from '@core/constants/http';
+import { ROLES, USER_STATUS } from '@core/constants/statuses';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 
 interface JwtPayload {
   sub: string;
@@ -15,8 +18,8 @@ interface JwtPayload {
 export const authenticate = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
-      res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Authentication required' } });
+    if (!authHeader?.startsWith(BEARER_PREFIX)) {
+      res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: ERROR_MESSAGES.AUTH_REQUIRED } });
       return;
     }
 
@@ -29,7 +32,7 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
     const decoded = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
 
     const user = await User.findByPk(decoded.sub, { include: [Role] });
-    if (!user || user.status === 'BLOCKED') {
+    if (!user || user.status === USER_STATUS.BLOCKED) {
       res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'User not found or blocked' } });
       return;
     }
@@ -39,7 +42,7 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
       email: user.email,
       roleId: user.roleId,
       vendorId: user.vendorId,
-      role: { name: user.role?.name ?? 'CUSTOMER' },
+      role: { name: user.role?.name ?? ROLES.CUSTOMER },
     };
 
     next();
@@ -55,7 +58,7 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
 /** Attaches req.user when a valid Bearer token is present; otherwise continues as guest. */
 export const optionalAuthenticate = async (req: Request, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ')) {
+  if (!authHeader?.startsWith(BEARER_PREFIX)) {
     next();
     return;
   }
@@ -69,13 +72,13 @@ export const optionalAuthenticate = async (req: Request, res: Response, next: Ne
 
     const decoded = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
     const user = await User.findByPk(decoded.sub, { include: [Role] });
-    if (user && user.status !== 'BLOCKED') {
+    if (user && user.status !== USER_STATUS.BLOCKED) {
       req.user = {
         id: user.id,
         email: user.email,
         roleId: user.roleId,
         vendorId: user.vendorId,
-        role: { name: user.role?.name ?? 'CUSTOMER' },
+        role: { name: user.role?.name ?? ROLES.CUSTOMER },
       };
     }
   } catch (err) {

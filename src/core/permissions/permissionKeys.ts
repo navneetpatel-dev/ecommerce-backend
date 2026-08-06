@@ -1,4 +1,5 @@
 /** Canonical permission keys — must match `database/seeders/20240101000001-seed-roles-permissions.js`. */
+import { ROLES } from '@core/constants/statuses';
 export const PERMISSIONS = {
   USER_MANAGE: 'user.manage',
   VENDOR_MANAGE: 'vendor.manage',
@@ -30,14 +31,14 @@ export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
 export const PERMISSION_KEYS = Object.values(PERMISSIONS) as PermissionKey[];
 
 export const ROLE_PERMISSIONS: Record<string, readonly PermissionKey[]> = {
-  SUPER_ADMIN: PERMISSION_KEYS,
-  ADMIN_ORDER_MANAGER: [
+  [ROLES.SUPER_ADMIN]: PERMISSION_KEYS,
+  [ROLES.ADMIN_ORDER_MANAGER]: [
     PERMISSIONS.ORDER_MANAGE,
     PERMISSIONS.ORDER_REFUND,
     PERMISSIONS.ANALYTICS_VIEW,
     PERMISSIONS.AUDIT_VIEW,
   ],
-  ADMIN_CATALOG_MANAGER: [
+  [ROLES.ADMIN_CATALOG_MANAGER]: [
     PERMISSIONS.PRODUCT_MANAGE,
     PERMISSIONS.PRODUCT_APPROVE,
     PERMISSIONS.CATEGORY_MANAGE,
@@ -45,7 +46,7 @@ export const ROLE_PERMISSIONS: Record<string, readonly PermissionKey[]> = {
     PERMISSIONS.ANALYTICS_VIEW,
     PERMISSIONS.AUDIT_VIEW,
   ],
-  VENDOR_OWNER: [
+  [ROLES.VENDOR_OWNER]: [
     PERMISSIONS.PRODUCT_CREATE,
     PERMISSIONS.PRODUCT_UPDATE,
     PERMISSIONS.PRODUCT_DELETE,
@@ -53,6 +54,6 @@ export const ROLE_PERMISSIONS: Record<string, readonly PermissionKey[]> = {
     PERMISSIONS.PAYOUT_VIEW,
     PERMISSIONS.REVIEW_RESPOND,
   ],
-  VENDOR_STAFF: [PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.SUBORDER_MANAGE],
-  CUSTOMER: [],
+  [ROLES.VENDOR_STAFF]: [PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.SUBORDER_MANAGE],
+  [ROLES.CUSTOMER]: [],
 };

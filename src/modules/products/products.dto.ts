@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { PRODUCT_STATUS_VALUES } from '@core/constants/statuses';
+import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from '@core/constants/http';
 
 export const CreateProductSchema = z.object({
   categoryId: z.string().uuid(),
@@ -18,10 +20,10 @@ export const UpdateProductSchema = z.object({
 
 export const GetProductsQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
-  limit: z.coerce.number().int().positive().max(100).default(20),
+  limit: z.coerce.number().int().positive().max(MAX_PAGE_LIMIT).default(DEFAULT_PAGE_LIMIT),
   categoryId: z.string().uuid().optional(),
   vendorId: z.string().uuid().optional(),
-  status: z.enum(['DRAFT', 'PENDING_APPROVAL', 'LIVE', 'REJECTED', 'ARCHIVED']).optional(),
+  status: z.enum(PRODUCT_STATUS_VALUES).optional(),
   search: z.string().optional(),
   minPrice: z.coerce.number().optional(),
   maxPrice: z.coerce.number().optional(),

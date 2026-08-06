@@ -1,10 +1,11 @@
 import { z } from 'zod';
+import { SHIPPING_METHOD_VALUES } from '@core/constants/statuses';
 
 export const GetShippingRatesSchema = z.object({
   pincode: z.string(),
   state: z.string().optional(),
   weight: z.coerce.number(),
-  method: z.enum(['STANDARD', 'EXPRESS']).optional(),
+  method: z.enum(SHIPPING_METHOD_VALUES).optional(),
 });
 
 export const CreateZoneSchema = z.object({
@@ -21,7 +22,7 @@ export const UpdateZoneSchema = z.object({
 
 export const CreateRateSchema = z.object({
   zoneId: z.string().uuid(),
-  method: z.enum(['STANDARD', 'EXPRESS']),
+  method: z.enum(SHIPPING_METHOD_VALUES),
   minWeightGrams: z.number().int().min(0).optional(),
   maxWeightGrams: z.number().int().positive(),
   price: z.number().min(0),

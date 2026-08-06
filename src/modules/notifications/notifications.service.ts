@@ -1,4 +1,5 @@
 import { NotificationLog } from '@database/models/notificationLog.model';
+import { NOTIFICATION_STATUS } from '@core/constants/statuses';
 
 export class NotificationsService {
   async listLogs() {
@@ -13,7 +14,7 @@ export class NotificationsService {
       referenceType: body.referenceType ?? 'USER',
       referenceId: body.referenceId ?? actorId,
       channel: body.channel ?? 'EMAIL',
-      status: 'PENDING',
+      status: NOTIFICATION_STATUS.PENDING,
       createdBy: actorId,
     } as any);
 

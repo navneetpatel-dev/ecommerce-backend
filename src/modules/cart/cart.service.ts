@@ -1,6 +1,7 @@
 import type { Transaction } from 'sequelize';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 import { cartRepository } from './cart.repository';
 import { MAX_CART_LINE_QUANTITY } from './cart.constants';
 import { Cart } from '@database/models/cart.model';
@@ -149,7 +150,7 @@ export class CartService {
 
       const quantity = clampQuantity(data.quantity, variant.stock);
       if (quantity < 1) {
-        throw new ValidationError('Insufficient stock');
+        throw new ValidationError(ERROR_MESSAGES.INSUFFICIENT_STOCK);
       }
 
       let cart;
@@ -170,7 +171,7 @@ export class CartService {
       if (existingItem) {
         const newQuantity = clampQuantity(existingItem.quantity + quantity, variant.stock);
         if (newQuantity < 1) {
-          throw new ValidationError('Insufficient stock');
+          throw new ValidationError(ERROR_MESSAGES.INSUFFICIENT_STOCK);
         }
         await existingItem.update({ quantity: newQuantity }, { transaction: t });
       } else {
@@ -206,7 +207,7 @@ export class CartService {
       const item = itemResult as CartItem & { variant: ProductVariant };
       const quantity = clampQuantity(data.quantity, item.variant.stock);
       if (quantity < 1) {
-        throw new ValidationError('Insufficient stock');
+        throw new ValidationError(ERROR_MESSAGES.INSUFFICIENT_STOCK);
       }
 
       await item.update({ quantity }, { transaction: t });

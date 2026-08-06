@@ -5,13 +5,16 @@ import { authService, type SessionDeviceMeta } from './auth.service';
 import { User } from '@database/models/user.model';
 import { Role } from '@database/models/role.model';
 import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
+import { COOKIES, REFRESH_TOKEN_TTL_MS } from '@core/constants/http';
+import { AUTH_COOKIE_PATH } from '@core/constants/apiPaths';
+import { ROLES } from '@core/constants/statuses';
 
 const COOKIE_OPTIONS = {
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
   sameSite: 'lax' as const,
-  path: '/api/auth',
-  maxAge: 7 * 24 * 60 * 60 * 1000,
+  path: AUTH_COOKIE_PATH,
+  maxAge: REFRESH_TOKEN_TTL_MS,
 };
 
 function deviceMeta(req: Request): SessionDeviceMeta {
@@ -23,33 +26,33 @@ function deviceMeta(req: Request): SessionDeviceMeta {
 
 export const register = asyncHandler(async (req: Request, res: Response) => {
   const result = await authService.register(req.body as any, deviceMeta(req));
-  res.cookie('refreshToken', result.refreshToken, COOKIE_OPTIONS);
+  res.cookie(COOKIES.REFRESH_TOKEN, result.refreshToken, COOKIE_OPTIONS);
   res.status(201).json(ok({ user: result.user, accessToken: result.accessToken }));
 });
 
 export const login = asyncHandler(async (req: Request, res: Response) => {
   const result = await authService.login(req.body as any, deviceMeta(req));
-  res.cookie('refreshToken', result.refreshToken, COOKIE_OPTIONS);
+  res.cookie(COOKIES.REFRESH_TOKEN, result.refreshToken, COOKIE_OPTIONS);
   res.status(200).json(ok({ user: result.user, accessToken: result.accessToken }));
 });
 
 export const refresh = asyncHandler(async (req: Request, res: Response) => {
-  const token = req.cookies?.refreshToken || req.body?.refreshToken;
+  const token = req.cookies?.[COOKIES.REFRESH_TOKEN] || req.body?.refreshToken;
   if (!token) {
     res.status(401).json({ success: false, error: { code: 'REFRESH_REQUIRED', message: 'Refresh token required' } });
     return;
   }
   const result = await authService.refreshToken(token, deviceMeta(req));
-  res.cookie('refreshToken', result.refreshToken, COOKIE_OPTIONS);
+  res.cookie(COOKIES.REFRESH_TOKEN, result.refreshToken, COOKIE_OPTIONS);
   res.status(200).json(ok({ accessToken: result.accessToken }));
 });
 
 export const logout = asyncHandler(async (req: Request, res: Response) => {
-  const token = req.cookies?.refreshToken;
+  const token = req.cookies?.[COOKIES.REFRESH_TOKEN];
   if (token) {
     await authService.logout(token);
   }
-  res.clearCookie('refreshToken', { path: '/api/auth' });
+  res.clearCookie(COOKIES.REFRESH_TOKEN, { path: AUTH_COOKIE_PATH });
   res.status(200).json(ok({ message: 'Logged out' }));
 });
 
@@ -69,7 +72,7 @@ export const changePassword = asyncHandler(async (req: Request, res: Response) =
 });
 
 export const listSessions = asyncHandler(async (req: Request, res: Response) => {
-  const current = req.cookies?.refreshToken ?? null;
+  const current = req.cookies?.[COOKIES.REFRESH_TOKEN] ?? null;
   const sessions = await authService.listSessions(req.user!.id, current);
   res.json(ok(sessions));
 });
@@ -80,7 +83,7 @@ export const revokeSession = asyncHandler(async (req: Request, res: Response) =>
 });
 
 export const revokeOtherSessions = asyncHandler(async (req: Request, res: Response) => {
-  const current = req.cookies?.refreshToken;
+  const current = req.cookies?.[COOKIES.REFRESH_TOKEN];
   if (!current) {
     res.status(400).json({
       success: false,
@@ -95,12 +98,12 @@ export const revokeOtherSessions = asyncHandler(async (req: Request, res: Respon
 export const me = asyncHandler(async (req: Request, res: Response) => {
   const user = await User.findByPk(req.user!.id, { include: [Role] });
   if (!user) { res.status(404).json({ success: false, error: { message: 'User not found' } }); return; }
-  const permissions = await resolvePermissionsForUser({ roleId: user.roleId, role: { name: user.role?.name ?? 'CUSTOMER' } });
+  const permissions = await resolvePermissionsForUser({ roleId: user.roleId, role: { name: user.role?.name ?? ROLES.CUSTOMER } });
   res.json(ok({
     id: user.id,
     email: user.email,
     name: user.name,
-    role: user.role?.name ?? 'CUSTOMER',
+    role: user.role?.name ?? ROLES.CUSTOMER,
     vendorId: user.vendorId,
     permissions,
   }));

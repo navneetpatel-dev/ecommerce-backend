@@ -12,6 +12,7 @@ import { requestIdMiddleware } from '@middleware/requestId.middleware';
 import { globalRateLimiter } from '@middleware/rateLimiter.middleware';
 import { errorHandlerMiddleware } from '@middleware/errorHandler.middleware';
 import { routes } from '@routes/index';
+import { API_PREFIX, HEALTH_PATH, WEBHOOKS_RAW_PATH } from '@core/constants/apiPaths';
 import '@database/models';
 
 export const app = express();
@@ -39,7 +40,7 @@ app.use(
 );
 app.use(compression());
 
-app.use('/api/webhooks', express.raw({ type: 'application/json' }));
+app.use(WEBHOOKS_RAW_PATH, express.raw({ type: 'application/json' }));
 
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
@@ -48,7 +49,7 @@ app.use(mongoSanitize());
 app.use(globalRateLimiter);
 
 // health check endpoint
-app.get('/health', async (req, res) => {
+app.get(HEALTH_PATH, async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
@@ -104,6 +105,6 @@ app.get('/health', async (req, res) => {
   res.status(statusCode).json(health);
 });
 
-app.use('/api', routes);
+app.use(API_PREFIX, routes);
 
 app.use(errorHandlerMiddleware);

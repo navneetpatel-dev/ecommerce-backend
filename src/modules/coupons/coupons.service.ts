@@ -6,6 +6,8 @@ import { ProductVariant } from '@database/models/productVariant.model';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import type { CreateCouponRequest } from './coupons.dto';
+import { COUPON_STATUS } from '@core/constants/statuses';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 
 function computePreviewDiscount(coupon: Coupon, subtotal: number): number {
   const value = Number(coupon.value ?? 0);
@@ -27,7 +29,7 @@ export const couponsService = {
     return Coupon.create({
       ...dto,
       code: dto.code.toUpperCase(),
-      status: 'ACTIVE',
+      status: COUPON_STATUS.ACTIVE,
       startDate: new Date(dto.startDate),
       endDate: new Date(dto.endDate),
       createdById: actorId,
@@ -40,19 +42,19 @@ export const couponsService = {
 
   async applyCoupon(code: string, userId: string) {
     const coupon = await Coupon.findOne({
-      where: { code: code.toUpperCase(), status: 'ACTIVE' },
+      where: { code: code.toUpperCase(), status: COUPON_STATUS.ACTIVE },
     });
     const now = new Date();
     if (!coupon || coupon.startDate > now || coupon.endDate < now) {
       throw new NotFoundError('Coupon');
     }
     if (coupon.usageLimitTotal != null && (coupon.usedCount ?? 0) >= coupon.usageLimitTotal) {
-      throw new ValidationError('Coupon usage limit reached');
+      throw new ValidationError(ERROR_MESSAGES.COUPON_USAGE_LIMIT);
     }
     if (coupon.usageLimitPerUser != null) {
       const userUsage = await CouponUsage.count({ where: { couponId: coupon.id, userId } });
       if (userUsage >= coupon.usageLimitPerUser) {
-        throw new ValidationError('Coupon usage limit reached');
+        throw new ValidationError(ERROR_MESSAGES.COUPON_USAGE_LIMIT);
       }
     }
 

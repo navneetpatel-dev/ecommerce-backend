@@ -1,6 +1,7 @@
 import { BaseRepository } from '@core/repository/BaseRepository';
 import { User } from '@database/models/user.model';
 import { Op, WhereOptions } from 'sequelize';
+import type { UserStatus } from '@core/constants/statuses';
 
 export class UsersRepository extends BaseRepository<User> {
   constructor() {
@@ -9,7 +10,7 @@ export class UsersRepository extends BaseRepository<User> {
 
   async findWithFilters(filters: {
     roleId?: string;
-    status?: 'ACTIVE' | 'BLOCKED';
+    status?: UserStatus;
     search?: string;
     limit: number;
     offset: number;

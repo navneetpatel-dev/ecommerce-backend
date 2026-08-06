@@ -4,6 +4,7 @@ import { User } from '@database/models/user.model';
 import { Product } from '@database/models/product.model';
 import { sequelize } from '@database/models';
 import { QueryTypes } from 'sequelize';
+import { PRODUCT_STATUS, PAYMENT_STATUS } from '@core/constants/statuses';
 
 export type DashboardMetrics = {
   totalOrders: number;
@@ -27,7 +28,7 @@ export const adminService = {
         Order.count(),
         Vendor.count(),
         User.count(),
-        Product.count({ where: { status: 'PENDING_APPROVAL' } }),
+        Product.count({ where: { status: PRODUCT_STATUS.PENDING_APPROVAL } }),
         Order.sum('totalAmount'),
       ]);
 
@@ -43,7 +44,7 @@ export const adminService = {
   async getPlatformAnalytics(): Promise<PlatformAnalytics> {
     const [paidGmv, allGmv, topVendorRows, topCategoryRows, orderVolumeRows] =
       await Promise.all([
-        Order.sum('totalAmount', { where: { paymentStatus: ['PAID'] as any } }),
+        Order.sum('totalAmount', { where: { paymentStatus: [PAYMENT_STATUS.PAID] as any } }),
         Order.sum('totalAmount'),
         sequelize.query<{ id: string; businessName: string; revenue: string }>(
           `SELECT v.id, v."businessName",
