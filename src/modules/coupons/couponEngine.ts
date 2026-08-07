@@ -432,20 +432,6 @@ export async function recordCouponUsage(params: {
   return { created: true };
 }
 
-/**
- * Cashback is recorded via CouponUsage at payment time.
- * WalletLedger is intentionally unused (removed from settlement path).
- */
-export async function creditCashbackIfNeeded(_params: {
-  coupon: Coupon;
-  userId: string;
-  orderId: string;
-  cashbackAmount: number;
-  transaction?: Transaction;
-}): Promise<void> {
-  return;
-}
-
 export async function destroyCouponUsageForOrder(
   orderId: string,
   transaction?: Transaction,

@@ -37,7 +37,6 @@ export const ERROR_MESSAGES = {
   COUPON_USAGE_LIMIT: 'Coupon usage limit reached',
   COUPON_PRIORITY: 'A higher-priority coupon is already applied',
   COUPON_CONFIG_INVALID: 'Coupon configuration is incomplete for this type',
-  COUPON_CASHBACK_DESCRIPTION: 'Cashback from coupon {code}',
   CART_EMPTY: 'Cart is empty',
   AUTH_REQUIRED: 'Authentication required',
   INVALID_TOKEN: 'Invalid token',

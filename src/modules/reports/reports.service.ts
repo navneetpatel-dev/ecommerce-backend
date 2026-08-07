@@ -307,22 +307,43 @@ export class ReportsService {
     ].join('\n');
   }
 
-  /** Printable HTML statement — open and use browser “Save as PDF”. */
-  toPrintableHtml(title: string, rows: Record<string, unknown>[]): string {
-    const body =
-      rows.length === 0
-        ? '<p>No rows</p>'
-        : `<table border="1" cellpadding="6" cellspacing="0"><thead><tr>${Object.keys(rows[0]!)
-            .map((h) => `<th>${h}</th>`)
-            .join('')}</tr></thead><tbody>${rows
-            .map(
-              (row) =>
-                `<tr>${Object.keys(rows[0]!)
-                  .map((h) => `<td>${row[h] ?? ''}</td>`)
-                  .join('')}</tr>`,
-            )
-            .join('')}</tbody></table>`;
-    return `<!doctype html><html><head><meta charset="utf-8"/><title>${title}</title></head><body><h1>${title}</h1>${body}</body></html>`;
+  /** Build a real PDF buffer for settlement statement export. */
+  async toPdf(title: string, rows: Record<string, unknown>[]): Promise<Buffer> {
+    const PDFDocument = (await import('pdfkit')).default;
+    return new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ margin: 40, size: 'A4' });
+      const chunks: Buffer[] = [];
+      doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+
+      doc.fontSize(16).text(title, { underline: true });
+      doc.moveDown();
+
+      if (rows.length === 0) {
+        doc.fontSize(11).text('No rows');
+        doc.end();
+        return;
+      }
+
+      const headers = Object.keys(rows[0]!);
+      doc.fontSize(9);
+      for (const row of rows) {
+        for (const header of headers) {
+          const value = row[header];
+          const display =
+            value instanceof Date
+              ? value.toISOString()
+              : value == null
+                ? ''
+                : String(value);
+          doc.text(`${header}: ${display}`);
+        }
+        doc.moveDown(0.5);
+        if (doc.y > 750) doc.addPage();
+      }
+      doc.end();
+    });
   }
 }
 

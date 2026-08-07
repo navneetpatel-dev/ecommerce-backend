@@ -20,7 +20,6 @@ import { initOrderItemModel, OrderItem } from './orderItem.model';
 import { initCouponModel, Coupon } from './coupon.model';
 import { initCouponBatchModel, CouponBatch } from './couponBatch.model';
 import { initCouponUsageModel, CouponUsage } from './couponUsage.model';
-import { initWalletLedgerModel, WalletLedger } from './walletLedger.model';
 import { initCommissionLedgerModel, CommissionLedger } from './commissionLedger.model';
 import { initPayoutModel, Payout } from './payout.model';
 import { initReviewModel, Review } from './review.model';
@@ -66,7 +65,6 @@ const models = {
   Coupon: initCouponModel(sequelize),
   CouponBatch: initCouponBatchModel(sequelize),
   CouponUsage: initCouponUsageModel(sequelize),
-  WalletLedger: initWalletLedgerModel(sequelize),
   CommissionLedger: initCommissionLedgerModel(sequelize),
   Payout: initPayoutModel(sequelize),
   Review: initReviewModel(sequelize),
@@ -102,7 +100,7 @@ export {
   Role, Permission, Vendor, User, RefreshToken, Address,
   VendorDocument, Category, CategoryAttribute, Product, ProductCategory, ProductVariant, ProductImage,
   Cart, CartItem, Order, SubOrder, OrderItem,
-  Coupon, CouponBatch, CouponUsage, WalletLedger, CommissionLedger, Payout,
+  Coupon, CouponBatch, CouponUsage, CommissionLedger, Payout,
   Review, ReviewVote, Wishlist, WishlistItem,
   ShippingZone, ShippingRate, Shipment, ReturnRequest,
   TaxRule, NotificationLog, AuditLog, WebhookEvent, HelpTicket,

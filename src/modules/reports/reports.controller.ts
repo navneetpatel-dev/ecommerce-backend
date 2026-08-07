@@ -8,7 +8,7 @@ function rangeFromQuery(req: Request) {
   return ReportRangeSchema.parse(req.query);
 }
 
-function sendExport(
+async function sendExport(
   res: Response,
   query: { format: 'json' | 'csv' | 'pdf' },
   filenameBase: string,
@@ -23,10 +23,10 @@ function sendExport(
     return;
   }
   if (query.format === 'pdf') {
-    const html = reportsService.toPrintableHtml(filenameBase, rows);
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${filenameBase}.html"`);
-    res.send(html);
+    const pdf = await reportsService.toPdf(filenameBase, rows);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filenameBase}.pdf"`);
+    res.send(pdf);
     return;
   }
   res.json(ok(payload));

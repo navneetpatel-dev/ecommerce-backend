@@ -1,4 +1,5 @@
 import type { Coupon, CouponConfig } from '@database/models/coupon.model';
+import { allocateProportionally, fromPaise, toPaise } from '@modules/pricing/money';
 
 export type CartLineForCoupon = {
   productId: string;
@@ -11,45 +12,26 @@ export type CartLineForCoupon = {
 };
 
 export function roundMoney(n: number): number {
-  return Math.max(0, Math.round(n * 100) / 100);
+  return fromPaise(toPaise(n));
 }
 
-/** Distribute totalDiscount across vendors proportional to subtotals; remainder on largest share. */
+/** Distribute totalDiscount across vendors in paise; remainder on largest share. */
 export function prorateDiscount(
   totalDiscount: number,
   vendorSubtotals: Record<string, number>,
 ): Record<string, number> {
-  const entries = Object.entries(vendorSubtotals).filter(([, v]) => v > 0);
+  const ids = Object.keys(vendorSubtotals);
   const result: Record<string, number> = {};
-  for (const id of Object.keys(vendorSubtotals)) {
-    result[id] = 0;
-  }
-  if (entries.length === 0 || totalDiscount <= 0) {
-    return result;
-  }
+  for (const id of ids) result[id] = 0;
 
-  const total = entries.reduce((sum, [, v]) => sum + v, 0);
-  if (total <= 0) return result;
+  const totalPaise = toPaise(totalDiscount);
+  if (totalPaise <= 0 || ids.length === 0) return result;
 
-  let allocated = 0;
-  let largestId = entries[0]![0];
-  let largestSubtotal = entries[0]![1];
-
-  for (const [vendorId, subtotal] of entries) {
-    if (subtotal > largestSubtotal) {
-      largestSubtotal = subtotal;
-      largestId = vendorId;
-    }
-    const share = roundMoney((totalDiscount * subtotal) / total);
-    result[vendorId] = share;
-    allocated += share;
-  }
-
-  const remainder = roundMoney(totalDiscount - allocated);
-  if (remainder !== 0) {
-    result[largestId] = roundMoney((result[largestId] ?? 0) + remainder);
-  }
-
+  const weights = ids.map((id) => toPaise(vendorSubtotals[id] ?? 0));
+  const allocated = allocateProportionally(totalPaise, weights);
+  ids.forEach((id, i) => {
+    result[id] = fromPaise(allocated[i] ?? 0);
+  });
   return result;
 }
 

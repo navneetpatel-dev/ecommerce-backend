@@ -9,15 +9,23 @@ import {
 } from './pricing.engine';
 
 export type QuoteVendorPricingInput = {
-  lines: Array<{ key: string; unitPrice: number; quantity: number }>;
+  lines: Array<{
+    key: string;
+    unitPrice: number;
+    quantity: number;
+    gstPercentage?: number;
+    commissionRatePercent?: number;
+  }>;
   merchandiseDiscount: number;
   /** Vendor-borne portion of merchandise discount (mixed platform+vendor coupons). */
   vendorBorneMerchandiseDiscount?: number;
   shippingDiscount: number;
   shippingCost: number;
+  /** Fallback GST when a line omits gstPercentage. */
   gstPercentage: number;
   vendorStateCode: string;
   shippingStateCode: string;
+  /** Fallback commission when a line omits commissionRatePercent. */
   commissionRatePercent: number;
   discountBearer: DiscountBearer | null | undefined;
   tcsRatePercent: number;
@@ -46,6 +54,8 @@ export class PricingService {
         key: line.key,
         unitPricePaise: toPaise(line.unitPrice),
         quantity: line.quantity,
+        gstPercentage: line.gstPercentage,
+        commissionRatePercent: line.commissionRatePercent,
       })),
       merchandiseDiscountPaise,
       vendorBorneMerchandiseDiscountPaise: vendorBorne,
@@ -135,10 +145,7 @@ export class PricingService {
         total: taxTotalPaise,
         gstPercentage: Number(tb.gstPercentage ?? 0),
       },
-      commissionBasePaise:
-        row.commissionAmountPaise != null && Number(row.commissionAmountPaise) >= 0
-          ? Math.max(0, taxablePaise) // net fields are authoritative; base for display
-          : taxablePaise,
+      commissionBasePaise: taxablePaise,
       commissionPaise,
       tcsPaise,
       netPayoutPaise,

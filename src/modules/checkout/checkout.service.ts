@@ -23,7 +23,6 @@ import {
   validateCouponSet,
   resolveCartCouponCodes,
   recordCouponUsage,
-  creditCashbackIfNeeded,
   resolveVendorDiscountBearer,
   type CartLineForCoupon,
 } from '@modules/coupons/couponEngine';
@@ -167,6 +166,32 @@ function resolveCheckoutCouponCodes(
   return resolveCartCouponCodes(cart);
 }
 
+type LineRateMap = Record<string, { gstPercentage: number; commissionRatePercent: number }>;
+
+async function resolveItemLineRates(
+  items: (CartItem & { variant: ProductVariant & { product: any } })[],
+  vendor: Vendor | undefined,
+  defaultCommissionRate: number,
+): Promise<{ lineRates: LineRateMap; fallbackGst: number; fallbackCommission: number }> {
+  const lineRates: LineRateMap = {};
+  for (const item of items) {
+    const categoryId = item.variant.product.categoryId;
+    const gstPercentage = await taxService.getGstRate(categoryId);
+    const commissionRatePercent = await categoriesService.resolveCommissionRate(
+      categoryId,
+      vendor?.commissionRate,
+      defaultCommissionRate,
+    );
+    lineRates[item.id] = { gstPercentage, commissionRatePercent };
+  }
+  const first = items[0] ? lineRates[items[0].id] : undefined;
+  return {
+    lineRates,
+    fallbackGst: first?.gstPercentage ?? 0,
+    fallbackCommission: first?.commissionRatePercent ?? defaultCommissionRate,
+  };
+}
+
 export class CheckoutService {
   async getQuote(userId: string, data: CheckoutQuoteRequest): Promise<{
     vendorBreakdowns: Array<{
@@ -224,6 +249,7 @@ export class CheckoutService {
       shippingCost: number;
       gstPercentage: number;
       commissionRate: number;
+      lineRates: LineRateMap;
     }> = [];
 
     for (const [vendorId, items] of Object.entries(itemsByVendor)) {
@@ -246,14 +272,15 @@ export class CheckoutService {
           ? 0
           : rate.cost;
       shippingByVendor[vendorId] = shippingCost;
-      const categoryId = items[0]!.variant.product.categoryId;
-      const gstPercentage = await taxService.getGstRate(categoryId);
-      const commissionRate = await categoriesService.resolveCommissionRate(
-        categoryId,
-        vendor?.commissionRate,
-        settings.defaultCommissionRate,
-      );
-      baseVendorRows.push({ vendorId, items, shippingCost, gstPercentage, commissionRate });
+      const resolved = await resolveItemLineRates(items, vendor, settings.defaultCommissionRate);
+      baseVendorRows.push({
+        vendorId,
+        items,
+        shippingCost,
+        gstPercentage: resolved.fallbackGst,
+        commissionRate: resolved.fallbackCommission,
+        lineRates: resolved.lineRates,
+      });
     }
 
     const shippingTotal = Object.values(shippingByVendor).reduce((s, n) => s + n, 0);
@@ -307,6 +334,8 @@ export class CheckoutService {
           key: item.id,
           unitPrice: Number(item.variant.price),
           quantity: Number(item.quantity),
+          gstPercentage: row.lineRates[item.id]?.gstPercentage,
+          commissionRatePercent: row.lineRates[item.id]?.commissionRatePercent,
         })),
         merchandiseDiscount,
         vendorBorneMerchandiseDiscount: vendorBorne,
@@ -395,6 +424,7 @@ export class CheckoutService {
           shippingCost: number;
           gstPercentage: number;
           commissionRate: number;
+          lineRates: LineRateMap;
         }
       > = {};
 
@@ -416,22 +446,21 @@ export class CheckoutService {
           rate.freeShippingThreshold != null && vendorSubtotal >= rate.freeShippingThreshold
             ? 0
             : rate.cost;
-        const categoryId = items[0]!.variant.product.categoryId;
-        const gstPercentage = await taxService.getGstRate(categoryId);
         const vendor = vendorMap[vendorId];
-        const commissionRate = await categoriesService.resolveCommissionRate(
-          categoryId,
-          vendor?.commissionRate,
-          settings.defaultCommissionRate,
-        );
+        const resolved = await resolveItemLineRates(items, vendor, settings.defaultCommissionRate);
         shippingByVendor[vendorId] = shippingCost;
         shippingTotal += shippingCost;
-        vendorPrep[vendorId] = { items, shippingCost, gstPercentage, commissionRate };
+        vendorPrep[vendorId] = {
+          items,
+          shippingCost,
+          gstPercentage: resolved.fallbackGst,
+          commissionRate: resolved.fallbackCommission,
+          lineRates: resolved.lineRates,
+        };
       }
 
       const couponCodes = resolveCheckoutCouponCodes(data, cart);
       let discountTotal = 0;
-      let cashbackAmount = 0;
       let coupons: Coupon[] = [];
       let primaryCoupon: Coupon | null = null;
       let vendorDiscountShares: Record<string, number> = {};
@@ -450,7 +479,6 @@ export class CheckoutService {
           throw new ValidationError(result.reason ?? ERROR_MESSAGES.COUPON_INVALID);
         }
         discountTotal = result.discount;
-        cashbackAmount = result.cashbackAmount;
         coupons = result.coupons;
         primaryCoupon = result.primaryCoupon;
         vendorDiscountShares = result.vendorDiscountShares;
@@ -476,6 +504,8 @@ export class CheckoutService {
             key: item.id,
             unitPrice: Number(item.variant.price),
             quantity: Number(item.quantity),
+            gstPercentage: prep.lineRates[item.id]?.gstPercentage,
+            commissionRatePercent: prep.lineRates[item.id]?.commissionRatePercent,
           })),
           merchandiseDiscount,
           vendorBorneMerchandiseDiscount: vendorBorne,
@@ -581,7 +611,10 @@ export class CheckoutService {
             vendorId,
             subOrderId: subOrder.id,
             saleAmount: r.commissionBase,
-            commissionRate: prep.commissionRate,
+            commissionRate:
+              p.commissionBasePaise > 0
+                ? Math.round((p.commissionPaise / p.commissionBasePaise) * 10000) / 100
+                : prep.commissionRate,
             commissionAmount: r.commissionAmount,
             taxableAmount: r.taxableAmount,
             discountAmount: r.merchandiseDiscount,
@@ -630,15 +663,6 @@ export class CheckoutService {
             actorId: userId,
             transaction: t,
           });
-          if (cashbackAmount > 0 && coupon.type === 'CASHBACK') {
-            await creditCashbackIfNeeded({
-              coupon,
-              userId,
-              orderId: orderRow.id,
-              cashbackAmount,
-              transaction: t,
-            });
-          }
         }
       }
 

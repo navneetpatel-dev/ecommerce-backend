@@ -134,6 +134,29 @@ describe('PricingEngine', () => {
     assert.equal(typeof result.roundingAdjustmentPaise, 'number');
   });
 
+  it('taxes and commissions each line by its own rates', () => {
+    const result = computeSubOrderBreakdown({
+      lines: [
+        { key: 'food', unitPricePaise: 10000, quantity: 1, gstPercentage: 5, commissionRatePercent: 10 },
+        { key: 'gadget', unitPricePaise: 10000, quantity: 1, gstPercentage: 18, commissionRatePercent: 15 },
+      ],
+      merchandiseDiscountPaise: 0,
+      shippingDiscountPaise: 0,
+      shippingCostPaise: 0,
+      gstPercentage: 18,
+      intraState: false,
+      commissionRatePercent: 10,
+      discountBearer: DISCOUNT_BEARER.PLATFORM,
+      tcsRatePercent: 0,
+    });
+    assert.equal(result.lines[0]!.tax.total, 500); // 5% of 10000
+    assert.equal(result.lines[1]!.tax.total, 1800); // 18% of 10000
+    assert.equal(result.tax.total, 2300);
+    assert.equal(result.lines[0]!.commissionPaise, 1000);
+    assert.equal(result.lines[1]!.commissionPaise, 1500);
+    assert.equal(result.commissionPaise, 2500);
+  });
+
   it('reverses frozen line proportionally for partial returns', () => {
     const priced = computeSubOrderBreakdown({
       lines: [{ key: 'a', unitPricePaise: 10000, quantity: 2 }],

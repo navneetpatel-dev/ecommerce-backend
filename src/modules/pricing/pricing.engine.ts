@@ -14,6 +14,10 @@ export type PricingLineInput = {
   key: string;
   unitPricePaise: Paise;
   quantity: number;
+  /** Per-line GST %; falls back to SubOrderPricingInput.gstPercentage. */
+  gstPercentage?: number;
+  /** Per-line commission %; falls back to SubOrderPricingInput.commissionRatePercent. */
+  commissionRatePercent?: number;
 };
 
 export type PricingLineBreakdown = {
@@ -42,8 +46,10 @@ export type SubOrderPricingInput = {
   /** Shipping discount (e.g. FREE_SHIPPING share). */
   shippingDiscountPaise: Paise;
   shippingCostPaise: Paise;
+  /** Default GST when a line omits gstPercentage. */
   gstPercentage: number;
   intraState: boolean;
+  /** Default commission when a line omits commissionRatePercent. */
   commissionRatePercent: number;
   discountBearer: DiscountBearer | null | undefined;
   /** Marketplace TCS rate percent (0 disables). */
@@ -65,7 +71,7 @@ export type SubOrderPricingBreakdown = {
   netPayoutPaise: Paise;
   /** Customer pays for this vendor slice (excl. cashback). */
   customerTotalPaise: Paise;
-  /** Explicit rounding residual if line tax sums drift from suborder tax. */
+  /** Explicit rounding residual if line tax sums drift from a same-rate suborder tax. */
   roundingAdjustmentPaise: Paise;
 };
 
@@ -109,28 +115,10 @@ function splitTax(taxablePaise: Paise, gstPercentage: number, intraState: boolea
   };
 }
 
-function commissionBasePaise(
-  subtotalPaise: Paise,
-  merchandiseDiscountPaise: Paise,
-  discountBearer: DiscountBearer | null | undefined,
-  vendorBorneMerchandiseDiscountPaise?: Paise,
-): Paise {
-  if (vendorBorneMerchandiseDiscountPaise != null) {
-    return Math.max(
-      0,
-      subtotalPaise - Math.min(merchandiseDiscountPaise, Math.max(0, Math.round(vendorBorneMerchandiseDiscountPaise))),
-    );
-  }
-  if (discountBearer === DISCOUNT_BEARER.VENDOR) {
-    return Math.max(0, subtotalPaise - merchandiseDiscountPaise);
-  }
-  return subtotalPaise;
-}
-
 /**
  * Authoritative per-SubOrder pricing. All money in paise.
- * Order: line subtotals → merchandise discount → tax on post-discount →
- * commission (excludes tax/shipping) → TCS → net payout.
+ * Order: line subtotals → merchandise discount → tax on post-discount (per-line GST) →
+ * commission per-line (excludes tax/shipping) → TCS → net payout.
  */
 export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderPricingBreakdown {
   const lines = input.lines.map((line) => {
@@ -141,6 +129,8 @@ export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderP
       quantity: qty,
       unitPricePaise: unit,
       lineSubtotalPaise: unit * qty,
+      gstPercentage: Number(line.gstPercentage ?? input.gstPercentage ?? 0),
+      commissionRatePercent: Number(line.commissionRatePercent ?? input.commissionRatePercent ?? 0),
     };
   });
 
@@ -161,8 +151,6 @@ export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderP
     lines.map((line) => line.lineSubtotalPaise),
   );
 
-  const taxablePaise = Math.max(0, subtotalPaise - merchandiseDiscountPaise);
-  const tax = splitTax(taxablePaise, input.gstPercentage, input.intraState);
   const vendorBorne = Math.min(
     merchandiseDiscountPaise,
     input.vendorBorneMerchandiseDiscountPaise != null
@@ -171,64 +159,20 @@ export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderP
         ? merchandiseDiscountPaise
         : 0,
   );
-  const base = commissionBasePaise(
-    subtotalPaise,
-    merchandiseDiscountPaise,
-    input.discountBearer,
-    vendorBorne,
-  );
-  const commissionPaise = Math.round((base * Number(input.commissionRatePercent || 0)) / 100);
-  const tcsPaise = Math.round((taxablePaise * Number(input.tcsRatePercent || 0)) / 100);
-  const netPayoutPaise = Math.max(0, taxablePaise - commissionPaise - tcsPaise);
 
-  const lineTaxTotals = allocateProportionally(
-    tax.total,
-    lines.map((line, i) => Math.max(0, line.lineSubtotalPaise - (lineDiscounts[i] ?? 0))),
-  );
-  const lineCommission = allocateProportionally(
-    commissionPaise,
-    lines.map((line, i) => {
-      const disc = lineDiscounts[i] ?? 0;
-      const lineVendorBorne =
-        merchandiseDiscountPaise > 0
-          ? Math.round((disc * vendorBorne) / merchandiseDiscountPaise)
-          : 0;
-      return Math.max(0, line.lineSubtotalPaise - lineVendorBorne);
-    }),
-  );
-  const lineTcs = allocateProportionally(
-    tcsPaise,
-    lines.map((line, i) => Math.max(0, line.lineSubtotalPaise - (lineDiscounts[i] ?? 0))),
-  );
+  const taxablePaise = Math.max(0, subtotalPaise - merchandiseDiscountPaise);
 
   const pricedLines: PricingLineBreakdown[] = lines.map((line, i) => {
     const discountPaise = lineDiscounts[i] ?? 0;
     const lineTaxable = Math.max(0, line.lineSubtotalPaise - discountPaise);
-    const lineTaxTotal = lineTaxTotals[i] ?? 0;
-    const lineTax = input.intraState
-      ? {
-          cgst: Math.floor(lineTaxTotal / 2),
-          sgst: lineTaxTotal - Math.floor(lineTaxTotal / 2),
-          igst: 0,
-          total: lineTaxTotal,
-          gstPercentage: input.gstPercentage,
-        }
-      : {
-          cgst: 0,
-          sgst: 0,
-          igst: lineTaxTotal,
-          total: lineTaxTotal,
-          gstPercentage: input.gstPercentage,
-        };
-    const commissionBase =
+    const lineTax = splitTax(lineTaxable, line.gstPercentage, input.intraState);
+    const lineVendorBorne =
       merchandiseDiscountPaise > 0
-        ? Math.max(
-            0,
-            line.lineSubtotalPaise - Math.round((discountPaise * vendorBorne) / merchandiseDiscountPaise),
-          )
-        : line.lineSubtotalPaise;
-    const commission = lineCommission[i] ?? 0;
-    const tcs = lineTcs[i] ?? 0;
+        ? Math.round((discountPaise * vendorBorne) / merchandiseDiscountPaise)
+        : 0;
+    const commissionBase = Math.max(0, line.lineSubtotalPaise - lineVendorBorne);
+    const commission = Math.round((commissionBase * line.commissionRatePercent) / 100);
+    // TCS allocated later from suborder total so sum matches exactly
     return {
       key: line.key,
       quantity: line.quantity,
@@ -239,32 +183,71 @@ export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderP
       tax: lineTax,
       commissionBasePaise: commissionBase,
       commissionPaise: commission,
-      tcsPaise: tcs,
-      netPayoutPaise: Math.max(0, lineTaxable - commission - tcs),
+      tcsPaise: 0,
+      netPayoutPaise: 0,
     };
   });
 
-  const summedLineTax = pricedLines.reduce((sum, line) => sum + line.tax.total, 0);
-  let appliedRoundingAdjustmentPaise = tax.total - summedLineTax;
-  if (appliedRoundingAdjustmentPaise !== 0 && pricedLines.length > 0) {
-    const target = pricedLines.reduce((best, line) =>
-      line.taxablePaise > best.taxablePaise ? line : best,
-    );
-    target.tax.total += appliedRoundingAdjustmentPaise;
-    if (input.intraState) {
-      target.tax.sgst += appliedRoundingAdjustmentPaise;
-    } else {
-      target.tax.igst += appliedRoundingAdjustmentPaise;
-    }
-    target.netPayoutPaise = Math.max(
-      0,
-      target.taxablePaise - target.commissionPaise - target.tcsPaise,
-    );
-  } else {
-    appliedRoundingAdjustmentPaise = 0;
+  const tcsPaise = Math.round((taxablePaise * Number(input.tcsRatePercent || 0)) / 100);
+  const lineTcs = allocateProportionally(
+    tcsPaise,
+    pricedLines.map((line) => line.taxablePaise),
+  );
+  for (let i = 0; i < pricedLines.length; i += 1) {
+    const line = pricedLines[i]!;
+    line.tcsPaise = lineTcs[i] ?? 0;
+    line.netPayoutPaise = Math.max(0, line.taxablePaise - line.commissionPaise - line.tcsPaise);
   }
 
-  const customerTotalPaise = taxablePaise + tax.total + shippingChargedPaise;
+  let taxTotal = pricedLines.reduce((sum, line) => sum + line.tax.total, 0);
+  let taxCgst = pricedLines.reduce((sum, line) => sum + line.tax.cgst, 0);
+  let taxSgst = pricedLines.reduce((sum, line) => sum + line.tax.sgst, 0);
+  let taxIgst = pricedLines.reduce((sum, line) => sum + line.tax.igst, 0);
+
+  // When all lines share one GST rate, reconcile to tax(suborder taxable) and expose residual.
+  const uniqueGst = [...new Set(lines.map((line) => line.gstPercentage))];
+  let appliedRoundingAdjustmentPaise = 0;
+  if (uniqueGst.length === 1) {
+    const expected = splitTax(taxablePaise, uniqueGst[0]!, input.intraState);
+    appliedRoundingAdjustmentPaise = expected.total - taxTotal;
+    if (appliedRoundingAdjustmentPaise !== 0 && pricedLines.length > 0) {
+      const target = pricedLines.reduce((best, line) =>
+        line.taxablePaise > best.taxablePaise ? line : best,
+      );
+      target.tax.total += appliedRoundingAdjustmentPaise;
+      if (input.intraState) {
+        target.tax.sgst += appliedRoundingAdjustmentPaise;
+      } else {
+        target.tax.igst += appliedRoundingAdjustmentPaise;
+      }
+      target.netPayoutPaise = Math.max(
+        0,
+        target.taxablePaise - target.commissionPaise - target.tcsPaise,
+      );
+      taxTotal = expected.total;
+      taxCgst = pricedLines.reduce((sum, line) => sum + line.tax.cgst, 0);
+      taxSgst = pricedLines.reduce((sum, line) => sum + line.tax.sgst, 0);
+      taxIgst = pricedLines.reduce((sum, line) => sum + line.tax.igst, 0);
+    } else {
+      appliedRoundingAdjustmentPaise = 0;
+    }
+  }
+
+  const commissionBasePaise = pricedLines.reduce((sum, line) => sum + line.commissionBasePaise, 0);
+  const commissionPaise = pricedLines.reduce((sum, line) => sum + line.commissionPaise, 0);
+  const netPayoutPaise = Math.max(0, taxablePaise - commissionPaise - tcsPaise);
+  const customerTotalPaise = taxablePaise + taxTotal + shippingChargedPaise;
+
+  const displayGst =
+    uniqueGst.length === 1
+      ? uniqueGst[0]!
+      : taxablePaise > 0
+        ? Math.round(
+            (pricedLines.reduce((sum, line) => sum + line.taxablePaise * line.tax.gstPercentage, 0) /
+              taxablePaise) *
+              100,
+          ) / 100
+        : input.gstPercentage;
 
   return {
     lines: pricedLines,
@@ -274,8 +257,14 @@ export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderP
     shippingCostPaise,
     shippingChargedPaise,
     taxablePaise,
-    tax,
-    commissionBasePaise: base,
+    tax: {
+      cgst: taxCgst,
+      sgst: taxSgst,
+      igst: taxIgst,
+      total: taxTotal,
+      gstPercentage: displayGst,
+    },
+    commissionBasePaise,
     commissionPaise,
     tcsPaise,
     netPayoutPaise,

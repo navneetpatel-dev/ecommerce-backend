@@ -16,7 +16,6 @@ import { ReturnRequest } from '@database/models/returnRequest.model';
 import { cartService } from '@modules/cart/cart.service';
 import {
   recordCouponUsage,
-  creditCashbackIfNeeded,
   destroyCouponUsageForOrder,
 } from '@modules/coupons/couponEngine';
 import {
@@ -139,21 +138,6 @@ export class PaymentsService {
         actorId: order.userId,
         transaction,
       });
-
-      if (coupon.type === 'CASHBACK') {
-        const cashback = Number(coupon.value ?? 0);
-        const amount = Math.min(
-          cashback,
-          Number(order.totalAmount) + Number(order.discountTotal ?? 0),
-        );
-        await creditCashbackIfNeeded({
-          coupon,
-          userId: order.userId,
-          orderId: order.id,
-          cashbackAmount: amount,
-          transaction,
-        });
-      }
     }
   }
 

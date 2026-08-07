@@ -254,19 +254,36 @@ export class CartService {
     let grandTotal = 0;
 
     for (const [vendorId, vendorItems] of byVendor) {
-      const first = vendorItems[0]!;
-      const productId = first.product.id;
-      const product = await Product.findByPk(productId, { attributes: ['categoryId', 'vendorId'] });
-      const categoryId = product?.categoryId ?? null;
-      const gstPercentage = categoryId ? await taxService.getGstRate(categoryId) : 0;
       const vendor = vendorId !== 'platform' ? await Vendor.findByPk(vendorId) : null;
-      const commissionRate = categoryId
-        ? await categoriesService.resolveCommissionRate(
-            categoryId,
-            vendor?.commissionRate,
-            settings.defaultCommissionRate,
-          )
-        : settings.defaultCommissionRate;
+      const lineMeta: Array<{
+        key: string;
+        unitPrice: number;
+        quantity: number;
+        gstPercentage: number;
+        commissionRatePercent: number;
+      }> = [];
+      for (const item of vendorItems) {
+        const product = await Product.findByPk(item.product.id, {
+          attributes: ['categoryId', 'vendorId'],
+        });
+        const categoryId = product?.categoryId ?? null;
+        const gstPercentage = categoryId ? await taxService.getGstRate(categoryId) : 0;
+        const commissionRatePercent = categoryId
+          ? await categoriesService.resolveCommissionRate(
+              categoryId,
+              vendor?.commissionRate,
+              settings.defaultCommissionRate,
+            )
+          : settings.defaultCommissionRate;
+        lineMeta.push({
+          key: item.id,
+          unitPrice: item.product.price,
+          quantity: item.quantity,
+          gstPercentage,
+          commissionRatePercent,
+        });
+      }
+      const fallback = lineMeta[0];
       const merchandiseDiscount = input.vendorDiscountShares[vendorId] ?? 0;
       const shippingDiscount = Math.min(
         estShippingPerVendor,
@@ -275,19 +292,15 @@ export class CartService {
       const vendorBorne = input.vendorBorneDiscountShares[vendorId] ?? 0;
       discount += merchandiseDiscount + shippingDiscount;
       const priced = pricingService.computeVendorBreakdown({
-        lines: vendorItems.map((item) => ({
-          key: item.id,
-          unitPrice: item.product.price,
-          quantity: item.quantity,
-        })),
+        lines: lineMeta,
         merchandiseDiscount,
         vendorBorneMerchandiseDiscount: vendorBorne,
         shippingDiscount,
         shippingCost: estShippingPerVendor,
-        gstPercentage,
+        gstPercentage: fallback?.gstPercentage ?? 0,
         vendorStateCode: String(vendor?.state ?? ''),
         shippingStateCode: shippingStateCode || String(vendor?.state ?? ''),
-        commissionRatePercent: commissionRate,
+        commissionRatePercent: fallback?.commissionRatePercent ?? settings.defaultCommissionRate,
         discountBearer: resolveVendorDiscountBearer(vendorBorne, merchandiseDiscount),
         tcsRatePercent: settings.tcsRatePercent,
       });
