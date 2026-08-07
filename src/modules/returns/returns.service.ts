@@ -14,7 +14,7 @@ import { DebitNote } from '@database/models/debitNote.model';
 import { sequelize } from '@database/models';
 import type { Transaction } from 'sequelize';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
-import { fromPaise } from '@modules/pricing/money';
+import { fromPaise, toPaise } from '@modules/pricing/money';
 import { pricingService } from '@modules/pricing/pricing.service';
 import { nextDocumentNumber } from '@modules/pricing/documentSequence';
 import { notificationsService } from '@modules/notifications/notifications.service';
@@ -172,9 +172,12 @@ export class ReturnsService {
         updatedBy: actorId,
       };
 
-      if (status === RETURN_STATUS.APPROVED || status === RETURN_STATUS.REFUNDED) {
+      if (
+        (status === RETURN_STATUS.APPROVED || status === RETURN_STATUS.REFUNDED) &&
+        row.refundAmount == null
+      ) {
         const orderItem = (row as any).orderItem as OrderItem & {
-          subOrder: SubOrder & { items?: OrderItem[] };
+          subOrder: SubOrder & { items?: OrderItem[]; orderId: string };
         };
         if (orderItem?.subOrder) {
           const frozen = pricingService.frozenLineFromOrderItem({
@@ -260,6 +263,95 @@ export class ReturnsService {
             }
           }
 
+          const sub = orderItem.subOrder;
+          const nextSubtotalPaise = Math.max(
+            0,
+            Number(sub.subtotalPaise ?? 0) - reversal.refundSubtotalPaise,
+          );
+          const nextDiscountPaise = Math.max(
+            0,
+            Number(sub.discountAmountPaise ?? 0) - reversal.refundDiscountPaise,
+          );
+          const nextTaxablePaise = Math.max(
+            0,
+            Number(sub.taxableAmountPaise ?? 0) - reversal.refundMerchandisePaise,
+          );
+          const nextTaxPaise = Math.max(
+            0,
+            Number(sub.taxAmountPaise ?? 0) - reversal.refundTaxPaise,
+          );
+          const nextCommissionPaise = Math.max(
+            0,
+            Number(sub.commissionAmountPaise ?? 0) - reversal.refundCommissionPaise,
+          );
+          const nextTcsPaise = Math.max(
+            0,
+            Number(sub.tcsAmountPaise ?? 0) - reversal.refundTcsPaise,
+          );
+          const nextNetPaise = Math.max(
+            0,
+            Number(sub.netPayoutAmountPaise ?? 0) - reversal.refundNetClawbackPaise,
+          );
+          await sub.update(
+            {
+              subtotal: fromPaise(nextSubtotalPaise),
+              discountAmount: fromPaise(nextDiscountPaise),
+              taxableAmount: fromPaise(nextTaxablePaise),
+              taxAmount: fromPaise(nextTaxPaise),
+              commissionAmount: fromPaise(nextCommissionPaise),
+              tcsAmount: fromPaise(nextTcsPaise),
+              netPayoutAmount: fromPaise(nextNetPaise),
+              subtotalPaise: nextSubtotalPaise,
+              discountAmountPaise: nextDiscountPaise,
+              taxableAmountPaise: nextTaxablePaise,
+              taxAmountPaise: nextTaxPaise,
+              commissionAmountPaise: nextCommissionPaise,
+              tcsAmountPaise: nextTcsPaise,
+              netPayoutAmountPaise: nextNetPaise,
+              updatedBy: actorId,
+            },
+            { transaction: t },
+          );
+
+          const order = await Order.findByPk(sub.orderId, { transaction: t });
+          if (order) {
+            const nextOrderTotalPaise = Math.max(
+              0,
+              toPaise(Number(order.totalAmount)) - reversal.customerRefundPaise,
+            );
+            const nextDiscountTotal = Math.max(
+              0,
+              Number(order.discountTotal ?? 0) - fromPaise(reversal.refundDiscountPaise),
+            );
+            await order.update(
+              {
+                totalAmount: fromPaise(nextOrderTotalPaise),
+                discountTotal: nextDiscountTotal,
+                updatedBy: actorId,
+              },
+              { transaction: t },
+            );
+          }
+
+          await orderItem.update(
+            {
+              discountAmount: 0,
+              taxableAmount: 0,
+              taxAmount: 0,
+              commissionAmount: 0,
+              tcsAmount: 0,
+              netPayoutAmount: 0,
+              discountAmountPaise: 0,
+              taxableAmountPaise: 0,
+              taxAmountPaise: 0,
+              commissionAmountPaise: 0,
+              tcsAmountPaise: 0,
+              netPayoutAmountPaise: 0,
+              updatedBy: actorId,
+            },
+            { transaction: t },
+          );
+
           const ledger = await CommissionLedger.findOne({
             where: { subOrderId: orderItem.subOrderId },
             transaction: t,
@@ -313,6 +405,10 @@ export class ReturnsService {
               0,
               Number(ledger.taxAmountPaise ?? 0) - reversal.refundTaxPaise,
             );
+            const discountPaise = Math.max(
+              0,
+              Number(ledger.discountAmountPaise ?? 0) - reversal.refundDiscountPaise,
+            );
             await ledger.update(
               {
                 saleAmount: nextSale,
@@ -321,12 +417,14 @@ export class ReturnsService {
                 tcsAmount: nextTcs,
                 taxAmount: nextTax,
                 netPayoutAmount: nextNet,
+                discountAmount: fromPaise(discountPaise),
                 saleAmountPaise: salePaise,
                 commissionAmountPaise: commissionPaise,
                 taxableAmountPaise: taxablePaise,
                 tcsAmountPaise: tcsPaise,
                 taxAmountPaise: taxPaise,
                 netPayoutAmountPaise: netPaise,
+                discountAmountPaise: discountPaise,
                 status: nextNet <= 0 ? COMMISSION_STATUS.CLAWED_BACK : ledger.status,
                 updatedBy: actorId,
               },
@@ -334,6 +432,8 @@ export class ReturnsService {
             );
           }
         }
+      } else if (status === RETURN_STATUS.APPROVED || status === RETURN_STATUS.REFUNDED) {
+        // Financial reversal already frozen on this return — keep existing refund snapshot.
       }
 
       await row.update(patch, { transaction: t });

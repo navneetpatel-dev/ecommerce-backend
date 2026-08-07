@@ -7,7 +7,6 @@ import { Order } from '@database/models/order.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { Vendor } from '@database/models/vendor.model';
-import { Coupon } from '@database/models/coupon.model';
 import { toPaise, fromPaise } from '@modules/pricing/money';
 import type { ReportRangeQuery } from './reports.dto';
 
@@ -15,6 +14,15 @@ function assertRange(query: ReportRangeQuery) {
   if (query.from > query.to) {
     throw new ValidationError(ERROR_MESSAGES.REPORT_INVALID_RANGE);
   }
+}
+
+/** Prefer frozen paise columns; fall back to DECIMAL rupees for legacy rows. */
+function frozenPaise(paiseValue: unknown, rupeeValue: unknown): number {
+  const paise = Number(paiseValue ?? 0);
+  const rupees = Number(rupeeValue ?? 0);
+  if (paise !== 0) return paise;
+  if (rupees === 0) return 0;
+  return toPaise(rupees);
 }
 
 function paidOrderInclude(from: Date, to: Date) {
@@ -36,30 +44,33 @@ export class ReportsService {
     const subOrders = await SubOrder.findAll({
       include: [paidOrderInclude(query.from, query.to)],
     });
-    const ledgers = await CommissionLedger.findAll({
-      where: {
-        createdAt: { [Op.between]: [query.from, query.to] },
-        status: { [Op.ne]: COMMISSION_STATUS.CLAWED_BACK },
-      },
-    });
+
+    // Align commission/TCS/net to the same paid orders (frozen SubOrder period).
+    const subOrderIds = subOrders.map((sub) => sub.id);
+    const ledgers = subOrderIds.length
+      ? await CommissionLedger.findAll({
+          where: {
+            subOrderId: { [Op.in]: subOrderIds },
+            status: { [Op.ne]: COMMISSION_STATUS.CLAWED_BACK },
+          },
+        })
+      : [];
 
     let gmvPaise = 0;
     let taxCollectedPaise = 0;
     let shippingPaise = 0;
     let merchandiseDiscountPaise = 0;
-    let customerPaymentsPaise = 0;
 
     for (const sub of subOrders) {
-      const order = (sub as SubOrder & { order?: Order }).order;
-      gmvPaise += toPaise(sub.subtotal);
-      taxCollectedPaise += toPaise(sub.taxAmount);
-      shippingPaise += toPaise(
-        Math.max(0, Number(sub.shippingCost) - Number(sub.shippingDiscountAmount ?? 0)),
+      gmvPaise += frozenPaise(sub.subtotalPaise, sub.subtotal);
+      taxCollectedPaise += frozenPaise(sub.taxAmountPaise, sub.taxAmount);
+      const shippingCostPaise = frozenPaise(sub.shippingCostPaise, sub.shippingCost);
+      const shippingDiscountPaise = frozenPaise(
+        sub.shippingDiscountAmountPaise,
+        sub.shippingDiscountAmount,
       );
-      merchandiseDiscountPaise += toPaise(sub.discountAmount);
-      if (order) {
-        // Count order total once per order via Set below
-      }
+      shippingPaise += Math.max(0, shippingCostPaise - shippingDiscountPaise);
+      merchandiseDiscountPaise += frozenPaise(sub.discountAmountPaise, sub.discountAmount);
     }
 
     const orderIds = new Set(
@@ -71,7 +82,10 @@ export class ReportsService {
       where: { id: { [Op.in]: [...orderIds] } },
       attributes: ['id', 'totalAmount', 'discountTotal', 'couponId'],
     });
-    customerPaymentsPaise = orders.reduce((sum, order) => sum + toPaise(order.totalAmount), 0);
+    const customerPaymentsPaise = orders.reduce(
+      (sum, order) => sum + toPaise(order.totalAmount),
+      0,
+    );
 
     let commissionPaise = 0;
     let tcsPaise = 0;
@@ -80,15 +94,18 @@ export class ReportsService {
     let vendorDiscountPaise = 0;
 
     for (const ledger of ledgers) {
-      commissionPaise += toPaise(ledger.commissionAmount);
-      tcsPaise += toPaise(ledger.tcsAmount ?? 0);
-      netPayoutPaise +=
+      commissionPaise += frozenPaise(ledger.commissionAmountPaise, ledger.commissionAmount);
+      tcsPaise += frozenPaise(ledger.tcsAmountPaise, ledger.tcsAmount);
+      netPayoutPaise += frozenPaise(
+        ledger.netPayoutAmountPaise,
         ledger.netPayoutAmount != null
-          ? toPaise(ledger.netPayoutAmount)
-          : toPaise(ledger.saleAmount) - toPaise(ledger.commissionAmount);
-      const disc = toPaise(ledger.discountAmount ?? 0);
+          ? ledger.netPayoutAmount
+          : Number(ledger.saleAmount) - Number(ledger.commissionAmount),
+      );
+      const disc = frozenPaise(ledger.discountAmountPaise, ledger.discountAmount);
       if (ledger.discountBearer === DISCOUNT_BEARER.VENDOR) vendorDiscountPaise += disc;
       else if (ledger.discountBearer === DISCOUNT_BEARER.PLATFORM) platformDiscountPaise += disc;
+      else if (disc > 0) platformDiscountPaise += disc;
     }
 
     return {
@@ -145,22 +162,28 @@ export class ReportsService {
         pendingNet: 0,
         settledNet: 0,
       };
-      const taxable = Number(ledger.taxableAmount ?? ledger.saleAmount);
-      const net =
+      const taxablePaise = frozenPaise(ledger.taxableAmountPaise, ledger.taxableAmount ?? ledger.saleAmount);
+      const netPaise = frozenPaise(
+        ledger.netPayoutAmountPaise,
         ledger.netPayoutAmount != null
-          ? Number(ledger.netPayoutAmount)
-          : Number(ledger.saleAmount) - Number(ledger.commissionAmount);
-      row.grossSales += taxable;
+          ? ledger.netPayoutAmount
+          : Number(ledger.saleAmount) - Number(ledger.commissionAmount),
+      );
+      const commissionPaise = frozenPaise(ledger.commissionAmountPaise, ledger.commissionAmount);
+      const tcsPaise = frozenPaise(ledger.tcsAmountPaise, ledger.tcsAmount);
+      const discPaise = frozenPaise(ledger.discountAmountPaise, ledger.discountAmount);
+
+      row.grossSales += fromPaise(taxablePaise);
       if (ledger.discountBearer === DISCOUNT_BEARER.VENDOR) {
-        row.discountsAbsorbed += Number(ledger.discountAmount ?? 0);
+        row.discountsAbsorbed += fromPaise(discPaise);
       }
-      row.commissionCharged += Number(ledger.commissionAmount);
-      row.tcsCharged += Number(ledger.tcsAmount ?? 0);
+      row.commissionCharged += fromPaise(commissionPaise);
+      row.tcsCharged += fromPaise(tcsPaise);
       if (ledger.status === COMMISSION_STATUS.SETTLED) {
-        row.settledNet += net;
-        row.netPaidOut += net;
+        row.settledNet += fromPaise(netPaise);
+        row.netPaidOut += fromPaise(netPaise);
       } else if (ledger.status === COMMISSION_STATUS.PENDING) {
-        row.pendingNet += net;
+        row.pendingNet += fromPaise(netPaise);
       }
       byVendor.set(key, row);
     }
@@ -213,53 +236,42 @@ export class ReportsService {
         vendorId,
         createdAt: { [Op.between]: [query.from, query.to] },
       },
-      include: [
-        {
-          model: SubOrder,
-          include: [
-            {
-              model: Order,
-              as: 'order',
-              attributes: ['id', 'couponId'],
-              include: [{ model: Coupon, as: 'coupon', attributes: ['id', 'vendorId', 'discountBearer'] }],
-            },
-          ],
-        },
-      ],
     });
 
-    let sales = 0;
-    let commission = 0;
-    let tcs = 0;
-    let net = 0;
-    let pending = 0;
-    let settled = 0;
-    let vendorCouponDiscount = 0;
-    let platformCouponDiscount = 0;
+    let salesPaise = 0;
+    let commissionPaise = 0;
+    let tcsPaise = 0;
+    let netPaise = 0;
+    let pendingPaise = 0;
+    let settledPaise = 0;
+    let vendorCouponDiscountPaise = 0;
+    let platformCouponDiscountPaise = 0;
 
     for (const ledger of ledgers) {
-      const taxable = Number(ledger.taxableAmount ?? ledger.saleAmount);
-      const netRow =
+      const taxable = frozenPaise(ledger.taxableAmountPaise, ledger.taxableAmount ?? ledger.saleAmount);
+      const netRow = frozenPaise(
+        ledger.netPayoutAmountPaise,
         ledger.netPayoutAmount != null
-          ? Number(ledger.netPayoutAmount)
-          : Number(ledger.saleAmount) - Number(ledger.commissionAmount);
-      sales += taxable;
-      commission += Number(ledger.commissionAmount);
-      tcs += Number(ledger.tcsAmount ?? 0);
-      net += netRow;
-      if (ledger.status === COMMISSION_STATUS.PENDING) pending += netRow;
-      if (ledger.status === COMMISSION_STATUS.SETTLED) settled += netRow;
+          ? ledger.netPayoutAmount
+          : Number(ledger.saleAmount) - Number(ledger.commissionAmount),
+      );
+      const commission = frozenPaise(ledger.commissionAmountPaise, ledger.commissionAmount);
+      const tcs = frozenPaise(ledger.tcsAmountPaise, ledger.tcsAmount);
+      const discount = frozenPaise(ledger.discountAmountPaise, ledger.discountAmount);
 
-      const discount = Number(ledger.discountAmount ?? 0);
-      const sub = (ledger as any).SubOrder as
-        | (SubOrder & { order?: Order & { coupon?: Coupon } })
-        | undefined;
-      const coupon = sub?.order?.coupon;
-      if (discount > 0 && ledger.discountBearer === DISCOUNT_BEARER.VENDOR) {
-        if (coupon?.vendorId && coupon.vendorId === vendorId) {
-          vendorCouponDiscount += discount;
+      salesPaise += taxable;
+      commissionPaise += commission;
+      tcsPaise += tcs;
+      netPaise += netRow;
+      if (ledger.status === COMMISSION_STATUS.PENDING) pendingPaise += netRow;
+      if (ledger.status === COMMISSION_STATUS.SETTLED) settledPaise += netRow;
+
+      // Own coupons: VENDOR bearer. Platform coupons on my items: PLATFORM bearer.
+      if (discount > 0) {
+        if (ledger.discountBearer === DISCOUNT_BEARER.VENDOR) {
+          vendorCouponDiscountPaise += discount;
         } else {
-          platformCouponDiscount += discount;
+          platformCouponDiscountPaise += discount;
         }
       }
     }
@@ -268,16 +280,16 @@ export class ReportsService {
       from: query.from,
       to: query.to,
       vendorId,
-      sales,
-      commissionDeducted: commission,
-      tcsDeducted: tcs,
+      sales: fromPaise(salesPaise),
+      commissionDeducted: fromPaise(commissionPaise),
+      tcsDeducted: fromPaise(tcsPaise),
       discountAbsorbed: {
-        ownCoupons: vendorCouponDiscount,
-        platformCouponsOnMyItems: platformCouponDiscount,
+        ownCoupons: fromPaise(vendorCouponDiscountPaise),
+        platformCouponsOnMyItems: fromPaise(platformCouponDiscountPaise),
       },
-      netPayout: net,
-      upcomingPayout: pending,
-      historicalPayout: settled,
+      netPayout: fromPaise(netPaise),
+      upcomingPayout: fromPaise(pendingPaise),
+      historicalPayout: fromPaise(settledPaise),
     };
   }
 

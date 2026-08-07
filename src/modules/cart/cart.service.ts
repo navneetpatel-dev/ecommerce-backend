@@ -159,6 +159,8 @@ export class CartService {
     let appliedCoupons: CartView['appliedCoupons'] = [];
     let removedCouponReason: string | null = null;
     let vendorDiscountShares: Record<string, number> = {};
+    let vendorShippingDiscountShares: Record<string, number> = {};
+    let vendorBorneDiscountShares: Record<string, number> = {};
     if (userId) {
       const { couponsService } = await import('@modules/coupons/coupons.service');
       const revalidated = await couponsService.revalidateCartCoupon(userId);
@@ -166,11 +168,17 @@ export class CartService {
       appliedCoupons = revalidated.appliedCoupons;
       removedCouponReason = revalidated.removed ? revalidated.reason : null;
       vendorDiscountShares = revalidated.appliedCoupon?.vendorDiscountShares ?? {};
+      vendorShippingDiscountShares =
+        revalidated.appliedCoupon?.vendorShippingDiscountShares ?? {};
+      vendorBorneDiscountShares = revalidated.appliedCoupon?.vendorBorneDiscountShares ?? {};
     }
 
     const pricingPreview = await this.buildPricingPreview({
+      userId,
       items: available,
       vendorDiscountShares,
+      vendorShippingDiscountShares,
+      vendorBorneDiscountShares,
       merchandiseDiscountTotal: appliedCoupon?.discount ?? 0,
     });
 
@@ -187,8 +195,11 @@ export class CartService {
   }
 
   private async buildPricingPreview(input: {
+    userId: string | null;
     items: CartViewItem[];
     vendorDiscountShares: Record<string, number>;
+    vendorShippingDiscountShares: Record<string, number>;
+    vendorBorneDiscountShares: Record<string, number>;
     merchandiseDiscountTotal: number;
   }): Promise<NonNullable<CartView['pricingPreview']>> {
     const merchandiseSubtotal = input.items.reduce(
@@ -209,12 +220,25 @@ export class CartService {
     const { taxService } = await import('@modules/tax/tax.service');
     const { categoriesService } = await import('@modules/categories/categories.service');
     const { pricingService } = await import('@modules/pricing/pricing.service');
+    const { resolveVendorDiscountBearer } = await import('@modules/coupons/couponEngine');
     const { ShippingRate } = await import('@database/models/shippingRate.model');
-    const { DISCOUNT_BEARER } = await import('@core/constants/statuses');
+    const { Address } = await import('@database/models/address.model');
 
     const settings = await settingsService.getPlatformSettings();
     const cheapest = await ShippingRate.findOne({ order: [['price', 'ASC']] });
     const estShippingPerVendor = Number(cheapest?.price ?? 0);
+
+    let shippingStateCode = '';
+    if (input.userId) {
+      const address = await Address.findOne({
+        where: { userId: input.userId },
+        order: [
+          ['isDefault', 'DESC'],
+          ['updatedAt', 'DESC'],
+        ],
+      });
+      shippingStateCode = String(address?.state ?? '').trim();
+    }
 
     const byVendor = new Map<string, CartViewItem[]>();
     for (const item of input.items) {
@@ -244,7 +268,12 @@ export class CartService {
           )
         : settings.defaultCommissionRate;
       const merchandiseDiscount = input.vendorDiscountShares[vendorId] ?? 0;
-      discount += merchandiseDiscount;
+      const shippingDiscount = Math.min(
+        estShippingPerVendor,
+        input.vendorShippingDiscountShares[vendorId] ?? 0,
+      );
+      const vendorBorne = input.vendorBorneDiscountShares[vendorId] ?? 0;
+      discount += merchandiseDiscount + shippingDiscount;
       const priced = pricingService.computeVendorBreakdown({
         lines: vendorItems.map((item) => ({
           key: item.id,
@@ -252,13 +281,14 @@ export class CartService {
           quantity: item.quantity,
         })),
         merchandiseDiscount,
-        shippingDiscount: 0,
+        vendorBorneMerchandiseDiscount: vendorBorne,
+        shippingDiscount,
         shippingCost: estShippingPerVendor,
         gstPercentage,
         vendorStateCode: String(vendor?.state ?? ''),
-        shippingStateCode: String(vendor?.state ?? ''),
+        shippingStateCode: shippingStateCode || String(vendor?.state ?? ''),
         commissionRatePercent: commissionRate,
-        discountBearer: DISCOUNT_BEARER.PLATFORM,
+        discountBearer: resolveVendorDiscountBearer(vendorBorne, merchandiseDiscount),
         tcsRatePercent: settings.tcsRatePercent,
       });
       taxTotal += priced.rupees.tax.total;

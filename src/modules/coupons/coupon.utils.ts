@@ -1,5 +1,4 @@
 import type { Coupon, CouponConfig } from '@database/models/coupon.model';
-import { DISCOUNT_BEARER, type DiscountBearer } from '@core/constants/statuses';
 
 export type CartLineForCoupon = {
   productId: string;
@@ -52,17 +51,6 @@ export function prorateDiscount(
   }
 
   return result;
-}
-
-export function commissionSaleAmount(
-  subtotal: number,
-  vendorDiscountShare: number,
-  discountBearer: DiscountBearer | null | undefined,
-): number {
-  if (discountBearer === DISCOUNT_BEARER.VENDOR) {
-    return roundMoney(Math.max(0, subtotal - vendorDiscountShare));
-  }
-  return roundMoney(subtotal);
 }
 
 export function lineAmount(line: CartLineForCoupon): number {

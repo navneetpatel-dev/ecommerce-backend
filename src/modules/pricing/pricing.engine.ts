@@ -76,6 +76,8 @@ export type RefundReversalInput = {
 };
 
 export type RefundReversalBreakdown = {
+  refundSubtotalPaise: Paise;
+  refundDiscountPaise: Paise;
   refundMerchandisePaise: Paise;
   refundTaxPaise: Paise;
   refundCommissionPaise: Paise;
@@ -288,6 +290,8 @@ export function reverseFrozenLine(input: RefundReversalInput): RefundReversalBre
   const qty = Math.max(0, Math.min(Math.floor(returnQuantity), line.quantity));
   if (line.quantity <= 0 || qty <= 0) {
     return {
+      refundSubtotalPaise: 0,
+      refundDiscountPaise: 0,
       refundMerchandisePaise: 0,
       refundTaxPaise: 0,
       refundCommissionPaise: 0,
@@ -301,6 +305,8 @@ export function reverseFrozenLine(input: RefundReversalInput): RefundReversalBre
   const ratioDen = line.quantity;
   const scale = (value: Paise) => Math.round((value * ratioNum) / ratioDen);
 
+  const refundSubtotalPaise = scale(line.lineSubtotalPaise);
+  const refundDiscountPaise = scale(line.discountPaise);
   const refundMerchandisePaise = scale(line.taxablePaise);
   const refundTaxPaise = scale(line.tax.total);
   const refundCommissionPaise = scale(line.commissionPaise);
@@ -308,6 +314,8 @@ export function reverseFrozenLine(input: RefundReversalInput): RefundReversalBre
   const refundNetClawbackPaise = scale(line.netPayoutPaise);
 
   return {
+    refundSubtotalPaise,
+    refundDiscountPaise,
     refundMerchandisePaise,
     refundTaxPaise,
     refundCommissionPaise,

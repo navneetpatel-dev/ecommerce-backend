@@ -687,6 +687,8 @@ export class CouponsService {
       cashbackAmount: number;
       type: string;
       vendorDiscountShares: Record<string, number>;
+      vendorShippingDiscountShares: Record<string, number>;
+      vendorBorneDiscountShares: Record<string, number>;
     } | null;
     appliedCoupons: Array<{
       code: string;
@@ -742,6 +744,8 @@ export class CouponsService {
         cashbackAmount: result.cashbackAmount,
         type: result.primaryCoupon?.type ?? result.coupons[0]!.type,
         vendorDiscountShares: result.vendorDiscountShares,
+        vendorShippingDiscountShares: result.vendorShippingDiscountShares,
+        vendorBorneDiscountShares: result.vendorBorneDiscountShares,
       },
       appliedCoupons: result.coupons.map((coupon) => ({
         code: coupon.code,

@@ -96,7 +96,7 @@ function failSet(reason: string, reasonCode: string): ValidateCouponSetResult {
   };
 }
 
-export { prorateDiscount, commissionSaleAmount } from './coupon.utils';
+export { prorateDiscount } from './coupon.utils';
 export { type CartLineForCoupon } from './coupon.utils';
 
 /** Normalize cart coupon fields into a unique uppercase code list. */

@@ -135,7 +135,10 @@ export class PricingService {
         total: taxTotalPaise,
         gstPercentage: Number(tb.gstPercentage ?? 0),
       },
-      commissionBasePaise: taxablePaise,
+      commissionBasePaise:
+        row.commissionAmountPaise != null && Number(row.commissionAmountPaise) >= 0
+          ? Math.max(0, taxablePaise) // net fields are authoritative; base for display
+          : taxablePaise,
       commissionPaise,
       tcsPaise,
       netPayoutPaise,
