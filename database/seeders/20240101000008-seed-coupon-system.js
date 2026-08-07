@@ -57,6 +57,7 @@ module.exports = {
       applicableScope: JSON.stringify({ type: 'all', ids: [] }),
       excludedItems: JSON.stringify({ productIds: [], categoryIds: [] }),
       userRestriction: JSON.stringify({ type: 'all' }),
+      config: JSON.stringify({}),
       usageLimitTotal: 1000,
       usageLimitPerUser: 5,
       usedCount: 0,
@@ -88,6 +89,7 @@ module.exports = {
         applicableScope: JSON.stringify({ type: 'vendor', ids: [vendorId] }),
         excludedItems: JSON.stringify({ productIds: [], categoryIds: [] }),
         userRestriction: JSON.stringify({ type: 'all' }),
+        config: JSON.stringify({}),
         usageLimitTotal: 500,
         usageLimitPerUser: 3,
         usedCount: 0,
@@ -150,6 +152,7 @@ module.exports = {
         applicableScope: JSON.stringify({ type: 'all', ids: [] }),
         excludedItems: JSON.stringify({ productIds: [], categoryIds: [] }),
         userRestriction: JSON.stringify({ type: 'all' }),
+        config: JSON.stringify({}),
         usageLimitTotal: 1,
         usageLimitPerUser: 1,
         usedCount: 0,
@@ -171,6 +174,85 @@ module.exports = {
     }
 
     console.log('✓ Coupon system seed (cs-coupon-*)');
+
+    // Multi-vendor cart for proration / commission verification
+    const customerId = await findId(
+      queryInterface,
+      `SELECT u.id FROM users u
+       INNER JOIN roles r ON r.id = u."roleId"
+       WHERE r.name = 'CUSTOMER'
+       ORDER BY u."createdAt" ASC
+       LIMIT 1`,
+    );
+    if (!customerId) {
+      console.log('skip multi-vendor cart seed — no customer');
+      return;
+    }
+
+    const [variantRows] = await queryInterface.sequelize.query(
+      `
+      SELECT pv.id AS "variantId", p."vendorId"
+      FROM product_variants pv
+      INNER JOIN products p ON p.id = pv."productId"
+      INNER JOIN vendors v ON v.id = p."vendorId"
+      WHERE p.status = 'LIVE' AND v.status = 'APPROVED' AND p."deletedAt" IS NULL
+      ORDER BY p."createdAt" ASC
+      LIMIT 40
+      `,
+    );
+    const byVendor = new Map();
+    for (const row of variantRows) {
+      if (!byVendor.has(row.vendorId)) byVendor.set(row.vendorId, row.variantId);
+      if (byVendor.size >= 2) break;
+    }
+    if (byVendor.size < 2) {
+      console.log('skip multi-vendor cart seed — need 2 approved vendors with live products');
+      return;
+    }
+
+    let cartId = await findId(
+      queryInterface,
+      `SELECT id FROM carts WHERE "userId" = :userId LIMIT 1`,
+      { userId: customerId },
+    );
+    if (!cartId) {
+      cartId = randomUUID();
+      await queryInterface.bulkInsert('carts', [
+        {
+          id: cartId,
+          userId: customerId,
+          couponCode: 'CS-COUPON-PLATFORM-10',
+          createdAt: now,
+          updatedAt: now,
+        },
+      ]);
+    } else {
+      await queryInterface.sequelize.query(
+        `UPDATE carts SET "couponCode" = 'CS-COUPON-PLATFORM-10', "updatedAt" = :now WHERE id = :cartId`,
+        { replacements: { cartId, now } },
+      );
+    }
+
+    for (const variantId of byVendor.values()) {
+      const existingItem = await findId(
+        queryInterface,
+        `SELECT id FROM cart_items WHERE "cartId" = :cartId AND "variantId" = :variantId LIMIT 1`,
+        { cartId, variantId },
+      );
+      if (existingItem) continue;
+      await queryInterface.bulkInsert('cart_items', [
+        {
+          id: randomUUID(),
+          cartId,
+          variantId,
+          quantity: 1,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ]);
+    }
+
+    console.log('✓ Multi-vendor cart seed (cs-coupon platform code applied)');
   },
 
   async down(queryInterface) {

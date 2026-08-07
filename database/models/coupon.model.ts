@@ -37,7 +37,7 @@ export class Coupon extends Model<InferAttributes<Coupon>, InferCreationAttribut
   declare endDate: Date;
   declare stackable: CreationOptional<boolean>;
   declare priority: CreationOptional<number>;
-  declare status: 'DRAFT' | 'ACTIVE' | 'PAUSED' | 'EXPIRED' | 'ARCHIVED';
+  declare status: 'DRAFT' | 'ACTIVE' | 'PAUSED' | 'EXPIRED' | 'ARCHIVED' | 'REJECTED';
   declare discountBearer: CreationOptional<'PLATFORM' | 'VENDOR'>;
   declare batchId: string | null;
   declare createdById: string;
@@ -80,7 +80,10 @@ export const initCouponModel = (sequelize: Sequelize) => {
       endDate: { type: DataTypes.DATE, allowNull: false },
       stackable: { type: DataTypes.BOOLEAN, defaultValue: false },
       priority: { type: DataTypes.INTEGER, defaultValue: 0 },
-      status: { type: DataTypes.ENUM('DRAFT', 'ACTIVE', 'PAUSED', 'EXPIRED', 'ARCHIVED'), defaultValue: 'DRAFT' },
+      status: {
+        type: DataTypes.ENUM('DRAFT', 'ACTIVE', 'PAUSED', 'EXPIRED', 'ARCHIVED', 'REJECTED'),
+        defaultValue: 'DRAFT',
+      },
       discountBearer: {
         type: DataTypes.ENUM('PLATFORM', 'VENDOR'),
         allowNull: false,

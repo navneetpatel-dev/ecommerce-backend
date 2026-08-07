@@ -12,6 +12,7 @@ import {
   BulkGenerateSchema,
   ListCouponsQuerySchema,
   StatusSchema,
+  EligibleCouponsQuerySchema,
 } from './coupons.dto';
 
 function isVendorActor(req: Request): boolean {
@@ -96,7 +97,11 @@ export const removeCoupon = asyncHandler(async (req: Request, res: Response) => 
 });
 
 export const eligibleCoupons = asyncHandler(async (req: Request, res: Response) => {
-  const result = await couponsService.eligibleCoupons(req.user!.id);
+  const query = EligibleCouponsQuerySchema.parse(req.query);
+  const result = await couponsService.eligibleCoupons(req.user!.id, {
+    productId: query.productId,
+    limit: query.limit,
+  });
   res.json(ok(result));
 });
 

@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "db:migrate": "sequelize-cli db:migrate",
     "db:seed": "sequelize-cli db:seed:all",
-    "test": "jest",
+    "test": "tsx --tsconfig tsconfig.json --test 'src/**/__tests__/**/*.test.ts'",
     "docker:dev": "docker-compose up",
     "docker:dev:build": "docker-compose up --build",
     "docker:dev:down": "docker-compose down",

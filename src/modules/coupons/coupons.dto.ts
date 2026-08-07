@@ -170,7 +170,12 @@ export const ApplyCouponSchema = z.object({
 });
 
 export const StatusSchema = z.object({
-  status: z.enum(['ACTIVE', 'PAUSED', 'ARCHIVED', 'DRAFT']),
+  status: z.enum(['ACTIVE', 'PAUSED', 'ARCHIVED', 'DRAFT', 'REJECTED']),
+});
+
+export const EligibleCouponsQuerySchema = z.object({
+  productId: z.string().uuid().optional(),
+  limit: z.coerce.number().int().positive().max(20).optional(),
 });
 
 const templateObjectSchema = couponObjectSchema.omit({ code: true });

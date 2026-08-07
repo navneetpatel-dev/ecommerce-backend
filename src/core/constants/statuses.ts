@@ -156,6 +156,7 @@ export const COUPON_STATUS = {
   PAUSED: 'PAUSED',
   EXPIRED: 'EXPIRED',
   ARCHIVED: 'ARCHIVED',
+  REJECTED: 'REJECTED',
 } as const;
 export type CouponStatus = (typeof COUPON_STATUS)[keyof typeof COUPON_STATUS];
 export const COUPON_STATUS_VALUES = Object.values(COUPON_STATUS) as [CouponStatus, ...CouponStatus[]];

@@ -8,6 +8,8 @@ import { ProductVariant } from '@database/models/productVariant.model';
 import { Product } from '@database/models/product.model';
 import { Vendor } from '@database/models/vendor.model';
 import { User } from '@database/models/user.model';
+import { Order } from '@database/models/order.model';
+import { ShippingRate } from '@database/models/shippingRate.model';
 import { NotificationLog } from '@database/models/notificationLog.model';
 import { sequelize } from '@database/models';
 import { NotFoundError } from '@core/errors/NotFoundError';
@@ -21,9 +23,10 @@ import {
   VENDOR_STATUS,
 } from '@core/constants/statuses';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
-import { resolveItemAvailability } from '@core/catalog/customerVisibility';
+import { resolveItemAvailability, isProductCustomerVisible } from '@core/catalog/customerVisibility';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { logAudit } from '@modules/audit/audit.service';
+import { areQueuesReady, queues } from '@config/queue';
 import {
   validateCoupon,
   type CartLineForCoupon,
@@ -36,6 +39,56 @@ import type {
   UpdateCouponRequest,
   CouponStatusRequest,
 } from './coupons.dto';
+
+async function previewShippingTotal(): Promise<number> {
+  const cheapest = await ShippingRate.findOne({
+    order: [['price', 'ASC']],
+    attributes: ['price'],
+  });
+  return Number(cheapest?.price ?? 0);
+}
+
+async function enqueueNotification(log: NotificationLog): Promise<void> {
+  if (!areQueuesReady()) return;
+  try {
+    await queues.email.add('notification-delivery', {
+      notificationLogId: log.id,
+      type: log.type,
+      userId: log.userId,
+      referenceType: log.referenceType,
+      referenceId: log.referenceId,
+    });
+  } catch {
+    // Queue optional in local/dev — log row remains PENDING for a worker.
+  }
+}
+
+async function createNotificationOnce(params: {
+  userId: string;
+  type: NotificationLog['type'];
+  referenceId: string;
+}): Promise<NotificationLog | null> {
+  const exists = await NotificationLog.findOne({
+    where: {
+      userId: params.userId,
+      type: params.type,
+      referenceId: params.referenceId,
+      status: { [Op.in]: [NOTIFICATION_STATUS.PENDING, NOTIFICATION_STATUS.SENT] },
+    },
+  });
+  if (exists) return null;
+  const log = await NotificationLog.create({
+    userId: params.userId,
+    type: params.type,
+    referenceType: 'Coupon',
+    referenceId: params.referenceId,
+    channel: 'EMAIL',
+    status: NOTIFICATION_STATUS.PENDING,
+    createdBy: params.userId,
+  });
+  await enqueueNotification(log);
+  return log;
+}
 
 async function loadCartLines(userId: string): Promise<{
   cart: Cart | null;
@@ -97,6 +150,44 @@ async function loadCartLines(userId: string): Promise<{
   return { cart, lines };
 }
 
+/** Single-product lines for PDP eligible-offer preview (qty 1, primary variant price). */
+async function loadProductPreviewLines(productId: string): Promise<CartLineForCoupon[]> {
+  const product = await Product.findByPk(productId, {
+    include: [
+      { model: Vendor, as: 'vendor' },
+      { model: ProductVariant, as: 'variants' },
+    ],
+  });
+  if (!product) return [];
+  const vendor = (product as Product & { vendor?: Vendor }).vendor ?? null;
+  if (!isProductCustomerVisible(product, vendor)) return [];
+
+  const variants = ((product as Product & { variants?: ProductVariant[] }).variants ?? []).slice();
+  variants.sort((a, b) => Number(a.price ?? 0) - Number(b.price ?? 0));
+  const variant = variants[0];
+  if (!variant) return [];
+
+  const quantity = 1;
+  const availability = resolveItemAvailability({
+    product,
+    vendor,
+    stock: Number(variant.stock ?? 0),
+    quantity,
+  });
+  if (!availability.isAvailable) return [];
+
+  return [
+    {
+      productId: String(product.id),
+      categoryId: product.categoryId ? String(product.categoryId) : null,
+      vendorId: product.vendorId ? String(product.vendorId) : null,
+      unitPrice: Number(variant.price ?? product.basePrice ?? 0),
+      quantity,
+      isCustomerVisible: true,
+    },
+  ];
+}
+
 async function assertVendorOwnsScopeProducts(
   vendorId: string,
   scope: { type: string; ids: string[] } | undefined,
@@ -121,7 +212,7 @@ function resolveCreateDefaults(
   vendorId: string | null;
   discountBearer: 'PLATFORM' | 'VENDOR';
   applicableScope: { type: 'all' | 'vendor' | 'product' | 'category'; ids: string[] };
-  status: 'DRAFT' | 'ACTIVE' | 'PAUSED' | 'EXPIRED' | 'ARCHIVED';
+  status: 'DRAFT' | 'ACTIVE' | 'PAUSED' | 'EXPIRED' | 'ARCHIVED' | 'REJECTED';
 } {
   const vendorId = opts.forceVendorId ?? dto.vendorId ?? null;
   const discountBearer =
@@ -311,41 +402,81 @@ export class CouponsService {
     totalDiscount: number;
     usedCountCached: number;
     usageLimitTotal: number | null;
+    revenueImpact: number;
+    conversionRate: number | null;
   }> {
     const coupon = await this.getById(id, opts);
     const usedCount = await CouponUsage.count({ where: { couponId: coupon.id } });
     const totalDiscount =
       (await CouponUsage.sum('discountApplied', { where: { couponId: coupon.id } })) ?? 0;
+
+    const usages = await CouponUsage.findAll({
+      where: { couponId: coupon.id },
+      attributes: ['orderId'],
+    });
+    const orderIds = [...new Set(usages.map((row) => row.orderId))];
+    let revenueImpact = 0;
+    if (orderIds.length > 0) {
+      revenueImpact = Number(
+        (await Order.sum('totalAmount', { where: { id: { [Op.in]: orderIds } } })) ?? 0,
+      );
+    }
+
+    const limit = coupon.usageLimitTotal == null ? null : Number(coupon.usageLimitTotal);
+    const conversionRate =
+      limit != null && limit > 0 ? Math.min(1, usedCount / limit) : usedCount > 0 ? 1 : 0;
+
     return {
       couponId: coupon.id,
       code: coupon.code,
       usedCount,
       totalDiscount: Number(totalDiscount),
       usedCountCached: Number(coupon.usedCount ?? 0),
-      usageLimitTotal: coupon.usageLimitTotal == null ? null : Number(coupon.usageLimitTotal),
+      usageLimitTotal: limit,
+      revenueImpact,
+      conversionRate,
     };
   }
 
-  /** Vendor-borne discount cost absorbed across this vendor's coupons. */
+  /** Vendor-borne discount cost absorbed this calendar month (UTC). */
   async vendorAbsorbedDiscountSummary(vendorId: string): Promise<{
     vendorId: string;
     absorbedDiscountTotal: number;
     couponCount: number;
+    periodStart: string;
+    periodEnd: string;
   }> {
+    const now = new Date();
+    const periodStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const periodEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+
     const coupons = await Coupon.findAll({
       where: { vendorId, discountBearer: DISCOUNT_BEARER.VENDOR },
       attributes: ['id'],
     });
     const ids = coupons.map((row) => row.id);
     if (!ids.length) {
-      return { vendorId, absorbedDiscountTotal: 0, couponCount: 0 };
+      return {
+        vendorId,
+        absorbedDiscountTotal: 0,
+        couponCount: 0,
+        periodStart: periodStart.toISOString(),
+        periodEnd: periodEnd.toISOString(),
+      };
     }
     const total =
-      (await CouponUsage.sum('discountApplied', { where: { couponId: { [Op.in]: ids } } })) ?? 0;
+      (await CouponUsage.sum('discountApplied', {
+        where: {
+          couponId: { [Op.in]: ids },
+          createdAt: { [Op.gte]: periodStart, [Op.lt]: periodEnd },
+        },
+      })) ?? 0;
     return {
       vendorId,
       absorbedDiscountTotal: Number(total),
       couponCount: ids.length,
+      periodStart: periodStart.toISOString(),
+      periodEnd: periodEnd.toISOString(),
     };
   }
 
@@ -355,7 +486,13 @@ export class CouponsService {
     actorId: string,
     opts: { forceVendorId?: string | null } = {},
   ): Promise<Coupon> {
+    if (dto.status === COUPON_STATUS.REJECTED && opts.forceVendorId) {
+      throw new ForbiddenError(ERROR_MESSAGES.AUTH_REQUIRED);
+    }
     const coupon = await this.getById(id, opts);
+    if (dto.status === COUPON_STATUS.REJECTED && !coupon.vendorId) {
+      throw new ValidationError(ERROR_MESSAGES.COUPON_NOT_APPLICABLE);
+    }
     await coupon.update({ status: dto.status, updatedBy: actorId });
     await logAudit({
       actorId,
@@ -458,6 +595,7 @@ export class CouponsService {
       updatedAt?: Date;
       redemptionCount: number;
       discountTotal: number;
+      revenueImpact: number;
       codes: string[];
       expiresAt: string | null;
     }>
@@ -492,6 +630,21 @@ export class CouponsService {
                 where: { couponId: { [Op.in]: ids } },
               })) ?? 0,
             );
+
+      let revenueImpact = 0;
+      if (ids.length > 0) {
+        const usages = await CouponUsage.findAll({
+          where: { couponId: { [Op.in]: ids } },
+          attributes: ['orderId'],
+        });
+        const orderIds = [...new Set(usages.map((row) => row.orderId))];
+        if (orderIds.length > 0) {
+          revenueImpact = Number(
+            (await Order.sum('totalAmount', { where: { id: { [Op.in]: orderIds } } })) ?? 0,
+          );
+        }
+      }
+
       const expiresAt =
         coupons.length === 0
           ? null
@@ -511,6 +664,7 @@ export class CouponsService {
         updatedAt: batch.updatedAt,
         redemptionCount,
         discountTotal,
+        revenueImpact,
         codes: coupons.map((row) => row.code),
         expiresAt: expiresAt ? expiresAt.toISOString() : null,
       });
@@ -524,11 +678,12 @@ export class CouponsService {
       throw new ValidationError(ERROR_MESSAGES.CART_EMPTY);
     }
 
+    const shippingTotal = await previewShippingTotal();
     const result = await validateCoupon({
       code,
       userId,
       lines,
-      shippingTotal: 0,
+      shippingTotal,
       existingCouponCode: cart.couponCode,
     });
 
@@ -571,11 +726,12 @@ export class CouponsService {
       return { removed: false, reason: null, reasonCode: null, appliedCoupon: null };
     }
 
+    const shippingTotal = await previewShippingTotal();
     const result = await validateCoupon({
       code: cart.couponCode,
       userId,
       lines,
-      shippingTotal: 0,
+      shippingTotal,
       existingCouponCode: null,
     });
 
@@ -605,7 +761,7 @@ export class CouponsService {
 
   async eligibleCoupons(
     userId: string,
-    limit = 5,
+    opts: { limit?: number; productId?: string } = {},
   ): Promise<
     Array<{
       code: string;
@@ -615,9 +771,13 @@ export class CouponsService {
       priority: number;
     }>
   > {
-    const { lines } = await loadCartLines(userId);
+    const limit = opts.limit ?? 5;
+    const lines = opts.productId
+      ? await loadProductPreviewLines(opts.productId)
+      : (await loadCartLines(userId)).lines;
     if (lines.length === 0) return [];
 
+    const shippingTotal = await previewShippingTotal();
     const now = new Date();
     const candidates = await Coupon.findAll({
       where: {
@@ -644,7 +804,7 @@ export class CouponsService {
         coupon,
         userId,
         lines,
-        shippingTotal: 0,
+        shippingTotal,
       });
       if (result.valid) {
         eligible.push({
@@ -681,89 +841,59 @@ export class CouponsService {
         (coupon.usedCount ?? 0) >= Math.ceil(Number(coupon.usageLimitTotal) * 0.8);
       const expiring = coupon.endDate <= inThreeDays && coupon.endDate >= now;
 
-      // Vendor alerts for vendor-scoped coupons
       if (coupon.vendorId && (nearLimit || expiring)) {
         const owner = await User.findOne({ where: { vendorId: coupon.vendorId } });
         if (owner) {
           if (nearLimit) {
-            const exists = await NotificationLog.findOne({
-              where: {
-                userId: owner.id,
-                type: 'COUPON_USAGE_LIMIT',
-                referenceId: coupon.id,
-                status: { [Op.in]: [NOTIFICATION_STATUS.PENDING, NOTIFICATION_STATUS.SENT] },
-              },
+            const log = await createNotificationOnce({
+              userId: owner.id,
+              type: 'COUPON_USAGE_LIMIT',
+              referenceId: coupon.id,
             });
-            if (!exists) {
-              const log = await NotificationLog.create({
-                userId: owner.id,
-                type: 'COUPON_USAGE_LIMIT',
-                referenceType: 'Coupon',
-                referenceId: coupon.id,
-                channel: 'EMAIL',
-                status: NOTIFICATION_STATUS.PENDING,
-                createdBy: owner.id,
-              });
-              created.push(log);
-            }
+            if (log) created.push(log);
           }
           if (expiring) {
-            const exists = await NotificationLog.findOne({
-              where: {
-                userId: owner.id,
-                type: 'COUPON_EXPIRING',
-                referenceId: coupon.id,
-                status: { [Op.in]: [NOTIFICATION_STATUS.PENDING, NOTIFICATION_STATUS.SENT] },
-              },
+            const log = await createNotificationOnce({
+              userId: owner.id,
+              type: 'COUPON_EXPIRING',
+              referenceId: coupon.id,
             });
-            if (!exists) {
-              const log = await NotificationLog.create({
-                userId: owner.id,
-                type: 'COUPON_EXPIRING',
-                referenceType: 'Coupon',
-                referenceId: coupon.id,
-                channel: 'EMAIL',
-                status: NOTIFICATION_STATUS.PENDING,
-                createdBy: owner.id,
-              });
-              created.push(log);
-            }
+            if (log) created.push(log);
           }
         }
       }
 
-      // Customer marketing: consent-gated offer expiry for users who redeemed this coupon
+      // Consent-gated: prior redeemers + customers who currently have this code on their cart
       if (expiring) {
         const usageRows = await CouponUsage.findAll({
           where: { couponId: coupon.id },
           attributes: ['userId'],
           limit: 2000,
         });
-        const customerIds = [...new Set(usageRows.map((row) => row.userId))];
+        const cartHolders = await Cart.findAll({
+          where: { couponCode: coupon.code },
+          attributes: ['userId'],
+          limit: 2000,
+        });
+        const customerIds = [
+          ...new Set(
+            [
+              ...usageRows.map((row) => row.userId),
+              ...cartHolders.map((row) => row.userId),
+            ].filter((id): id is string => typeof id === 'string' && id.length > 0),
+          ),
+        ];
         for (const customerId of customerIds.slice(0, 500)) {
           const customer = await User.findByPk(customerId, {
             attributes: ['id', 'emailMarketingConsent'],
           });
           if (!customer?.emailMarketingConsent) continue;
-          const exists = await NotificationLog.findOne({
-            where: {
-              userId: customer.id,
-              type: 'COUPON_OFFER_EXPIRING',
-              referenceId: coupon.id,
-              status: { [Op.in]: [NOTIFICATION_STATUS.PENDING, NOTIFICATION_STATUS.SENT] },
-            },
-          });
-          if (exists) continue;
-          const log = await NotificationLog.create({
+          const log = await createNotificationOnce({
             userId: customer.id,
             type: 'COUPON_OFFER_EXPIRING',
-            referenceType: 'Coupon',
             referenceId: coupon.id,
-            channel: 'EMAIL',
-            status: NOTIFICATION_STATUS.PENDING,
-            createdBy: customer.id,
           });
-          created.push(log);
+          if (log) created.push(log);
         }
       }
     }
