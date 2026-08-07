@@ -64,6 +64,7 @@ function serializeProfile(user: any) {
     name: plain.name,
     phone: plain.phone ?? null,
     role: roleName,
+    status: plain.status ?? null,
     vendorId: plain.vendorId ?? null,
     emailVerified: Boolean(plain.emailVerified),
     emailMarketingConsent: Boolean(plain.emailMarketingConsent),
