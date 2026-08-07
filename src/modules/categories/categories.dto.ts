@@ -3,6 +3,7 @@ import {
   CATEGORY_ATTRIBUTE_TYPE_VALUES,
   CATEGORY_STATUS_VALUES,
 } from '@core/constants/statuses';
+import { pageLimitQuerySchema } from '@core/http/pagination';
 
 const optionalImageUrl = z.preprocess(
   (value) => (typeof value === 'string' && value.trim() === '' ? null : value),
@@ -78,7 +79,13 @@ export const ReorderAttributesSchema = z.object({
   orderedIds: z.array(z.string().uuid()).min(1),
 });
 
+export const GetCategoriesPaginatedQuerySchema = pageLimitQuerySchema.extend({
+  search: z.string().trim().optional(),
+  status: z.enum(CATEGORY_STATUS_VALUES).optional(),
+});
+
 export type CreateCategoryRequest = z.infer<typeof CreateCategorySchema>;
 export type UpdateCategoryRequest = z.infer<typeof UpdateCategorySchema>;
 export type CreateCategoryAttributeRequest = z.infer<typeof CreateCategoryAttributeSchema>;
 export type UpdateCategoryAttributeRequest = z.infer<typeof UpdateCategoryAttributeSchema>;
+export type GetCategoriesPaginatedQuery = z.infer<typeof GetCategoriesPaginatedQuerySchema>;

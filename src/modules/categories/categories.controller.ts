@@ -1,11 +1,11 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
-import { pageLimitQuerySchema } from '@core/http/pagination';
 import { categoriesService } from './categories.service';
 import {
   CreateCategoryAttributeSchema,
   CreateCategorySchema,
+  GetCategoriesPaginatedQuerySchema,
   ReassignProductsSchema,
   ReorderAttributesSchema,
   ReorderCategoriesSchema,
@@ -21,7 +21,7 @@ export const createCategory = asyncHandler(async (req: Request, res: Response) =
 
 export const getCategories = asyncHandler(async (req: Request, res: Response) => {
   if (req.query.page != null || req.query.limit != null) {
-    const query = pageLimitQuerySchema.parse(req.query);
+    const query = GetCategoriesPaginatedQuerySchema.parse(req.query);
     const result = await categoriesService.getCategoriesPaginated(query);
     res.json(ok(result.categories, { pagination: result.pagination }));
     return;

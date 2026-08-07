@@ -203,9 +203,24 @@ export class CategoriesService {
     return rows.map((row) => serializeCategory(row));
   }
 
-  async getCategoriesPaginated(query: { page: number; limit: number }) {
+  async getCategoriesPaginated(query: {
+    page: number;
+    limit: number;
+    search?: string;
+    status?: string;
+  }) {
     const offset = paginationOffset(query.page, query.limit);
+    const where: Record<string, unknown> = {};
+    if (query.status) {
+      where.status = query.status;
+    }
+    const search = query.search?.trim();
+    if (search) {
+      where.name = { [Op.iLike]: `%${search}%` };
+    }
+
     const { rows, count } = await Category.findAndCountAll({
+      where,
       include: [
         {
           association: 'parent',
