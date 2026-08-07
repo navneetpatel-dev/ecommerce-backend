@@ -11,6 +11,10 @@ export class TaxRule extends Model<InferAttributes<TaxRule>, InferCreationAttrib
   declare readonly createdAt: CreationOptional<Date>;
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
+
+  static associate(models: Record<string, any>) {
+    TaxRule.belongsTo(models.Category, { as: 'category', foreignKey: 'categoryId' });
+  }
 }
 
 export const initTaxRuleModel = (sequelize: Sequelize) => {

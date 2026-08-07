@@ -1,6 +1,7 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { taxRepository } from './tax.repository';
 import { TaxRule } from '@database/models/taxRule.model';
+import { Category } from '@database/models/category.model';
 import { sequelize } from '@database/models';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 
@@ -10,6 +11,17 @@ export interface TaxCalculation {
   igst: number;
   total: number;
   gstPercentage: number;
+}
+
+function serializeTaxRule(row: TaxRule) {
+  const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
+  return {
+    id: plain.id,
+    hsnCode: plain.hsnCode,
+    gstPercentage: Number(plain.gstPercentage),
+    categoryName: plain.category?.name ?? null,
+    createdAt: plain.createdAt,
+  };
 }
 
 export class TaxService {
@@ -69,12 +81,15 @@ export class TaxService {
   async getTaxRules(query: { page: number; limit: number }) {
     const offset = paginationOffset(query.page, query.limit);
     const { rows, count } = await TaxRule.findAndCountAll({
+      include: [{ model: Category, as: 'category', attributes: ['id', 'name'], required: false }],
       order: [['createdAt', 'DESC']],
       limit: query.limit,
       offset,
+      distinct: true,
+      col: 'id',
     });
     return {
-      rules: rows,
+      rules: rows.map((row) => serializeTaxRule(row)),
       pagination: buildPaginationMeta(count, query.page, query.limit),
     };
   }

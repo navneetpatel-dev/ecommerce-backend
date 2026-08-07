@@ -9,9 +9,24 @@ import { ReviewVote } from '@database/models/reviewVote.model';
 import { OrderItem } from '@database/models/orderItem.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { Product } from '@database/models/product.model';
+import { User } from '@database/models/user.model';
 import { sequelize } from '@database/models';
 import { QueryTypes } from 'sequelize';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
+
+function serializePendingReview(row: Review) {
+  const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
+  return {
+    id: plain.id,
+    rating: plain.rating,
+    title: plain.title,
+    body: plain.body,
+    status: plain.status,
+    createdAt: plain.createdAt,
+    productName: plain.product?.name ?? null,
+    customerName: plain.user?.name ?? null,
+  };
+}
 
 export class ReviewsService {
   async createReview(userId: string, data: {
@@ -159,7 +174,10 @@ export class ReviewsService {
     const offset = paginationOffset(query.page, query.limit);
     const { rows, count } = await Review.findAndCountAll({
       where: { status: REVIEW_STATUS.PENDING },
-      include: [{ model: Product, as: 'product' }],
+      include: [
+        { model: Product, as: 'product', attributes: ['id', 'name'] },
+        { model: User, as: 'user', attributes: ['id', 'name'] },
+      ],
       order: [['createdAt', 'ASC']],
       limit: query.limit,
       offset,
@@ -167,7 +185,7 @@ export class ReviewsService {
       col: 'id',
     });
     return {
-      reviews: rows,
+      reviews: rows.map((row) => serializePendingReview(row)),
       pagination: buildPaginationMeta(count, query.page, query.limit),
     };
   }

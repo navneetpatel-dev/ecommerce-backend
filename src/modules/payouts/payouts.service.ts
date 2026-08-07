@@ -1,5 +1,6 @@
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { Payout } from '@database/models/payout.model';
+import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { COMMISSION_STATUS, PAYOUT_STATUS } from '@core/constants/statuses';
@@ -7,20 +8,30 @@ import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 
 function serializePayout(row: Payout) {
   const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
+  const { Vendor: vendorAssoc, ...rest } = plain;
   return {
-    ...plain,
+    ...rest,
     amount: Number(plain.amount),
+    vendorName: vendorAssoc?.businessName ?? null,
   };
 }
+
+const vendorInclude = {
+  model: Vendor,
+  attributes: ['id', 'businessName'],
+};
 
 export class PayoutsService {
   async list(query: { page: number; limit: number }, vendorId?: string | null) {
     const offset = paginationOffset(query.page, query.limit);
     const { rows, count } = await Payout.findAndCountAll({
       where: vendorId ? { vendorId } : undefined,
+      include: [vendorInclude],
       order: [['createdAt', 'DESC']],
       limit: query.limit,
       offset,
+      distinct: true,
+      col: 'id',
     });
     return {
       payouts: rows.map((row) => serializePayout(row)),
@@ -34,6 +45,7 @@ export class PayoutsService {
     }
     const rows = await Payout.findAll({
       where: { vendorId },
+      include: [vendorInclude],
       order: [['createdAt', 'DESC']],
     });
     return rows.map((row) => serializePayout(row));

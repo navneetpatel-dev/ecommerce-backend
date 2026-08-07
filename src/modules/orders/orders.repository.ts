@@ -31,6 +31,10 @@ export class OrdersRepository extends BaseRepository<Order> {
       col: 'id',
       include: [
         {
+          association: 'user',
+          attributes: ['id', 'name', 'email'],
+        },
+        {
           association: 'subOrders',
           include: ['items', 'vendor'],
         },

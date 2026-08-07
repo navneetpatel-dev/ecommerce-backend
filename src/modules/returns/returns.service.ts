@@ -7,9 +7,15 @@ import { ReturnRequest } from '@database/models/returnRequest.model';
 import { OrderItem } from '@database/models/orderItem.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { Order } from '@database/models/order.model';
+import { User } from '@database/models/user.model';
 import { sequelize } from '@database/models';
 import type { Transaction } from 'sequelize';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
+
+const returnListInclude = [
+  { model: OrderItem, as: 'orderItem', required: false, attributes: ['id', 'productName'] },
+  { model: User, as: 'user', required: false, attributes: ['id', 'name'] },
+];
 
 type CreateReturnInput = {
   orderItemId: string;
@@ -33,9 +39,6 @@ function serializeReturn(row: ReturnRequest | (ReturnRequest & { orderItem?: Ord
   const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
   return {
     id: plain.id,
-    subOrderId: plain.subOrderId,
-    orderItemId: plain.orderItemId,
-    userId: plain.userId,
     reason: plain.reason,
     reasonCode: plain.reasonCode,
     status: plain.status,
@@ -43,6 +46,7 @@ function serializeReturn(row: ReturnRequest | (ReturnRequest & { orderItem?: Ord
     resolvedAt: plain.resolvedAt,
     createdAt: plain.createdAt,
     productName: plain.orderItem?.productName ?? null,
+    customerName: plain.user?.name ?? null,
   };
 }
 
@@ -50,7 +54,7 @@ export class ReturnsService {
   async listForUser(userId: string) {
     const rows = await ReturnRequest.findAll({
       where: { userId },
-      include: [{ model: OrderItem, as: 'orderItem', required: false }],
+      include: returnListInclude,
       order: [['createdAt', 'DESC']],
     });
     return rows.map((row) => serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }));
@@ -59,7 +63,7 @@ export class ReturnsService {
   async listAll(query: { page: number; limit: number }) {
     const offset = paginationOffset(query.page, query.limit);
     const { rows, count } = await ReturnRequest.findAndCountAll({
-      include: [{ model: OrderItem, as: 'orderItem', required: false }],
+      include: returnListInclude,
       order: [['createdAt', 'DESC']],
       limit: query.limit,
       offset,

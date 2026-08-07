@@ -13,6 +13,10 @@ export class AuditLog extends Model<InferAttributes<AuditLog>, InferCreationAttr
   declare readonly createdAt: CreationOptional<Date>;
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
+
+  static associate(models: Record<string, any>) {
+    AuditLog.belongsTo(models.User, { as: 'actor', foreignKey: 'actorId' });
+  }
 }
 
 export const initAuditLogModel = (sequelize: Sequelize) => {

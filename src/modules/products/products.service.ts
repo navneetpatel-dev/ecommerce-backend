@@ -51,6 +51,8 @@ function mapProductResponse(product: Product, reviewCount = 0) {
     vendor: plain.vendor ?? plain.Vendor ?? null,
     category: plain.category ?? plain.Category ?? null,
     categoryName: plain.category?.name ?? plain.Category?.name ?? plain.categoryName,
+    vendorName:
+      plain.vendor?.businessName ?? plain.Vendor?.businessName ?? plain.vendorName ?? null,
   };
 }
 

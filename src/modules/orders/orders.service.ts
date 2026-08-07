@@ -27,6 +27,7 @@ function mapOrderResponse(order: any) {
     ...plain,
     totalAmount: Number(plain.totalAmount ?? 0),
     discountTotal: Number(plain.discountTotal ?? 0),
+    customerName: plain.user?.name ?? null,
     subOrders: (plain.subOrders ?? []).map((sub: any) => ({
       ...sub,
       subtotal: Number(sub.subtotal ?? 0),
