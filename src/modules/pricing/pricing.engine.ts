@@ -1,5 +1,6 @@
-import { DISCOUNT_BEARER, type DiscountBearer } from '@core/constants/statuses';
+import { DISCOUNT_BEARER, type DiscountBearer, type ReturnReason } from '@core/constants/statuses';
 import { allocateProportionally, fromPaise, toPaise, type Paise } from './money';
+import { resolveShippingRefundPolicy } from './shippingRefundPolicy';
 
 export type TaxBreakdownPaise = {
   cgst: Paise;
@@ -79,6 +80,14 @@ export type RefundReversalInput = {
   line: PricingLineBreakdown;
   /** Quantity being returned (≤ original). */
   returnQuantity: number;
+  /** Return reason — drives shipping refund policy when provided. */
+  reasonCode?: ReturnReason;
+  /** Original shipping charged on the sub-order (paise). */
+  shippingChargedPaise?: Paise;
+  /** Configurable return shipping fee (paise). */
+  returnShippingFeePaise?: Paise;
+  /** True when outbound shipping was already refunded on a prior return. */
+  shippingAlreadyRefunded?: boolean;
 };
 
 export type RefundReversalBreakdown = {
@@ -89,7 +98,9 @@ export type RefundReversalBreakdown = {
   refundCommissionPaise: Paise;
   refundTcsPaise: Paise;
   refundNetClawbackPaise: Paise;
-  /** Amount credited to customer (merchandise + tax). */
+  shippingRefundPaise: Paise;
+  returnShippingFeePaise: Paise;
+  /** Amount credited to customer (merchandise + tax ± shipping). */
   customerRefundPaise: Paise;
 };
 
@@ -286,6 +297,8 @@ export function reverseFrozenLine(input: RefundReversalInput): RefundReversalBre
       refundCommissionPaise: 0,
       refundTcsPaise: 0,
       refundNetClawbackPaise: 0,
+      shippingRefundPaise: 0,
+      returnShippingFeePaise: 0,
       customerRefundPaise: 0,
     };
   }
@@ -302,6 +315,23 @@ export function reverseFrozenLine(input: RefundReversalInput): RefundReversalBre
   const refundTcsPaise = scale(line.tcsPaise);
   const refundNetClawbackPaise = scale(line.netPayoutPaise);
 
+  let shippingRefundPaise = 0;
+  let returnShippingFeePaise = 0;
+  if (input.reasonCode) {
+    const policy = resolveShippingRefundPolicy(input.reasonCode);
+    if (policy.refundOriginalShipping && !input.shippingAlreadyRefunded) {
+      shippingRefundPaise = Math.max(0, Math.round(input.shippingChargedPaise ?? 0));
+    }
+    if (policy.deductReturnShippingFee) {
+      returnShippingFeePaise = Math.max(0, Math.round(input.returnShippingFeePaise ?? 0));
+    }
+  }
+
+  const customerRefundPaise = Math.max(
+    0,
+    refundMerchandisePaise + refundTaxPaise + shippingRefundPaise - returnShippingFeePaise,
+  );
+
   return {
     refundSubtotalPaise,
     refundDiscountPaise,
@@ -310,7 +340,9 @@ export function reverseFrozenLine(input: RefundReversalInput): RefundReversalBre
     refundCommissionPaise,
     refundTcsPaise,
     refundNetClawbackPaise,
-    customerRefundPaise: refundMerchandisePaise + refundTaxPaise,
+    shippingRefundPaise,
+    returnShippingFeePaise,
+    customerRefundPaise,
   };
 }
 

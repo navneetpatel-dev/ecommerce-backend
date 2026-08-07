@@ -13,6 +13,7 @@ export const CreateCheckoutSchema = z
     couponCode: z.string().optional().nullable(),
     couponCodes: z.array(z.string()).optional(),
     paymentMethod: PaymentMethodInput.default('RAZORPAY'),
+    walletAmountToUse: z.coerce.number().min(0).optional().default(0),
     shippingMethodByVendor: z.record(z.string()).optional(),
   })
   .transform((body) => {
@@ -22,6 +23,7 @@ export const CreateCheckoutSchema = z
       couponCode: body.couponCode ?? undefined,
       couponCodes: body.couponCodes,
       paymentMethod: body.paymentMethod,
+      walletAmountToUse: body.walletAmountToUse ?? 0,
       shippingMethodByVendor: body.shippingMethodByVendor ?? {},
     };
   })
@@ -36,12 +38,14 @@ export const CheckoutQuoteSchema = z
     addressId: z.string().uuid().optional(),
     couponCode: z.string().optional().nullable(),
     couponCodes: z.array(z.string()).optional(),
+    walletAmountToUse: z.coerce.number().min(0).optional().default(0),
     shippingMethodByVendor: z.record(z.string()).optional(),
   })
   .transform((body) => ({
     shippingAddressId: (body.shippingAddressId ?? body.addressId) as string,
     couponCode: body.couponCode ?? undefined,
     couponCodes: body.couponCodes,
+    walletAmountToUse: body.walletAmountToUse ?? 0,
     shippingMethodByVendor: body.shippingMethodByVendor ?? {},
   }))
   .refine((body) => Boolean(body.shippingAddressId), {

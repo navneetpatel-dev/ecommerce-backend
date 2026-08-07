@@ -10,6 +10,8 @@ export type PlatformSettingsPayload = {
   defaultReturnWindow: number;
   payoutCycle: string;
   freeShippingThreshold: number;
+  /** Deducted from customer refund when reason does not refund original shipping. */
+  returnShippingFee: number;
   supportEmail: string;
   supportHours: string;
 };
@@ -24,6 +26,7 @@ const DEFAULTS: PlatformSettingsPayload = {
   defaultReturnWindow: 7,
   payoutCycle: 'WEEKLY',
   freeShippingThreshold: 500,
+  returnShippingFee: 0,
   supportEmail: 'support@inkandbrass.example',
   supportHours: 'Mon–Sat, 9:00 AM–7:00 PM',
 };

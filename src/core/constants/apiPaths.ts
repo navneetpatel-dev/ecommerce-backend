@@ -29,6 +29,7 @@ export const API_MOUNTS = {
   settings: '/settings',
   homepage: '/homepage',
   reports: '/reports',
+  wallet: '/wallet',
 } as const;
 
 export const HEALTH_PATH = '/health';

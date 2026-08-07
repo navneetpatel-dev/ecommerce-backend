@@ -126,6 +126,45 @@ export const RETURN_REASON = {
 export type ReturnReason = (typeof RETURN_REASON)[keyof typeof RETURN_REASON];
 export const RETURN_REASON_VALUES = Object.values(RETURN_REASON) as [ReturnReason, ...ReturnReason[]];
 
+/** How the customer receives the refund (never bank/UPI collection). */
+export const REFUND_METHOD = {
+  RAZORPAY: 'RAZORPAY',
+  WALLET_CREDIT: 'WALLET_CREDIT',
+} as const;
+export type RefundMethod = (typeof REFUND_METHOD)[keyof typeof REFUND_METHOD];
+export const REFUND_METHOD_VALUES = Object.values(REFUND_METHOD) as [RefundMethod, ...RefundMethod[]];
+
+/** Parallel refund-track status (independent of logistics status). */
+export const REFUND_STATUS = {
+  NONE: 'NONE',
+  PENDING: 'PENDING',
+  INITIATED: 'INITIATED',
+  COMPLETED: 'COMPLETED',
+  FAILED: 'FAILED',
+} as const;
+export type RefundStatus = (typeof REFUND_STATUS)[keyof typeof REFUND_STATUS];
+export const REFUND_STATUS_VALUES = Object.values(REFUND_STATUS) as [RefundStatus, ...RefundStatus[]];
+
+export const WALLET_LEDGER_TYPE = {
+  CREDIT: 'CREDIT',
+  DEBIT: 'DEBIT',
+} as const;
+export type WalletLedgerType = (typeof WALLET_LEDGER_TYPE)[keyof typeof WALLET_LEDGER_TYPE];
+
+export const WALLET_REFERENCE_TYPE = {
+  ORDER: 'ORDER',
+  RETURN: 'RETURN',
+  CASHBACK: 'CASHBACK',
+  CLAWBACK: 'CLAWBACK',
+  COD_REFUND: 'COD_REFUND',
+  WALLET_REFUND: 'WALLET_REFUND',
+} as const;
+
+export const COMMISSION_REFERENCE_TYPE = {
+  CASHBACK_COST: 'CashbackCost',
+  CASHBACK_COST_REVERSAL: 'CashbackCostReversal',
+} as const;
+
 export const SHIPMENT_STATUS = {
   PENDING: 'PENDING',
   PICKED_UP: 'PICKED_UP',

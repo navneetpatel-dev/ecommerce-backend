@@ -2,7 +2,7 @@ import type { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { reportsService } from './reports.service';
-import { ReportRangeSchema } from './reports.dto';
+import { ReportRangeSchema, WriteOffReportSchema } from './reports.dto';
 
 function rangeFromQuery(req: Request) {
   return ReportRangeSchema.parse(req.query);
@@ -55,6 +55,18 @@ export const vendorSummary = asyncHandler(async (req: Request, res: Response) =>
   const vendorId = req.params.vendorId!;
   const data = await reportsService.vendorSummary(vendorId, query, req.user?.vendorId ?? null);
   sendExport(res, query, 'vendor-settlement', data, [flattenRecord(data)]);
+});
+
+export const walletLiability = asyncHandler(async (req: Request, res: Response) => {
+  const query = rangeFromQuery(req);
+  const data = await reportsService.walletLiabilityReport(query);
+  sendExport(res, query, 'wallet-liability', data, data.rows as unknown as Record<string, unknown>[]);
+});
+
+export const cashbackWriteOff = asyncHandler(async (req: Request, res: Response) => {
+  const query = WriteOffReportSchema.parse(req.query);
+  const data = await reportsService.cashbackWriteOffReport(query);
+  sendExport(res, query, 'cashback-write-off', data, data.rows as unknown as Record<string, unknown>[]);
 });
 
 function flattenRecord(value: unknown): Record<string, unknown> {

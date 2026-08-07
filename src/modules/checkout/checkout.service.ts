@@ -34,18 +34,20 @@ import type {
   CreateCheckoutRequest,
   CheckoutQuoteRequest,
 } from './checkout.dto';
+import type { Coupon } from '@database/models/coupon.model';
+import { walletService } from '@modules/wallet/wallet.service';
+import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
 import {
   ORDER_STATUS,
   PAYMENT_STATUS,
   PAYMENT_METHOD,
   COMMISSION_STATUS,
   DISCOUNT_BEARER,
+  WALLET_REFERENCE_TYPE,
 } from '@core/constants/statuses';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { notifyOrderConfirmed } from '@modules/notifications/orderNotifications';
 import { notificationsService } from '@modules/notifications/notifications.service';
-import type { Coupon } from '@database/models/coupon.model';
-
 function groupBy<T>(array: T[], keyFn: (item: T) => string): Record<string, T[]> {
   return array.reduce((acc, item) => {
     const key = keyFn(item);
@@ -208,6 +210,10 @@ export class CheckoutService {
       total: number;
     }>;
     grandTotal: number;
+    cashbackAmount: number;
+    walletBalance: number;
+    walletAmountToUse: number;
+    amountDue: number;
     appliedCoupon: { code: string; discount: number; cashbackAmount?: number } | null;
     appliedCoupons: Array<{ code: string; discount: number; cashbackAmount?: number }>;
   }> {
@@ -383,10 +389,21 @@ export class CheckoutService {
     });
 
     const grandTotal = vendorBreakdowns.reduce((sum, row) => sum + row.total, 0);
+    const walletBalance = await walletService.getBalance(userId);
+    const walletAmountToUse = Math.min(
+      Math.max(0, Number(data.walletAmountToUse ?? 0)),
+      walletBalance,
+      grandTotal,
+    );
+    const amountDue = Math.round((grandTotal - walletAmountToUse) * 100) / 100;
 
     return {
       vendorBreakdowns,
       grandTotal,
+      cashbackAmount,
+      walletBalance,
+      walletAmountToUse,
+      amountDue,
       appliedCoupon: applied,
       appliedCoupons,
     };
@@ -461,6 +478,8 @@ export class CheckoutService {
 
       const couponCodes = resolveCheckoutCouponCodes(data, cart);
       let discountTotal = 0;
+      let cashbackAmount = 0;
+      let cashbackDiscountBearer: 'PLATFORM' | 'VENDOR' | null = null;
       let coupons: Coupon[] = [];
       let primaryCoupon: Coupon | null = null;
       let vendorDiscountShares: Record<string, number> = {};
@@ -479,11 +498,19 @@ export class CheckoutService {
           throw new ValidationError(result.reason ?? ERROR_MESSAGES.COUPON_INVALID);
         }
         discountTotal = result.discount;
+        cashbackAmount = result.cashbackAmount;
         coupons = result.coupons;
         primaryCoupon = result.primaryCoupon;
         vendorDiscountShares = result.vendorDiscountShares;
         vendorShippingDiscountShares = result.vendorShippingDiscountShares;
         vendorBorneDiscountShares = result.vendorBorneDiscountShares;
+        const cashbackCoupon = coupons.find((c) => c.type === 'CASHBACK');
+        if (cashbackCoupon) {
+          cashbackDiscountBearer =
+            cashbackCoupon.discountBearer === DISCOUNT_BEARER.VENDOR
+              ? DISCOUNT_BEARER.VENDOR
+              : DISCOUNT_BEARER.PLATFORM;
+        }
       }
 
       let customerGrandTotalPaise = 0;
@@ -522,18 +549,71 @@ export class CheckoutService {
         customerGrandTotalPaise += priced.paise.customerTotalPaise;
       }
 
+      const orderTotalRupees = fromPaise(customerGrandTotalPaise);
+      const requestedWallet = Math.max(0, Number(data.walletAmountToUse ?? 0));
+      let walletAmountUsed = 0;
+      if (requestedWallet > 0) {
+        if (data.paymentMethod === PAYMENT_METHOD.COD) {
+          throw new ValidationError(ERROR_MESSAGES.WALLET_INVALID_AMOUNT);
+        }
+        const balance = await walletService.getBalance(userId, t);
+        walletAmountUsed = Math.min(requestedWallet, balance, orderTotalRupees);
+        walletAmountUsed = Math.round(walletAmountUsed * 100) / 100;
+      }
+      const razorpayRemainder = Math.round((orderTotalRupees - walletAmountUsed) * 100) / 100;
+
       const orderRow = await Order.create({
         userId,
         shippingAddressId: data.shippingAddressId,
         couponId: primaryCoupon?.id ?? null,
         appliedCouponIds: coupons.map((c) => c.id),
-        totalAmount: fromPaise(customerGrandTotalPaise),
+        totalAmount: orderTotalRupees,
         discountTotal,
         status: ORDER_STATUS.PENDING,
         paymentStatus: PAYMENT_STATUS.PENDING,
+        paymentMethod: data.paymentMethod,
+        walletAmountUsed,
+        pendingCashbackAmount: cashbackAmount,
+        cashbackCreditedAt: null,
+        cashbackDiscountBearer,
         razorpayOrderId: null,
         razorpayPaymentId: null,
       }, { transaction: t });
+
+      if (walletAmountUsed > 0) {
+        await walletService.debit(
+          userId,
+          walletAmountUsed,
+          { type: WALLET_REFERENCE_TYPE.ORDER, id: orderRow.id },
+          `${WALLET_DESCRIPTIONS.CHECKOUT_SPEND} #${orderRow.id.slice(0, 8).toUpperCase()}`,
+          t,
+        );
+      }
+
+      // Wallet covers full amount — mark paid inside the same transaction.
+      if (data.paymentMethod === PAYMENT_METHOD.RAZORPAY && razorpayRemainder <= 0) {
+        await orderRow.update(
+          {
+            paymentStatus: PAYMENT_STATUS.PAID,
+            status: ORDER_STATUS.CONFIRMED,
+          },
+          { transaction: t },
+        );
+        if (coupons.length > 0) {
+          const perCouponDiscount =
+            coupons.length > 0 ? discountTotal / coupons.length : 0;
+          for (const coupon of coupons) {
+            await recordCouponUsage({
+              couponId: coupon.id,
+              userId,
+              orderId: orderRow.id,
+              discountApplied: perCouponDiscount,
+              actorId: userId,
+              transaction: t,
+            });
+          }
+        }
+      }
 
       for (const [vendorId, prep] of Object.entries(vendorPrep)) {
         const priced = pricedByVendor[vendorId]!;
@@ -677,7 +757,13 @@ export class CheckoutService {
     });
 
     if (data.paymentMethod === PAYMENT_METHOD.RAZORPAY) {
-      const razorpay = await paymentsService.createRazorpayOrderForOrder(order);
+      const walletUsed = Number(order.walletAmountUsed ?? 0);
+      const remainder = Math.round((Number(order.totalAmount) - walletUsed) * 100) / 100;
+      if (remainder <= 0 || order.paymentStatus === PAYMENT_STATUS.PAID) {
+        void notifyOrderConfirmed(order.id);
+        return { orderId: order.id };
+      }
+      const razorpay = await paymentsService.createRazorpayOrderForOrder(order, remainder);
       return {
         orderId: order.id,
         ...razorpay,
@@ -749,10 +835,22 @@ export class CheckoutService {
 
       await cartService.restoreItemsToUserCart(userId, restoreLines, t);
 
+      const walletUsed = Number(order.walletAmountUsed ?? 0);
+      if (walletUsed > 0) {
+        await walletService.credit(
+          userId,
+          walletUsed,
+          { type: WALLET_REFERENCE_TYPE.ORDER, id: order.id },
+          `${WALLET_DESCRIPTIONS.CHECKOUT_SPEND} rollback`,
+          t,
+        );
+      }
+
       await order.update(
         {
           status: ORDER_STATUS.CANCELLED,
           paymentStatus: PAYMENT_STATUS.FAILED,
+          walletAmountUsed: 0,
         },
         { transaction: t },
       );

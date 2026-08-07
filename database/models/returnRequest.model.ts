@@ -1,8 +1,13 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
 import {
+  REFUND_METHOD_VALUES,
+  REFUND_STATUS,
+  REFUND_STATUS_VALUES,
   RETURN_REASON_VALUES,
   RETURN_STATUS,
   RETURN_STATUS_VALUES,
+  type RefundMethod,
+  type RefundStatus,
   type ReturnReason,
   type ReturnStatus,
 } from '@core/constants/statuses';
@@ -15,11 +20,19 @@ export class ReturnRequest extends Model<InferAttributes<ReturnRequest>, InferCr
   declare reason: string;
   declare reasonCode: ReturnReason;
   declare status: ReturnStatus;
+  declare refundMethod: CreationOptional<RefundMethod | null>;
+  declare refundStatus: CreationOptional<RefundStatus>;
   declare refundAmount: number | null;
   declare refundTaxAmount: CreationOptional<number | null>;
   declare refundCommissionAmount: CreationOptional<number | null>;
   declare refundTcsAmount: CreationOptional<number | null>;
   declare refundNetClawback: CreationOptional<number | null>;
+  declare walletRefundAmount: CreationOptional<number>;
+  declare razorpayRefundAmount: CreationOptional<number>;
+  declare shippingRefundAmount: CreationOptional<number>;
+  declare returnShippingFeeAmount: CreationOptional<number>;
+  declare razorpayRefundId: CreationOptional<string | null>;
+  declare receivedAt: CreationOptional<Date | null>;
   declare resolvedById: string | null;
   declare resolvedAt: Date | null;
   declare createdBy: string | null;
@@ -52,11 +65,23 @@ export const initReturnRequestModel = (sequelize: Sequelize) => {
         type: DataTypes.ENUM(...RETURN_STATUS_VALUES),
         defaultValue: RETURN_STATUS.REQUESTED,
       },
+      refundMethod: { type: DataTypes.ENUM(...REFUND_METHOD_VALUES), allowNull: true },
+      refundStatus: {
+        type: DataTypes.ENUM(...REFUND_STATUS_VALUES),
+        allowNull: false,
+        defaultValue: REFUND_STATUS.NONE,
+      },
       refundAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       refundTaxAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       refundCommissionAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       refundTcsAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       refundNetClawback: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+      walletRefundAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      razorpayRefundAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      shippingRefundAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      returnShippingFeeAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      razorpayRefundId: { type: DataTypes.STRING, allowNull: true },
+      receivedAt: { type: DataTypes.DATE, allowNull: true },
       resolvedById: { type: DataTypes.UUID, allowNull: true },
       resolvedAt: { type: DataTypes.DATE, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },

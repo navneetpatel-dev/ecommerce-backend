@@ -22,6 +22,8 @@ export class CommissionLedger extends Model<InferAttributes<CommissionLedger>, I
   declare tcsAmountPaise: CreationOptional<number>;
   declare netPayoutAmountPaise: CreationOptional<number>;
   declare shippingCollectedPaise: CreationOptional<number>;
+  /** Optional adjustment marker (e.g. CashbackCost / CashbackCostReversal). */
+  declare referenceType: CreationOptional<string | null>;
   declare status: 'PENDING' | 'SETTLED' | 'CLAWED_BACK';
   declare createdBy: string | null;
   declare updatedBy: string | null;
@@ -63,6 +65,7 @@ export const initCommissionLedgerModel = (sequelize: Sequelize) => {
       tcsAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       netPayoutAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       shippingCollectedPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      referenceType: { type: DataTypes.STRING(64), allowNull: true },
       status: { type: DataTypes.ENUM('PENDING', 'SETTLED', 'CLAWED_BACK'), defaultValue: 'PENDING' },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },

@@ -74,8 +74,24 @@ export class PricingService {
     };
   }
 
-  reverseLineFromFrozen(line: PricingLineBreakdown, returnQuantity: number) {
-    return reverseFrozenLine({ line, returnQuantity });
+  reverseLineFromFrozen(
+    line: PricingLineBreakdown,
+    returnQuantity: number,
+    opts?: {
+      reasonCode?: import('@core/constants/statuses').ReturnReason;
+      shippingChargedPaise?: number;
+      returnShippingFeePaise?: number;
+      shippingAlreadyRefunded?: boolean;
+    },
+  ) {
+    return reverseFrozenLine({
+      line,
+      returnQuantity,
+      reasonCode: opts?.reasonCode,
+      shippingChargedPaise: opts?.shippingChargedPaise,
+      returnShippingFeePaise: opts?.returnShippingFeePaise,
+      shippingAlreadyRefunded: opts?.shippingAlreadyRefunded,
+    });
   }
 
   /** Rebuild a frozen line snapshot from persisted OrderItem columns (prefer paise). */

@@ -1,5 +1,4 @@
 import crypto from 'crypto';
-import { Op } from 'sequelize';
 import { env } from '@config/env';
 import { razorpay, razorpayConfigured } from '@config/razorpay';
 import { AppError } from '@core/errors/AppError';
@@ -12,7 +11,6 @@ import { ProductVariant } from '@database/models/productVariant.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { Coupon } from '@database/models/coupon.model';
 import { WebhookEvent } from '@database/models/webhookEvent.model';
-import { ReturnRequest } from '@database/models/returnRequest.model';
 import { cartService } from '@modules/cart/cart.service';
 import {
   recordCouponUsage,
@@ -22,7 +20,6 @@ import {
   ORDER_STATUS,
   PAYMENT_STATUS,
   COMMISSION_STATUS,
-  RETURN_STATUS,
 } from '@core/constants/statuses';
 import { ERROR_MESSAGES, ERROR_CODES } from '@core/constants/errors';
 import { RAZORPAY_MIN_AMOUNT_PAISE } from '@core/constants/http';
@@ -141,12 +138,17 @@ export class PaymentsService {
     }
   }
 
-  async createRazorpayOrderForOrder(order: Order): Promise<RazorpayCheckoutPayload> {
+  async createRazorpayOrderForOrder(
+    order: Order,
+    amountOverrideRupees?: number,
+  ): Promise<RazorpayCheckoutPayload> {
     if (!razorpayConfigured || !env.RAZORPAY_KEY_ID) {
       throw new AppError(ERROR_MESSAGES.RAZORPAY_NOT_CONFIGURED, 503, ERROR_CODES.RAZORPAY_NOT_CONFIGURED);
     }
 
-    const amountInPaise = Math.round(Number(order.totalAmount) * 100);
+    const chargeAmount =
+      amountOverrideRupees != null ? Number(amountOverrideRupees) : Number(order.totalAmount);
+    const amountInPaise = Math.round(chargeAmount * 100);
     if (amountInPaise < RAZORPAY_MIN_AMOUNT_PAISE) {
       throw new ValidationError('Order amount below Razorpay minimum');
     }
@@ -165,6 +167,25 @@ export class PaymentsService {
       currency: rzpOrder.currency,
       keyId: env.RAZORPAY_KEY_ID,
     };
+  }
+
+  /**
+   * Initiate a Razorpay refund. Does NOT mark the return REFUNDED —
+   * wait for refund.processed webhook.
+   */
+  async createRazorpayRefund(
+    paymentId: string,
+    amountPaise: number,
+    returnRequestId: string,
+  ): Promise<string> {
+    if (!razorpayConfigured) {
+      throw new AppError(ERROR_MESSAGES.RAZORPAY_NOT_CONFIGURED, 503, ERROR_CODES.RAZORPAY_NOT_CONFIGURED);
+    }
+    const refund = await razorpay.payments.refund(paymentId, {
+      amount: amountPaise,
+      notes: { returnRequestId },
+    });
+    return String(refund.id);
   }
 
   /**
@@ -292,7 +313,7 @@ export class PaymentsService {
       }
     }
 
-    if (event.event === 'refund.processed' || event.event === 'refund.created') {
+    if (event.event === 'refund.processed') {
       await this.handleRefundWebhook(event.payload?.refund?.entity);
     }
 
@@ -310,56 +331,15 @@ export class PaymentsService {
       | undefined,
   ): Promise<void> {
     if (!refund?.id || !refund.payment_id) return;
-    if (refund.status && refund.status !== 'processed' && refund.status !== 'created') return;
+    // Only `refund.processed` flips status — never on create alone.
+    if (refund.status && refund.status !== 'processed') return;
 
-    const order = await Order.findOne({ where: { razorpayPaymentId: refund.payment_id } });
-    if (!order?.userId) return;
-
-    const subOrders = await SubOrder.findAll({
-      where: { orderId: order.id },
-      attributes: ['id'],
+    const { returnsService } = await import('@modules/returns/returns.service');
+    await returnsService.markRazorpayRefundProcessed({
+      razorpayRefundId: refund.id,
+      paymentId: refund.payment_id,
+      amountPaise: Number(refund.amount ?? 0),
     });
-    const subOrderIds = subOrders.map((sub) => sub.id);
-
-    let returnId: string | null = null;
-    let refundAmount = Number(refund.amount ?? 0) / 100;
-
-    if (subOrderIds.length > 0) {
-      const returnRow = await ReturnRequest.findOne({
-        where: {
-          subOrderId: { [Op.in]: subOrderIds },
-          status: { [Op.in]: [RETURN_STATUS.REFUNDED, RETURN_STATUS.APPROVED] },
-        },
-        order: [['updatedAt', 'DESC']],
-      });
-      if (returnRow) {
-        returnId = returnRow.id;
-        if (returnRow.refundAmount != null) {
-          refundAmount = Number(returnRow.refundAmount);
-        }
-      }
-    }
-
-    const orderNumber = order.id.slice(0, 8).toUpperCase();
-    if (returnId) {
-      void notificationsService.sendRefundProcessed(order.userId, returnId, {
-        orderId: order.id,
-        orderNumber,
-        amount: refundAmount,
-      });
-      return;
-    }
-
-    void notificationsService.sendRefundProcessed(
-      order.userId,
-      refund.id,
-      {
-        orderId: order.id,
-        orderNumber,
-        amount: refundAmount,
-      },
-      'RazorpayRefund',
-    );
   }
 }
 

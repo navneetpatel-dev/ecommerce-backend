@@ -23,10 +23,18 @@ const orderDetailInclude = [
 
 function mapOrderResponse(order: any) {
   const plain = typeof order.get === 'function' ? order.get({ plain: true }) : order;
+  const totalAmount = Number(plain.totalAmount ?? 0);
+  const walletAmountUsed = Number(plain.walletAmountUsed ?? 0);
   return {
     ...plain,
-    totalAmount: Number(plain.totalAmount ?? 0),
+    totalAmount,
     discountTotal: Number(plain.discountTotal ?? 0),
+    walletAmountUsed,
+    pendingCashbackAmount: Number(plain.pendingCashbackAmount ?? 0),
+    cashbackCreditedAt: plain.cashbackCreditedAt ?? null,
+    cashbackDiscountBearer: plain.cashbackDiscountBearer ?? null,
+    paymentMethod: plain.paymentMethod ?? null,
+    razorpayAmountPaid: Math.max(0, Math.round((totalAmount - walletAmountUsed) * 100) / 100),
     customerName: plain.user?.name ?? null,
     subOrders: (plain.subOrders ?? []).map((sub: any) => ({
       ...sub,

@@ -10,6 +10,11 @@ export class Order extends Model<InferAttributes<Order>, InferCreationAttributes
   declare discountTotal: CreationOptional<number>;
   declare status: 'PENDING' | 'CONFIRMED' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED' | 'RETURNED';
   declare paymentStatus: 'PENDING' | 'PAID' | 'FAILED' | 'REFUNDED';
+  declare paymentMethod: CreationOptional<'RAZORPAY' | 'COD' | null>;
+  declare walletAmountUsed: CreationOptional<number>;
+  declare pendingCashbackAmount: CreationOptional<number>;
+  declare cashbackCreditedAt: CreationOptional<Date | null>;
+  declare cashbackDiscountBearer: CreationOptional<'PLATFORM' | 'VENDOR' | null>;
   declare shippingAddressId: string;
   declare razorpayOrderId: string | null;
   declare razorpayPaymentId: string | null;
@@ -42,6 +47,11 @@ export const initOrderModel = (sequelize: Sequelize) => {
         defaultValue: 'PENDING',
       },
       paymentStatus: { type: DataTypes.ENUM('PENDING', 'PAID', 'FAILED', 'REFUNDED'), defaultValue: 'PENDING' },
+      paymentMethod: { type: DataTypes.ENUM('RAZORPAY', 'COD'), allowNull: true },
+      walletAmountUsed: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      pendingCashbackAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      cashbackCreditedAt: { type: DataTypes.DATE, allowNull: true },
+      cashbackDiscountBearer: { type: DataTypes.ENUM('PLATFORM', 'VENDOR'), allowNull: true },
       shippingAddressId: { type: DataTypes.UUID, allowNull: false },
       razorpayOrderId: { type: DataTypes.STRING, allowNull: true },
       razorpayPaymentId: { type: DataTypes.STRING, allowNull: true },

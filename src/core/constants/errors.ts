@@ -27,6 +27,12 @@ export const ERROR_CODES = {
   COUPON_CONFIG_INVALID: 'COUPON_CONFIG_INVALID',
   COUPON_DUPLICATE_SCOPE: 'COUPON_DUPLICATE_SCOPE',
   DOCUMENT_SEQUENCE_MISSING: 'DOCUMENT_SEQUENCE_MISSING',
+  WALLET_INSUFFICIENT_BALANCE: 'WALLET_INSUFFICIENT_BALANCE',
+  WALLET_INVALID_AMOUNT: 'WALLET_INVALID_AMOUNT',
+  RETURN_INVALID_TRANSITION: 'RETURN_INVALID_TRANSITION',
+  RETURN_NOT_RECEIVED: 'RETURN_NOT_RECEIVED',
+  RETURN_REFUND_PENDING: 'RETURN_REFUND_PENDING',
+  RETURN_WINDOW_EXPIRED: 'RETURN_WINDOW_EXPIRED',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -77,6 +83,12 @@ export const ERROR_MESSAGES = {
   COUPON_DUPLICATE_SCOPE:
     'Only one platform coupon and one coupon per seller can be applied together',
   DOCUMENT_SEQUENCE_MISSING: 'Document number sequence is not configured',
+  WALLET_INSUFFICIENT_BALANCE: 'Insufficient wallet balance',
+  WALLET_INVALID_AMOUNT: 'Wallet amount must be greater than zero',
+  RETURN_INVALID_TRANSITION: 'This return status transition is not allowed',
+  RETURN_NOT_RECEIVED: 'Return must be received before it can be closed',
+  RETURN_REFUND_PENDING: 'Refund must complete before this action',
+  RETURN_WINDOW_EXPIRED: 'The return window for this item has expired',
   SHOP_UNAVAILABLE: 'This shop is currently unavailable',
   NOT_YOUR_VENDOR_REPORT: 'Not your vendor report',
   REPORT_INVALID_RANGE: 'Report date range is invalid',

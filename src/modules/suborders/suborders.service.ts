@@ -55,6 +55,9 @@ export class SubordersService {
           orderId: order.id,
           orderNumber,
         });
+        void import('@modules/wallet/cashback.service').then(({ creditPendingCashbackForOrder }) =>
+          creditPendingCashbackForOrder(order.id),
+        );
       }
     }
 

@@ -7,8 +7,10 @@ import { Order } from '@database/models/order.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { Vendor } from '@database/models/vendor.model';
+import { WalletLedger } from '@database/models/walletLedger.model';
+import { WalletWriteOff } from '@database/models/walletWriteOff.model';
 import { toPaise, fromPaise } from '@modules/pricing/money';
-import type { ReportRangeQuery } from './reports.dto';
+import type { ReportRangeQuery, WriteOffReportQuery } from './reports.dto';
 
 function assertRange(query: ReportRangeQuery) {
   if (query.from > query.to) {
@@ -290,6 +292,95 @@ export class ReportsService {
       netPayout: fromPaise(netPaise),
       upcomingPayout: fromPaise(pendingPaise),
       historicalPayout: fromPaise(settledPaise),
+    };
+  }
+
+  /** Outstanding customer wallet balances platform-wide (latest ledger per user). */
+  async walletLiabilityReport(_query: ReportRangeQuery): Promise<{
+    totalLiability: number;
+    customerCount: number;
+    rows: Array<{ userId: string; balance: number; asOf: Date }>;
+  }> {
+    const ledgers = await WalletLedger.findAll({
+      order: [
+        ['userId', 'ASC'],
+        ['createdAt', 'DESC'],
+      ],
+      attributes: ['userId', 'balanceAfter', 'createdAt', 'type', 'amount'],
+    });
+
+    const seen = new Set<string>();
+    const rows: Array<{ userId: string; balance: number; asOf: Date }> = [];
+    let totalLiability = 0;
+    for (const row of ledgers) {
+      if (seen.has(row.userId)) continue;
+      seen.add(row.userId);
+      const balance = Number(row.balanceAfter);
+      if (balance <= 0) continue;
+      totalLiability += balance;
+      rows.push({ userId: row.userId, balance, asOf: row.createdAt as Date });
+    }
+
+    return {
+      totalLiability: Math.round(totalLiability * 100) / 100,
+      customerCount: rows.length,
+      rows,
+    };
+  }
+
+  /** Cashback write-offs: recovered vs written-off, filterable by bornBy. */
+  async cashbackWriteOffReport(query: WriteOffReportQuery): Promise<{
+    from: Date;
+    to: Date;
+    bornBy: string | null;
+    recoveredTotal: number;
+    writtenOffTotal: number;
+    rows: Array<{
+      id: string;
+      userId: string;
+      originalClawbackAmount: number;
+      recoveredAmount: number;
+      writtenOffAmount: number;
+      bornBy: string;
+      referenceType: string;
+      referenceId: string;
+      createdAt: Date;
+    }>;
+  }> {
+    assertRange(query);
+    const where: Record<string, unknown> = {
+      createdAt: { [Op.between]: [query.from, query.to] },
+    };
+    if (query.bornBy) where.bornBy = query.bornBy;
+
+    const writeOffs = await WalletWriteOff.findAll({ where, order: [['createdAt', 'DESC']] });
+    let recoveredTotal = 0;
+    let writtenOffTotal = 0;
+    const rows = writeOffs.map((row) => {
+      const recovered = Number(row.recoveredAmount);
+      const writtenOff = Number(row.writtenOffAmount);
+      recoveredTotal += recovered;
+      writtenOffTotal += writtenOff;
+      return {
+        id: row.id,
+        userId: row.userId,
+        originalClawbackAmount: Number(row.originalClawbackAmount),
+        recoveredAmount: recovered,
+        writtenOffAmount: writtenOff,
+        bornBy: row.bornBy,
+        referenceType: row.referenceType,
+        referenceId: row.referenceId,
+        createdAt: row.createdAt as Date,
+      };
+    });
+
+    return {
+      from: query.from,
+      to: query.to,
+      bornBy: query.bornBy ?? null,
+      recoveredTotal: Math.round(recoveredTotal * 100) / 100,
+      writtenOffTotal: Math.round(writtenOffTotal * 100) / 100,
+      rows,
     };
   }
 
