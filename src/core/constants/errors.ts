@@ -46,6 +46,7 @@ export const ERROR_MESSAGES = {
   CATEGORY_NAME_EXISTS: 'Category name already exists',
   CATEGORY_HAS_SUBCATEGORIES: 'Cannot delete category with subcategories',
   CATEGORY_HAS_PRODUCTS: 'Cannot delete category while products still use it',
+  CATEGORY_INVALID_PARENT: 'Category cannot be its own parent or descendant',
   ITEMS_UNAVAILABLE: 'Some items in your cart are no longer available',
   VENDOR_UNAVAILABLE: 'This seller is currently unavailable',
   COUPON_INACTIVE: 'Coupon is not active',

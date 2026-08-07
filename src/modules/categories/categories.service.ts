@@ -15,6 +15,29 @@ function generateSlug(name: string): string {
     .replace(/(^-|-$)/g, '');
 }
 
+async function assertValidParent(
+  categoryId: string,
+  parentId: string,
+  transaction: Transaction,
+) {
+  if (parentId === categoryId) {
+    throw new ValidationError(ERROR_MESSAGES.CATEGORY_INVALID_PARENT);
+  }
+
+  let cursor: string | null = parentId;
+  const seen = new Set<string>([categoryId]);
+
+  while (cursor) {
+    if (seen.has(cursor)) {
+      throw new ValidationError(ERROR_MESSAGES.CATEGORY_INVALID_PARENT);
+    }
+    seen.add(cursor);
+    const node = await categoriesRepository.findById(cursor, { transaction });
+    if (!node) throw new NotFoundError('Parent category');
+    cursor = node.parentId;
+  }
+}
+
 export class CategoriesService {
   async createCategory(data: CreateCategoryRequest) {
     return sequelize.transaction(async (t: Transaction) => {
@@ -44,14 +67,22 @@ export class CategoriesService {
     return categoriesRepository.findTopLevel();
   }
 
-  /** Flat top-level list for admin tables (paginated). */
+  /** Flat admin list — all categories with parent name for the table. */
   async getCategoriesPaginated(query: { page: number; limit: number }) {
     const offset = paginationOffset(query.page, query.limit);
     const { rows, count } = await Category.findAndCountAll({
-      where: { parentId: null },
+      include: [
+        {
+          association: 'parent',
+          attributes: ['id', 'name'],
+          required: false,
+        },
+      ],
       order: [['createdAt', 'DESC']],
       limit: query.limit,
       offset,
+      distinct: true,
+      col: 'id',
     });
     return {
       categories: rows,
@@ -91,9 +122,7 @@ export class CategoriesService {
 
       if (data.parentId !== undefined) {
         if (data.parentId) {
-          const parent = await categoriesRepository.findById(data.parentId, { transaction: t });
-          if (!parent) throw new NotFoundError('Parent category');
-          if (parent.id === id) throw new ValidationError('Category cannot be its own parent');
+          await assertValidParent(id, data.parentId, t);
         }
         updateData.parentId = data.parentId;
       }
