@@ -25,6 +25,29 @@ router.post('/register', authenticate, validate(RegisterVendorSchema), vendorsCo
 
 // Vendor dashboard
 router.get('/dashboard/summary', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_CREATE, PERMISSIONS.SUBORDER_MANAGE, PERMISSIONS.PAYOUT_VIEW), vendorsController.getDashboardSummary);
+router.get(
+  '/me',
+  authenticate,
+  authorize(
+    PERMISSIONS.PRODUCT_UPDATE,
+    PERMISSIONS.PRODUCT_CREATE,
+    PERMISSIONS.SUBORDER_MANAGE,
+    PERMISSIONS.PAYOUT_VIEW,
+  ),
+  vendorsController.getMyVendor,
+);
+router.patch(
+  '/me',
+  authenticate,
+  authorize(
+    PERMISSIONS.PRODUCT_UPDATE,
+    PERMISSIONS.PRODUCT_CREATE,
+    PERMISSIONS.SUBORDER_MANAGE,
+    PERMISSIONS.PAYOUT_VIEW,
+  ),
+  validate(UpdateVendorSchema),
+  vendorsController.updateMyVendor,
+);
 
 // Admin vendor management
 router.get('/', authenticate, authorize(PERMISSIONS.VENDOR_MANAGE, PERMISSIONS.VENDOR_APPROVE), validate(GetVendorsQuerySchema, 'query'), vendorsController.getVendors);

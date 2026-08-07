@@ -1,5 +1,6 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
+import { ForbiddenError } from '@core/errors/ForbiddenError';
 import {
   VENDOR_STATUS,
   ORDER_STATUS,
@@ -110,6 +111,20 @@ export class VendorsService {
     const vendor = await vendorsRepository.findById(vendorId);
     if (!vendor) throw new NotFoundError('Vendor');
     return vendor;
+  }
+
+  async getMyVendor(userVendorId: string | null | undefined) {
+    if (!userVendorId) {
+      throw new ForbiddenError(ERROR_MESSAGES.VENDOR_NOT_LINKED);
+    }
+    return this.getVendorById(userVendorId);
+  }
+
+  async updateMyVendor(userVendorId: string | null | undefined, data: UpdateVendorRequest) {
+    if (!userVendorId) {
+      throw new ForbiddenError(ERROR_MESSAGES.VENDOR_NOT_LINKED);
+    }
+    return this.updateVendor(userVendorId, data);
   }
 
   async updateVendor(vendorId: string, data: UpdateVendorRequest) {

@@ -35,6 +35,17 @@ export const getVendorById = asyncHandler(async (req: Request, res: Response) =>
   res.json(ok(vendor));
 });
 
+export const getMyVendor = asyncHandler(async (req: Request, res: Response) => {
+  const vendor = await vendorsService.getMyVendor(req.user!.vendorId);
+  res.json(ok(vendor));
+});
+
+export const updateMyVendor = asyncHandler(async (req: Request, res: Response) => {
+  const dto = UpdateVendorSchema.parse(req.body);
+  const vendor = await vendorsService.updateMyVendor(req.user!.vendorId, dto);
+  res.json(ok(vendor));
+});
+
 export const updateVendor = asyncHandler(async (req: Request, res: Response) => {
   const dto = UpdateVendorSchema.parse(req.body);
   const vendor = await vendorsService.updateVendor(req.params.id!, dto);

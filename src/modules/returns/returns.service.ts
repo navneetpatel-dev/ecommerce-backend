@@ -74,6 +74,36 @@ const RESOLVED_AT_STATUSES: ReturnStatus[] = [
   RETURN_STATUS.CLOSED,
 ];
 
+const returnLockInclude = [
+  {
+    model: OrderItem,
+    as: 'orderItem',
+    include: [
+      {
+        model: SubOrder,
+        as: 'subOrder',
+        include: [{ model: OrderItem, as: 'items' }],
+      },
+    ],
+  },
+];
+
+/**
+ * Postgres rejects FOR UPDATE on the nullable side of an OUTER JOIN.
+ * Lock the return row alone, then load associations without a lock.
+ */
+async function findReturnForUpdate(id: string, t: Transaction): Promise<ReturnRequest | null> {
+  const locked = await ReturnRequest.findByPk(id, {
+    transaction: t,
+    lock: t.LOCK.UPDATE,
+  });
+  if (!locked) return null;
+  return ReturnRequest.findByPk(id, {
+    include: returnLockInclude,
+    transaction: t,
+  });
+}
+
 function serializeReturn(row: ReturnRequest | (ReturnRequest & { orderItem?: OrderItem })) {
   const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
   return {
@@ -565,21 +595,11 @@ export class ReturnsService {
     } = { payload: null };
 
     await sequelize.transaction(async (t) => {
-      const row = await ReturnRequest.findByPk(returnRequestId, {
-        include: [
-          {
-            model: OrderItem,
-            as: 'orderItem',
-            include: [{ model: SubOrder, as: 'subOrder' }],
-          },
-        ],
-        transaction: t,
-        lock: t.LOCK.UPDATE,
-      });
+      const row = await findReturnForUpdate(returnRequestId, t);
       if (!row) return;
-      if (row.refundStatus === REFUND_STATUS.COMPLETED) return;
 
       const orderItem = (row as any).orderItem as OrderItem & { subOrder: SubOrder };
+      if (!orderItem?.subOrder) return;
       const order = await Order.findByPk(orderItem.subOrder.orderId, { transaction: t });
       if (!order) return;
 
@@ -587,6 +607,14 @@ export class ReturnsService {
         where: { returnRequestId: row.id },
         transaction: t,
       });
+      // Idempotent: already finalized with CreditNote. Still allow recovery if
+      // refundStatus was marked COMPLETED before CreditNote (wallet-only path).
+      if (existingCredit && row.refundStatus === REFUND_STATUS.COMPLETED) {
+        return;
+      }
+
+      const auditActorId = actorId === 'system' ? null : actorId;
+
       if (!existingCredit && row.refundAmount != null) {
         const merchandisePaise = toPaise(
           Math.max(
@@ -611,8 +639,8 @@ export class ReturnsService {
             taxPaise,
             totalPaise,
             taxBreakdown: { refundTaxPaise: taxPaise },
-            createdBy: actorId,
-            updatedBy: actorId,
+            createdBy: auditActorId,
+            updatedBy: auditActorId,
             deletedBy: null,
           },
           { transaction: t },
@@ -632,9 +660,9 @@ export class ReturnsService {
           // Preserve logistics progress; only stamp REFUNDED when still at APPROVED.
           status: nextStatus,
           refundStatus: REFUND_STATUS.COMPLETED,
-          resolvedById: actorId === 'system' ? row.resolvedById : actorId,
+          resolvedById: auditActorId ?? row.resolvedById,
           resolvedAt: new Date(),
-          updatedBy: actorId === 'system' ? row.updatedBy : actorId,
+          updatedBy: auditActorId ?? row.updatedBy,
         },
         { transaction: t },
       );
@@ -664,23 +692,7 @@ export class ReturnsService {
     let shouldCompleteRefundImmediately = false;
 
     const result = await sequelize.transaction(async (t: Transaction) => {
-      const row = await ReturnRequest.findByPk(id, {
-        include: [
-          {
-            model: OrderItem,
-            as: 'orderItem',
-            include: [
-              {
-                model: SubOrder,
-                as: 'subOrder',
-                include: [{ model: OrderItem, as: 'items' }],
-              },
-            ],
-          },
-        ],
-        transaction: t,
-        lock: t.LOCK.UPDATE,
-      });
+      const row = await findReturnForUpdate(id, t);
       if (!row) throw new NotFoundError('ReturnRequest');
 
       assertTransition(row.status, status);

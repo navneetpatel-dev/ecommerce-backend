@@ -18,6 +18,8 @@ export const UpdateVendorSchema = z.object({
   description: z.string().optional(),
   logoUrl: z.string().url().optional(),
   bannerUrl: z.string().url().optional(),
+  /** Optional override of platform returnShippingFee (rupees). Null clears override. */
+  returnShippingFee: z.number().min(0).nullable().optional(),
 });
 
 export const ApproveVendorSchema = z.object({
