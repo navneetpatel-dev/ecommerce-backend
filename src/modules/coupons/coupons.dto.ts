@@ -15,6 +15,7 @@ const TYPES_REQUIRING_VALUE = new Set<(typeof COUPON_TYPES)[number]>([
   'PERCENTAGE',
   'FLAT',
   'CASHBACK',
+  'BUNDLE',
 ]);
 
 const ScopeSchema = z.object({
@@ -36,6 +37,20 @@ const UserRestrictionSchema = z
   })
   .optional();
 
+const CouponConfigSchema = z
+  .object({
+    tiers: z
+      .array(
+        z.object({
+          minSubtotal: z.number().nonnegative(),
+          percent: z.number().positive().max(100),
+        }),
+      )
+      .optional(),
+    bundleProductIds: z.array(z.string().uuid()).optional(),
+  })
+  .optional();
+
 const couponObjectSchema = z.object({
   code: z
     .string()
@@ -50,6 +65,7 @@ const couponObjectSchema = z.object({
   applicableScope: ScopeSchema.optional(),
   excludedItems: ExcludedItemsSchema,
   userRestriction: UserRestrictionSchema,
+  config: CouponConfigSchema,
   usageLimitTotal: z.number().int().positive().optional().nullable(),
   usageLimitPerUser: z.number().int().positive().optional().nullable(),
   startDate: z
@@ -73,6 +89,10 @@ function refineCouponDatesAndValue(
     value?: number | null;
     startDate: string;
     endDate: string;
+    config?: {
+      tiers?: Array<{ minSubtotal: number; percent: number }>;
+      bundleProductIds?: string[];
+    };
   },
   ctx: z.RefinementCtx,
 ) {
@@ -90,6 +110,29 @@ function refineCouponDatesAndValue(
       path: ['value'],
       message: 'Percentage value cannot exceed 100',
     });
+  }
+
+  if (data.type === 'TIERED') {
+    const tiers = data.config?.tiers ?? [];
+    const hasValue = data.value != null && !Number.isNaN(data.value) && data.value > 0;
+    if (tiers.length === 0 && !hasValue) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['config'],
+        message: 'Tiered coupons require tiers or a percentage value',
+      });
+    }
+  }
+
+  if (data.type === 'BUNDLE') {
+    const ids = data.config?.bundleProductIds ?? [];
+    if (ids.length === 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['config', 'bundleProductIds'],
+        message: 'Bundle coupons require at least one product',
+      });
+    }
   }
 
   const start = Date.parse(data.startDate);
@@ -115,6 +158,7 @@ export const UpdateCouponSchema = couponObjectSchema
           value: data.value,
           startDate: data.startDate,
           endDate: data.endDate,
+          config: data.config,
         },
         ctx,
       );

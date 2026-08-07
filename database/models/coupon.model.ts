@@ -12,6 +12,12 @@ export interface CouponUserRestriction {
   value?: string | string[];
 }
 
+/** Type-specific rules (TIERED breakpoints, BUNDLE required products). */
+export interface CouponConfig {
+  tiers?: Array<{ minSubtotal: number; percent: number }>;
+  bundleProductIds?: string[];
+}
+
 export class Coupon extends Model<InferAttributes<Coupon>, InferCreationAttributes<Coupon>> {
   declare id: CreationOptional<string>;
   declare code: string;
@@ -23,6 +29,7 @@ export class Coupon extends Model<InferAttributes<Coupon>, InferCreationAttribut
   declare applicableScope: CreationOptional<CouponScope>;
   declare excludedItems: CreationOptional<{ productIds: string[]; categoryIds: string[] }>;
   declare userRestriction: CreationOptional<CouponUserRestriction>;
+  declare config: CreationOptional<CouponConfig>;
   declare usageLimitTotal: number | null;
   declare usageLimitPerUser: CreationOptional<number>;
   declare usedCount: CreationOptional<number>;
@@ -65,6 +72,7 @@ export const initCouponModel = (sequelize: Sequelize) => {
       applicableScope: { type: DataTypes.JSONB, defaultValue: {} },
       excludedItems: { type: DataTypes.JSONB, defaultValue: {} },
       userRestriction: { type: DataTypes.JSONB, defaultValue: {} },
+      config: { type: DataTypes.JSONB, allowNull: false, defaultValue: {} },
       usageLimitTotal: { type: DataTypes.INTEGER, allowNull: true },
       usageLimitPerUser: { type: DataTypes.INTEGER, defaultValue: 1 },
       usedCount: { type: DataTypes.INTEGER, defaultValue: 0 },

@@ -142,6 +142,7 @@ function toCouponLines(
       vendorId: product.vendorId ? String(product.vendorId) : null,
       unitPrice: Number(item.variant.price),
       quantity: Number(item.quantity),
+      isCustomerVisible: true,
     };
   });
 }

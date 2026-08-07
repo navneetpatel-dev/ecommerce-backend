@@ -7,6 +7,7 @@ import { Order } from '@database/models/order.model';
 import { WalletLedger } from '@database/models/walletLedger.model';
 import {
   COUPON_STATUS,
+  COUPON_USER_SEGMENT,
   DISCOUNT_BEARER,
   ORDER_STATUS,
   PAYMENT_STATUS,
@@ -149,6 +150,31 @@ export async function validateCoupon(input: ValidateCouponInput): Promise<Valida
     if (allowed.length > 0 && !allowed.includes(input.userId)) {
       return fail(ERROR_MESSAGES.COUPON_RESTRICTION, ERROR_CODES.COUPON_RESTRICTION);
     }
+  } else if (restrictionType === 'segment') {
+    const wanted = Array.isArray(restriction.value)
+      ? restriction.value.map((v) => String(v).toLowerCase())
+      : restriction.value
+        ? [String(restriction.value).toLowerCase()]
+        : [];
+    if (wanted.length === 0) {
+      return fail(ERROR_MESSAGES.COUPON_RESTRICTION, ERROR_CODES.COUPON_RESTRICTION);
+    }
+    const paidOrders = await Order.count({
+      where: {
+        userId: input.userId,
+        [Op.or]: [
+          { paymentStatus: PAYMENT_STATUS.PAID },
+          { status: { [Op.in]: [ORDER_STATUS.CONFIRMED, ORDER_STATUS.SHIPPED, ORDER_STATUS.DELIVERED] } },
+        ],
+      },
+    });
+    const segments = new Set<string>();
+    if (paidOrders === 0) segments.add(COUPON_USER_SEGMENT.NEW);
+    if (paidOrders > 0) segments.add(COUPON_USER_SEGMENT.RETURNING);
+    if (paidOrders >= 3) segments.add(COUPON_USER_SEGMENT.LOYAL);
+    if (!wanted.some((segment) => segments.has(segment))) {
+      return fail(ERROR_MESSAGES.COUPON_RESTRICTION, ERROR_CODES.COUPON_RESTRICTION);
+    }
   }
 
   if (coupon.vendorId) {
@@ -158,16 +184,24 @@ export async function validateCoupon(input: ValidateCouponInput): Promise<Valida
     }
   }
 
-  const { discount, cashbackAmount, freeShipping } = computeTypeDiscount(
+  const { discount, cashbackAmount, freeShipping, configInvalid } = computeTypeDiscount(
     coupon,
     eligibleLines,
     shippingTotal,
   );
 
+  if (configInvalid) {
+    return fail(ERROR_MESSAGES.COUPON_CONFIG_INVALID, ERROR_CODES.COUPON_CONFIG_INVALID);
+  }
+
+  // BUNDLE requires all configured products present — zero discount means incomplete set
+  if (coupon.type === 'BUNDLE' && discount <= 0) {
+    return fail(ERROR_MESSAGES.COUPON_SCOPE, ERROR_CODES.COUPON_SCOPE);
+  }
+
   let vendorDiscountShares: Record<string, number> = {};
   if (freeShipping && input.shippingByVendor) {
     vendorDiscountShares = { ...input.shippingByVendor };
-    // Cap each vendor share so sum equals discount (already shippingTotal)
     const shippingSum = Object.values(vendorDiscountShares).reduce((s, n) => s + n, 0);
     if (shippingSum > 0 && Math.abs(shippingSum - discount) > 0.01) {
       vendorDiscountShares = prorateDiscount(discount, vendorDiscountShares);
@@ -261,7 +295,10 @@ export async function creditCashbackIfNeeded(params: {
       balanceAfter,
       referenceType: 'COUPON_CASHBACK',
       referenceId: params.orderId,
-      description: `Cashback from coupon ${params.coupon.code}`,
+      description: ERROR_MESSAGES.COUPON_CASHBACK_DESCRIPTION.replace(
+        '{code}',
+        params.coupon.code,
+      ),
       expiresAt: null,
       createdBy: params.userId,
       updatedBy: null,

@@ -1,4 +1,4 @@
-import type { Coupon } from '@database/models/coupon.model';
+import type { Coupon, CouponConfig } from '@database/models/coupon.model';
 import { DISCOUNT_BEARER, type DiscountBearer } from '@core/constants/statuses';
 
 export type CartLineForCoupon = {
@@ -7,6 +7,8 @@ export type CartLineForCoupon = {
   vendorId: string | null;
   unitPrice: number;
   quantity: number;
+  /** When false, line is excluded from coupon eligibility (customerVisible gate). */
+  isCustomerVisible?: boolean;
 };
 
 export function roundMoney(n: number): number {
@@ -81,11 +83,18 @@ export function filterEligibleLines(coupon: Coupon, lines: CartLineForCoupon[]):
   const scope = coupon.applicableScope ?? { type: 'all', ids: [] };
   const scopeType = (scope.type || 'all').toLowerCase();
   const ids = (scope.ids ?? []).map(String);
+  const config = (coupon.config ?? {}) as CouponConfig;
+  const bundleIds = (config.bundleProductIds ?? []).map(String);
 
   return lines.filter((line) => {
+    if (line.isCustomerVisible === false) return false;
     if (isLineExcluded(line, coupon.excludedItems)) return false;
 
     if (coupon.vendorId && line.vendorId !== coupon.vendorId) return false;
+
+    if (coupon.type === 'BUNDLE' && bundleIds.length > 0 && !bundleIds.includes(line.productId)) {
+      return false;
+    }
 
     switch (scopeType) {
       case 'all':
@@ -102,14 +111,31 @@ export function filterEligibleLines(coupon: Coupon, lines: CartLineForCoupon[]):
   });
 }
 
+function resolveTier(coupon: Coupon): Array<{ minSubtotal: number; percent: number }> {
+  const config = (coupon.config ?? {}) as CouponConfig;
+  if (Array.isArray(config.tiers) && config.tiers.length > 0) {
+    return config.tiers
+      .map((tier) => ({
+        minSubtotal: Number(tier.minSubtotal) || 0,
+        percent: Number(tier.percent) || 0,
+      }))
+      .filter((tier) => tier.percent > 0)
+      .sort((a, b) => a.minSubtotal - b.minSubtotal);
+  }
+  const percent = Number(coupon.value ?? 0);
+  if (percent <= 0) return [];
+  return [{ minSubtotal: Number(coupon.minOrderValue ?? 0), percent }];
+}
+
 export function computeTypeDiscount(
   coupon: Coupon,
   eligibleLines: CartLineForCoupon[],
   shippingTotal: number,
-): { discount: number; cashbackAmount: number; freeShipping: boolean } {
+): { discount: number; cashbackAmount: number; freeShipping: boolean; configInvalid?: boolean } {
   const eligibleSubtotal = eligibleLines.reduce((sum, line) => sum + lineAmount(line), 0);
   const value = Number(coupon.value ?? 0);
   const cap = coupon.maxDiscountCap != null ? Number(coupon.maxDiscountCap) : Infinity;
+  const config = (coupon.config ?? {}) as CouponConfig;
 
   switch (coupon.type) {
     case 'PERCENTAGE': {
@@ -120,14 +146,17 @@ export function computeTypeDiscount(
       return { discount: roundMoney(Math.min(value, eligibleSubtotal, cap)), cashbackAmount: 0, freeShipping: false };
     }
     case 'FREE_SHIPPING': {
-      return { discount: roundMoney(Math.min(shippingTotal, cap === Infinity ? shippingTotal : cap)), cashbackAmount: 0, freeShipping: true };
+      return {
+        discount: roundMoney(Math.min(shippingTotal, cap === Infinity ? shippingTotal : cap)),
+        cashbackAmount: 0,
+        freeShipping: true,
+      };
     }
     case 'CASHBACK': {
       const cashback = roundMoney(Math.min(value, eligibleSubtotal, cap));
       return { discount: 0, cashbackAmount: cashback, freeShipping: false };
     }
     case 'BOGO': {
-      // Simple: buy 2 get 1 — discount cheapest unit among eligible lines (by unit price).
       const units: number[] = [];
       for (const line of eligibleLines) {
         for (let i = 0; i < line.quantity; i++) units.push(Number(line.unitPrice));
@@ -137,10 +166,43 @@ export function computeTypeDiscount(
       const discount = units.slice(0, freeCount).reduce((s, p) => s + p, 0);
       return { discount: roundMoney(Math.min(discount, cap)), cashbackAmount: 0, freeShipping: false };
     }
-    case 'TIERED':
-    case 'BUNDLE':
-      // Config-driven types: valid pass with 0 discount until template configs are expanded.
-      return { discount: 0, cashbackAmount: 0, freeShipping: false };
+    case 'TIERED': {
+      const tiers = resolveTier(coupon);
+      if (tiers.length === 0) {
+        return { discount: 0, cashbackAmount: 0, freeShipping: false, configInvalid: true };
+      }
+      let matchedPercent = 0;
+      for (const tier of tiers) {
+        if (eligibleSubtotal >= tier.minSubtotal) {
+          matchedPercent = tier.percent;
+        }
+      }
+      if (matchedPercent <= 0) {
+        return { discount: 0, cashbackAmount: 0, freeShipping: false };
+      }
+      const raw = (eligibleSubtotal * matchedPercent) / 100;
+      return {
+        discount: roundMoney(Math.min(raw, cap, eligibleSubtotal)),
+        cashbackAmount: 0,
+        freeShipping: false,
+      };
+    }
+    case 'BUNDLE': {
+      const bundleIds = (config.bundleProductIds ?? []).map(String);
+      if (bundleIds.length === 0) {
+        return { discount: 0, cashbackAmount: 0, freeShipping: false, configInvalid: true };
+      }
+      const present = new Set(eligibleLines.map((line) => line.productId));
+      const allPresent = bundleIds.every((id) => present.has(id));
+      if (!allPresent) {
+        return { discount: 0, cashbackAmount: 0, freeShipping: false };
+      }
+      return {
+        discount: roundMoney(Math.min(value, eligibleSubtotal, cap)),
+        cashbackAmount: 0,
+        freeShipping: false,
+      };
+    }
     default:
       return { discount: 0, cashbackAmount: 0, freeShipping: false };
   }

@@ -23,6 +23,8 @@ export const ERROR_CODES = {
   COUPON_RESTRICTION: 'COUPON_RESTRICTION',
   COUPON_MIN_ORDER: 'COUPON_MIN_ORDER',
   COUPON_STACK: 'COUPON_STACK',
+  COUPON_PRIORITY: 'COUPON_PRIORITY',
+  COUPON_CONFIG_INVALID: 'COUPON_CONFIG_INVALID',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -31,6 +33,9 @@ export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
 export const ERROR_MESSAGES = {
   INSUFFICIENT_STOCK: 'Insufficient stock',
   COUPON_USAGE_LIMIT: 'Coupon usage limit reached',
+  COUPON_PRIORITY: 'A higher-priority coupon is already applied',
+  COUPON_CONFIG_INVALID: 'Coupon configuration is incomplete for this type',
+  COUPON_CASHBACK_DESCRIPTION: 'Cashback from coupon {code}',
   CART_EMPTY: 'Cart is empty',
   AUTH_REQUIRED: 'Authentication required',
   INVALID_TOKEN: 'Invalid token',

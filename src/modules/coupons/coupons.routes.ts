@@ -65,6 +65,12 @@ router.patch(
 // Admin
 router.get('/batches', authenticate, authorize(PERMISSIONS.COUPON_MANAGE), couponsController.listBatches);
 router.post(
+  '/jobs/notify-alerts',
+  authenticate,
+  authorize(PERMISSIONS.COUPON_MANAGE),
+  couponsController.runCouponAlertJob,
+);
+router.post(
   '/bulk',
   authenticate,
   authorize(PERMISSIONS.COUPON_MANAGE),

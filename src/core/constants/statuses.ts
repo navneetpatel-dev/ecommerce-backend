@@ -170,6 +170,18 @@ export const DISCOUNT_BEARER_VALUES = Object.values(DISCOUNT_BEARER) as [
   ...DiscountBearer[],
 ];
 
+/** Built-in customer segments for coupon userRestriction.type === 'segment'. */
+export const COUPON_USER_SEGMENT = {
+  NEW: 'new',
+  RETURNING: 'returning',
+  LOYAL: 'loyal',
+} as const;
+export type CouponUserSegment = (typeof COUPON_USER_SEGMENT)[keyof typeof COUPON_USER_SEGMENT];
+export const COUPON_USER_SEGMENT_VALUES = Object.values(COUPON_USER_SEGMENT) as [
+  CouponUserSegment,
+  ...CouponUserSegment[],
+];
+
 export const PAYOUT_STATUS = {
   PENDING: 'PENDING',
   SETTLED: 'SETTLED',

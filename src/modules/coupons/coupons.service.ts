@@ -77,16 +77,41 @@ async function loadCartLines(userId: string): Promise<{
 
   const lines: CartLineForCoupon[] = items.map((item: any) => {
     const product = item.variant?.product;
+    const vendor = product?.vendor ?? product?.Vendor ?? null;
+    const availability = resolveItemAvailability({
+      product,
+      vendor,
+      stock: Number(item.variant?.stock ?? 0),
+      quantity: Number(item.quantity ?? 0),
+    });
     return {
       productId: String(product?.id ?? ''),
       categoryId: product?.categoryId ? String(product.categoryId) : null,
       vendorId: product?.vendorId ? String(product.vendorId) : null,
       unitPrice: Number(item.variant?.price ?? 0),
       quantity: Number(item.quantity ?? 0),
+      isCustomerVisible: availability.isAvailable,
     };
   });
 
   return { cart, lines };
+}
+
+async function assertVendorOwnsScopeProducts(
+  vendorId: string,
+  scope: { type: string; ids: string[] } | undefined,
+) {
+  if (!scope || scope.type !== 'product' || !scope.ids?.length) return;
+  const products = await Product.findAll({
+    where: { id: { [Op.in]: scope.ids } },
+    attributes: ['id', 'vendorId'],
+  });
+  if (products.length !== scope.ids.length) {
+    throw new ValidationError(ERROR_MESSAGES.COUPON_SCOPE);
+  }
+  if (products.some((product) => String(product.vendorId) !== vendorId)) {
+    throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_PRODUCT);
+  }
 }
 
 function resolveCreateDefaults(
@@ -135,6 +160,10 @@ export class CouponsService {
     }
 
     const defaults = resolveCreateDefaults(dto, opts);
+    if (opts.forceVendorId) {
+      await assertVendorOwnsScopeProducts(opts.forceVendorId, defaults.applicableScope);
+    }
+
     const coupon = await Coupon.create({
       code: dto.code.toUpperCase(),
       type: dto.type,
@@ -148,6 +177,7 @@ export class CouponsService {
         categoryIds: dto.excludedItems?.categoryIds ?? [],
       },
       userRestriction: dto.userRestriction ?? { type: 'all' },
+      config: dto.config ?? {},
       usageLimitTotal: dto.usageLimitTotal ?? null,
       usageLimitPerUser: dto.usageLimitPerUser ?? 1,
       startDate: new Date(dto.startDate),
@@ -195,6 +225,7 @@ export class CouponsService {
     if (dto.minQuantity !== undefined) patch.minQuantity = dto.minQuantity;
     if (dto.excludedItems !== undefined) patch.excludedItems = dto.excludedItems;
     if (dto.userRestriction !== undefined) patch.userRestriction = dto.userRestriction;
+    if (dto.config !== undefined) patch.config = dto.config;
     if (dto.usageLimitTotal !== undefined) patch.usageLimitTotal = dto.usageLimitTotal;
     if (dto.usageLimitPerUser !== undefined) patch.usageLimitPerUser = dto.usageLimitPerUser;
     if (dto.startDate != null) patch.startDate = new Date(dto.startDate);
@@ -211,6 +242,10 @@ export class CouponsService {
           dto.applicableScope.type === 'product' || dto.applicableScope.type === 'category'
             ? dto.applicableScope
             : { type: 'vendor', ids: [opts.forceVendorId] };
+        await assertVendorOwnsScopeProducts(
+          opts.forceVendorId,
+          patch.applicableScope as { type: string; ids: string[] },
+        );
       }
     } else {
       if (dto.vendorId !== undefined) patch.vendorId = dto.vendorId;
@@ -379,6 +414,7 @@ export class CouponsService {
               categoryIds: template.excludedItems?.categoryIds ?? [],
             },
             userRestriction: template.userRestriction ?? { type: 'all' },
+            config: template.config ?? {},
             usageLimitTotal: 1,
             usageLimitPerUser: template.usageLimitPerUser ?? 1,
             startDate: new Date(template.startDate),
@@ -411,21 +447,75 @@ export class CouponsService {
     });
   }
 
-  async listBatches(opts: { forceVendorId?: string | null } = {}): Promise<CouponBatch[]> {
+  async listBatches(opts: { forceVendorId?: string | null } = {}): Promise<
+    Array<{
+      id: string;
+      name: string;
+      templateCouponConfig: Record<string, unknown>;
+      generatedCount: number;
+      createdById: string;
+      createdAt: Date;
+      updatedAt?: Date;
+      redemptionCount: number;
+      discountTotal: number;
+      codes: string[];
+      expiresAt: string | null;
+    }>
+  > {
     const batches = await CouponBatch.findAll({
       order: [['createdAt', 'DESC']],
       limit: 100,
     });
-    if (!opts.forceVendorId) return batches;
 
-    const filtered: CouponBatch[] = [];
+    const result = [];
     for (const batch of batches) {
-      const count = await Coupon.count({
-        where: { batchId: batch.id, vendorId: opts.forceVendorId },
+      const couponWhere: Record<string, unknown> = { batchId: batch.id };
+      if (opts.forceVendorId) couponWhere.vendorId = opts.forceVendorId;
+
+      const coupons = await Coupon.findAll({
+        where: couponWhere,
+        attributes: ['id', 'code', 'usedCount', 'endDate'],
+        order: [['code', 'ASC']],
       });
-      if (count > 0) filtered.push(batch);
+      if (opts.forceVendorId && coupons.length === 0) continue;
+
+      const ids = coupons.map((row) => row.id);
+      const redemptionCount =
+        ids.length === 0
+          ? 0
+          : await CouponUsage.count({ where: { couponId: { [Op.in]: ids } } });
+      const discountTotal =
+        ids.length === 0
+          ? 0
+          : Number(
+              (await CouponUsage.sum('discountApplied', {
+                where: { couponId: { [Op.in]: ids } },
+              })) ?? 0,
+            );
+      const expiresAt =
+        coupons.length === 0
+          ? null
+          : coupons.reduce((earliest, row) => {
+              const end = row.endDate;
+              if (!earliest || end < earliest) return end;
+              return earliest;
+            }, null as Date | null);
+
+      result.push({
+        id: batch.id,
+        name: batch.name,
+        templateCouponConfig: batch.templateCouponConfig as Record<string, unknown>,
+        generatedCount: batch.generatedCount,
+        createdById: batch.createdById,
+        createdAt: batch.createdAt,
+        updatedAt: batch.updatedAt,
+        redemptionCount,
+        discountTotal,
+        codes: coupons.map((row) => row.code),
+        expiresAt: expiresAt ? expiresAt.toISOString() : null,
+      });
     }
-    return filtered;
+    return result;
   }
 
   async applyCoupon(code: string, userId: string) {
@@ -468,7 +558,13 @@ export class CouponsService {
     removed: boolean;
     reason: string | null;
     reasonCode: string | null;
-    appliedCoupon: { code: string; discount: number; cashbackAmount: number; type: string } | null;
+    appliedCoupon: {
+      code: string;
+      discount: number;
+      cashbackAmount: number;
+      type: string;
+      vendorDiscountShares: Record<string, number>;
+    } | null;
   }> {
     const { cart, lines } = await loadCartLines(userId);
     if (!cart?.couponCode) {
@@ -502,6 +598,7 @@ export class CouponsService {
         discount: result.discount,
         cashbackAmount: result.cashbackAmount,
         type: result.coupon.type,
+        vendorDiscountShares: result.vendorDiscountShares,
       },
     };
   }
@@ -569,12 +666,9 @@ export class CouponsService {
     const coupons = await Coupon.findAll({
       where: {
         status: COUPON_STATUS.ACTIVE,
-        vendorId: { [Op.ne]: null },
         [Op.or]: [
           { endDate: { [Op.between]: [now, inThreeDays] } },
-          {
-            usageLimitTotal: { [Op.ne]: null },
-          },
+          { usageLimitTotal: { [Op.ne]: null } },
         ],
       },
       limit: 200,
@@ -582,42 +676,94 @@ export class CouponsService {
 
     const created: NotificationLog[] = [];
     for (const coupon of coupons) {
-      if (!coupon.vendorId) continue;
-      const owner = await User.findOne({ where: { vendorId: coupon.vendorId } });
-      if (!owner) continue;
-
       const nearLimit =
         coupon.usageLimitTotal != null &&
         (coupon.usedCount ?? 0) >= Math.ceil(Number(coupon.usageLimitTotal) * 0.8);
       const expiring = coupon.endDate <= inThreeDays && coupon.endDate >= now;
 
-      if (nearLimit) {
-        const log = await NotificationLog.create({
-          userId: owner.id,
-          type: 'COUPON_USAGE_LIMIT',
-          referenceType: 'Coupon',
-          referenceId: coupon.id,
-          channel: 'EMAIL',
-          status: NOTIFICATION_STATUS.PENDING,
-          createdBy: owner.id,
-        });
-        created.push(log);
+      // Vendor alerts for vendor-scoped coupons
+      if (coupon.vendorId && (nearLimit || expiring)) {
+        const owner = await User.findOne({ where: { vendorId: coupon.vendorId } });
+        if (owner) {
+          if (nearLimit) {
+            const exists = await NotificationLog.findOne({
+              where: {
+                userId: owner.id,
+                type: 'COUPON_USAGE_LIMIT',
+                referenceId: coupon.id,
+                status: { [Op.in]: [NOTIFICATION_STATUS.PENDING, NOTIFICATION_STATUS.SENT] },
+              },
+            });
+            if (!exists) {
+              const log = await NotificationLog.create({
+                userId: owner.id,
+                type: 'COUPON_USAGE_LIMIT',
+                referenceType: 'Coupon',
+                referenceId: coupon.id,
+                channel: 'EMAIL',
+                status: NOTIFICATION_STATUS.PENDING,
+                createdBy: owner.id,
+              });
+              created.push(log);
+            }
+          }
+          if (expiring) {
+            const exists = await NotificationLog.findOne({
+              where: {
+                userId: owner.id,
+                type: 'COUPON_EXPIRING',
+                referenceId: coupon.id,
+                status: { [Op.in]: [NOTIFICATION_STATUS.PENDING, NOTIFICATION_STATUS.SENT] },
+              },
+            });
+            if (!exists) {
+              const log = await NotificationLog.create({
+                userId: owner.id,
+                type: 'COUPON_EXPIRING',
+                referenceType: 'Coupon',
+                referenceId: coupon.id,
+                channel: 'EMAIL',
+                status: NOTIFICATION_STATUS.PENDING,
+                createdBy: owner.id,
+              });
+              created.push(log);
+            }
+          }
+        }
       }
-      if (expiring) {
-        const log = await NotificationLog.create({
-          userId: owner.id,
-          type: 'COUPON_EXPIRING',
-          referenceType: 'Coupon',
-          referenceId: coupon.id,
-          channel: 'EMAIL',
-          status: NOTIFICATION_STATUS.PENDING,
-          createdBy: owner.id,
-        });
-        created.push(log);
 
-        // Customer marketing only with consent — skip if no saved-coupon linkage yet
-        if (owner.emailMarketingConsent) {
-          // vendor owners aren't the marketing audience; customer offers need consent field (present on User)
+      // Customer marketing: consent-gated offer expiry for users who redeemed this coupon
+      if (expiring) {
+        const usageRows = await CouponUsage.findAll({
+          where: { couponId: coupon.id },
+          attributes: ['userId'],
+          limit: 2000,
+        });
+        const customerIds = [...new Set(usageRows.map((row) => row.userId))];
+        for (const customerId of customerIds.slice(0, 500)) {
+          const customer = await User.findByPk(customerId, {
+            attributes: ['id', 'emailMarketingConsent'],
+          });
+          if (!customer?.emailMarketingConsent) continue;
+          const exists = await NotificationLog.findOne({
+            where: {
+              userId: customer.id,
+              type: 'COUPON_OFFER_EXPIRING',
+              referenceId: coupon.id,
+              status: { [Op.in]: [NOTIFICATION_STATUS.PENDING, NOTIFICATION_STATUS.SENT] },
+            },
+          });
+          if (exists) continue;
+          const log = await NotificationLog.create({
+            userId: customer.id,
+            type: 'COUPON_OFFER_EXPIRING',
+            referenceType: 'Coupon',
+            referenceId: coupon.id,
+            channel: 'EMAIL',
+            status: NOTIFICATION_STATUS.PENDING,
+            createdBy: customer.id,
+          });
+          created.push(log);
         }
       }
     }

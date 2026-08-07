@@ -79,6 +79,11 @@ export const listBatches = asyncHandler(async (req: Request, res: Response) => {
   res.json(ok(batches));
 });
 
+export const runCouponAlertJob = asyncHandler(async (_req: Request, res: Response) => {
+  const result = await couponsService.notifyExpiringAndNearLimit();
+  res.json(ok(result));
+});
+
 export const applyCoupon = asyncHandler(async (req: Request, res: Response) => {
   const { code } = ApplyCouponSchema.parse(req.body);
   const result = await couponsService.applyCoupon(code, req.user!.id);
