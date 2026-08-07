@@ -14,6 +14,8 @@ import { Product } from '@database/models/product.model';
 import { ProductCategory } from '@database/models/productCategory.model';
 import { sequelize } from '@database/models';
 import { categoriesService } from '@modules/categories/categories.service';
+import { notificationsService } from '@modules/notifications/notifications.service';
+import { findVendorOwnerUserId } from '@modules/notifications/orderNotifications';
 import type { Transaction } from 'sequelize';
 import type {
   CreateProductRequest,
@@ -292,11 +294,11 @@ export class ProductsService {
   }
 
   async approveProduct(id: string, adminId: string) {
-    return sequelize.transaction(async (t) => {
-      const product = await productsRepository.findById(id, { transaction: t });
-      if (!product) throw new NotFoundError('Product');
+    const product = await sequelize.transaction(async (t) => {
+      const row = await productsRepository.findById(id, { transaction: t });
+      if (!row) throw new NotFoundError('Product');
 
-      if (product.status !== PRODUCT_STATUS.PENDING_APPROVAL) {
+      if (row.status !== PRODUCT_STATUS.PENDING_APPROVAL) {
         throw new ValidationError('Product is not pending approval');
       }
 
@@ -307,14 +309,22 @@ export class ProductsService {
       }, { transaction: t });
       return this.getProductById(id);
     });
+
+    const ownerId = await findVendorOwnerUserId(product.vendorId);
+    if (ownerId) {
+      void notificationsService.sendProductApproved(ownerId, product.id, {
+        productName: product.name,
+      });
+    }
+    return product;
   }
 
   async rejectProduct(id: string, data: RejectProductRequest) {
-    return sequelize.transaction(async (t) => {
-      const product = await productsRepository.findById(id, { transaction: t });
-      if (!product) throw new NotFoundError('Product');
+    const product = await sequelize.transaction(async (t) => {
+      const row = await productsRepository.findById(id, { transaction: t });
+      if (!row) throw new NotFoundError('Product');
 
-      if (product.status !== PRODUCT_STATUS.PENDING_APPROVAL) {
+      if (row.status !== PRODUCT_STATUS.PENDING_APPROVAL) {
         throw new ValidationError('Product is not pending approval');
       }
 
@@ -325,6 +335,15 @@ export class ProductsService {
 
       return this.getProductById(id);
     });
+
+    const ownerId = await findVendorOwnerUserId(product.vendorId);
+    if (ownerId) {
+      void notificationsService.sendProductRejected(ownerId, product.id, {
+        productName: product.name,
+        reason: data.rejectionNote,
+      });
+    }
+    return product;
   }
 
   async archiveProduct(id: string) {

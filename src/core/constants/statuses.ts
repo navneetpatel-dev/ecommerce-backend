@@ -185,8 +185,12 @@ export const COUPON_USER_SEGMENT_VALUES = Object.values(COUPON_USER_SEGMENT) as 
 
 export const PAYOUT_STATUS = {
   PENDING: 'PENDING',
-  SETTLED: 'SETTLED',
+  PROCESSING: 'PROCESSING',
+  PAID: 'PAID',
+  FAILED: 'FAILED',
 } as const;
+export type PayoutStatus = (typeof PAYOUT_STATUS)[keyof typeof PAYOUT_STATUS];
+export const PAYOUT_STATUS_VALUES = Object.values(PAYOUT_STATUS) as [PayoutStatus, ...PayoutStatus[]];
 
 export const COMMISSION_STATUS = {
   PENDING: 'PENDING',

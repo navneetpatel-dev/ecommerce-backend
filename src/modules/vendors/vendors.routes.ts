@@ -12,6 +12,7 @@ import {
   SuspendVendorSchema,
   GetVendorsQuerySchema,
   UploadDocumentSchema,
+  RejectDocumentSchema,
 } from './vendors.dto';
 
 const router = Router();
@@ -37,5 +38,12 @@ router.patch('/:id/suspend', authenticate, authorize(PERMISSIONS.VENDOR_MANAGE),
 router.post('/:id/documents', authenticate, authorize(PERMISSIONS.VENDOR_MANAGE), validate(UploadDocumentSchema), vendorsController.uploadDocument);
 router.get('/:id/documents', authenticate, authorize(PERMISSIONS.VENDOR_MANAGE), vendorsController.getVendorDocuments);
 router.patch('/documents/:documentId/verify', authenticate, authorize(PERMISSIONS.VENDOR_MANAGE), vendorsController.verifyDocument);
+router.patch(
+  '/documents/:documentId/reject',
+  authenticate,
+  authorize(PERMISSIONS.VENDOR_MANAGE),
+  validate(RejectDocumentSchema),
+  vendorsController.rejectDocument,
+);
 
 export default router;

@@ -30,9 +30,14 @@ export const ChangePasswordSchema = z.object({
   newPassword: z.string().min(8),
 });
 
+export const VerifyEmailSchema = z.object({
+  token: z.string().min(1),
+});
+
 export type RegisterRequest = z.infer<typeof RegisterSchema>;
 export type LoginRequest = z.infer<typeof LoginSchema>;
 export type RefreshRequest = z.infer<typeof RefreshSchema>;
 export type ForgotPasswordRequest = z.infer<typeof ForgotPasswordSchema>;
 export type ResetPasswordRequest = z.infer<typeof ResetPasswordSchema>;
 export type ChangePasswordRequest = z.infer<typeof ChangePasswordSchema>;
+export type VerifyEmailRequest = z.infer<typeof VerifyEmailSchema>;

@@ -1,4 +1,4 @@
-import { Queue, QueueEvents, type ConnectionOptions } from 'bullmq';
+import { Queue, QueueEvents, type ConnectionOptions, type JobsOptions } from 'bullmq';
 import { env } from './env';
 import { logger } from '@core/logger';
 import { redisClient } from './redis';
@@ -14,8 +14,20 @@ const redisConnection: ConnectionOptions = {
   enableReadyCheck: false,
 };
 
-const QUEUE_NAMES = ['email', 'sms', 'payout', 'notification'] as const;
-type QueueName = (typeof QUEUE_NAMES)[number];
+/**
+ * Queue names follow the notification architecture:
+ * - email-transactional / email-marketing for email delivery
+ * - sms / payout / notification for adjacent background work
+ */
+export const QUEUE_NAMES = [
+  'email-transactional',
+  'email-marketing',
+  'sms',
+  'payout',
+  'notification',
+] as const;
+
+export type QueueName = (typeof QUEUE_NAMES)[number];
 
 let queuesReady = false;
 
@@ -38,10 +50,31 @@ function ensureQueueEvents(name: QueueName): QueueEvents {
   return events;
 }
 
+export const DEFAULT_TRANSACTIONAL_JOB_OPTIONS: JobsOptions = {
+  attempts: 5,
+  backoff: { type: 'exponential', delay: 2000 },
+  removeOnComplete: 1000,
+  removeOnFail: 5000,
+};
+
+export const DEFAULT_MARKETING_JOB_OPTIONS: JobsOptions = {
+  attempts: 3,
+  backoff: { type: 'exponential', delay: 10_000 },
+  removeOnComplete: 1000,
+  removeOnFail: 5000,
+};
+
 /** Lazy accessors — queues are only created after Redis is confirmed reachable. */
 export const queues = {
+  get emailTransactional() {
+    return ensureQueue('email-transactional');
+  },
+  get emailMarketing() {
+    return ensureQueue('email-marketing');
+  },
+  /** @deprecated Prefer emailTransactional — kept for callers that used the old name. */
   get email() {
-    return ensureQueue('email');
+    return ensureQueue('email-transactional');
   },
   get sms() {
     return ensureQueue('sms');
@@ -55,8 +88,14 @@ export const queues = {
 };
 
 export const queueEvents = {
+  get emailTransactional() {
+    return ensureQueueEvents('email-transactional');
+  },
+  get emailMarketing() {
+    return ensureQueueEvents('email-marketing');
+  },
   get email() {
-    return ensureQueueEvents('email');
+    return ensureQueueEvents('email-transactional');
   },
   get sms() {
     return ensureQueueEvents('sms');
@@ -68,6 +107,10 @@ export const queueEvents = {
     return ensureQueueEvents('notification');
   },
 };
+
+export function getQueueConnection(): ConnectionOptions {
+  return redisConnection;
+}
 
 async function redisIsReachable(): Promise<boolean> {
   try {
@@ -108,7 +151,6 @@ export async function connectQueues(): Promise<void> {
     logger.info('BullMQ queues connected', { queues: [...QUEUE_NAMES] });
   } catch (error) {
     queuesReady = false;
-    // Best-effort cleanup of half-open queue clients
     await closeQueues().catch(() => undefined);
     logger.error('Failed to connect BullMQ queues', {
       error: error instanceof Error ? error.message : 'Unknown error',

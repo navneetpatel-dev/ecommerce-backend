@@ -20,6 +20,8 @@ import {
 import { ORDER_STATUS, PAYMENT_STATUS, COMMISSION_STATUS } from '@core/constants/statuses';
 import { ERROR_MESSAGES, ERROR_CODES } from '@core/constants/errors';
 import { RAZORPAY_MIN_AMOUNT_PAISE } from '@core/constants/http';
+import { notifyOrderConfirmed } from '@modules/notifications/orderNotifications';
+import { notificationsService } from '@modules/notifications/notifications.service';
 
 export type RazorpayCheckoutPayload = {
   razorpayOrderId: string;
@@ -40,7 +42,8 @@ type OrderForRollback = Order & {
 };
 
 export class PaymentsService {
-  private async restoreCancelledRazorpayOrder(razorpayOrderId: string) {
+  private async restoreCancelledRazorpayOrder(razorpayOrderId: string): Promise<string | null> {
+    let cancelledOrderId: string | null = null;
     await sequelize.transaction(async (t) => {
       const locked = await Order.findOne({
         where: { razorpayOrderId },
@@ -97,7 +100,9 @@ export class PaymentsService {
         },
         { transaction: t },
       );
+      cancelledOrderId = order.id;
     });
+    return cancelledOrderId;
   }
 
   private async applyCouponOnPaymentCaptured(order: Order, transaction: any) {
@@ -221,6 +226,7 @@ export class PaymentsService {
     if (event.event === 'payment.captured') {
       const payment = event.payload?.payment?.entity;
       if (payment?.order_id && payment?.id) {
+        let confirmedOrderId: string | null = null;
         await sequelize.transaction(async (t) => {
           const order = await Order.findOne({
             where: { razorpayOrderId: payment.order_id },
@@ -239,14 +245,31 @@ export class PaymentsService {
             { transaction: t },
           );
           await this.applyCouponOnPaymentCaptured(order, t);
+          confirmedOrderId = order.id;
         });
+        if (confirmedOrderId) {
+          void notifyOrderConfirmed(confirmedOrderId);
+        }
       }
     }
 
     if (event.event === 'payment.failed') {
       const payment = event.payload?.payment?.entity;
       if (payment?.order_id) {
-        await this.restoreCancelledRazorpayOrder(payment.order_id);
+        const order = await Order.findOne({ where: { razorpayOrderId: payment.order_id } });
+        if (order) {
+          void notificationsService.sendPaymentFailed(order.userId, order.id, {
+            orderId: order.id,
+            orderNumber: order.id.slice(0, 8).toUpperCase(),
+          });
+        }
+        const cancelledOrderId = await this.restoreCancelledRazorpayOrder(payment.order_id);
+        if (cancelledOrderId && order) {
+          void notificationsService.sendOrderCancelled(order.userId, cancelledOrderId, {
+            orderId: cancelledOrderId,
+            orderNumber: cancelledOrderId.slice(0, 8).toUpperCase(),
+          });
+        }
       }
     }
 

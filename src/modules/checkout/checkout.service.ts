@@ -39,6 +39,8 @@ import {
   COMMISSION_STATUS,
 } from '@core/constants/statuses';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
+import { notifyOrderConfirmed } from '@modules/notifications/orderNotifications';
+import { notificationsService } from '@modules/notifications/notifications.service';
 
 function groupBy<T>(array: T[], keyFn: (item: T) => string): Record<string, T[]> {
   return array.reduce((acc, item) => {
@@ -474,6 +476,7 @@ export class CheckoutService {
       };
     }
 
+    void notifyOrderConfirmed(order.id);
     return { orderId: order.id };
   }
 
@@ -545,6 +548,11 @@ export class CheckoutService {
         },
         { transaction: t },
       );
+
+      void notificationsService.sendOrderCancelled(order.userId, order.id, {
+        orderId: order.id,
+        orderNumber: order.id.slice(0, 8).toUpperCase(),
+      });
 
       return { restored: true, orderId: order.id };
     });

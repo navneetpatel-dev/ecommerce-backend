@@ -37,7 +37,7 @@ export const initNotificationLogModel = (sequelize: Sequelize) => {
       userId: { type: DataTypes.UUID, allowNull: false },
       type: { type: DataTypes.STRING, allowNull: false },
       referenceType: { type: DataTypes.STRING, allowNull: false },
-      referenceId: { type: DataTypes.UUID, allowNull: false },
+      referenceId: { type: DataTypes.STRING(191), allowNull: false },
       channel: { type: DataTypes.ENUM('EMAIL', 'SMS', 'PUSH'), defaultValue: 'EMAIL' },
       status: { type: DataTypes.ENUM('PENDING', 'SENT', 'FAILED', 'BOUNCED', 'COMPLAINED'), defaultValue: 'PENDING' },
       providerMessageId: { type: DataTypes.STRING, allowNull: true },

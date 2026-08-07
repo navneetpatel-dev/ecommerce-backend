@@ -15,6 +15,7 @@ import { PASSWORD_RESET_EXPIRY, REFRESH_TOKEN_TTL_MS } from '@core/constants/htt
 import { ROLES, USER_STATUS } from '@core/constants/statuses';
 import { ERROR_MESSAGES, ERROR_CODES } from '@core/constants/errors';
 import { roleNameOf } from '@utils/userRole';
+import { notificationsService } from '@modules/notifications/notifications.service';
 
 export type SessionDeviceMeta = {
   userAgent?: string | null;
@@ -135,6 +136,15 @@ export class AuthService {
     });
 
     const tokens = await generateTokens(user, meta);
+
+    const verifyToken = jwt.sign(
+      { sub: user.id, purpose: 'email-verify' },
+      env.JWT_SECRET,
+      { expiresIn: '2d' },
+    );
+    void notificationsService.sendEmailVerification(user.id, {
+      actionUrl: `${env.CLIENT_URL.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verifyToken)}`,
+    });
 
     return {
       user: {
@@ -311,7 +321,31 @@ export class AuthService {
       env.JWT_SECRET,
       { expiresIn: PASSWORD_RESET_EXPIRY },
     );
-    logger.info('Password reset token generated', { email: user.email, role: roleNameOf(user), token });
+    const actionUrl = `${env.CLIENT_URL.replace(/\/$/, '')}/reset-password?token=${encodeURIComponent(token)}`;
+    void notificationsService.sendPasswordReset(user.id, { actionUrl });
+    logger.info('Password reset requested', { email: user.email, role: roleNameOf(user) });
+  }
+
+  async verifyEmail(token: string): Promise<{ verified: boolean }> {
+    let decoded: { sub: string; purpose: string };
+    try {
+      decoded = jwt.verify(token, env.JWT_SECRET) as { sub: string; purpose: string };
+    } catch {
+      throw new ValidationError({ token: ['Invalid or expired verification token'] });
+    }
+    if (decoded.purpose !== 'email-verify') {
+      throw new ValidationError({ token: ['Invalid token purpose'] });
+    }
+
+    const user = await repo.findById(decoded.sub);
+    if (!user) throw new NotFoundError('User');
+
+    if (!user.emailVerified) {
+      await repo.update(user.id, { emailVerified: true } as any);
+      void notificationsService.sendWelcome(user.id, { name: user.name });
+    }
+
+    return { verified: true };
   }
 
   async resetPassword(resetToken: string, newPassword: string) {

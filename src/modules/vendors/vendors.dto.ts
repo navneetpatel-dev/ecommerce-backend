@@ -44,6 +44,10 @@ export const UploadDocumentSchema = z.object({
   url: z.string().url(),
 });
 
+export const RejectDocumentSchema = z.object({
+  reason: z.string().min(1),
+});
+
 export type RegisterVendorRequest = z.infer<typeof RegisterVendorSchema>;
 export type UpdateVendorRequest = z.infer<typeof UpdateVendorSchema>;
 export type ApproveVendorRequest = z.infer<typeof ApproveVendorSchema>;
@@ -51,3 +55,4 @@ export type RejectVendorRequest = z.infer<typeof RejectVendorSchema>;
 export type SuspendVendorRequest = z.infer<typeof SuspendVendorSchema>;
 export type GetVendorsQuery = z.infer<typeof GetVendorsQuerySchema>;
 export type UploadDocumentRequest = z.infer<typeof UploadDocumentSchema>;
+export type RejectDocumentRequest = z.infer<typeof RejectDocumentSchema>;

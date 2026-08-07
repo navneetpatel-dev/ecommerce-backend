@@ -5,6 +5,8 @@ import { Order } from '@database/models/order.model';
 import { OrderItem } from '@database/models/orderItem.model';
 import { Shipment } from '@database/models/shipment.model';
 import { sequelize } from '@database/models';
+import { ORDER_STATUS } from '@core/constants/statuses';
+import { notificationsService } from '@modules/notifications/notifications.service';
 
 export class SubordersService {
   async list(vendorId?: string | null) {
@@ -21,19 +23,42 @@ export class SubordersService {
   }
 
   async updateStatus(id: string, status: SubOrder['status'], trackingId: string | undefined, updatedBy: string) {
-    return sequelize.transaction(async (transaction) => {
-      const suborder = await SubOrder.findByPk(id, { transaction });
-      if (!suborder) throw new NotFoundError('SubOrder');
-      await suborder.update({ status, trackingId: trackingId ?? suborder.trackingId, updatedBy }, { transaction });
-      if (status === 'SHIPPED' && trackingId) {
+    const suborder = await sequelize.transaction(async (transaction) => {
+      const row = await SubOrder.findByPk(id, { transaction });
+      if (!row) throw new NotFoundError('SubOrder');
+      await row.update({ status, trackingId: trackingId ?? row.trackingId, updatedBy }, { transaction });
+      if (status === ORDER_STATUS.SHIPPED && trackingId) {
         await Shipment.findOrCreate({
           where: { subOrderId: id },
           defaults: { subOrderId: id, carrier: 'MANUAL', trackingNumber: trackingId, status: 'IN_TRANSIT', shippedAt: new Date() } as any,
           transaction,
         });
       }
-      return suborder.reload({ transaction });
+      return row.reload({
+        include: [{ model: Order, as: 'order' }],
+        transaction,
+      });
     });
+
+    const order = (suborder as SubOrder & { order?: Order }).order;
+    if (order?.userId) {
+      const orderNumber = order.id.slice(0, 8).toUpperCase();
+      if (status === ORDER_STATUS.SHIPPED) {
+        void notificationsService.sendSubOrderShipped(order.userId, suborder.id, {
+          orderId: order.id,
+          orderNumber,
+          trackingId: suborder.trackingId,
+        });
+      }
+      if (status === ORDER_STATUS.DELIVERED) {
+        void notificationsService.sendSubOrderDelivered(order.userId, suborder.id, {
+          orderId: order.id,
+          orderNumber,
+        });
+      }
+    }
+
+    return suborder;
   }
 }
 

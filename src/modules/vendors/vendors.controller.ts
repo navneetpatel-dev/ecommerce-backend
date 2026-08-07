@@ -10,6 +10,7 @@ import {
   SuspendVendorSchema,
   GetVendorsQuerySchema,
   UploadDocumentSchema,
+  RejectDocumentSchema,
 } from './vendors.dto';
 
 export const getPublicVendorBySlug = asyncHandler(async (req: Request, res: Response) => {
@@ -72,6 +73,12 @@ export const getVendorDocuments = asyncHandler(async (req: Request, res: Respons
 export const verifyDocument = asyncHandler(async (req: Request, res: Response) => {
   const document = await vendorsService.verifyDocument(req.params.documentId!);
   res.json(ok(document));
+});
+
+export const rejectDocument = asyncHandler(async (req: Request, res: Response) => {
+  const dto = RejectDocumentSchema.parse(req.body);
+  const result = await vendorsService.rejectDocument(req.params.documentId!, dto);
+  res.json(ok(result));
 });
 
 export const getDashboardSummary = asyncHandler(async (req: Request, res: Response) => {

@@ -10,7 +10,6 @@ import { Vendor } from '@database/models/vendor.model';
 import { User } from '@database/models/user.model';
 import { Order } from '@database/models/order.model';
 import { ShippingRate } from '@database/models/shippingRate.model';
-import { NotificationLog } from '@database/models/notificationLog.model';
 import { sequelize } from '@database/models';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
@@ -19,14 +18,13 @@ import { AppError } from '@core/errors/AppError';
 import {
   COUPON_STATUS,
   DISCOUNT_BEARER,
-  NOTIFICATION_STATUS,
   VENDOR_STATUS,
 } from '@core/constants/statuses';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { resolveItemAvailability, isProductCustomerVisible } from '@core/catalog/customerVisibility';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { logAudit } from '@modules/audit/audit.service';
-import { areQueuesReady, queues } from '@config/queue';
+import { notificationsService } from '@modules/notifications/notifications.service';
 import {
   validateCoupon,
   type CartLineForCoupon,
@@ -46,48 +44,6 @@ async function previewShippingTotal(): Promise<number> {
     attributes: ['price'],
   });
   return Number(cheapest?.price ?? 0);
-}
-
-async function enqueueNotification(log: NotificationLog): Promise<void> {
-  if (!areQueuesReady()) return;
-  try {
-    await queues.email.add('notification-delivery', {
-      notificationLogId: log.id,
-      type: log.type,
-      userId: log.userId,
-      referenceType: log.referenceType,
-      referenceId: log.referenceId,
-    });
-  } catch {
-    // Queue optional in local/dev — log row remains PENDING for a worker.
-  }
-}
-
-async function createNotificationOnce(params: {
-  userId: string;
-  type: NotificationLog['type'];
-  referenceId: string;
-}): Promise<NotificationLog | null> {
-  const exists = await NotificationLog.findOne({
-    where: {
-      userId: params.userId,
-      type: params.type,
-      referenceId: params.referenceId,
-      status: { [Op.in]: [NOTIFICATION_STATUS.PENDING, NOTIFICATION_STATUS.SENT] },
-    },
-  });
-  if (exists) return null;
-  const log = await NotificationLog.create({
-    userId: params.userId,
-    type: params.type,
-    referenceType: 'Coupon',
-    referenceId: params.referenceId,
-    channel: 'EMAIL',
-    status: NOTIFICATION_STATUS.PENDING,
-    createdBy: params.userId,
-  });
-  await enqueueNotification(log);
-  return log;
 }
 
 async function loadCartLines(userId: string): Promise<{
@@ -834,36 +790,41 @@ export class CouponsService {
       limit: 200,
     });
 
-    const created: NotificationLog[] = [];
+    const created: unknown[] = [];
     for (const coupon of coupons) {
       const nearLimit =
         coupon.usageLimitTotal != null &&
         (coupon.usedCount ?? 0) >= Math.ceil(Number(coupon.usageLimitTotal) * 0.8);
       const expiring = coupon.endDate <= inThreeDays && coupon.endDate >= now;
+      const templateData = {
+        code: coupon.code,
+        usedCount: coupon.usedCount ?? 0,
+        usageLimit: coupon.usageLimitTotal,
+        expiresAt: coupon.endDate.toISOString(),
+      };
 
       if (coupon.vendorId && (nearLimit || expiring)) {
         const owner = await User.findOne({ where: { vendorId: coupon.vendorId } });
         if (owner) {
           if (nearLimit) {
-            const log = await createNotificationOnce({
-              userId: owner.id,
-              type: 'COUPON_USAGE_LIMIT',
-              referenceId: coupon.id,
-            });
+            const log = await notificationsService.sendCouponUsageLimit(
+              owner.id,
+              coupon.id,
+              templateData,
+            );
             if (log) created.push(log);
           }
           if (expiring) {
-            const log = await createNotificationOnce({
-              userId: owner.id,
-              type: 'COUPON_EXPIRING',
-              referenceId: coupon.id,
-            });
+            const log = await notificationsService.sendCouponExpiring(
+              owner.id,
+              coupon.id,
+              templateData,
+            );
             if (log) created.push(log);
           }
         }
       }
 
-      // Consent-gated: prior redeemers + customers who currently have this code on their cart
       if (expiring) {
         const usageRows = await CouponUsage.findAll({
           where: { couponId: coupon.id },
@@ -884,15 +845,11 @@ export class CouponsService {
           ),
         ];
         for (const customerId of customerIds.slice(0, 500)) {
-          const customer = await User.findByPk(customerId, {
-            attributes: ['id', 'emailMarketingConsent'],
-          });
-          if (!customer?.emailMarketingConsent) continue;
-          const log = await createNotificationOnce({
-            userId: customer.id,
-            type: 'COUPON_OFFER_EXPIRING',
-            referenceId: coupon.id,
-          });
+          const log = await notificationsService.sendCouponOfferExpiring(
+            customerId,
+            coupon.id,
+            templateData,
+          );
           if (log) created.push(log);
         }
       }

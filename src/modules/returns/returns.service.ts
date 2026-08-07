@@ -19,6 +19,7 @@ import { sequelize } from '@database/models';
 import type { Transaction } from 'sequelize';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { roundMoney } from '@modules/coupons/coupon.utils';
+import { notificationsService } from '@modules/notifications/notifications.service';
 
 const returnListInclude = [
   { model: OrderItem, as: 'orderItem', required: false, attributes: ['id', 'productName'] },
@@ -47,6 +48,7 @@ function serializeReturn(row: ReturnRequest | (ReturnRequest & { orderItem?: Ord
   const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
   return {
     id: plain.id,
+    orderItemId: plain.orderItemId,
     reason: plain.reason,
     reasonCode: plain.reasonCode,
     status: plain.status,
@@ -158,7 +160,7 @@ export class ReturnsService {
   }
 
   async transition(id: string, status: ReturnStatus, actorId: string) {
-    return sequelize.transaction(async (t: Transaction) => {
+    const result = await sequelize.transaction(async (t: Transaction) => {
       const row = await ReturnRequest.findByPk(id, {
         include: [
           {
@@ -229,6 +231,30 @@ export class ReturnsService {
 
       return serializeReturn(row as ReturnRequest & { orderItem?: OrderItem });
     });
+
+    const orderItem = await OrderItem.findByPk(result.orderItemId, {
+      include: [{ model: SubOrder, as: 'subOrder', include: [{ model: Order, as: 'order' }] }],
+    });
+    const order = (orderItem as any)?.subOrder?.order as Order | undefined;
+    if (order?.userId) {
+      const orderNumber = order.id.slice(0, 8).toUpperCase();
+      if (status === RETURN_STATUS.APPROVED || status === RETURN_STATUS.CLOSED) {
+        void notificationsService.sendOrderReturned(order.userId, result.id, {
+          orderId: order.id,
+          orderNumber,
+          status,
+        });
+      }
+      if (status === RETURN_STATUS.REFUNDED) {
+        void notificationsService.sendRefundProcessed(order.userId, result.id, {
+          orderId: order.id,
+          orderNumber,
+          amount: result.refundAmount ?? 0,
+        });
+      }
+    }
+
+    return result;
   }
 }
 

@@ -4,6 +4,7 @@ import {
   VENDOR_STATUS,
   ORDER_STATUS,
   COMMISSION_STATUS,
+  ROLES,
 } from '@core/constants/statuses';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
@@ -19,7 +20,12 @@ import type {
   SuspendVendorRequest,
   GetVendorsQuery,
   UploadDocumentRequest,
+  RejectDocumentRequest,
 } from './vendors.dto';
+import { User } from '@database/models/user.model';
+import { Role } from '@database/models/role.model';
+import { notificationsService } from '@modules/notifications/notifications.service';
+import { findVendorOwnerUserId } from '@modules/notifications/orderNotifications';
 
 function generateSlug(businessName: string): string {
   return businessName
@@ -51,7 +57,7 @@ export class VendorsService {
   }
 
   async registerVendor(userId: string, data: RegisterVendorRequest) {
-    return sequelize.transaction(async (t) => {
+    const vendor = await sequelize.transaction(async (t) => {
       const slug = generateSlug(data.businessName);
       
       // Check if slug already exists
@@ -60,14 +66,35 @@ export class VendorsService {
         throw new ValidationError('Business name already exists');
       }
 
-      const vendor = await vendorsRepository.create({
+      const created = await vendorsRepository.create({
         ...data,
         slug,
         status: VENDOR_STATUS.PENDING,
       }, { transaction: t });
 
-      return vendor;
+      await User.update({ vendorId: created.id }, { where: { id: userId }, transaction: t });
+      return created;
     });
+
+    void notificationsService.sendVendorApplicationReceived(userId, vendor.id, {
+      businessName: vendor.businessName,
+    });
+
+    const adminRole = await Role.findOne({ where: { name: ROLES.SUPER_ADMIN } });
+    if (adminRole) {
+      const admins = await User.findAll({
+        where: { roleId: adminRole.id },
+        attributes: ['id'],
+        limit: 20,
+      });
+      for (const admin of admins) {
+        void notificationsService.sendAdminNewVendorPending(admin.id, vendor.id, {
+          businessName: vendor.businessName,
+        });
+      }
+    }
+
+    return vendor;
   }
 
   async getVendors(query: GetVendorsQuery) {
@@ -116,8 +143,15 @@ export class VendorsService {
         suspensionReason: null,
       }, { transaction: t });
 
-      // TODO: Send approval notification
       return this.getVendorById(vendorId);
+    }).then(async (updated) => {
+      const ownerId = await findVendorOwnerUserId(vendorId);
+      if (ownerId) {
+        void notificationsService.sendVendorApproved(ownerId, vendorId, {
+          businessName: updated.businessName,
+        });
+      }
+      return updated;
     });
   }
 
@@ -134,8 +168,16 @@ export class VendorsService {
         rejectionReason: data.reason,
       }, { transaction: t });
 
-      // TODO: Send rejection notification with reason
       return this.getVendorById(vendorId);
+    }).then(async (updated) => {
+      const ownerId = await findVendorOwnerUserId(vendorId);
+      if (ownerId) {
+        void notificationsService.sendVendorRejected(ownerId, vendorId, {
+          businessName: updated.businessName,
+          reason: data.reason,
+        });
+      }
+      return updated;
     });
   }
 
@@ -149,8 +191,16 @@ export class VendorsService {
         suspensionReason: data.reason,
       }, { transaction: t });
 
-      // TODO: Send suspension notification with reason
       return this.getVendorById(vendorId);
+    }).then(async (updated) => {
+      const ownerId = await findVendorOwnerUserId(vendorId);
+      if (ownerId) {
+        void notificationsService.sendVendorSuspended(ownerId, vendorId, {
+          businessName: updated.businessName,
+          reason: data.reason,
+        });
+      }
+      return updated;
     });
   }
 
@@ -185,6 +235,27 @@ export class VendorsService {
       await document.update({ verified: true }, { transaction: t });
       return document;
     });
+  }
+
+  async rejectDocument(
+    documentId: string,
+    data: RejectDocumentRequest,
+  ): Promise<{ id: string; rejected: boolean }> {
+    const document = await sequelize.transaction(async (t) => {
+      const row = await VendorDocument.findByPk(documentId, { transaction: t });
+      if (!row) throw new NotFoundError('VendorDocument');
+      await row.update({ verified: false }, { transaction: t });
+      await row.destroy({ transaction: t });
+      return row;
+    });
+
+    const ownerId = await findVendorOwnerUserId(document.vendorId);
+    if (ownerId) {
+      void notificationsService.sendKycDocumentRejected(ownerId, document.id, {
+        reason: data.reason,
+      });
+    }
+    return { id: document.id, rejected: true };
   }
 
   async getDashboardSummary(vendorId: string): Promise<{
