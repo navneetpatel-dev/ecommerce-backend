@@ -4,7 +4,6 @@ import { Coupon } from '@database/models/coupon.model';
 import { CouponUsage } from '@database/models/couponUsage.model';
 import { Vendor } from '@database/models/vendor.model';
 import { Order } from '@database/models/order.model';
-import { WalletLedger } from '@database/models/walletLedger.model';
 import {
   COUPON_STATUS,
   COUPON_USER_SEGMENT,
@@ -34,6 +33,8 @@ export type ValidateCouponInput = {
   shippingByVendor?: Record<string, number>;
   /** Existing applied code on cart (for stackable checks). */
   existingCouponCode?: string | null;
+  /** All codes already on the cart (multi-coupon). */
+  existingCouponCodes?: string[] | null;
 };
 
 export type ValidateCouponResult = {
@@ -46,6 +47,23 @@ export type ValidateCouponResult = {
   freeShipping: boolean;
   eligibleSubtotal: number;
   vendorDiscountShares: Record<string, number>;
+};
+
+export type ValidateCouponSetResult = {
+  valid: boolean;
+  reason: string | null;
+  reasonCode: string | null;
+  coupons: Coupon[];
+  discount: number;
+  cashbackAmount: number;
+  freeShipping: boolean;
+  /** Merchandise discount shares by vendor. */
+  vendorDiscountShares: Record<string, number>;
+  /** Shipping discount shares by vendor (FREE_SHIPPING). */
+  vendorShippingDiscountShares: Record<string, number>;
+  /** Vendor-borne merchandise discount shares (VENDOR bearer coupons only). */
+  vendorBorneDiscountShares: Record<string, number>;
+  primaryCoupon: Coupon | null;
 };
 
 function fail(reason: string, reasonCode: string): ValidateCouponResult {
@@ -62,8 +80,36 @@ function fail(reason: string, reasonCode: string): ValidateCouponResult {
   };
 }
 
+function failSet(reason: string, reasonCode: string): ValidateCouponSetResult {
+  return {
+    valid: false,
+    reason,
+    reasonCode,
+    coupons: [],
+    discount: 0,
+    cashbackAmount: 0,
+    freeShipping: false,
+    vendorDiscountShares: {},
+    vendorShippingDiscountShares: {},
+    vendorBorneDiscountShares: {},
+    primaryCoupon: null,
+  };
+}
+
 export { prorateDiscount, commissionSaleAmount } from './coupon.utils';
 export { type CartLineForCoupon } from './coupon.utils';
+
+/** Normalize cart coupon fields into a unique uppercase code list. */
+export function resolveCartCouponCodes(cart: {
+  couponCode?: string | null;
+  couponCodes?: string[] | null;
+}): string[] {
+  const fromArray = Array.isArray(cart.couponCodes) ? cart.couponCodes : [];
+  const codes = fromArray.map((c) => String(c).trim().toUpperCase()).filter(Boolean);
+  const legacy = cart.couponCode?.trim().toUpperCase();
+  if (legacy && !codes.includes(legacy)) codes.unshift(legacy);
+  return [...new Set(codes)];
+}
 
 export async function validateCoupon(input: ValidateCouponInput): Promise<ValidateCouponResult> {
   const shippingTotal = input.shippingTotal ?? 0;
@@ -86,14 +132,22 @@ export async function validateCoupon(input: ValidateCouponInput): Promise<Valida
     return fail(ERROR_MESSAGES.COUPON_INACTIVE, ERROR_CODES.COUPON_INACTIVE);
   }
 
-  // Stackable: reject if cart already has a different non-stackable coupon
-  const existing = input.existingCouponCode?.trim().toUpperCase();
-  if (existing && existing !== coupon.code.toUpperCase()) {
+  const existingCodes = [
+    ...(input.existingCouponCodes ?? []).map((c) => c.trim().toUpperCase()).filter(Boolean),
+  ];
+  const legacy = input.existingCouponCode?.trim().toUpperCase();
+  if (legacy && !existingCodes.includes(legacy)) existingCodes.push(legacy);
+
+  const self = coupon.code.toUpperCase();
+  const others = existingCodes.filter((c) => c !== self);
+  if (others.length > 0) {
     if (!coupon.stackable) {
       return fail(ERROR_MESSAGES.COUPON_STACK, ERROR_CODES.COUPON_STACK);
     }
-    const other = await Coupon.findOne({ where: { code: existing, status: COUPON_STATUS.ACTIVE } });
-    if (other && !other.stackable) {
+    const otherRows = await Coupon.findAll({
+      where: { code: { [Op.in]: others }, status: COUPON_STATUS.ACTIVE },
+    });
+    if (otherRows.some((row) => !row.stackable)) {
       return fail(ERROR_MESSAGES.COUPON_STACK, ERROR_CODES.COUPON_STACK);
     }
   }
@@ -223,6 +277,123 @@ export async function validateCoupon(input: ValidateCouponInput): Promise<Valida
   };
 }
 
+/**
+ * Validate a multi-coupon set: at most one platform-wide + one vendor-scoped per seller.
+ * All coupons must be stackable when more than one is present.
+ */
+export async function validateCouponSet(input: {
+  codes: string[];
+  userId: string;
+  lines: CartLineForCoupon[];
+  shippingTotal?: number;
+  shippingByVendor?: Record<string, number>;
+}): Promise<ValidateCouponSetResult> {
+  const codes = [...new Set(input.codes.map((c) => c.trim().toUpperCase()).filter(Boolean))];
+  if (codes.length === 0) {
+    return {
+      valid: true,
+      reason: null,
+      reasonCode: null,
+      coupons: [],
+      discount: 0,
+      cashbackAmount: 0,
+      freeShipping: false,
+      vendorDiscountShares: {},
+      vendorShippingDiscountShares: {},
+      vendorBorneDiscountShares: {},
+      primaryCoupon: null,
+    };
+  }
+
+  const results: ValidateCouponResult[] = [];
+  for (const code of codes) {
+    const result = await validateCoupon({
+      code,
+      userId: input.userId,
+      lines: input.lines,
+      shippingTotal: input.shippingTotal,
+      shippingByVendor: input.shippingByVendor,
+      existingCouponCodes: codes,
+    });
+    if (!result.valid || !result.coupon) {
+      return failSet(
+        result.reason ?? ERROR_MESSAGES.COUPON_INVALID,
+        result.reasonCode ?? ERROR_CODES.COUPON_INVALID,
+      );
+    }
+    results.push(result);
+  }
+
+  if (codes.length > 1 && results.some((r) => !r.coupon!.stackable)) {
+    return failSet(ERROR_MESSAGES.COUPON_STACK, ERROR_CODES.COUPON_STACK);
+  }
+
+  let platformCount = 0;
+  const vendorSeen = new Set<string>();
+  for (const result of results) {
+    const coupon = result.coupon!;
+    if (coupon.vendorId) {
+      if (vendorSeen.has(coupon.vendorId)) {
+        return failSet(ERROR_MESSAGES.COUPON_DUPLICATE_SCOPE, ERROR_CODES.COUPON_DUPLICATE_SCOPE);
+      }
+      vendorSeen.add(coupon.vendorId);
+    } else {
+      platformCount += 1;
+      if (platformCount > 1) {
+        return failSet(ERROR_MESSAGES.COUPON_DUPLICATE_SCOPE, ERROR_CODES.COUPON_DUPLICATE_SCOPE);
+      }
+    }
+  }
+
+  const vendorDiscountShares: Record<string, number> = {};
+  const vendorShippingDiscountShares: Record<string, number> = {};
+  const vendorBorneDiscountShares: Record<string, number> = {};
+  let discount = 0;
+  let cashbackAmount = 0;
+  let freeShipping = false;
+  const coupons: Coupon[] = [];
+
+  for (const result of results) {
+    const coupon = result.coupon!;
+    coupons.push(coupon);
+    discount += result.discount;
+    cashbackAmount += result.cashbackAmount;
+    if (result.freeShipping) freeShipping = true;
+    const bearer = resolveDiscountBearer(coupon);
+    for (const [vendorId, share] of Object.entries(result.vendorDiscountShares)) {
+      if (result.freeShipping) {
+        vendorShippingDiscountShares[vendorId] = roundMoney(
+          (vendorShippingDiscountShares[vendorId] ?? 0) + share,
+        );
+      } else {
+        vendorDiscountShares[vendorId] = roundMoney((vendorDiscountShares[vendorId] ?? 0) + share);
+        if (bearer === DISCOUNT_BEARER.VENDOR) {
+          vendorBorneDiscountShares[vendorId] = roundMoney(
+            (vendorBorneDiscountShares[vendorId] ?? 0) + share,
+          );
+        }
+      }
+    }
+  }
+
+  const primaryCoupon =
+    coupons.find((c) => !c.vendorId) ?? coupons[0] ?? null;
+
+  return {
+    valid: true,
+    reason: null,
+    reasonCode: null,
+    coupons,
+    discount: roundMoney(discount),
+    cashbackAmount: roundMoney(cashbackAmount),
+    freeShipping,
+    vendorDiscountShares,
+    vendorShippingDiscountShares,
+    vendorBorneDiscountShares,
+    primaryCoupon,
+  };
+}
+
 export async function recordCouponUsage(params: {
   couponId: string;
   userId: string;
@@ -261,51 +432,18 @@ export async function recordCouponUsage(params: {
   return { created: true };
 }
 
-export async function creditCashbackIfNeeded(params: {
+/**
+ * Cashback is recorded via CouponUsage at payment time.
+ * WalletLedger is intentionally unused (removed from settlement path).
+ */
+export async function creditCashbackIfNeeded(_params: {
   coupon: Coupon;
   userId: string;
   orderId: string;
   cashbackAmount: number;
   transaction?: Transaction;
 }): Promise<void> {
-  if (params.coupon.type !== 'CASHBACK' || params.cashbackAmount <= 0) return;
-
-  const existing = await WalletLedger.findOne({
-    where: {
-      userId: params.userId,
-      referenceType: 'COUPON_CASHBACK',
-      referenceId: params.orderId,
-    },
-    transaction: params.transaction,
-  });
-  if (existing) return;
-
-  const last = await WalletLedger.findOne({
-    where: { userId: params.userId },
-    order: [['createdAt', 'DESC']],
-    transaction: params.transaction,
-  });
-  const balanceAfter = roundMoney(Number(last?.balanceAfter ?? 0) + params.cashbackAmount);
-
-  await WalletLedger.create(
-    {
-      userId: params.userId,
-      type: 'CREDIT',
-      amount: params.cashbackAmount,
-      balanceAfter,
-      referenceType: 'COUPON_CASHBACK',
-      referenceId: params.orderId,
-      description: ERROR_MESSAGES.COUPON_CASHBACK_DESCRIPTION.replace(
-        '{code}',
-        params.coupon.code,
-      ),
-      expiresAt: null,
-      createdBy: params.userId,
-      updatedBy: null,
-      deletedBy: null,
-    },
-    { transaction: params.transaction },
-  );
+  return;
 }
 
 export async function destroyCouponUsageForOrder(
@@ -326,4 +464,18 @@ export async function destroyCouponUsageForOrder(
 export function resolveDiscountBearer(coupon: Coupon | null): DiscountBearer | null {
   if (!coupon) return null;
   return (coupon.discountBearer as DiscountBearer) ?? DISCOUNT_BEARER.PLATFORM;
+}
+
+/** Dominant bearer for a vendor slice when multiple coupons apply. */
+export function resolveVendorDiscountBearer(
+  vendorBorneShare: number,
+  merchandiseShare: number,
+): DiscountBearer {
+  if (vendorBorneShare > 0 && vendorBorneShare >= merchandiseShare - 0.001) {
+    return DISCOUNT_BEARER.VENDOR;
+  }
+  if (vendorBorneShare > 0) {
+    return DISCOUNT_BEARER.VENDOR;
+  }
+  return DISCOUNT_BEARER.PLATFORM;
 }

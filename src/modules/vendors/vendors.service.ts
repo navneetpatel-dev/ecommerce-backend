@@ -293,7 +293,12 @@ export class VendorsService {
       { replacements: { vendorId, cancelled: ORDER_STATUS.CANCELLED }, type: QueryTypes.SELECT },
     );
     const [payout] = await sequelize.query<{ pending: string | null }>(
-      `SELECT COALESCE(SUM("saleAmount" - "commissionAmount"), 0)::numeric AS pending
+      `SELECT COALESCE(SUM(
+         CASE
+           WHEN "netPayoutAmount" IS NOT NULL THEN "netPayoutAmount"
+           ELSE ("saleAmount" - "commissionAmount")
+         END
+       ), 0)::numeric AS pending
        FROM commission_ledgers
        WHERE "vendorId" = :vendorId AND status = :pending`,
       {

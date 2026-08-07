@@ -4,6 +4,8 @@ const { v4: uuidv4 } = require('uuid');
 
 const PLATFORM_VALUE = {
   defaultCommissionRate: 10,
+  tcsRatePercent: 1,
+  tdsRatePercent: 1,
   autoApproveProducts: false,
   defaultReturnWindow: 7,
   payoutCycle: 'WEEKLY',

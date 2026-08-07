@@ -25,6 +25,8 @@ export const ERROR_CODES = {
   COUPON_STACK: 'COUPON_STACK',
   COUPON_PRIORITY: 'COUPON_PRIORITY',
   COUPON_CONFIG_INVALID: 'COUPON_CONFIG_INVALID',
+  COUPON_DUPLICATE_SCOPE: 'COUPON_DUPLICATE_SCOPE',
+  DOCUMENT_SEQUENCE_MISSING: 'DOCUMENT_SEQUENCE_MISSING',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -73,5 +75,11 @@ export const ERROR_MESSAGES = {
   COUPON_RESTRICTION: 'You are not eligible for this coupon',
   COUPON_MIN_ORDER: 'Order does not meet the minimum requirements for this coupon',
   COUPON_STACK: 'This coupon cannot be combined with another coupon',
+  COUPON_DUPLICATE_SCOPE:
+    'Only one platform coupon and one coupon per seller can be applied together',
+  DOCUMENT_SEQUENCE_MISSING: 'Document number sequence is not configured',
   SHOP_UNAVAILABLE: 'This shop is currently unavailable',
+  NOT_YOUR_VENDOR_REPORT: 'Not your vendor report',
+  REPORT_INVALID_RANGE: 'Report date range is invalid',
+  REPORT_RECONCILIATION_MISMATCH: 'Settlement reconciliation does not balance for the selected period',
 } as const;

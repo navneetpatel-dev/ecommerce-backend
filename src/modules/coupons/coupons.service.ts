@@ -27,6 +27,8 @@ import { logAudit } from '@modules/audit/audit.service';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import {
   validateCoupon,
+  validateCouponSet,
+  resolveCartCouponCodes,
   type CartLineForCoupon,
 } from './couponEngine';
 import { generateCouponCode } from './coupon.utils';
@@ -635,25 +637,35 @@ export class CouponsService {
     }
 
     const shippingTotal = await previewShippingTotal();
-    const result = await validateCoupon({
-      code,
+    const existingCodes = resolveCartCouponCodes(cart);
+    const nextCode = code.trim().toUpperCase();
+    const nextCodes = existingCodes.includes(nextCode)
+      ? existingCodes
+      : [...existingCodes, nextCode];
+
+    const result = await validateCouponSet({
+      codes: nextCodes,
       userId,
       lines,
       shippingTotal,
-      existingCouponCode: cart.couponCode,
     });
 
-    if (!result.valid || !result.coupon) {
+    if (!result.valid || result.coupons.length === 0) {
       throw new ValidationError(result.reason ?? ERROR_MESSAGES.COUPON_NOT_APPLICABLE);
     }
 
-    await cart.update({ couponCode: result.coupon.code });
+    const codes = result.coupons.map((c) => c.code);
+    await cart.update({
+      couponCode: result.primaryCoupon?.code ?? codes[0] ?? null,
+      couponCodes: codes,
+    });
 
     return {
-      code: result.coupon.code,
+      code: result.primaryCoupon?.code ?? codes[0]!,
+      codes,
       discount: result.discount,
       cashbackAmount: result.cashbackAmount,
-      type: result.coupon.type,
+      type: result.primaryCoupon?.type ?? result.coupons[0]!.type,
       vendorDiscountShares: result.vendorDiscountShares,
     };
   }
@@ -661,7 +673,7 @@ export class CouponsService {
   async removeCoupon(userId: string) {
     const cart = await Cart.findOne({ where: { userId } });
     if (!cart) return { cleared: false };
-    await cart.update({ couponCode: null });
+    await cart.update({ couponCode: null, couponCodes: [] });
     return { cleared: true };
   }
 
@@ -676,42 +688,67 @@ export class CouponsService {
       type: string;
       vendorDiscountShares: Record<string, number>;
     } | null;
+    appliedCoupons: Array<{
+      code: string;
+      discount: number;
+      cashbackAmount: number;
+      type: string;
+    }>;
   }> {
     const { cart, lines } = await loadCartLines(userId);
-    if (!cart?.couponCode) {
-      return { removed: false, reason: null, reasonCode: null, appliedCoupon: null };
+    const codes = cart ? resolveCartCouponCodes(cart) : [];
+    if (!cart || codes.length === 0) {
+      return {
+        removed: false,
+        reason: null,
+        reasonCode: null,
+        appliedCoupon: null,
+        appliedCoupons: [],
+      };
     }
 
     const shippingTotal = await previewShippingTotal();
-    const result = await validateCoupon({
-      code: cart.couponCode,
+    const result = await validateCouponSet({
+      codes,
       userId,
       lines,
       shippingTotal,
-      existingCouponCode: null,
     });
 
-    if (!result.valid || !result.coupon) {
-      await cart.update({ couponCode: null });
+    if (!result.valid || result.coupons.length === 0) {
+      await cart.update({ couponCode: null, couponCodes: [] });
       return {
         removed: true,
         reason: result.reason ?? ERROR_MESSAGES.COUPON_NOT_APPLICABLE,
         reasonCode: result.reasonCode,
         appliedCoupon: null,
+        appliedCoupons: [],
       };
     }
+
+    const nextCodes = result.coupons.map((c) => c.code);
+    await cart.update({
+      couponCode: result.primaryCoupon?.code ?? nextCodes[0] ?? null,
+      couponCodes: nextCodes,
+    });
 
     return {
       removed: false,
       reason: null,
       reasonCode: null,
       appliedCoupon: {
-        code: result.coupon.code,
+        code: result.primaryCoupon?.code ?? nextCodes[0]!,
         discount: result.discount,
         cashbackAmount: result.cashbackAmount,
-        type: result.coupon.type,
+        type: result.primaryCoupon?.type ?? result.coupons[0]!.type,
         vendorDiscountShares: result.vendorDiscountShares,
       },
+      appliedCoupons: result.coupons.map((coupon) => ({
+        code: coupon.code,
+        discount: result.discount,
+        cashbackAmount: result.cashbackAmount,
+        type: coupon.type,
+      })),
     };
   }
 

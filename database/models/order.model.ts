@@ -4,6 +4,8 @@ export class Order extends Model<InferAttributes<Order>, InferCreationAttributes
   declare id: CreationOptional<string>;
   declare userId: string;
   declare couponId: string | null;
+  /** Coupon ids applied at checkout (platform + vendor stack). */
+  declare appliedCouponIds: CreationOptional<string[]>;
   declare totalAmount: number;
   declare discountTotal: CreationOptional<number>;
   declare status: 'PENDING' | 'CONFIRMED' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED' | 'RETURNED';
@@ -32,6 +34,7 @@ export const initOrderModel = (sequelize: Sequelize) => {
       id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
       userId: { type: DataTypes.UUID, allowNull: false },
       couponId: { type: DataTypes.UUID, allowNull: true },
+      appliedCouponIds: { type: DataTypes.JSONB, allowNull: false, defaultValue: [] },
       totalAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
       discountTotal: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
       status: {

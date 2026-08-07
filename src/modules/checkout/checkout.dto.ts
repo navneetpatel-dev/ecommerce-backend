@@ -11,6 +11,7 @@ export const CreateCheckoutSchema = z
     shippingAddressId: z.string().uuid().optional(),
     addressId: z.string().uuid().optional(),
     couponCode: z.string().optional().nullable(),
+    couponCodes: z.array(z.string()).optional(),
     paymentMethod: PaymentMethodInput.default('RAZORPAY'),
     shippingMethodByVendor: z.record(z.string()).optional(),
   })
@@ -19,6 +20,7 @@ export const CreateCheckoutSchema = z
     return {
       shippingAddressId: shippingAddressId as string,
       couponCode: body.couponCode ?? undefined,
+      couponCodes: body.couponCodes,
       paymentMethod: body.paymentMethod,
       shippingMethodByVendor: body.shippingMethodByVendor ?? {},
     };
@@ -33,11 +35,13 @@ export const CheckoutQuoteSchema = z
     shippingAddressId: z.string().uuid().optional(),
     addressId: z.string().uuid().optional(),
     couponCode: z.string().optional().nullable(),
+    couponCodes: z.array(z.string()).optional(),
     shippingMethodByVendor: z.record(z.string()).optional(),
   })
   .transform((body) => ({
     shippingAddressId: (body.shippingAddressId ?? body.addressId) as string,
     couponCode: body.couponCode ?? undefined,
+    couponCodes: body.couponCodes,
     shippingMethodByVendor: body.shippingMethodByVendor ?? {},
   }))
   .refine((body) => Boolean(body.shippingAddressId), {

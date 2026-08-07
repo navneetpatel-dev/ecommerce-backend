@@ -113,29 +113,47 @@ export class PaymentsService {
   }
 
   private async applyCouponOnPaymentCaptured(order: Order, transaction: any) {
-    if (!order.couponId) return;
-    const coupon = await Coupon.findByPk(order.couponId, { transaction });
-    if (!coupon) return;
+    const couponIds = [
+      ...new Set(
+        [
+          ...(Array.isArray(order.appliedCouponIds) ? order.appliedCouponIds : []),
+          order.couponId,
+        ].filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    if (couponIds.length === 0) return;
 
-    await recordCouponUsage({
-      couponId: coupon.id,
-      userId: order.userId,
-      orderId: order.id,
-      discountApplied: Number(order.discountTotal ?? 0),
-      actorId: order.userId,
+    const coupons = await Coupon.findAll({
+      where: { id: couponIds },
       transaction,
     });
+    if (coupons.length === 0) return;
 
-    if (coupon.type === 'CASHBACK') {
-      const cashback = Number(coupon.value ?? 0);
-      const amount = Math.min(cashback, Number(order.totalAmount) + Number(order.discountTotal ?? 0));
-      await creditCashbackIfNeeded({
-        coupon,
+    const perCouponDiscount = Number(order.discountTotal ?? 0) / coupons.length;
+    for (const coupon of coupons) {
+      await recordCouponUsage({
+        couponId: coupon.id,
         userId: order.userId,
         orderId: order.id,
-        cashbackAmount: amount,
+        discountApplied: perCouponDiscount,
+        actorId: order.userId,
         transaction,
       });
+
+      if (coupon.type === 'CASHBACK') {
+        const cashback = Number(coupon.value ?? 0);
+        const amount = Math.min(
+          cashback,
+          Number(order.totalAmount) + Number(order.discountTotal ?? 0),
+        );
+        await creditCashbackIfNeeded({
+          coupon,
+          userId: order.userId,
+          orderId: order.id,
+          cashbackAmount: amount,
+          transaction,
+        });
+      }
     }
   }
 

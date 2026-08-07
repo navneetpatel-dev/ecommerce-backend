@@ -5,6 +5,9 @@ import { Category } from '@database/models/category.model';
 import { sequelize } from '@database/models';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 
+import { toPaise, fromPaise } from '@modules/pricing/money';
+import { computeSubOrderBreakdown } from '@modules/pricing/pricing.engine';
+
 export interface TaxCalculation {
   cgst: number;
   sgst: number;
@@ -26,8 +29,8 @@ function serializeTaxRule(row: TaxRule) {
 
 export class TaxService {
   /**
-   * Calculate GST tax based on vendor and shipping state
-   * CGST+SGST for intra-state, IGST for inter-state
+   * Calculate GST tax based on vendor and shipping state.
+   * Delegates split math to PricingEngine (paise) so tax matches checkout.
    */
   calculateTax(params: {
     vendorStateCode: string;
@@ -35,25 +38,25 @@ export class TaxService {
     taxableAmount: number;
     gstPercentage: number;
   }): TaxCalculation {
-    const total = this.round2(params.taxableAmount * (params.gstPercentage / 100));
-    
-    if (params.vendorStateCode === params.shippingStateCode) {
-      // Intra-state: CGST + SGST
-      return {
-        cgst: this.round2(total / 2),
-        sgst: this.round2(total / 2),
-        igst: 0,
-        total,
-        gstPercentage: params.gstPercentage,
-      };
-    }
-    
-    // Inter-state: IGST
+    const intraState =
+      String(params.vendorStateCode || '').trim().toUpperCase() ===
+      String(params.shippingStateCode || '').trim().toUpperCase();
+    const priced = computeSubOrderBreakdown({
+      lines: [{ key: 'tax', unitPricePaise: toPaise(params.taxableAmount), quantity: 1 }],
+      merchandiseDiscountPaise: 0,
+      shippingDiscountPaise: 0,
+      shippingCostPaise: 0,
+      gstPercentage: params.gstPercentage,
+      intraState,
+      commissionRatePercent: 0,
+      discountBearer: null,
+      tcsRatePercent: 0,
+    });
     return {
-      cgst: 0,
-      sgst: 0,
-      igst: total,
-      total,
+      cgst: fromPaise(priced.tax.cgst),
+      sgst: fromPaise(priced.tax.sgst),
+      igst: fromPaise(priced.tax.igst),
+      total: fromPaise(priced.tax.total),
       gstPercentage: params.gstPercentage,
     };
   }
@@ -134,10 +137,6 @@ export class TaxService {
 
       await rule.destroy({ transaction: t });
     });
-  }
-
-  private round2(num: number): number {
-    return Math.round(num * 100) / 100;
   }
 }
 

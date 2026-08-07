@@ -63,7 +63,7 @@ module.exports = {
       usedCount: 0,
       startDate,
       endDate,
-      stackable: false,
+      stackable: true,
       priority: 10,
       status: 'ACTIVE',
       discountBearer: 'PLATFORM',
@@ -76,6 +76,13 @@ module.exports = {
       updatedAt: now,
       deletedAt: null,
     });
+
+    // Ensure stackability even when coupons already exist from prior seeds.
+    await queryInterface.sequelize.query(
+      `UPDATE coupons SET stackable = true, "updatedAt" = :now
+       WHERE code IN ('CS-COUPON-PLATFORM-10', 'CS-COUPON-VENDOR-FLAT')`,
+      { replacements: { now } },
+    );
 
     if (vendorId) {
       await ensureCoupon(queryInterface, {
@@ -95,7 +102,7 @@ module.exports = {
         usedCount: 0,
         startDate,
         endDate,
-        stackable: false,
+        stackable: true,
         priority: 5,
         status: 'ACTIVE',
         discountBearer: 'VENDOR',
@@ -222,14 +229,25 @@ module.exports = {
           id: cartId,
           userId: customerId,
           couponCode: 'CS-COUPON-PLATFORM-10',
+          couponCodes: JSON.stringify(['CS-COUPON-PLATFORM-10', 'CS-COUPON-VENDOR-FLAT']),
           createdAt: now,
           updatedAt: now,
         },
       ]);
     } else {
       await queryInterface.sequelize.query(
-        `UPDATE carts SET "couponCode" = 'CS-COUPON-PLATFORM-10', "updatedAt" = :now WHERE id = :cartId`,
-        { replacements: { cartId, now } },
+        `UPDATE carts
+         SET "couponCode" = 'CS-COUPON-PLATFORM-10',
+             "couponCodes" = :codes::jsonb,
+             "updatedAt" = :now
+         WHERE id = :cartId`,
+        {
+          replacements: {
+            cartId,
+            now,
+            codes: JSON.stringify(['CS-COUPON-PLATFORM-10', 'CS-COUPON-VENDOR-FLAT']),
+          },
+        },
       );
     }
 

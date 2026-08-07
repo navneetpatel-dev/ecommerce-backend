@@ -26,6 +26,7 @@ import helpRoutes from '@modules/help/help.routes';
 import auditRoutes from '@modules/audit/audit.routes';
 import settingsRoutes from '@modules/settings/settings.routes';
 import homepageRoutes from '@modules/homepage/homepage.routes';
+import reportsRoutes from '@modules/reports/reports.routes';
 
 const router = Router();
 
@@ -55,5 +56,6 @@ router.use(API_MOUNTS.help, helpRoutes);
 router.use(API_MOUNTS.audit, auditRoutes);
 router.use(API_MOUNTS.settings, settingsRoutes);
 router.use(API_MOUNTS.homepage, homepageRoutes);
+router.use(API_MOUNTS.reports, reportsRoutes);
 
 export { router as routes };

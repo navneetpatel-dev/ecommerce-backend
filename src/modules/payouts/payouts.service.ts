@@ -1,5 +1,7 @@
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { Payout } from '@database/models/payout.model';
+import { SubOrder } from '@database/models/subOrder.model';
+import { TdsLedger } from '@database/models/tdsLedger.model';
 import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
@@ -12,6 +14,8 @@ import {
 } from '@modules/notifications/orderNotifications';
 import { logger } from '@core/logger';
 import { Op } from 'sequelize';
+import { settingsService } from '@modules/settings/settings.service';
+import { fromPaise, toPaise } from '@modules/pricing/money';
 
 async function notifyPayoutFailed(params: {
   vendorId: string;
@@ -82,8 +86,11 @@ export class PayoutsService {
   }
 
   async process(actorId: string) {
+    const settings = await settingsService.getPlatformSettings();
+    const tdsRate = Number(settings.tdsRatePercent ?? 0);
     const ledgers = await CommissionLedger.findAll({
       where: { status: COMMISSION_STATUS.PENDING },
+      include: [{ model: SubOrder, attributes: ['id', 'orderId'] }],
     });
     const grouped = new Map<string, { amount: number; start: Date; end: Date; rows: CommissionLedger[] }>();
     for (const ledger of ledgers) {
@@ -93,7 +100,10 @@ export class PayoutsService {
         end: ledger.createdAt,
         rows: [],
       };
-      current.amount += Number(ledger.saleAmount) - Number(ledger.commissionAmount);
+      current.amount +=
+        ledger.netPayoutAmount != null
+          ? Number(ledger.netPayoutAmount)
+          : Number(ledger.saleAmount) - Number(ledger.commissionAmount);
       current.start = current.start < ledger.createdAt ? current.start : ledger.createdAt;
       current.end = current.end > ledger.createdAt ? current.end : ledger.createdAt;
       current.rows.push(ledger);
@@ -109,6 +119,7 @@ export class PayoutsService {
               id: { [Op.in]: group.rows.map((row) => row.id) },
               status: COMMISSION_STATUS.PENDING,
             },
+            include: [{ model: SubOrder, attributes: ['id', 'orderId'] }],
             transaction,
             lock: transaction.LOCK.UPDATE,
           });
@@ -116,10 +127,46 @@ export class PayoutsService {
             throw new Error('No pending commission ledgers');
           }
 
-          const amount = locked.reduce(
-            (sum, row) => sum + (Number(row.saleAmount) - Number(row.commissionAmount)),
-            0,
-          );
+          let amountPaise = 0;
+          for (const row of locked) {
+            const netPaise =
+              row.netPayoutAmountPaise != null && Number(row.netPayoutAmountPaise) > 0
+                ? Number(row.netPayoutAmountPaise)
+                : toPaise(
+                    row.netPayoutAmount != null
+                      ? Number(row.netPayoutAmount)
+                      : Number(row.saleAmount) - Number(row.commissionAmount),
+                  );
+            const taxablePaise =
+              row.taxableAmountPaise != null && Number(row.taxableAmountPaise) > 0
+                ? Number(row.taxableAmountPaise)
+                : toPaise(Number(row.taxableAmount ?? row.saleAmount));
+            const tdsPaise =
+              tdsRate > 0 ? Math.round((taxablePaise * tdsRate) / 100) : 0;
+            amountPaise += Math.max(0, netPaise - tdsPaise);
+
+            if (tdsPaise > 0) {
+              const subOrder = (row as any).SubOrder as SubOrder | undefined;
+              if (subOrder?.orderId) {
+                await TdsLedger.create(
+                  {
+                    orderId: subOrder.orderId,
+                    subOrderId: row.subOrderId,
+                    vendorId,
+                    taxableAmountPaise: taxablePaise,
+                    ratePercent: tdsRate,
+                    tdsAmountPaise: tdsPaise,
+                    createdBy: actorId,
+                    updatedBy: actorId,
+                    deletedBy: null,
+                  },
+                  { transaction },
+                );
+              }
+            }
+          }
+
+          const amount = fromPaise(amountPaise);
           const row = await Payout.create(
             {
               vendorId,

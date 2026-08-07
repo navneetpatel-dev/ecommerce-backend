@@ -7,6 +7,21 @@ export class CommissionLedger extends Model<InferAttributes<CommissionLedger>, I
   declare saleAmount: number;
   declare commissionRate: number;
   declare commissionAmount: number;
+  declare taxableAmount: CreationOptional<number>;
+  declare discountAmount: CreationOptional<number>;
+  declare discountBearer: CreationOptional<'PLATFORM' | 'VENDOR' | null>;
+  declare taxAmount: CreationOptional<number>;
+  declare tcsAmount: CreationOptional<number>;
+  declare netPayoutAmount: CreationOptional<number>;
+  declare shippingCollected: CreationOptional<number>;
+  declare saleAmountPaise: CreationOptional<number>;
+  declare commissionAmountPaise: CreationOptional<number>;
+  declare taxableAmountPaise: CreationOptional<number>;
+  declare discountAmountPaise: CreationOptional<number>;
+  declare taxAmountPaise: CreationOptional<number>;
+  declare tcsAmountPaise: CreationOptional<number>;
+  declare netPayoutAmountPaise: CreationOptional<number>;
+  declare shippingCollectedPaise: CreationOptional<number>;
   declare status: 'PENDING' | 'SETTLED' | 'CLAWED_BACK';
   declare createdBy: string | null;
   declare updatedBy: string | null;
@@ -30,6 +45,24 @@ export const initCommissionLedgerModel = (sequelize: Sequelize) => {
       saleAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
       commissionRate: { type: DataTypes.DECIMAL(5, 2), allowNull: false },
       commissionAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
+      taxableAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      discountAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      discountBearer: {
+        type: DataTypes.ENUM('PLATFORM', 'VENDOR'),
+        allowNull: true,
+      },
+      taxAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      tcsAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      netPayoutAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      shippingCollected: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      saleAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      commissionAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      taxableAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      discountAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      taxAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      tcsAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      netPayoutAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      shippingCollectedPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       status: { type: DataTypes.ENUM('PENDING', 'SETTLED', 'CLAWED_BACK'), defaultValue: 'PENDING' },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },

@@ -2,6 +2,8 @@ import { z } from 'zod';
 
 export const UpdateSettingsSchema = z.object({
   defaultCommissionRate: z.number().min(0).max(100),
+  tcsRatePercent: z.number().min(0).max(100).default(1),
+  tdsRatePercent: z.number().min(0).max(100).default(1),
   autoApproveProducts: z.boolean(),
   defaultReturnWindow: z.number().int().positive(),
   payoutCycle: z.enum(['DAILY', 'WEEKLY', 'BIWEEKLY', 'MONTHLY']),

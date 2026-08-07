@@ -38,6 +38,11 @@ import { initWebhookEventModel, WebhookEvent } from './webhookEvent.model';
 import { initHelpTicketModel, HelpTicket } from './helpTicket.model';
 import { initPlatformSettingModel, PlatformSetting } from './platformSetting.model';
 import { initPromoBannerModel, PromoBanner } from './promoBanner.model';
+import { initTcsLedgerModel, TcsLedger } from './tcsLedger.model';
+import { initTdsLedgerModel, TdsLedger } from './tdsLedger.model';
+import { initCreditNoteModel, CreditNote } from './creditNote.model';
+import { initDebitNoteModel, DebitNote } from './debitNote.model';
+import { initDocumentSequenceModel, DocumentSequence } from './documentSequence.model';
 
 const models = {
   Role: initRoleModel(sequelize),
@@ -79,6 +84,11 @@ const models = {
   HelpTicket: initHelpTicketModel(sequelize),
   PlatformSetting: initPlatformSettingModel(sequelize),
   PromoBanner: initPromoBannerModel(sequelize),
+  TcsLedger: initTcsLedgerModel(sequelize),
+  TdsLedger: initTdsLedgerModel(sequelize),
+  CreditNote: initCreditNoteModel(sequelize),
+  DebitNote: initDebitNoteModel(sequelize),
+  DocumentSequence: initDocumentSequenceModel(sequelize),
 };
 
 Object.values(models).forEach((model: any) => {
@@ -97,4 +107,5 @@ export {
   ShippingZone, ShippingRate, Shipment, ReturnRequest,
   TaxRule, NotificationLog, AuditLog, WebhookEvent, HelpTicket,
   PlatformSetting, PromoBanner,
+  TcsLedger, TdsLedger, CreditNote, DebitNote, DocumentSequence,
 };

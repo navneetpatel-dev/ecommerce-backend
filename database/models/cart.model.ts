@@ -5,6 +5,8 @@ export class Cart extends Model<InferAttributes<Cart>, InferCreationAttributes<C
   declare userId: string | null;
   declare sessionId: string | null;
   declare couponCode: string | null;
+  /** Stacked coupon codes (platform + vendor-scoped). Synced with couponCode for legacy. */
+  declare couponCodes: CreationOptional<string[]>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -24,6 +26,7 @@ export const initCartModel = (sequelize: Sequelize) => {
       userId: { type: DataTypes.UUID, unique: true, allowNull: true },
       sessionId: { type: DataTypes.STRING, unique: true, allowNull: true },
       couponCode: { type: DataTypes.STRING, allowNull: true },
+      couponCodes: { type: DataTypes.JSONB, allowNull: false, defaultValue: [] },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

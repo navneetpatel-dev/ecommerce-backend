@@ -1,13 +1,7 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ValidationError } from '@core/errors/ValidationError';
-import {
-  COMMISSION_STATUS,
-  ORDER_STATUS,
-  RETURN_STATUS,
-  type ReturnReason,
-  type ReturnStatus,
-} from '@core/constants/statuses';
+import { COMMISSION_STATUS, DOCUMENT_SEQUENCE_KIND, ORDER_STATUS, RETURN_STATUS, type ReturnReason, type ReturnStatus } from '@core/constants/statuses';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { OrderItem } from '@database/models/orderItem.model';
@@ -15,10 +9,14 @@ import { SubOrder } from '@database/models/subOrder.model';
 import { Order } from '@database/models/order.model';
 import { User } from '@database/models/user.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
+import { CreditNote } from '@database/models/creditNote.model';
+import { DebitNote } from '@database/models/debitNote.model';
 import { sequelize } from '@database/models';
 import type { Transaction } from 'sequelize';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
-import { roundMoney } from '@modules/coupons/coupon.utils';
+import { fromPaise } from '@modules/pricing/money';
+import { pricingService } from '@modules/pricing/pricing.service';
+import { nextDocumentNumber } from '@modules/pricing/documentSequence';
 import { notificationsService } from '@modules/notifications/notifications.service';
 
 const returnListInclude = [
@@ -53,28 +51,16 @@ function serializeReturn(row: ReturnRequest | (ReturnRequest & { orderItem?: Ord
     reasonCode: plain.reasonCode,
     status: plain.status,
     refundAmount: plain.refundAmount != null ? Number(plain.refundAmount) : null,
+    refundTaxAmount: plain.refundTaxAmount != null ? Number(plain.refundTaxAmount) : null,
+    refundCommissionAmount:
+      plain.refundCommissionAmount != null ? Number(plain.refundCommissionAmount) : null,
+    refundTcsAmount: plain.refundTcsAmount != null ? Number(plain.refundTcsAmount) : null,
+    refundNetClawback: plain.refundNetClawback != null ? Number(plain.refundNetClawback) : null,
     resolvedAt: plain.resolvedAt,
     createdAt: plain.createdAt,
     productName: plain.orderItem?.productName ?? null,
     customerName: plain.user?.name ?? null,
   };
-}
-
-/** Line share of (unitPrice*qty - prorated suborder discount). */
-function computeLineRefundAmount(
-  item: OrderItem,
-  subOrder: SubOrder,
-  siblingItems: OrderItem[],
-): number {
-  const lineGross = Number(item.unitPrice) * Number(item.quantity);
-  const subtotal = siblingItems.reduce(
-    (sum, row) => sum + Number(row.unitPrice) * Number(row.quantity),
-    0,
-  );
-  const discountAmount = Number(subOrder.discountAmount ?? 0);
-  const lineDiscount =
-    subtotal > 0 ? roundMoney((discountAmount * lineGross) / subtotal) : 0;
-  return roundMoney(Math.max(0, lineGross - lineDiscount));
 }
 
 export class ReturnsService {
@@ -191,34 +177,157 @@ export class ReturnsService {
           subOrder: SubOrder & { items?: OrderItem[] };
         };
         if (orderItem?.subOrder) {
-          const siblings =
-            orderItem.subOrder.items ??
-            (await OrderItem.findAll({ where: { subOrderId: orderItem.subOrderId }, transaction: t }));
-          const refundAmount = computeLineRefundAmount(orderItem, orderItem.subOrder, siblings);
-          patch.refundAmount = refundAmount;
+          const frozen = pricingService.frozenLineFromOrderItem({
+            id: orderItem.id,
+            quantity: Number(orderItem.quantity),
+            unitPrice: Number(orderItem.unitPrice),
+            discountAmount: Number(orderItem.discountAmount ?? 0),
+            taxableAmount: Number(orderItem.taxableAmount ?? 0),
+            taxAmount: Number(orderItem.taxAmount ?? 0),
+            taxBreakdown: (orderItem.taxBreakdown as any) ?? null,
+            commissionAmount: Number(orderItem.commissionAmount ?? 0),
+            tcsAmount: Number(orderItem.tcsAmount ?? 0),
+            netPayoutAmount: Number(orderItem.netPayoutAmount ?? 0),
+            unitPricePaise: Number(orderItem.unitPricePaise ?? 0),
+            discountAmountPaise: Number(orderItem.discountAmountPaise ?? 0),
+            taxableAmountPaise: Number(orderItem.taxableAmountPaise ?? 0),
+            taxAmountPaise: Number(orderItem.taxAmountPaise ?? 0),
+            commissionAmountPaise: Number(orderItem.commissionAmountPaise ?? 0),
+            tcsAmountPaise: Number(orderItem.tcsAmountPaise ?? 0),
+            netPayoutAmountPaise: Number(orderItem.netPayoutAmountPaise ?? 0),
+          });
+          const reversal = pricingService.reverseLineFromFrozen(
+            frozen,
+            Number(orderItem.quantity),
+          );
+          patch.refundAmount = fromPaise(reversal.customerRefundPaise);
+          patch.refundTaxAmount = fromPaise(reversal.refundTaxPaise);
+          patch.refundCommissionAmount = fromPaise(reversal.refundCommissionPaise);
+          patch.refundTcsAmount = fromPaise(reversal.refundTcsPaise);
+          patch.refundNetClawback = fromPaise(reversal.refundNetClawbackPaise);
+
+          const existingCredit = await CreditNote.findOne({
+            where: { returnRequestId: row.id },
+            transaction: t,
+          });
+          if (!existingCredit) {
+            const cnNumber = await nextDocumentNumber(DOCUMENT_SEQUENCE_KIND.CREDIT_NOTE, t);
+            await CreditNote.create(
+              {
+                number: cnNumber,
+                returnRequestId: row.id,
+                orderId: orderItem.subOrder.orderId,
+                orderItemId: orderItem.id,
+                userId: row.userId,
+                merchandisePaise: reversal.refundMerchandisePaise,
+                taxPaise: reversal.refundTaxPaise,
+                totalPaise: reversal.customerRefundPaise,
+                taxBreakdown: {
+                  refundTaxPaise: reversal.refundTaxPaise,
+                },
+                createdBy: actorId,
+                updatedBy: actorId,
+                deletedBy: null,
+              },
+              { transaction: t },
+            );
+          }
+
+          const vendorId = orderItem.subOrder.vendorId;
+          if (vendorId) {
+            const existingDebit = await DebitNote.findOne({
+              where: { returnRequestId: row.id },
+              transaction: t,
+            });
+            if (!existingDebit) {
+              const dnNumber = await nextDocumentNumber(DOCUMENT_SEQUENCE_KIND.DEBIT_NOTE, t);
+              await DebitNote.create(
+                {
+                  number: dnNumber,
+                  returnRequestId: row.id,
+                  orderId: orderItem.subOrder.orderId,
+                  orderItemId: orderItem.id,
+                  vendorId,
+                  commissionPaise: reversal.refundCommissionPaise,
+                  tcsPaise: reversal.refundTcsPaise,
+                  netClawbackPaise: reversal.refundNetClawbackPaise,
+                  createdBy: actorId,
+                  updatedBy: actorId,
+                  deletedBy: null,
+                },
+                { transaction: t },
+              );
+            }
+          }
 
           const ledger = await CommissionLedger.findOne({
             where: { subOrderId: orderItem.subOrderId },
             transaction: t,
           });
-          if (ledger && Number(ledger.saleAmount) > 0) {
-            const subtotal = Number(orderItem.subOrder.subtotal);
-            const lineGross = Number(orderItem.unitPrice) * Number(orderItem.quantity);
-            const saleShare =
-              subtotal > 0 ? roundMoney((Number(ledger.saleAmount) * lineGross) / subtotal) : 0;
-            const commissionShare =
-              subtotal > 0
-                ? roundMoney((Number(ledger.commissionAmount) * lineGross) / subtotal)
-                : 0;
-            const nextSale = roundMoney(Math.max(0, Number(ledger.saleAmount) - saleShare));
-            const nextCommission = roundMoney(
-              Math.max(0, Number(ledger.commissionAmount) - commissionShare),
+          if (ledger) {
+            const nextSale = Math.max(
+              0,
+              Number(ledger.saleAmount) - fromPaise(reversal.refundMerchandisePaise),
+            );
+            const nextCommission = Math.max(
+              0,
+              Number(ledger.commissionAmount) - fromPaise(reversal.refundCommissionPaise),
+            );
+            const nextTaxable = Math.max(
+              0,
+              Number(ledger.taxableAmount ?? 0) - fromPaise(reversal.refundMerchandisePaise),
+            );
+            const nextTcs = Math.max(
+              0,
+              Number(ledger.tcsAmount ?? 0) - fromPaise(reversal.refundTcsPaise),
+            );
+            const nextNet = Math.max(
+              0,
+              Number(ledger.netPayoutAmount ?? 0) - fromPaise(reversal.refundNetClawbackPaise),
+            );
+            const nextTax = Math.max(
+              0,
+              Number(ledger.taxAmount ?? 0) - fromPaise(reversal.refundTaxPaise),
+            );
+            const salePaise = Math.max(
+              0,
+              Number(ledger.saleAmountPaise ?? 0) - reversal.refundMerchandisePaise,
+            );
+            const commissionPaise = Math.max(
+              0,
+              Number(ledger.commissionAmountPaise ?? 0) - reversal.refundCommissionPaise,
+            );
+            const taxablePaise = Math.max(
+              0,
+              Number(ledger.taxableAmountPaise ?? 0) - reversal.refundMerchandisePaise,
+            );
+            const tcsPaise = Math.max(
+              0,
+              Number(ledger.tcsAmountPaise ?? 0) - reversal.refundTcsPaise,
+            );
+            const netPaise = Math.max(
+              0,
+              Number(ledger.netPayoutAmountPaise ?? 0) - reversal.refundNetClawbackPaise,
+            );
+            const taxPaise = Math.max(
+              0,
+              Number(ledger.taxAmountPaise ?? 0) - reversal.refundTaxPaise,
             );
             await ledger.update(
               {
                 saleAmount: nextSale,
                 commissionAmount: nextCommission,
-                status: nextSale <= 0 ? COMMISSION_STATUS.CLAWED_BACK : ledger.status,
+                taxableAmount: nextTaxable,
+                tcsAmount: nextTcs,
+                taxAmount: nextTax,
+                netPayoutAmount: nextNet,
+                saleAmountPaise: salePaise,
+                commissionAmountPaise: commissionPaise,
+                taxableAmountPaise: taxablePaise,
+                tcsAmountPaise: tcsPaise,
+                taxAmountPaise: taxPaise,
+                netPayoutAmountPaise: netPaise,
+                status: nextNet <= 0 ? COMMISSION_STATUS.CLAWED_BACK : ledger.status,
                 updatedBy: actorId,
               },
               { transaction: t },

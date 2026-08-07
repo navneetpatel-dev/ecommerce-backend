@@ -16,6 +16,10 @@ export class ReturnRequest extends Model<InferAttributes<ReturnRequest>, InferCr
   declare reasonCode: ReturnReason;
   declare status: ReturnStatus;
   declare refundAmount: number | null;
+  declare refundTaxAmount: CreationOptional<number | null>;
+  declare refundCommissionAmount: CreationOptional<number | null>;
+  declare refundTcsAmount: CreationOptional<number | null>;
+  declare refundNetClawback: CreationOptional<number | null>;
   declare resolvedById: string | null;
   declare resolvedAt: Date | null;
   declare createdBy: string | null;
@@ -49,6 +53,10 @@ export const initReturnRequestModel = (sequelize: Sequelize) => {
         defaultValue: RETURN_STATUS.REQUESTED,
       },
       refundAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+      refundTaxAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+      refundCommissionAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+      refundTcsAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+      refundNetClawback: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       resolvedById: { type: DataTypes.UUID, allowNull: true },
       resolvedAt: { type: DataTypes.DATE, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },

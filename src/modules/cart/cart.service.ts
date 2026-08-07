@@ -43,8 +43,19 @@ export type CartViewItem = {
 export type CartView = {
   id: string | null;
   items: CartViewItem[];
+  /** Merchandise subtotal (available lines). */
+  merchandiseSubtotal: number;
+  /** Customer-facing total from PricingEngine preview (tax + est. shipping − discount). */
   total: number;
+  pricingPreview?: {
+    merchandiseSubtotal: number;
+    discount: number;
+    taxTotal: number;
+    shippingTotal: number;
+    grandTotal: number;
+  };
   appliedCoupon?: { code: string; discount: number; cashbackAmount: number; type: string } | null;
+  appliedCoupons?: Array<{ code: string; discount: number; cashbackAmount: number; type: string }>;
   removedCouponReason?: string | null;
 };
 
@@ -112,7 +123,7 @@ export class CartService {
     }
 
     if (!cart) {
-      return { id: null, items: [], total: 0 };
+      return { id: null, items: [], total: 0, merchandiseSubtotal: 0 };
     }
 
     // Unscoped Product/Vendor include — hidden items stay visible with isAvailable=false.
@@ -138,25 +149,133 @@ export class CartService {
     }) as (CartItem & { variant: ProductVariant & { product: any } })[];
 
     const mappedItems = items.map(mapCartItem);
-    const total = mappedItems
-      .filter((item) => item.isAvailable)
-      .reduce((sum, item) => sum + item.product.price * item.quantity, 0);
+    const available = mappedItems.filter((item) => item.isAvailable);
+    const merchandiseSubtotal = available.reduce(
+      (sum, item) => sum + item.product.price * item.quantity,
+      0,
+    );
 
     let appliedCoupon: CartView['appliedCoupon'] = null;
+    let appliedCoupons: CartView['appliedCoupons'] = [];
     let removedCouponReason: string | null = null;
+    let vendorDiscountShares: Record<string, number> = {};
     if (userId) {
       const { couponsService } = await import('@modules/coupons/coupons.service');
       const revalidated = await couponsService.revalidateCartCoupon(userId);
       appliedCoupon = revalidated.appliedCoupon;
+      appliedCoupons = revalidated.appliedCoupons;
       removedCouponReason = revalidated.removed ? revalidated.reason : null;
+      vendorDiscountShares = revalidated.appliedCoupon?.vendorDiscountShares ?? {};
     }
+
+    const pricingPreview = await this.buildPricingPreview({
+      items: available,
+      vendorDiscountShares,
+      merchandiseDiscountTotal: appliedCoupon?.discount ?? 0,
+    });
 
     return {
       id: String(cart.id),
       items: mappedItems,
-      total,
+      merchandiseSubtotal,
+      total: pricingPreview.grandTotal,
+      pricingPreview,
       appliedCoupon,
+      appliedCoupons,
       removedCouponReason,
+    };
+  }
+
+  private async buildPricingPreview(input: {
+    items: CartViewItem[];
+    vendorDiscountShares: Record<string, number>;
+    merchandiseDiscountTotal: number;
+  }): Promise<NonNullable<CartView['pricingPreview']>> {
+    const merchandiseSubtotal = input.items.reduce(
+      (sum, item) => sum + item.product.price * item.quantity,
+      0,
+    );
+    if (input.items.length === 0) {
+      return {
+        merchandiseSubtotal: 0,
+        discount: 0,
+        taxTotal: 0,
+        shippingTotal: 0,
+        grandTotal: 0,
+      };
+    }
+
+    const { settingsService } = await import('@modules/settings/settings.service');
+    const { taxService } = await import('@modules/tax/tax.service');
+    const { categoriesService } = await import('@modules/categories/categories.service');
+    const { pricingService } = await import('@modules/pricing/pricing.service');
+    const { ShippingRate } = await import('@database/models/shippingRate.model');
+    const { DISCOUNT_BEARER } = await import('@core/constants/statuses');
+
+    const settings = await settingsService.getPlatformSettings();
+    const cheapest = await ShippingRate.findOne({ order: [['price', 'ASC']] });
+    const estShippingPerVendor = Number(cheapest?.price ?? 0);
+
+    const byVendor = new Map<string, CartViewItem[]>();
+    for (const item of input.items) {
+      const vendorId = item.product.vendor.id || 'platform';
+      const list = byVendor.get(vendorId) ?? [];
+      list.push(item);
+      byVendor.set(vendorId, list);
+    }
+
+    let discount = 0;
+    let taxTotal = 0;
+    let shippingTotal = 0;
+    let grandTotal = 0;
+
+    for (const [vendorId, vendorItems] of byVendor) {
+      const first = vendorItems[0]!;
+      const productId = first.product.id;
+      const product = await Product.findByPk(productId, { attributes: ['categoryId', 'vendorId'] });
+      const categoryId = product?.categoryId ?? null;
+      const gstPercentage = categoryId ? await taxService.getGstRate(categoryId) : 0;
+      const vendor = vendorId !== 'platform' ? await Vendor.findByPk(vendorId) : null;
+      const commissionRate = categoryId
+        ? await categoriesService.resolveCommissionRate(
+            categoryId,
+            vendor?.commissionRate,
+            settings.defaultCommissionRate,
+          )
+        : settings.defaultCommissionRate;
+      const merchandiseDiscount = input.vendorDiscountShares[vendorId] ?? 0;
+      discount += merchandiseDiscount;
+      const priced = pricingService.computeVendorBreakdown({
+        lines: vendorItems.map((item) => ({
+          key: item.id,
+          unitPrice: item.product.price,
+          quantity: item.quantity,
+        })),
+        merchandiseDiscount,
+        shippingDiscount: 0,
+        shippingCost: estShippingPerVendor,
+        gstPercentage,
+        vendorStateCode: String(vendor?.state ?? ''),
+        shippingStateCode: String(vendor?.state ?? ''),
+        commissionRatePercent: commissionRate,
+        discountBearer: DISCOUNT_BEARER.PLATFORM,
+        tcsRatePercent: settings.tcsRatePercent,
+      });
+      taxTotal += priced.rupees.tax.total;
+      shippingTotal += priced.rupees.shippingCharged;
+      grandTotal += priced.rupees.customerTotal;
+    }
+
+    if (discount === 0 && input.merchandiseDiscountTotal > 0) {
+      discount = input.merchandiseDiscountTotal;
+    }
+
+    return {
+      merchandiseSubtotal,
+      discount,
+      taxTotal,
+      shippingTotal,
+      grandTotal,
     };
   }
 

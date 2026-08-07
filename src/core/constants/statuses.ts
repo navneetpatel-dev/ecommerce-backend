@@ -171,6 +171,18 @@ export const DISCOUNT_BEARER_VALUES = Object.values(DISCOUNT_BEARER) as [
   ...DiscountBearer[],
 ];
 
+/** Sequential GST document number series (credit / debit notes). */
+export const DOCUMENT_SEQUENCE_KIND = {
+  CREDIT_NOTE: 'CREDIT_NOTE',
+  DEBIT_NOTE: 'DEBIT_NOTE',
+} as const;
+export type DocumentSequenceKind =
+  (typeof DOCUMENT_SEQUENCE_KIND)[keyof typeof DOCUMENT_SEQUENCE_KIND];
+export const DOCUMENT_SEQUENCE_KIND_VALUES = Object.values(DOCUMENT_SEQUENCE_KIND) as [
+  DocumentSequenceKind,
+  ...DocumentSequenceKind[],
+];
+
 /** Built-in customer segments for coupon userRestriction.type === 'segment'. */
 export const COUPON_USER_SEGMENT = {
   NEW: 'new',

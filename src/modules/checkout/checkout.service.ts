@@ -9,6 +9,7 @@ import { SubOrder } from '@database/models/subOrder.model';
 import { OrderItem } from '@database/models/orderItem.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
+import { TcsLedger } from '@database/models/tcsLedger.model';
 import { Address } from '@database/models/address.model';
 import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
@@ -19,13 +20,15 @@ import { taxService } from '@modules/tax/tax.service';
 import { settingsService } from '@modules/settings/settings.service';
 import { categoriesService } from '@modules/categories/categories.service';
 import {
-  validateCoupon,
-  commissionSaleAmount,
+  validateCouponSet,
+  resolveCartCouponCodes,
   recordCouponUsage,
   creditCashbackIfNeeded,
-  resolveDiscountBearer,
+  resolveVendorDiscountBearer,
   type CartLineForCoupon,
 } from '@modules/coupons/couponEngine';
+import { pricingService } from '@modules/pricing/pricing.service';
+import { fromPaise } from '@modules/pricing/money';
 import { resolveItemAvailability } from '@core/catalog/customerVisibility';
 import type {
   CancelCheckoutRequest,
@@ -37,10 +40,12 @@ import {
   PAYMENT_STATUS,
   PAYMENT_METHOD,
   COMMISSION_STATUS,
+  DISCOUNT_BEARER,
 } from '@core/constants/statuses';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { notifyOrderConfirmed } from '@modules/notifications/orderNotifications';
 import { notificationsService } from '@modules/notifications/notifications.service';
+import type { Coupon } from '@database/models/coupon.model';
 
 function groupBy<T>(array: T[], keyFn: (item: T) => string): Record<string, T[]> {
   return array.reduce((acc, item) => {
@@ -149,6 +154,19 @@ function toCouponLines(
   });
 }
 
+function resolveCheckoutCouponCodes(
+  data: { couponCode?: string | null; couponCodes?: string[] },
+  cart: { couponCode?: string | null; couponCodes?: string[] | null },
+): string[] {
+  if (data.couponCodes && data.couponCodes.length > 0) {
+    return [...new Set(data.couponCodes.map((c) => c.trim().toUpperCase()).filter(Boolean))];
+  }
+  if (data.couponCode?.trim()) {
+    return [data.couponCode.trim().toUpperCase()];
+  }
+  return resolveCartCouponCodes(cart);
+}
+
 export class CheckoutService {
   async getQuote(userId: string, data: CheckoutQuoteRequest): Promise<{
     vendorBreakdowns: Array<{
@@ -159,10 +177,14 @@ export class CheckoutService {
       shippingCost: number;
       tax: { cgst: number; sgst: number; igst: number; total: number };
       discount: number;
+      tcsAmount: number;
+      commissionAmount: number;
+      netPayout: number;
       total: number;
     }>;
     grandTotal: number;
     appliedCoupon: { code: string; discount: number; cashbackAmount?: number } | null;
+    appliedCoupons: Array<{ code: string; discount: number; cashbackAmount?: number }>;
   }> {
     const cart = await loadUserCart(userId);
 
@@ -193,8 +215,18 @@ export class CheckoutService {
       ? await Vendor.findAll({ where: { id: vendorIds } })
       : [];
     const vendorMap = Object.fromEntries(vendors.map((v) => [v.id, v]));
+    const settings = await settingsService.getPlatformSettings();
 
-    const vendorBreakdowns = await Promise.all(Object.entries(itemsByVendor).map(async ([vendorId, items]) => {
+    const shippingByVendor: Record<string, number> = {};
+    const baseVendorRows: Array<{
+      vendorId: string;
+      items: (CartItem & { variant: ProductVariant & { product: any } })[];
+      shippingCost: number;
+      gstPercentage: number;
+      commissionRate: number;
+    }> = [];
+
+    for (const [vendorId, items] of Object.entries(itemsByVendor)) {
       const subtotal = items.reduce(
         (sum, item) => sum + Number(item.variant.price) * item.quantity,
         0,
@@ -209,56 +241,34 @@ export class CheckoutService {
       });
       const rate = rates.find((candidate) => candidate.method === method);
       if (!rate) throw new ValidationError(`No ${method} shipping rate is available`);
-      const shippingCost = rate.freeShippingThreshold != null && subtotal >= rate.freeShippingThreshold
-        ? 0
-        : rate.cost;
+      const shippingCost =
+        rate.freeShippingThreshold != null && subtotal >= rate.freeShippingThreshold
+          ? 0
+          : rate.cost;
+      shippingByVendor[vendorId] = shippingCost;
       const categoryId = items[0]!.variant.product.categoryId;
       const gstPercentage = await taxService.getGstRate(categoryId);
-      const tax = taxService.calculateTax({
-        vendorStateCode: vendorOriginState(vendor),
-        shippingStateCode: shippingAddress.state,
-        taxableAmount: subtotal,
-        gstPercentage,
-      });
-      return {
-        vendorId,
-        vendor: vendor
-          ? {
-              id: vendor.id,
-              businessName: vendor.businessName,
-              slug: vendor.slug,
-              logoUrl: vendor.logoUrl ?? null,
-            }
-          : { id: vendorId, businessName: 'Marketplace', slug: 'platform', logoUrl: null },
-        items: items.map((item) => ({
-          id: item.id,
-          variantId: item.variantId,
-          productName: item.variant.product.name,
-          quantity: item.quantity,
-          unitPrice: Number(item.variant.price),
-        })),
-        subtotal,
-        shippingCost,
-        tax: { cgst: tax.cgst, sgst: tax.sgst, igst: tax.igst, total: tax.total },
-        discount: 0,
-        total: subtotal + shippingCost + tax.total,
-      };
-    }));
-    const subtotal = vendorBreakdowns.reduce((sum, breakdown) => sum + breakdown.subtotal, 0);
-    const shippingTotal = vendorBreakdowns.reduce((sum, breakdown) => sum + breakdown.shippingCost, 0);
-    const taxTotal = vendorBreakdowns.reduce((sum, breakdown) => sum + breakdown.tax.total, 0);
-    const shippingByVendor = Object.fromEntries(
-      vendorBreakdowns.map((b) => [b.vendorId, b.shippingCost]),
-    );
+      const commissionRate = await categoriesService.resolveCommissionRate(
+        categoryId,
+        vendor?.commissionRate,
+        settings.defaultCommissionRate,
+      );
+      baseVendorRows.push({ vendorId, items, shippingCost, gstPercentage, commissionRate });
+    }
 
-    const couponCode = data.couponCode ?? cart.couponCode ?? undefined;
+    const shippingTotal = Object.values(shippingByVendor).reduce((s, n) => s + n, 0);
+    const couponCodes = resolveCheckoutCouponCodes(data, cart);
     let discount = 0;
     let cashbackAmount = 0;
     let applied: { code: string; discount: number; cashbackAmount?: number } | null = null;
+    let appliedCoupons: Array<{ code: string; discount: number; cashbackAmount?: number }> = [];
+    let vendorDiscountShares: Record<string, number> = {};
+    let vendorShippingDiscountShares: Record<string, number> = {};
+    let vendorBorneDiscountShares: Record<string, number> = {};
 
-    if (couponCode) {
-      const result = await validateCoupon({
-        code: couponCode,
+    if (couponCodes.length > 0) {
+      const result = await validateCouponSet({
+        codes: couponCodes,
         userId,
         lines: toCouponLines(quoteCart.items),
         shippingTotal,
@@ -269,20 +279,87 @@ export class CheckoutService {
       }
       discount = result.discount;
       cashbackAmount = result.cashbackAmount;
-      for (const breakdown of vendorBreakdowns) {
-        const share = result.vendorDiscountShares[breakdown.vendorId] ?? 0;
-        breakdown.discount = share;
-        breakdown.total = Math.max(0, breakdown.total - share);
-      }
-      if (result.coupon) {
-        applied = { code: result.coupon.code, discount, cashbackAmount };
+      vendorDiscountShares = result.vendorDiscountShares;
+      vendorShippingDiscountShares = result.vendorShippingDiscountShares;
+      vendorBorneDiscountShares = result.vendorBorneDiscountShares;
+      appliedCoupons = result.coupons.map((coupon) => ({
+        code: coupon.code,
+        discount: result.discount,
+        cashbackAmount: result.cashbackAmount,
+      }));
+      if (result.primaryCoupon) {
+        applied = {
+          code: result.coupons.map((c) => c.code).join('+'),
+          discount,
+          cashbackAmount,
+        };
       }
     }
 
+    const vendorBreakdowns = baseVendorRows.map((row) => {
+      const vendor = vendorMap[row.vendorId];
+      const merchandiseDiscount = vendorDiscountShares[row.vendorId] ?? 0;
+      const shippingDiscount = vendorShippingDiscountShares[row.vendorId] ?? 0;
+      const vendorBorne = vendorBorneDiscountShares[row.vendorId] ?? 0;
+      const bearer = resolveVendorDiscountBearer(vendorBorne, merchandiseDiscount);
+      const priced = pricingService.computeVendorBreakdown({
+        lines: row.items.map((item) => ({
+          key: item.id,
+          unitPrice: Number(item.variant.price),
+          quantity: Number(item.quantity),
+        })),
+        merchandiseDiscount,
+        vendorBorneMerchandiseDiscount: vendorBorne,
+        shippingDiscount,
+        shippingCost: row.shippingCost,
+        gstPercentage: row.gstPercentage,
+        vendorStateCode: vendorOriginState(vendor),
+        shippingStateCode: shippingAddress.state,
+        commissionRatePercent: row.commissionRate,
+        discountBearer: bearer,
+        tcsRatePercent: settings.tcsRatePercent,
+      });
+      const r = priced.rupees;
+      return {
+        vendorId: row.vendorId,
+        vendor: vendor
+          ? {
+              id: vendor.id,
+              businessName: vendor.businessName,
+              slug: vendor.slug,
+              logoUrl: vendor.logoUrl ?? null,
+            }
+          : { id: row.vendorId, businessName: 'Marketplace', slug: 'platform', logoUrl: null },
+        items: row.items.map((item) => ({
+          id: item.id,
+          variantId: item.variantId,
+          productName: item.variant.product.name,
+          quantity: item.quantity,
+          unitPrice: Number(item.variant.price),
+        })),
+        subtotal: r.subtotal,
+        shippingCost: r.shippingCharged,
+        tax: {
+          cgst: r.tax.cgst,
+          sgst: r.tax.sgst,
+          igst: r.tax.igst,
+          total: r.tax.total,
+        },
+        discount: r.merchandiseDiscount + r.shippingDiscount,
+        tcsAmount: r.tcsAmount,
+        commissionAmount: r.commissionAmount,
+        netPayout: r.netPayout,
+        total: r.customerTotal,
+      };
+    });
+
+    const grandTotal = vendorBreakdowns.reduce((sum, row) => sum + row.total, 0);
+
     return {
       vendorBreakdowns,
-      grandTotal: Math.max(0, subtotal + shippingTotal + taxTotal - discount),
+      grandTotal,
       appliedCoupon: applied,
+      appliedCoupons,
     };
   }
 
@@ -304,22 +381,29 @@ export class CheckoutService {
         throw new NotFoundError('Shipping address');
       }
 
-      let subtotal = 0;
-      for (const item of cart.items) {
-        subtotal += Number(item.variant.price) * item.quantity;
-      }
-
       const itemsByVendor = groupBy(cart.items, (item) => item.variant.product.vendorId || 'platform');
       const vendorIds = Object.keys(itemsByVendor).filter((id) => id !== 'platform');
       const vendors = vendorIds.length ? await Vendor.findAll({ where: { id: vendorIds }, transaction: t }) : [];
       const vendorMap = Object.fromEntries(vendors.map((vendor) => [vendor.id, vendor]));
       const settings = await settingsService.getPlatformSettings();
-      const vendorCharges: Record<string, { shippingCost: number; taxAmount: number; subtotal: number }> = {};
       let shippingTotal = 0;
-      let taxTotal = 0;
+      const shippingByVendor: Record<string, number> = {};
+      const vendorPrep: Record<
+        string,
+        {
+          items: (CartItem & { variant: ProductVariant & { product: any } })[];
+          shippingCost: number;
+          gstPercentage: number;
+          commissionRate: number;
+        }
+      > = {};
+
       for (const [vendorId, items] of Object.entries(itemsByVendor)) {
         const method = requestedMethod(data.shippingMethodByVendor[vendorId]);
-        const vendorSubtotal = items.reduce((sum, item) => sum + Number(item.variant.price) * item.quantity, 0);
+        const vendorSubtotal = items.reduce(
+          (sum, item) => sum + Number(item.variant.price) * item.quantity,
+          0,
+        );
         const rates = await getRatesForQuote({
           pincode: shippingAddress.pincode,
           state: shippingAddress.state,
@@ -328,33 +412,35 @@ export class CheckoutService {
         });
         const rate = rates.find((candidate) => candidate.method === method);
         if (!rate) throw new ValidationError(`No ${method} shipping rate is available`);
-        const shippingCost = rate.freeShippingThreshold != null && vendorSubtotal >= rate.freeShippingThreshold
-          ? 0
-          : rate.cost;
-        const gstPercentage = await taxService.getGstRate(items[0]!.variant.product.categoryId);
-        const taxAmount = taxService.calculateTax({
-          vendorStateCode: vendorOriginState(vendorMap[vendorId]),
-          shippingStateCode: shippingAddress.state,
-          taxableAmount: vendorSubtotal,
-          gstPercentage,
-        }).total;
-        vendorCharges[vendorId] = { shippingCost, taxAmount, subtotal: vendorSubtotal };
+        const shippingCost =
+          rate.freeShippingThreshold != null && vendorSubtotal >= rate.freeShippingThreshold
+            ? 0
+            : rate.cost;
+        const categoryId = items[0]!.variant.product.categoryId;
+        const gstPercentage = await taxService.getGstRate(categoryId);
+        const vendor = vendorMap[vendorId];
+        const commissionRate = await categoriesService.resolveCommissionRate(
+          categoryId,
+          vendor?.commissionRate,
+          settings.defaultCommissionRate,
+        );
+        shippingByVendor[vendorId] = shippingCost;
         shippingTotal += shippingCost;
-        taxTotal += taxAmount;
+        vendorPrep[vendorId] = { items, shippingCost, gstPercentage, commissionRate };
       }
 
-      const couponCode = data.couponCode ?? cart.couponCode ?? undefined;
-      const shippingByVendor = Object.fromEntries(
-        Object.entries(vendorCharges).map(([id, c]) => [id, c.shippingCost]),
-      );
+      const couponCodes = resolveCheckoutCouponCodes(data, cart);
       let discountTotal = 0;
       let cashbackAmount = 0;
-      let coupon = null as Awaited<ReturnType<typeof validateCoupon>>['coupon'];
+      let coupons: Coupon[] = [];
+      let primaryCoupon: Coupon | null = null;
       let vendorDiscountShares: Record<string, number> = {};
+      let vendorShippingDiscountShares: Record<string, number> = {};
+      let vendorBorneDiscountShares: Record<string, number> = {};
 
-      if (couponCode) {
-        const result = await validateCoupon({
-          code: couponCode,
+      if (couponCodes.length > 0) {
+        const result = await validateCouponSet({
+          codes: couponCodes,
           userId,
           lines: toCouponLines(cart.items),
           shippingTotal,
@@ -365,15 +451,53 @@ export class CheckoutService {
         }
         discountTotal = result.discount;
         cashbackAmount = result.cashbackAmount;
-        coupon = result.coupon;
+        coupons = result.coupons;
+        primaryCoupon = result.primaryCoupon;
         vendorDiscountShares = result.vendorDiscountShares;
+        vendorShippingDiscountShares = result.vendorShippingDiscountShares;
+        vendorBorneDiscountShares = result.vendorBorneDiscountShares;
+      }
+
+      let customerGrandTotalPaise = 0;
+      const pricedByVendor: Record<
+        string,
+        ReturnType<typeof pricingService.computeVendorBreakdown>
+      > = {};
+      const bearerByVendor: Record<string, (typeof DISCOUNT_BEARER)[keyof typeof DISCOUNT_BEARER]> = {};
+
+      for (const [vendorId, prep] of Object.entries(vendorPrep)) {
+        const merchandiseDiscount = vendorDiscountShares[vendorId] ?? 0;
+        const shippingDiscount = vendorShippingDiscountShares[vendorId] ?? 0;
+        const vendorBorne = vendorBorneDiscountShares[vendorId] ?? 0;
+        const bearer = resolveVendorDiscountBearer(vendorBorne, merchandiseDiscount);
+        bearerByVendor[vendorId] = bearer;
+        const priced = pricingService.computeVendorBreakdown({
+          lines: prep.items.map((item) => ({
+            key: item.id,
+            unitPrice: Number(item.variant.price),
+            quantity: Number(item.quantity),
+          })),
+          merchandiseDiscount,
+          vendorBorneMerchandiseDiscount: vendorBorne,
+          shippingDiscount,
+          shippingCost: prep.shippingCost,
+          gstPercentage: prep.gstPercentage,
+          vendorStateCode: vendorOriginState(vendorMap[vendorId]),
+          shippingStateCode: shippingAddress.state,
+          commissionRatePercent: prep.commissionRate,
+          discountBearer: bearer,
+          tcsRatePercent: settings.tcsRatePercent,
+        });
+        pricedByVendor[vendorId] = priced;
+        customerGrandTotalPaise += priced.paise.customerTotalPaise;
       }
 
       const orderRow = await Order.create({
         userId,
         shippingAddressId: data.shippingAddressId,
-        couponId: coupon?.id ?? null,
-        totalAmount: subtotal + shippingTotal + taxTotal - discountTotal,
+        couponId: primaryCoupon?.id ?? null,
+        appliedCouponIds: coupons.map((c) => c.id),
+        totalAmount: fromPaise(customerGrandTotalPaise),
         discountTotal,
         status: ORDER_STATUS.PENDING,
         paymentStatus: PAYMENT_STATUS.PENDING,
@@ -381,42 +505,69 @@ export class CheckoutService {
         razorpayPaymentId: null,
       }, { transaction: t });
 
-      const bearer = resolveDiscountBearer(coupon);
-
-      for (const [vendorId, items] of Object.entries(itemsByVendor)) {
-        const charges = vendorCharges[vendorId]!;
-        const subOrderTotal = charges.subtotal;
-        const discountAmount = vendorDiscountShares[vendorId] ?? 0;
-
-        const vendor = vendorMap[vendorId];
-        const categoryId = items[0]!.variant.product.categoryId;
-        const commissionRate = await categoriesService.resolveCommissionRate(
-          categoryId,
-          vendor?.commissionRate,
-          settings.defaultCommissionRate,
-        );
-        const saleAmount = commissionSaleAmount(subOrderTotal, discountAmount, bearer);
-        const commissionAmount = saleAmount * (commissionRate / 100);
+      for (const [vendorId, prep] of Object.entries(vendorPrep)) {
+        const priced = pricedByVendor[vendorId]!;
+        const r = priced.rupees;
+        const p = priced.paise;
+        const bearer = bearerByVendor[vendorId] ?? DISCOUNT_BEARER.PLATFORM;
 
         const subOrder = await SubOrder.create({
           orderId: orderRow.id,
           vendorId: vendorId === 'platform' ? null : vendorId,
           status: ORDER_STATUS.PENDING,
-          subtotal: subOrderTotal,
-          shippingCost: charges.shippingCost,
-          taxAmount: charges.taxAmount,
-          discountAmount,
-          commissionAmount,
+          subtotal: r.subtotal,
+          shippingCost: r.shippingCost,
+          shippingDiscountAmount: r.shippingDiscount,
+          taxAmount: r.tax.total,
+          taxableAmount: r.taxableAmount,
+          taxBreakdown: r.tax,
+          discountAmount: r.merchandiseDiscount,
+          commissionAmount: r.commissionAmount,
+          tcsAmount: r.tcsAmount,
+          netPayoutAmount: r.netPayout,
+          subtotalPaise: p.subtotalPaise,
+          shippingCostPaise: p.shippingCostPaise,
+          shippingDiscountAmountPaise: p.shippingDiscountPaise,
+          taxAmountPaise: p.tax.total,
+          taxableAmountPaise: p.taxablePaise,
+          discountAmountPaise: p.merchandiseDiscountPaise,
+          commissionAmountPaise: p.commissionPaise,
+          tcsAmountPaise: p.tcsPaise,
+          netPayoutAmountPaise: p.netPayoutPaise,
+          roundingAdjustmentPaise: p.roundingAdjustmentPaise,
           trackingId: null,
         }, { transaction: t });
 
-        for (const item of items) {
+        const lineByKey = Object.fromEntries(
+          priced.paise.lines.map((row) => [row.key, row]),
+        );
+        const lineRupeesByKey = Object.fromEntries(
+          priced.rupees.lines.map((row) => [row.key, row]),
+        );
+
+        for (const item of prep.items) {
+          const linePaise = lineByKey[item.id]!;
+          const lineRupees = lineRupeesByKey[item.id]!;
           await OrderItem.create({
             subOrderId: subOrder.id,
             variantId: item.variantId,
             productName: item.variant.product.name,
             quantity: item.quantity,
             unitPrice: Number(item.variant.price),
+            discountAmount: lineRupees.discountAmount,
+            taxableAmount: lineRupees.taxableAmount,
+            taxAmount: lineRupees.tax.total,
+            taxBreakdown: lineRupees.tax,
+            commissionAmount: lineRupees.commissionAmount,
+            tcsAmount: lineRupees.tcsAmount,
+            netPayoutAmount: lineRupees.netPayout,
+            unitPricePaise: linePaise.unitPricePaise,
+            discountAmountPaise: linePaise.discountPaise,
+            taxableAmountPaise: linePaise.taxablePaise,
+            taxAmountPaise: linePaise.tax.total,
+            commissionAmountPaise: linePaise.commissionPaise,
+            tcsAmountPaise: linePaise.tcsPaise,
+            netPayoutAmountPaise: linePaise.netPayoutPaise,
           }, { transaction: t });
 
           await item.variant.decrement('stock', {
@@ -429,36 +580,69 @@ export class CheckoutService {
           await CommissionLedger.create({
             vendorId,
             subOrderId: subOrder.id,
-            saleAmount,
-            commissionRate,
-            commissionAmount,
+            saleAmount: r.commissionBase,
+            commissionRate: prep.commissionRate,
+            commissionAmount: r.commissionAmount,
+            taxableAmount: r.taxableAmount,
+            discountAmount: r.merchandiseDiscount,
+            discountBearer: bearer,
+            taxAmount: r.tax.total,
+            tcsAmount: r.tcsAmount,
+            netPayoutAmount: r.netPayout,
+            shippingCollected: r.shippingCharged,
+            saleAmountPaise: p.commissionBasePaise,
+            commissionAmountPaise: p.commissionPaise,
+            taxableAmountPaise: p.taxablePaise,
+            discountAmountPaise: p.merchandiseDiscountPaise,
+            taxAmountPaise: p.tax.total,
+            tcsAmountPaise: p.tcsPaise,
+            netPayoutAmountPaise: p.netPayoutPaise,
+            shippingCollectedPaise: p.shippingChargedPaise,
             status: COMMISSION_STATUS.PENDING,
           }, { transaction: t });
+
+          if (p.tcsPaise > 0) {
+            await TcsLedger.create({
+              orderId: orderRow.id,
+              subOrderId: subOrder.id,
+              vendorId,
+              taxableAmountPaise: p.taxablePaise,
+              ratePercent: settings.tcsRatePercent,
+              tcsAmountPaise: p.tcsPaise,
+              createdBy: userId,
+              updatedBy: userId,
+              deletedBy: null,
+            }, { transaction: t });
+          }
         }
       }
 
       // Usage is webhook-driven for Razorpay. COD has no webhook — record on place.
-      if (coupon && data.paymentMethod === PAYMENT_METHOD.COD) {
-        await recordCouponUsage({
-          couponId: coupon.id,
-          userId,
-          orderId: orderRow.id,
-          discountApplied: discountTotal,
-          actorId: userId,
-          transaction: t,
-        });
-        if (cashbackAmount > 0) {
-          await creditCashbackIfNeeded({
-            coupon,
+      if (coupons.length > 0 && data.paymentMethod === PAYMENT_METHOD.COD) {
+        const perCouponDiscount =
+          coupons.length > 0 ? discountTotal / coupons.length : 0;
+        for (const coupon of coupons) {
+          await recordCouponUsage({
+            couponId: coupon.id,
             userId,
             orderId: orderRow.id,
-            cashbackAmount,
+            discountApplied: perCouponDiscount,
+            actorId: userId,
             transaction: t,
           });
+          if (cashbackAmount > 0 && coupon.type === 'CASHBACK') {
+            await creditCashbackIfNeeded({
+              coupon,
+              userId,
+              orderId: orderRow.id,
+              cashbackAmount,
+              transaction: t,
+            });
+          }
         }
       }
 
-      await cart.update({ couponCode: null }, { transaction: t });
+      await cart.update({ couponCode: null, couponCodes: [] }, { transaction: t });
 
       await CartItem.destroy({
         where: { cartId: cart.id },

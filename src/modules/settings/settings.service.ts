@@ -2,6 +2,10 @@ import { PlatformSetting } from '@database/models/platformSetting.model';
 
 export type PlatformSettingsPayload = {
   defaultCommissionRate: number;
+  /** Marketplace TCS percent on taxable value (0 disables). */
+  tcsRatePercent: number;
+  /** TDS u/s 194-O percent on taxable value at payout (0 disables). */
+  tdsRatePercent: number;
   autoApproveProducts: boolean;
   defaultReturnWindow: number;
   payoutCycle: string;
@@ -14,6 +18,8 @@ const SETTINGS_KEY = 'platform';
 
 const DEFAULTS: PlatformSettingsPayload = {
   defaultCommissionRate: 10,
+  tcsRatePercent: 1,
+  tdsRatePercent: 1,
   autoApproveProducts: false,
   defaultReturnWindow: 7,
   payoutCycle: 'WEEKLY',

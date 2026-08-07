@@ -7,9 +7,24 @@ export class SubOrder extends Model<InferAttributes<SubOrder>, InferCreationAttr
   declare status: 'PENDING' | 'CONFIRMED' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED' | 'RETURNED';
   declare subtotal: number;
   declare shippingCost: CreationOptional<number>;
+  declare shippingDiscountAmount: CreationOptional<number>;
   declare taxAmount: CreationOptional<number>;
+  declare taxableAmount: CreationOptional<number>;
+  declare taxBreakdown: CreationOptional<Record<string, unknown> | null>;
   declare discountAmount: CreationOptional<number>;
   declare commissionAmount: CreationOptional<number>;
+  declare tcsAmount: CreationOptional<number>;
+  declare netPayoutAmount: CreationOptional<number>;
+  declare subtotalPaise: CreationOptional<number>;
+  declare shippingCostPaise: CreationOptional<number>;
+  declare shippingDiscountAmountPaise: CreationOptional<number>;
+  declare taxAmountPaise: CreationOptional<number>;
+  declare taxableAmountPaise: CreationOptional<number>;
+  declare discountAmountPaise: CreationOptional<number>;
+  declare commissionAmountPaise: CreationOptional<number>;
+  declare tcsAmountPaise: CreationOptional<number>;
+  declare netPayoutAmountPaise: CreationOptional<number>;
+  declare roundingAdjustmentPaise: CreationOptional<number>;
   declare trackingId: string | null;
   declare createdBy: string | null;
   declare updatedBy: string | null;
@@ -23,6 +38,7 @@ export class SubOrder extends Model<InferAttributes<SubOrder>, InferCreationAttr
     SubOrder.belongsTo(models.Vendor, { as: 'vendor', foreignKey: 'vendorId' });
     SubOrder.hasMany(models.OrderItem, { foreignKey: 'subOrderId', as: 'items' });
     SubOrder.hasOne(models.Shipment, { foreignKey: 'subOrderId', as: 'shipment' });
+    SubOrder.hasOne(models.CommissionLedger, { foreignKey: 'subOrderId' });
   }
 }
 
@@ -38,9 +54,24 @@ export const initSubOrderModel = (sequelize: Sequelize) => {
       },
       subtotal: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
       shippingCost: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      shippingDiscountAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       taxAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      taxableAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      taxBreakdown: { type: DataTypes.JSONB, allowNull: true },
       discountAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       commissionAmount: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
+      tcsAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      netPayoutAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      subtotalPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      shippingCostPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      shippingDiscountAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      taxAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      taxableAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      discountAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      commissionAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      tcsAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      netPayoutAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      roundingAdjustmentPaise: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
       trackingId: { type: DataTypes.STRING, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
