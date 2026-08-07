@@ -31,6 +31,12 @@ export class Product extends Model<InferAttributes<Product>, InferCreationAttrib
     Product.belongsTo(models.Category, { foreignKey: 'categoryId' });
     Product.hasMany(models.ProductVariant, { foreignKey: 'productId', as: 'variants' });
     Product.hasMany(models.ProductImage, { foreignKey: 'productId', as: 'images' });
+    Product.belongsToMany(models.Category, {
+      through: models.ProductCategory,
+      as: 'secondaryCategories',
+      foreignKey: 'productId',
+      otherKey: 'categoryId',
+    });
 
     // Customer-facing catalog rule — define once; every shopper query uses this scope.
     Product.addScope('customerVisible', {

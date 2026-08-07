@@ -59,22 +59,25 @@ export class TaxService {
   }
 
   /**
-   * Get GST rate for a category, falling back to platform default
+   * Get GST rate for a category, walking parents when the leaf has no override.
    */
   async getGstRate(categoryId?: string): Promise<number> {
     if (categoryId) {
-      const categoryRule = await taxRepository.findByCategory(categoryId);
-      if (categoryRule) {
-        return Number(categoryRule.gstPercentage);
+      const { categoriesService } = await import('../categories/categories.service');
+      const chain = await categoriesService.walkCategoryAncestors(categoryId);
+      for (const node of chain) {
+        const categoryRule = await taxRepository.findByCategory(node.id);
+        if (categoryRule) {
+          return Number(categoryRule.gstPercentage);
+        }
       }
     }
-    
+
     const defaultRule = await taxRepository.findDefault();
     if (defaultRule) {
       return Number(defaultRule.gstPercentage);
     }
-    
-    // Default GST rate if no rules exist
+
     return 18.0;
   }
 

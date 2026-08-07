@@ -12,6 +12,10 @@ export class Category extends Model<InferAttributes<Category>, InferCreationAttr
   declare imageUrl: string | null;
   declare parentId: string | null;
   declare status: CreationOptional<CategoryStatus>;
+  declare displayOrder: CreationOptional<number>;
+  declare seoTitle: string | null;
+  declare seoDescription: string | null;
+  declare commissionRate: number | null;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -23,6 +27,16 @@ export class Category extends Model<InferAttributes<Category>, InferCreationAttr
     Category.belongsTo(models.Category, { as: 'parent', foreignKey: 'parentId' });
     Category.hasMany(models.Category, { as: 'children', foreignKey: 'parentId' });
     Category.hasMany(models.Product, { foreignKey: 'categoryId' });
+    Category.hasMany(models.CategoryAttribute, {
+      as: 'attributes',
+      foreignKey: 'categoryId',
+    });
+    Category.belongsToMany(models.Product, {
+      through: models.ProductCategory,
+      as: 'taggedProducts',
+      foreignKey: 'categoryId',
+      otherKey: 'productId',
+    });
   }
 }
 
@@ -39,6 +53,10 @@ export const initCategoryModel = (sequelize: Sequelize) => {
         allowNull: false,
         defaultValue: CATEGORY_STATUS.ACTIVE,
       },
+      displayOrder: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+      seoTitle: { type: DataTypes.STRING, allowNull: true },
+      seoDescription: { type: DataTypes.TEXT, allowNull: true },
+      commissionRate: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

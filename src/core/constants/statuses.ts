@@ -54,6 +54,18 @@ export const CATEGORY_STATUS = {
 export type CategoryStatus = (typeof CATEGORY_STATUS)[keyof typeof CATEGORY_STATUS];
 export const CATEGORY_STATUS_VALUES = Object.values(CATEGORY_STATUS) as [CategoryStatus, ...CategoryStatus[]];
 
+export const CATEGORY_ATTRIBUTE_TYPE = {
+  ENUM: 'ENUM',
+  RANGE: 'RANGE',
+  BOOLEAN: 'BOOLEAN',
+} as const;
+export type CategoryAttributeType =
+  (typeof CATEGORY_ATTRIBUTE_TYPE)[keyof typeof CATEGORY_ATTRIBUTE_TYPE];
+export const CATEGORY_ATTRIBUTE_TYPE_VALUES = Object.values(CATEGORY_ATTRIBUTE_TYPE) as [
+  CategoryAttributeType,
+  ...CategoryAttributeType[],
+];
+
 export const PROMO_BANNER_STATUS = {
   DRAFT: 'DRAFT',
   ACTIVE: 'ACTIVE',

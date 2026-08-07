@@ -19,6 +19,8 @@ const reviewCountLiteral = [
 
 type ProductListFilters = {
   categoryId?: string;
+  categoryIds?: string[];
+  productIds?: string[];
   vendorId?: string;
   status?: ProductStatus;
   search?: string;
@@ -30,10 +32,33 @@ type ProductListFilters = {
   offset: number;
 };
 
+const categoryWithAncestors = {
+  model: Category,
+  include: [
+    {
+      association: 'parent',
+      required: false,
+      include: [
+        {
+          association: 'parent',
+          required: false,
+        },
+      ],
+    },
+  ],
+} as const;
+
 function buildListWhere(filters: ProductListFilters) {
   const where: any = {};
 
-  if (filters.categoryId) where.categoryId = filters.categoryId;
+  if (filters.productIds?.length) {
+    where.id = { [Op.in]: filters.productIds };
+  }
+  if (filters.categoryIds?.length) {
+    where.categoryId = { [Op.in]: filters.categoryIds };
+  } else if (filters.categoryId) {
+    where.categoryId = filters.categoryId;
+  }
   if (filters.vendorId) where.vendorId = filters.vendorId;
   if (filters.status) where.status = filters.status;
 
@@ -81,7 +106,7 @@ export class ProductsRepository extends BaseRepository<Product> {
       col: 'id',
       attributes: { include: [reviewCountLiteral] },
       include: [
-        { model: Category },
+        categoryWithAncestors as any,
         { model: Vendor, as: 'vendor' },
         'variants',
         'images',
@@ -106,7 +131,7 @@ export class ProductsRepository extends BaseRepository<Product> {
       distinct: true,
       col: 'id',
       attributes: { include: [reviewCountLiteral] },
-      include: [{ model: Category }, 'variants', 'images'],
+      include: [categoryWithAncestors as any, 'variants', 'images'],
       order: buildListOrder(filters.sort) as any,
     });
   }
@@ -116,7 +141,7 @@ export class ProductsRepository extends BaseRepository<Product> {
       where: { slug },
       attributes: { include: [reviewCountLiteral] },
       include: [
-        { model: Category },
+        categoryWithAncestors as any,
         { model: Vendor, as: 'vendor' },
         'variants',
         'images',
@@ -127,7 +152,7 @@ export class ProductsRepository extends BaseRepository<Product> {
   async findVisibleById(id: string) {
     return Product.scope('customerVisible').findByPk(id, {
       attributes: { include: [reviewCountLiteral] },
-      include: [{ model: Category }, 'variants', 'images'],
+      include: [categoryWithAncestors as any, 'variants', 'images'],
     });
   }
 
@@ -135,7 +160,7 @@ export class ProductsRepository extends BaseRepository<Product> {
     return Product.scope('customerVisible').findOne({
       where: { slug },
       attributes: { include: [reviewCountLiteral] },
-      include: [{ model: Category }, 'variants', 'images'],
+      include: [categoryWithAncestors as any, 'variants', 'images'],
     });
   }
 

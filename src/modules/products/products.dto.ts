@@ -18,18 +18,24 @@ export const UpdateProductSchema = z.object({
   tags: z.array(z.string()).optional(),
 });
 
-export const GetProductsQuerySchema = z.object({
-  page: z.coerce.number().int().positive().default(1),
-  limit: z.coerce.number().int().positive().max(MAX_PAGE_LIMIT).default(DEFAULT_PAGE_LIMIT),
-  categoryId: z.string().uuid().optional(),
-  vendorId: z.string().uuid().optional(),
-  status: z.enum(PRODUCT_STATUS_VALUES).optional(),
-  search: z.string().optional(),
-  minPrice: z.coerce.number().optional(),
-  maxPrice: z.coerce.number().optional(),
-  rating: z.coerce.number().min(1).max(5).optional(),
-  sort: z.enum(['trending', 'price_asc', 'price_desc', 'newest', 'rating', 'popular']).optional(),
-});
+export const GetProductsQuerySchema = z
+  .object({
+    page: z.coerce.number().int().positive().default(1),
+    limit: z.coerce.number().int().positive().max(MAX_PAGE_LIMIT).default(DEFAULT_PAGE_LIMIT),
+    categoryId: z.string().uuid().optional(),
+    vendorId: z.string().uuid().optional(),
+    status: z.enum(PRODUCT_STATUS_VALUES).optional(),
+    search: z.string().optional(),
+    minPrice: z.coerce.number().optional(),
+    maxPrice: z.coerce.number().optional(),
+    rating: z.coerce.number().min(1).max(5).optional(),
+    sort: z.enum(['trending', 'price_asc', 'price_desc', 'newest', 'rating', 'popular']).optional(),
+    includeDescendants: z
+      .union([z.literal('true'), z.literal('false'), z.boolean()])
+      .optional()
+      .transform((value) => value === true || value === 'true'),
+  })
+  .passthrough();
 
 export const ApproveProductSchema = z.object({});
 

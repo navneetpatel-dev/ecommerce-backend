@@ -12,6 +12,7 @@ import { ProductImage } from '@database/models/productImage.model';
 import { Review } from '@database/models/review.model';
 import { Product } from '@database/models/product.model';
 import { sequelize } from '@database/models';
+import { categoriesService } from '@modules/categories/categories.service';
 import type {
   CreateProductRequest,
   UpdateProductRequest,
@@ -60,11 +61,13 @@ export class ProductsService {
   async createProduct(vendorId: string | null, data: CreateProductRequest) {
     return sequelize.transaction(async (t) => {
       const slug = generateSlug(data.name);
-      
+
       const existing = await productsRepository.findBySlug(slug);
       if (existing) {
         throw new ValidationError(ERROR_MESSAGES.PRODUCT_NAME_EXISTS);
       }
+
+      await categoriesService.assertActiveCategory(data.categoryId, t);
 
       const product = await productsRepository.create({
         ...data,
@@ -78,10 +81,44 @@ export class ProductsService {
     });
   }
 
-  async getProducts(query: GetProductsQuery, options: { customerFacing?: boolean } = {}) {
+  async getProducts(
+    query: GetProductsQuery,
+    options: {
+      customerFacing?: boolean;
+      includeDescendants?: boolean;
+      attributeFilters?: Record<string, string[]>;
+    } = {},
+  ) {
     const offset = paginationOffset(query.page, query.limit);
+    let categoryIds: string[] | undefined;
+    if (query.categoryId && options.includeDescendants) {
+      const { categoriesRepository } = await import('../categories/categories.repository');
+      categoryIds = await categoriesRepository.findDescendantIds(query.categoryId);
+    }
+
+    let productIds: string[] | undefined;
+    const attributeFilters = options.attributeFilters ?? {};
+    if (query.categoryId && Object.keys(attributeFilters).length > 0) {
+      const ids = await categoriesService.findVisibleProductIdsForFacets(
+        categoryIds ?? [query.categoryId],
+        query.categoryId,
+        attributeFilters,
+      );
+      if (ids !== null) {
+        if (ids.length === 0) {
+          return {
+            products: [],
+            pagination: buildPaginationMeta(0, query.page, query.limit),
+          };
+        }
+        productIds = ids;
+      }
+    }
+
     const filters = {
-      categoryId: query.categoryId,
+      categoryId: categoryIds ? undefined : query.categoryId,
+      categoryIds,
+      productIds,
       vendorId: query.vendorId,
       status: query.status,
       search: query.search,
@@ -109,7 +146,21 @@ export class ProductsService {
     const product = options.customerFacing
       ? await productsRepository.findVisibleById(id)
       : await productsRepository.findById(id, {
-          include: ['variants', 'images', { model: Category }, { model: Vendor, as: 'vendor' }],
+          include: [
+            'variants',
+            'images',
+            {
+              model: Category,
+              include: [
+                {
+                  association: 'parent',
+                  required: false,
+                  include: [{ association: 'parent', required: false }],
+                },
+              ],
+            },
+            { model: Vendor, as: 'vendor' },
+          ],
         });
     if (!product) throw new NotFoundError('Product');
     const reviewCount = await Review.count({
@@ -133,6 +184,10 @@ export class ProductsService {
 
       if (vendorId && product.vendorId !== vendorId) {
         throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_PRODUCT);
+      }
+
+      if (data.categoryId) {
+        await categoriesService.assertActiveCategory(data.categoryId, t);
       }
 
       const updateData: any = { ...data };

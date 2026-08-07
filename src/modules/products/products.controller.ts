@@ -30,10 +30,42 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
   res.status(201).json(ok(product));
 });
 
+const PRODUCT_LIST_QUERY_KEYS = new Set([
+  'page',
+  'limit',
+  'categoryId',
+  'vendorId',
+  'status',
+  'search',
+  'minPrice',
+  'maxPrice',
+  'rating',
+  'sort',
+  'includeDescendants',
+]);
+
+function extractAttributeFilters(query: Request['query']): Record<string, string[]> {
+  const selected: Record<string, string[]> = {};
+  for (const [key, value] of Object.entries(query)) {
+    if (PRODUCT_LIST_QUERY_KEYS.has(key)) continue;
+    if (typeof value === 'string' && value.length) {
+      selected[key] = value.split(',').map((part) => part.trim()).filter(Boolean);
+    } else if (Array.isArray(value)) {
+      selected[key] = value
+        .flatMap((part) => String(part).split(','))
+        .map((part) => part.trim())
+        .filter(Boolean);
+    }
+  }
+  return selected;
+}
+
 export const getProducts = asyncHandler(async (req: Request, res: Response) => {
   const query = GetProductsQuerySchema.parse(req.query);
   const result = await productsService.getProducts(query, {
     customerFacing: !isCatalogModerator(req),
+    includeDescendants: Boolean(query.includeDescendants),
+    attributeFilters: extractAttributeFilters(req.query),
   });
   res.json(ok(result.products, { pagination: result.pagination }));
 });

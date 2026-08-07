@@ -19,6 +19,7 @@ import { cartService } from '@modules/cart/cart.service';
 import { getRatesForQuote } from '@modules/shipping/shipping.service';
 import { taxService } from '@modules/tax/tax.service';
 import { settingsService } from '@modules/settings/settings.service';
+import { categoriesService } from '@modules/categories/categories.service';
 import { resolveItemAvailability } from '@core/catalog/customerVisibility';
 import type {
   CancelCheckoutRequest,
@@ -361,7 +362,12 @@ export class CheckoutService {
         const subOrderTotal = charges.subtotal;
 
         const vendor = vendorMap[vendorId];
-        const commissionRate = Number(vendor?.commissionRate ?? settings.defaultCommissionRate);
+        const categoryId = items[0]!.variant.product.categoryId;
+        const commissionRate = await categoriesService.resolveCommissionRate(
+          categoryId,
+          vendor?.commissionRate,
+          settings.defaultCommissionRate,
+        );
         const commissionAmount = subOrderTotal * (commissionRate / 100);
 
         const subOrder = await SubOrder.create({
