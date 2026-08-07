@@ -51,6 +51,8 @@ export const ERROR_MESSAGES = {
   CATEGORY_INACTIVE: 'Category must be active to assign products',
   CATEGORY_REASSIGN_SAME: 'Source and target categories must be different',
   CATEGORY_ATTRIBUTE_EXISTS: 'An attribute with this name already exists on the category',
+  CATEGORY_SECONDARY_INVALID:
+    'Secondary categories must be active and different from the primary category',
   ITEMS_UNAVAILABLE: 'Some items in your cart are no longer available',
   VENDOR_UNAVAILABLE: 'This seller is currently unavailable',
   COUPON_INACTIVE: 'Coupon is not active',

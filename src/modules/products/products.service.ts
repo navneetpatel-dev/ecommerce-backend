@@ -11,8 +11,10 @@ import { ProductVariant } from '@database/models/productVariant.model';
 import { ProductImage } from '@database/models/productImage.model';
 import { Review } from '@database/models/review.model';
 import { Product } from '@database/models/product.model';
+import { ProductCategory } from '@database/models/productCategory.model';
 import { sequelize } from '@database/models';
 import { categoriesService } from '@modules/categories/categories.service';
+import type { Transaction } from 'sequelize';
 import type {
   CreateProductRequest,
   UpdateProductRequest,
@@ -40,10 +42,17 @@ function mapProductResponse(product: Product, reviewCount = 0) {
     stock: Number(variant.stock ?? 0),
   }));
   const stockFromVariants = variants.reduce((sum: number, variant: { stock: number }) => sum + variant.stock, 0);
+  const secondaryCategories = (plain.secondaryCategories ?? []).map((category: any) => ({
+    id: category.id,
+    name: category.name,
+    slug: category.slug,
+    status: category.status,
+  }));
 
   return {
     ...plain,
     variants,
+    secondaryCategories,
     basePrice: Number(plain.basePrice ?? 0),
     avgRating: Number(plain.avgRating ?? 0),
     reviewCount: Number(plain.reviewCount ?? reviewCount ?? 0),
@@ -57,10 +66,31 @@ function mapProductResponse(product: Product, reviewCount = 0) {
   };
 }
 
+async function syncSecondaryCategories(
+  productId: string,
+  primaryCategoryId: string,
+  secondaryCategoryIds: string[],
+  transaction: Transaction,
+) {
+  const uniqueIds = [...new Set(secondaryCategoryIds.filter((id) => id !== primaryCategoryId))];
+  for (const categoryId of uniqueIds) {
+    await categoriesService.assertActiveCategory(categoryId, transaction);
+  }
+
+  await ProductCategory.destroy({ where: { productId }, transaction, force: true });
+  if (!uniqueIds.length) return;
+
+  await ProductCategory.bulkCreate(
+    uniqueIds.map((categoryId) => ({ productId, categoryId })),
+    { transaction },
+  );
+}
+
 export class ProductsService {
   async createProduct(vendorId: string | null, data: CreateProductRequest) {
     return sequelize.transaction(async (t) => {
       const slug = generateSlug(data.name);
+      const { secondaryCategoryIds = [], ...productFields } = data;
 
       const existing = await productsRepository.findBySlug(slug);
       if (existing) {
@@ -70,14 +100,16 @@ export class ProductsService {
       await categoriesService.assertActiveCategory(data.categoryId, t);
 
       const product = await productsRepository.create({
-        ...data,
+        ...productFields,
         slug,
         vendorId,
         status: PRODUCT_STATUS.DRAFT,
         avgRating: 0,
       }, { transaction: t });
 
-      return product;
+      await syncSecondaryCategories(product.id, data.categoryId, secondaryCategoryIds, t);
+
+      return this.getProductById(product.id);
     });
   }
 
@@ -89,6 +121,11 @@ export class ProductsService {
       attributeFilters?: Record<string, string[]>;
     } = {},
   ) {
+    // Category-driven browse must not surface ARCHIVED taxonomy nodes.
+    if (options.customerFacing && query.categoryId) {
+      await categoriesService.assertBrowseableCategory(query.categoryId);
+    }
+
     const offset = paginationOffset(query.page, query.limit);
     let categoryIds: string[] | undefined;
     if (query.categoryId && options.includeDescendants) {
@@ -159,6 +196,12 @@ export class ProductsService {
                 },
               ],
             },
+            {
+              association: 'secondaryCategories',
+              attributes: ['id', 'name', 'slug', 'status'],
+              through: { attributes: [] },
+              required: false,
+            },
             { model: Vendor, as: 'vendor' },
           ],
         });
@@ -186,14 +229,16 @@ export class ProductsService {
         throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_PRODUCT);
       }
 
-      if (data.categoryId) {
-        await categoriesService.assertActiveCategory(data.categoryId, t);
+      const { secondaryCategoryIds, ...productFields } = data;
+
+      if (productFields.categoryId) {
+        await categoriesService.assertActiveCategory(productFields.categoryId, t);
       }
 
-      const updateData: any = { ...data };
+      const updateData: Record<string, unknown> = { ...productFields };
 
-      if (data.name) {
-        const slug = generateSlug(data.name);
+      if (productFields.name) {
+        const slug = generateSlug(productFields.name);
         const existing = await productsRepository.findBySlug(slug);
         if (existing && existing.id !== id) {
           throw new ValidationError(ERROR_MESSAGES.PRODUCT_NAME_EXISTS);
@@ -201,7 +246,15 @@ export class ProductsService {
         updateData.slug = slug;
       }
 
-      await productsRepository.update(id, updateData, { transaction: t });
+      if (Object.keys(updateData).length) {
+        await productsRepository.update(id, updateData, { transaction: t });
+      }
+
+      if (secondaryCategoryIds !== undefined) {
+        const primaryCategoryId = productFields.categoryId ?? product.categoryId;
+        await syncSecondaryCategories(id, primaryCategoryId, secondaryCategoryIds, t);
+      }
+
       return this.getProductById(id);
     });
   }

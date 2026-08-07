@@ -48,6 +48,13 @@ const categoryWithAncestors = {
   ],
 } as const;
 
+const secondaryCategoriesInclude = {
+  association: 'secondaryCategories',
+  attributes: ['id', 'name', 'slug', 'status'],
+  through: { attributes: [] },
+  required: false,
+} as const;
+
 function buildListWhere(filters: ProductListFilters) {
   const where: any = {};
 
@@ -107,6 +114,7 @@ export class ProductsRepository extends BaseRepository<Product> {
       attributes: { include: [reviewCountLiteral] },
       include: [
         categoryWithAncestors as any,
+        secondaryCategoriesInclude as any,
         { model: Vendor, as: 'vendor' },
         'variants',
         'images',
@@ -131,7 +139,12 @@ export class ProductsRepository extends BaseRepository<Product> {
       distinct: true,
       col: 'id',
       attributes: { include: [reviewCountLiteral] },
-      include: [categoryWithAncestors as any, 'variants', 'images'],
+      include: [
+        categoryWithAncestors as any,
+        secondaryCategoriesInclude as any,
+        'variants',
+        'images',
+      ],
       order: buildListOrder(filters.sort) as any,
     });
   }
@@ -142,6 +155,7 @@ export class ProductsRepository extends BaseRepository<Product> {
       attributes: { include: [reviewCountLiteral] },
       include: [
         categoryWithAncestors as any,
+        secondaryCategoriesInclude as any,
         { model: Vendor, as: 'vendor' },
         'variants',
         'images',
@@ -152,7 +166,12 @@ export class ProductsRepository extends BaseRepository<Product> {
   async findVisibleById(id: string) {
     return Product.scope('customerVisible').findByPk(id, {
       attributes: { include: [reviewCountLiteral] },
-      include: [categoryWithAncestors as any, 'variants', 'images'],
+      include: [
+        categoryWithAncestors as any,
+        secondaryCategoriesInclude as any,
+        'variants',
+        'images',
+      ],
     });
   }
 
@@ -160,7 +179,12 @@ export class ProductsRepository extends BaseRepository<Product> {
     return Product.scope('customerVisible').findOne({
       where: { slug },
       attributes: { include: [reviewCountLiteral] },
-      include: [categoryWithAncestors as any, 'variants', 'images'],
+      include: [
+        categoryWithAncestors as any,
+        secondaryCategoriesInclude as any,
+        'variants',
+        'images',
+      ],
     });
   }
 

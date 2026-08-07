@@ -58,6 +58,21 @@ async function getCategoryDepth(categoryId: string | null, transaction?: Transac
   return depth;
 }
 
+/** Height of a subtree rooted at categoryId (leaf = 1). */
+async function getSubtreeHeight(categoryId: string, transaction?: Transaction): Promise<number> {
+  const children = await Category.findAll({
+    where: { parentId: categoryId },
+    attributes: ['id'],
+    transaction,
+  });
+  if (!children.length) return 1;
+  let maxChild = 0;
+  for (const child of children) {
+    maxChild = Math.max(maxChild, await getSubtreeHeight(child.id, transaction));
+  }
+  return 1 + maxChild;
+}
+
 async function assertValidParent(
   categoryId: string | null,
   parentId: string,
@@ -81,7 +96,8 @@ async function assertValidParent(
   }
 
   const parentDepth = await getCategoryDepth(parentId, transaction);
-  if (parentDepth >= MAX_CATEGORY_DEPTH) {
+  const subtreeHeight = categoryId ? await getSubtreeHeight(categoryId, transaction) : 1;
+  if (parentDepth + subtreeHeight > MAX_CATEGORY_DEPTH) {
     throw new ValidationError(ERROR_MESSAGES.CATEGORY_MAX_DEPTH);
   }
 }
@@ -144,6 +160,11 @@ export class CategoriesService {
       throw new ValidationError(ERROR_MESSAGES.CATEGORY_INACTIVE);
     }
     return category;
+  }
+
+  /** Customer category browse — missing or ARCHIVED looks like not found. */
+  async assertBrowseableCategory(categoryId: string) {
+    return this.findActiveCategoryByIdOrSlug(categoryId);
   }
 
   async createCategory(data: CreateCategoryRequest) {
@@ -241,7 +262,9 @@ export class CategoriesService {
       parentId = current.id;
     }
 
-    const withAttrs = await categoriesRepository.findWithChildren(current!.id);
+    const withAttrs = await categoriesRepository.findWithChildren(current!.id, {
+      activeChildrenOnly: true,
+    });
     const path = breadcrumb.map((node) => node.slug).join('/');
     return {
       ...serializeCategory(withAttrs ?? current!),

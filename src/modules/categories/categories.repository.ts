@@ -47,13 +47,28 @@ export class CategoriesRepository extends BaseRepository<Category> {
     return this.findActiveTree();
   }
 
-  async findWithChildren(id: string) {
+  async findWithChildren(
+    id: string,
+    options: { activeChildrenOnly?: boolean } = {},
+  ) {
+    const childWhere = options.activeChildrenOnly
+      ? { status: CATEGORY_STATUS.ACTIVE }
+      : undefined;
+
     return this.model.findByPk(id, {
       include: [
         'parent',
         {
           association: 'children',
-          include: ['children'],
+          required: false,
+          where: childWhere,
+          include: [
+            {
+              association: 'children',
+              required: false,
+              where: childWhere,
+            },
+          ],
         },
         {
           association: 'attributes',

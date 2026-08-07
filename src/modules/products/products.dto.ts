@@ -4,6 +4,8 @@ import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from '@core/constants/http';
 
 export const CreateProductSchema = z.object({
   categoryId: z.string().uuid(),
+  /** Optional secondary tags (ProductCategory); canonical categoryId stays primary. */
+  secondaryCategoryIds: z.array(z.string().uuid()).max(20).default([]),
   name: z.string().min(1),
   description: z.string().min(1),
   basePrice: z.number().positive(),
@@ -12,6 +14,7 @@ export const CreateProductSchema = z.object({
 
 export const UpdateProductSchema = z.object({
   categoryId: z.string().uuid().optional(),
+  secondaryCategoryIds: z.array(z.string().uuid()).max(20).optional(),
   name: z.string().min(1).optional(),
   description: z.string().min(1).optional(),
   basePrice: z.number().positive().optional(),

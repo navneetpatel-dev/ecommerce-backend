@@ -390,6 +390,47 @@ module.exports = {
       }
     }
 
+    const tshirtId = leafIds['cs-apparel-tshirts'];
+    if (tshirtId) {
+      const apparelAttrs = [
+        {
+          name: 'Size',
+          type: 'ENUM',
+          options: JSON.stringify(['S', 'M', 'L', 'XL']),
+          displayOrder: 0,
+        },
+        {
+          name: 'Color',
+          type: 'ENUM',
+          options: JSON.stringify(['black', 'white', 'navy']),
+          displayOrder: 1,
+        },
+      ];
+      for (const def of apparelAttrs) {
+        const exists = await hasRow(
+          queryInterface,
+          `SELECT id FROM category_attributes WHERE "categoryId" = '${tshirtId}' AND name = '${def.name}' AND "deletedAt" IS NULL LIMIT 1`,
+        );
+        if (!exists) {
+          await queryInterface.bulkInsert('category_attributes', [
+            {
+              id: randomUUID(),
+              categoryId: tshirtId,
+              name: def.name,
+              type: def.type,
+              options: def.options,
+              displayOrder: def.displayOrder,
+              createdBy: null,
+              updatedBy: null,
+              deletedBy: null,
+              createdAt: stamp,
+              updatedAt: stamp,
+            },
+          ]);
+        }
+      }
+    }
+
     const cookwareId = parentIds['cs-cookware'];
     const taxPairs = [
       { categoryId: cookwareId, gstPercentage: 12, hsnCode: '7323' },
@@ -508,6 +549,40 @@ module.exports = {
           productId,
           url: 'https://images.unsplash.com/photo-1556910103-1c02745aae4d?w=600&fit=crop',
           isPrimary: true,
+          createdAt: stamp,
+          updatedAt: stamp,
+        },
+      ]);
+    }
+
+    // Optional secondary tags (canonical categoryId remains source of truth).
+    const secondaryTags = [
+      { productSlug: 'seed-steel-frying-pan', categorySlug: 'cs-kitchen-storage' },
+      { productSlug: 'seed-stock-pot-basic', categorySlug: 'cs-camp-cooksets' },
+    ];
+    for (const tag of secondaryTags) {
+      const [products] = await queryInterface.sequelize.query(
+        `SELECT id FROM products WHERE slug = '${tag.productSlug}' AND "deletedAt" IS NULL LIMIT 1`,
+      );
+      const [categories] = await queryInterface.sequelize.query(
+        `SELECT id FROM categories WHERE slug = '${tag.categorySlug}' AND "deletedAt" IS NULL LIMIT 1`,
+      );
+      const productId = products[0]?.id;
+      const categoryId = categories[0]?.id;
+      if (!productId || !categoryId) continue;
+      const exists = await hasRow(
+        queryInterface,
+        `SELECT id FROM product_categories WHERE "productId" = '${productId}' AND "categoryId" = '${categoryId}' AND "deletedAt" IS NULL LIMIT 1`,
+      );
+      if (exists) continue;
+      await queryInterface.bulkInsert('product_categories', [
+        {
+          id: randomUUID(),
+          productId,
+          categoryId,
+          createdBy: null,
+          updatedBy: null,
+          deletedBy: null,
           createdAt: stamp,
           updatedAt: stamp,
         },
