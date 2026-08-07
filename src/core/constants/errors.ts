@@ -32,7 +32,8 @@ export const ERROR_CODES = {
   RETURN_INVALID_TRANSITION: 'RETURN_INVALID_TRANSITION',
   RETURN_NOT_RECEIVED: 'RETURN_NOT_RECEIVED',
   RETURN_REFUND_PENDING: 'RETURN_REFUND_PENDING',
-  RETURN_WINDOW_EXPIRED: 'RETURN_WINDOW_EXPIRED',
+  ITEM_MUST_BE_DELIVERED: 'ITEM_MUST_BE_DELIVERED',
+  RETURN_ALREADY_EXISTS: 'RETURN_ALREADY_EXISTS',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -89,6 +90,8 @@ export const ERROR_MESSAGES = {
   RETURN_NOT_RECEIVED: 'Return must be received before it can be closed',
   RETURN_REFUND_PENDING: 'Refund must complete before this action',
   RETURN_WINDOW_EXPIRED: 'The return window for this item has expired',
+  ITEM_MUST_BE_DELIVERED: 'Item must be delivered before requesting a return',
+  RETURN_ALREADY_EXISTS: 'A return already exists for this item',
   SHOP_UNAVAILABLE: 'This shop is currently unavailable',
   NOT_YOUR_VENDOR_REPORT: 'Not your vendor report',
   REPORT_INVALID_RANGE: 'Report date range is invalid',

@@ -1,5 +1,6 @@
 import type { Transaction } from 'sequelize';
 import { sequelize } from '@database/models';
+import { User } from '@database/models/user.model';
 import { WalletLedger } from '@database/models/walletLedger.model';
 import { WalletWriteOff } from '@database/models/walletWriteOff.model';
 import { ValidationError } from '@core/errors/ValidationError';
@@ -17,7 +18,22 @@ function roundRupees(n: number): number {
   return fromPaise(toPaise(n));
 }
 
+/**
+ * Serialize all wallet mutations per user — including when the ledger is empty
+ * (FOR UPDATE on WalletLedger alone cannot lock a missing row).
+ */
+async function acquireUserWalletLock(userId: string, transaction: Transaction): Promise<void> {
+  const user = await User.findByPk(userId, {
+    transaction,
+    lock: transaction.LOCK.UPDATE,
+  });
+  if (!user) {
+    throw new ValidationError(ERROR_MESSAGES.USER_NOT_FOUND_OR_BLOCKED);
+  }
+}
+
 async function lockedBalance(userId: string, transaction: Transaction): Promise<number> {
+  await acquireUserWalletLock(userId, transaction);
   const last = await WalletLedger.findOne({
     where: { userId },
     order: [['createdAt', 'DESC']],

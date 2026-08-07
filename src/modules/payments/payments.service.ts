@@ -245,6 +245,7 @@ export class PaymentsService {
             payment_id: string;
             amount: number;
             status?: string;
+            notes?: Record<string, string> | null;
           };
         };
       };
@@ -327,6 +328,7 @@ export class PaymentsService {
           payment_id: string;
           amount: number;
           status?: string;
+          notes?: Record<string, string> | null;
         }
       | undefined,
   ): Promise<void> {
@@ -334,11 +336,16 @@ export class PaymentsService {
     // Only `refund.processed` flips status — never on create alone.
     if (refund.status && refund.status !== 'processed') return;
 
+    const notes = refund.notes ?? {};
+    const returnRequestId =
+      typeof notes.returnRequestId === 'string' ? notes.returnRequestId : null;
+
     const { returnsService } = await import('@modules/returns/returns.service');
     await returnsService.markRazorpayRefundProcessed({
       razorpayRefundId: refund.id,
       paymentId: refund.payment_id,
       amountPaise: Number(refund.amount ?? 0),
+      returnRequestId,
     });
   }
 }

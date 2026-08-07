@@ -15,6 +15,12 @@ export class Order extends Model<InferAttributes<Order>, InferCreationAttributes
   declare pendingCashbackAmount: CreationOptional<number>;
   declare cashbackCreditedAt: CreationOptional<Date | null>;
   declare cashbackDiscountBearer: CreationOptional<'PLATFORM' | 'VENDOR' | null>;
+  /** Frozen checkout grand total (stable for refund payment-source splits). */
+  declare originalTotalAmount: CreationOptional<number>;
+  /** Razorpay-charged portion at checkout (originalTotal − wallet). */
+  declare razorpayAmountPaid: CreationOptional<number>;
+  /** Vendor that bears VENDOR cashback (coupon.vendorId). */
+  declare cashbackVendorId: CreationOptional<string | null>;
   declare shippingAddressId: string;
   declare razorpayOrderId: string | null;
   declare razorpayPaymentId: string | null;
@@ -52,6 +58,9 @@ export const initOrderModel = (sequelize: Sequelize) => {
       pendingCashbackAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       cashbackCreditedAt: { type: DataTypes.DATE, allowNull: true },
       cashbackDiscountBearer: { type: DataTypes.ENUM('PLATFORM', 'VENDOR'), allowNull: true },
+      originalTotalAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      razorpayAmountPaid: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      cashbackVendorId: { type: DataTypes.UUID, allowNull: true },
       shippingAddressId: { type: DataTypes.UUID, allowNull: false },
       razorpayOrderId: { type: DataTypes.STRING, allowNull: true },
       razorpayPaymentId: { type: DataTypes.STRING, allowNull: true },

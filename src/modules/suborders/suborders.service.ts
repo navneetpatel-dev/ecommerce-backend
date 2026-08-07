@@ -55,9 +55,7 @@ export class SubordersService {
           orderId: order.id,
           orderNumber,
         });
-        void import('@modules/wallet/cashback.service').then(({ creditPendingCashbackForOrder }) =>
-          creditPendingCashbackForOrder(order.id),
-        );
+        // Cashback credit is handled by the delayed scheduler (same pattern as REVIEW_REQUEST).
       }
     }
 

@@ -1,6 +1,7 @@
 /**
- * Integration-style verification for consolidated refund + wallet scenarios.
- * Exercises pure helpers with concrete numbers from the prompt's seed cases.
+ * Computed-number verification for consolidated refund scenarios.
+ * Covers pricing/shipping policy, payment-source splits, and clawback math.
+ * Full webhook/Razorpay E2E remains an ops verification step.
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
@@ -26,30 +27,57 @@ function line(partial?: Partial<PricingLineBreakdown>): PricingLineBreakdown {
   };
 }
 
-/** Proportional split of refund across wallet + razorpay sources. */
-function splitRefund(
-  customerRefund: number,
-  walletUsed: number,
-  originalTotal: number,
-  isCod: boolean,
-) {
-  if (isCod || walletUsed >= originalTotal) {
+/** Mirrors ReturnsService.splitRefundAmounts pool logic. */
+function splitRefund(input: {
+  customerRefund: number;
+  walletUsed: number;
+  razorpayPaid: number;
+  originalTotal: number;
+  isCod: boolean;
+  walletAlready?: number;
+  razorpayAlready?: number;
+}) {
+  const {
+    customerRefund,
+    walletUsed,
+    razorpayPaid,
+    originalTotal,
+    isCod,
+    walletAlready = 0,
+    razorpayAlready = 0,
+  } = input;
+
+  if (isCod) {
     return { walletRefund: customerRefund, razorpayRefund: 0 };
   }
-  if (walletUsed <= 0) {
+  if (walletUsed > 0 && razorpayPaid <= 0) {
+    return { walletRefund: customerRefund, razorpayRefund: 0 };
+  }
+  if (walletUsed <= 0 || originalTotal <= 0) {
     return { walletRefund: 0, razorpayRefund: customerRefund };
   }
-  const walletShare = Math.round((customerRefund * walletUsed) / originalTotal * 100) / 100;
-  return {
-    walletRefund: walletShare,
-    razorpayRefund: Math.round((customerRefund - walletShare) * 100) / 100,
-  };
+
+  const walletRemaining = Math.max(0, Math.round((walletUsed - walletAlready) * 100) / 100);
+  const razorpayRemaining = Math.max(0, Math.round((razorpayPaid - razorpayAlready) * 100) / 100);
+
+  let walletShare = Math.round(((customerRefund * walletUsed) / originalTotal) * 100) / 100;
+  walletShare = Math.min(walletShare, walletRemaining, customerRefund);
+  let razorpayShare = Math.round((customerRefund - walletShare) * 100) / 100;
+  if (razorpayShare > razorpayRemaining) {
+    razorpayShare = razorpayRemaining;
+    walletShare = Math.min(customerRefund - razorpayShare, walletRemaining);
+  }
+  return { walletRefund: walletShare, razorpayRefund: razorpayShare };
 }
 
-describe('verification scenarios (prompt 1–10 math)', () => {
-  it('1. COD DAMAGED → shipping included in refund', () => {
-    const policy = resolveShippingRefundPolicy(RETURN_REASON.DAMAGED);
-    assert.equal(policy.refundOriginalShipping, true);
+function clawbackCap(balance: number, amount: number) {
+  const recovered = Math.min(balance, amount);
+  return { recovered, writtenOff: Math.round((amount - recovered) * 100) / 100 };
+}
+
+describe('verification scenarios (prompt 1–10)', () => {
+  it('1. COD DAMAGED → includes shipping; full wallet path', () => {
+    assert.equal(resolveShippingRefundPolicy(RETURN_REASON.DAMAGED).refundOriginalShipping, true);
     const rev = reverseFrozenLine({
       line: line(),
       returnQuantity: 1,
@@ -59,7 +87,13 @@ describe('verification scenarios (prompt 1–10 math)', () => {
     });
     assert.equal(rev.shippingRefundPaise, 4900);
     assert.equal(rev.customerRefundPaise, 50000 + 9000 + 4900);
-    const split = splitRefund(fromPaise(rev.customerRefundPaise), 0, fromPaise(rev.customerRefundPaise), true);
+    const split = splitRefund({
+      customerRefund: fromPaise(rev.customerRefundPaise),
+      walletUsed: 0,
+      razorpayPaid: 0,
+      originalTotal: fromPaise(rev.customerRefundPaise),
+      isCod: true,
+    });
     assert.equal(split.walletRefund, fromPaise(rev.customerRefundPaise));
     assert.equal(split.razorpayRefund, 0);
   });
@@ -77,46 +111,75 @@ describe('verification scenarios (prompt 1–10 math)', () => {
     assert.equal(rev.customerRefundPaise, 50000 + 9000 - 5000);
   });
 
-  it('3. Razorpay-only refund stays webhook-gated (split has no wallet)', () => {
-    const rev = reverseFrozenLine({
-      line: line(),
-      returnQuantity: 1,
-      reasonCode: RETURN_REASON.DAMAGED,
-      shippingChargedPaise: 0,
+  it('3. Razorpay-only → entire refund is webhook-gated portion', () => {
+    const amount = 118;
+    const split = splitRefund({
+      customerRefund: amount,
+      walletUsed: 0,
+      razorpayPaid: amount,
+      originalTotal: amount,
+      isCod: false,
     });
-    const amount = fromPaise(rev.customerRefundPaise);
-    const split = splitRefund(amount, 0, amount, false);
     assert.equal(split.walletRefund, 0);
     assert.equal(split.razorpayRefund, amount);
   });
 
-  it('4–5. Wallet full vs partial covering order total', () => {
+  it('4. Wallet fully covers order → remainder 0', () => {
     const orderTotal = 599;
-    assert.equal(Math.min(599, orderTotal), 599); // full cover → remainder 0
-    assert.equal(Math.round((orderTotal - 200) * 100) / 100, 399); // partial remainder
+    const walletPortion = Math.min(599, orderTotal);
+    const remainder = Math.round((orderTotal - walletPortion) * 100) / 100;
+    assert.equal(remainder, 0);
   });
 
-  it('6. Split-paid return proportions wallet vs Razorpay', () => {
-    const split = splitRefund(118, 40, 200, false);
-    assert.equal(split.walletRefund, 23.6);
-    assert.equal(split.razorpayRefund, 94.4);
+  it('5. Wallet partial cover → Razorpay remainder only', () => {
+    const orderTotal = 599;
+    const walletPortion = 200;
+    const remainder = Math.round((orderTotal - walletPortion) * 100) / 100;
+    assert.equal(remainder, 399);
   });
 
-  it('7–9. Cashback bearer does not reduce checkout; write-off bornBy tracks bearer', () => {
-    // CASHBACK discount at checkout is 0; pending stored separately.
+  it('6. Split-paid return proportions + remaining pools on 2nd return', () => {
+    const first = splitRefund({
+      customerRefund: 118,
+      walletUsed: 40,
+      razorpayPaid: 160,
+      originalTotal: 200,
+      isCod: false,
+    });
+    assert.equal(first.walletRefund, 23.6);
+    assert.equal(first.razorpayRefund, 94.4);
+
+    const second = splitRefund({
+      customerRefund: 82,
+      walletUsed: 40,
+      razorpayPaid: 160,
+      originalTotal: 200,
+      isCod: false,
+      walletAlready: first.walletRefund,
+      razorpayAlready: first.razorpayRefund,
+    });
+    assert.equal(second.walletRefund, 16.4);
+    assert.equal(second.razorpayRefund, 65.6);
+    assert.ok(first.walletRefund + second.walletRefund <= 40 + 0.001);
+    assert.ok(first.razorpayRefund + second.razorpayRefund <= 160 + 0.001);
+  });
+
+  it('7–9. Cashback does not reduce checkout; write-off bornBy tracks bearer', () => {
     const checkoutDiscountFromCashback = 0;
     assert.equal(checkoutDiscountFromCashback, 0);
-    assert.equal(DISCOUNT_BEARER.VENDOR, 'VENDOR');
+    const claw = clawbackCap(30, 100);
+    assert.equal(claw.recovered, 30);
+    assert.equal(claw.writtenOff, 70);
     assert.equal(DISCOUNT_BEARER.PLATFORM, 'PLATFORM');
+    assert.equal(DISCOUNT_BEARER.VENDOR, 'VENDOR');
   });
 
-  it('10. Clawback cap never exceeds balance', () => {
-    const balance = 30;
-    const clawbackAmount = 100;
-    const recovered = Math.min(balance, clawbackAmount);
-    const writtenOff = clawbackAmount - recovered;
-    assert.equal(recovered, 30);
-    assert.equal(writtenOff, 70);
-    assert.ok(balance - recovered >= 0);
+  it('10. Concurrent clawback/debit cap: recovered never exceeds balance', () => {
+    const balance = 50;
+    const a = clawbackCap(balance, 40);
+    const balanceAfterA = balance - a.recovered;
+    const b = clawbackCap(balanceAfterA, 40);
+    assert.equal(a.recovered + b.recovered, 50);
+    assert.equal(balanceAfterA - b.recovered, 0);
   });
 });

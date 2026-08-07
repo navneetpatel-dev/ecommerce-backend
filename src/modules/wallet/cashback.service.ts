@@ -15,10 +15,12 @@ import {
 import { toPaise, fromPaise } from '@modules/pricing/money';
 import { walletService } from '@modules/wallet/wallet.service';
 import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
+import { env } from '@config/env';
 
 /**
  * Credits pending cashback once per order (idempotent via cashbackCreditedAt).
- * VENDOR-borne cashback writes a SETTLED CommissionLedger CashbackCost adjustment.
+ * VENDOR-borne cashback writes a SETTLED CommissionLedger CashbackCost adjustment
+ * against the coupon's vendor (Order.cashbackVendorId), never mutating the original commission row.
  */
 export async function creditPendingCashbackForOrder(
   orderId: string,
@@ -48,38 +50,50 @@ export async function creditPendingCashbackForOrder(
     );
 
     const bearer = (order.cashbackDiscountBearer as DiscountBearer | null) ?? DISCOUNT_BEARER.PLATFORM;
-    if (bearer === DISCOUNT_BEARER.VENDOR && delivered.vendorId) {
-      const amountPaise = toPaise(pending);
-      await CommissionLedger.create(
-        {
-          vendorId: delivered.vendorId,
-          subOrderId: delivered.id,
-          saleAmount: 0,
-          commissionRate: 0,
-          commissionAmount: -pending,
-          taxableAmount: 0,
-          discountAmount: 0,
-          discountBearer: DISCOUNT_BEARER.VENDOR,
-          taxAmount: 0,
-          tcsAmount: 0,
-          netPayoutAmount: -pending,
-          shippingCollected: 0,
-          saleAmountPaise: 0,
-          commissionAmountPaise: -amountPaise,
-          taxableAmountPaise: 0,
-          discountAmountPaise: 0,
-          taxAmountPaise: 0,
-          tcsAmountPaise: 0,
-          netPayoutAmountPaise: -amountPaise,
-          shippingCollectedPaise: 0,
-          referenceType: COMMISSION_REFERENCE_TYPE.CASHBACK_COST,
-          status: COMMISSION_STATUS.SETTLED,
-          createdBy: order.userId,
-          updatedBy: order.userId,
-          deletedBy: null,
-        },
-        { transaction },
-      );
+    if (bearer === DISCOUNT_BEARER.VENDOR) {
+      const vendorId = order.cashbackVendorId ?? delivered.vendorId;
+      const subOrder =
+        vendorId && delivered.vendorId === vendorId
+          ? delivered
+          : vendorId
+            ? (await SubOrder.findOne({
+                where: { orderId: order.id, vendorId },
+                transaction,
+              })) ?? delivered
+            : delivered;
+      if (vendorId && subOrder) {
+        const amountPaise = toPaise(pending);
+        await CommissionLedger.create(
+          {
+            vendorId,
+            subOrderId: subOrder.id,
+            saleAmount: 0,
+            commissionRate: 0,
+            commissionAmount: -pending,
+            taxableAmount: 0,
+            discountAmount: 0,
+            discountBearer: DISCOUNT_BEARER.VENDOR,
+            taxAmount: 0,
+            tcsAmount: 0,
+            netPayoutAmount: -pending,
+            shippingCollected: 0,
+            saleAmountPaise: 0,
+            commissionAmountPaise: -amountPaise,
+            taxableAmountPaise: 0,
+            discountAmountPaise: 0,
+            taxAmountPaise: 0,
+            tcsAmountPaise: 0,
+            netPayoutAmountPaise: -amountPaise,
+            shippingCollectedPaise: 0,
+            referenceType: COMMISSION_REFERENCE_TYPE.CASHBACK_COST,
+            status: COMMISSION_STATUS.SETTLED,
+            createdBy: order.userId,
+            updatedBy: order.userId,
+            deletedBy: null,
+          },
+          { transaction },
+        );
+      }
     }
 
     await order.update(
@@ -97,107 +111,150 @@ export async function creditPendingCashbackForOrder(
 }
 
 /**
- * Claw back credited cashback on return (capped wallet recovery + full vendor reversal).
+ * Claw back credited cashback proportionally to returned merchandise.
+ * Vendor CashbackCost is reversed in FULL on first clawback after credit
+ * (vendor does not bear write-off risk from partial wallet recovery).
  */
 export async function clawbackCashbackForReturn(input: {
   order: Order;
   returnRequestId: string;
   actorId: string;
   transaction: Transaction;
+  /** Merchandise (taxable) paise being refunded on this return. */
+  refundMerchandisePaise: number;
+  /** Order merchandise taxable paise still on the books before this return was frozen. */
+  orderMerchandiseBeforePaise: number;
 }): Promise<void> {
-  const { order, returnRequestId, actorId, transaction } = input;
+  const {
+    order,
+    returnRequestId,
+    actorId,
+    transaction,
+    refundMerchandisePaise,
+    orderMerchandiseBeforePaise,
+  } = input;
   if (!order.cashbackCreditedAt) return;
-  const pending = Number(order.pendingCashbackAmount ?? 0);
-  if (pending <= 0) return;
+  const remainingCashback = Number(order.pendingCashbackAmount ?? 0);
+  if (remainingCashback <= 0) return;
+
+  const denom = Math.max(1, orderMerchandiseBeforePaise);
+  const ratio = Math.min(1, Math.max(0, refundMerchandisePaise / denom));
+  const clawAmount = fromPaise(Math.round(toPaise(remainingCashback) * ratio));
+  if (clawAmount <= 0) return;
 
   const bearer = (order.cashbackDiscountBearer as DiscountBearer | null) ?? DISCOUNT_BEARER.PLATFORM;
+  const isFullClawback = clawAmount >= remainingCashback - 0.001;
 
   await walletService.clawback(
     order.userId,
-    pending,
+    clawAmount,
     { type: WALLET_REFERENCE_TYPE.CLAWBACK, id: returnRequestId },
     WALLET_DESCRIPTIONS.CASHBACK_CLAWBACK,
     bearer,
     transaction,
   );
 
+  // Reverse vendor CashbackCost in FULL once (first clawback after credit), regardless of recovery.
   if (bearer === DISCOUNT_BEARER.VENDOR) {
-    const costRow = await CommissionLedger.findOne({
+    const subIds = (
+      await SubOrder.findAll({
+        where: { orderId: order.id },
+        attributes: ['id'],
+        transaction,
+      })
+    ).map((s) => s.id);
+
+    const alreadyReversed = await CommissionLedger.findOne({
       where: {
-        referenceType: COMMISSION_REFERENCE_TYPE.CASHBACK_COST,
-        subOrderId: {
-          [Op.in]: (
-            await SubOrder.findAll({
-              where: { orderId: order.id },
-              attributes: ['id'],
-              transaction,
-            })
-          ).map((s) => s.id),
-        },
+        referenceType: COMMISSION_REFERENCE_TYPE.CASHBACK_COST_REVERSAL,
+        subOrderId: { [Op.in]: subIds },
       },
       transaction,
     });
-    if (costRow) {
-      const amount = Math.abs(Number(costRow.commissionAmount));
-      const amountPaise = Math.abs(Number(costRow.commissionAmountPaise ?? toPaise(amount)));
-      await CommissionLedger.create(
-        {
-          vendorId: costRow.vendorId,
-          subOrderId: costRow.subOrderId,
-          saleAmount: 0,
-          commissionRate: 0,
-          commissionAmount: amount,
-          taxableAmount: 0,
-          discountAmount: 0,
-          discountBearer: DISCOUNT_BEARER.VENDOR,
-          taxAmount: 0,
-          tcsAmount: 0,
-          netPayoutAmount: amount,
-          shippingCollected: 0,
-          saleAmountPaise: 0,
-          commissionAmountPaise: amountPaise,
-          taxableAmountPaise: 0,
-          discountAmountPaise: 0,
-          taxAmountPaise: 0,
-          tcsAmountPaise: 0,
-          netPayoutAmountPaise: amountPaise,
-          shippingCollectedPaise: 0,
-          referenceType: COMMISSION_REFERENCE_TYPE.CASHBACK_COST_REVERSAL,
-          status: COMMISSION_STATUS.SETTLED,
-          createdBy: actorId,
-          updatedBy: actorId,
-          deletedBy: null,
+
+    if (!alreadyReversed) {
+      const costRow = await CommissionLedger.findOne({
+        where: {
+          referenceType: COMMISSION_REFERENCE_TYPE.CASHBACK_COST,
+          subOrderId: { [Op.in]: subIds },
         },
-        { transaction },
-      );
+        transaction,
+      });
+      if (costRow) {
+        const amount = Math.abs(Number(costRow.commissionAmount));
+        const amountPaise = Math.abs(Number(costRow.commissionAmountPaise ?? toPaise(amount)));
+        await CommissionLedger.create(
+          {
+            vendorId: costRow.vendorId,
+            subOrderId: costRow.subOrderId,
+            saleAmount: 0,
+            commissionRate: 0,
+            commissionAmount: amount,
+            taxableAmount: 0,
+            discountAmount: 0,
+            discountBearer: DISCOUNT_BEARER.VENDOR,
+            taxAmount: 0,
+            tcsAmount: 0,
+            netPayoutAmount: amount,
+            shippingCollected: 0,
+            saleAmountPaise: 0,
+            commissionAmountPaise: amountPaise,
+            taxableAmountPaise: 0,
+            discountAmountPaise: 0,
+            taxAmountPaise: 0,
+            tcsAmountPaise: 0,
+            netPayoutAmountPaise: amountPaise,
+            shippingCollectedPaise: 0,
+            referenceType: COMMISSION_REFERENCE_TYPE.CASHBACK_COST_REVERSAL,
+            status: COMMISSION_STATUS.SETTLED,
+            createdBy: actorId,
+            updatedBy: actorId,
+            deletedBy: null,
+          },
+          { transaction },
+        );
+      }
     }
   }
 
-  // Prevent double clawback on subsequent returns for the same order cashback.
+  const nextPending = isFullClawback
+    ? 0
+    : Math.round((remainingCashback - clawAmount) * 100) / 100;
   await order.update(
     {
-      pendingCashbackAmount: 0,
+      pendingCashbackAmount: Math.max(0, nextPending),
       updatedBy: actorId,
     },
     { transaction },
   );
 }
 
+/**
+ * Delayed-job pattern matching REVIEW_REQUEST: credit cashback for orders whose
+ * delivered sub-order fell into the delay window.
+ */
 export async function processPendingCashbackCredits(limit = 100): Promise<number> {
+  const delayMs = env.CASHBACK_CREDIT_DELAY_DAYS * 24 * 60 * 60 * 1000;
+  const windowEnd = new Date(Date.now() - delayMs);
+  const windowStart = new Date(windowEnd.getTime() - 24 * 60 * 60 * 1000);
+
+  const deliveredSubs = await SubOrder.findAll({
+    where: {
+      status: ORDER_STATUS.DELIVERED,
+      updatedAt: { [Op.between]: [windowStart, windowEnd] },
+    },
+    attributes: ['orderId'],
+    limit,
+  });
+  const orderIds = [...new Set(deliveredSubs.map((s) => s.orderId))];
+  if (orderIds.length === 0) return 0;
+
   const orders = await Order.findAll({
     where: {
+      id: { [Op.in]: orderIds },
       pendingCashbackAmount: { [Op.gt]: 0 },
       cashbackCreditedAt: null,
     },
-    include: [
-      {
-        model: SubOrder,
-        as: 'subOrders',
-        required: true,
-        where: { status: ORDER_STATUS.DELIVERED },
-      },
-    ],
-    limit,
   });
 
   let credited = 0;

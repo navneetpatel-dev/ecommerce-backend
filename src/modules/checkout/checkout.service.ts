@@ -480,6 +480,7 @@ export class CheckoutService {
       let discountTotal = 0;
       let cashbackAmount = 0;
       let cashbackDiscountBearer: 'PLATFORM' | 'VENDOR' | null = null;
+      let cashbackVendorId: string | null = null;
       let coupons: Coupon[] = [];
       let primaryCoupon: Coupon | null = null;
       let vendorDiscountShares: Record<string, number> = {};
@@ -510,6 +511,7 @@ export class CheckoutService {
             cashbackCoupon.discountBearer === DISCOUNT_BEARER.VENDOR
               ? DISCOUNT_BEARER.VENDOR
               : DISCOUNT_BEARER.PLATFORM;
+          cashbackVendorId = cashbackCoupon.vendorId ?? null;
         }
       }
 
@@ -576,6 +578,10 @@ export class CheckoutService {
         pendingCashbackAmount: cashbackAmount,
         cashbackCreditedAt: null,
         cashbackDiscountBearer,
+        cashbackVendorId,
+        originalTotalAmount: orderTotalRupees,
+        razorpayAmountPaid:
+          data.paymentMethod === PAYMENT_METHOD.COD ? 0 : Math.max(0, razorpayRemainder),
         razorpayOrderId: null,
         razorpayPaymentId: null,
       }, { transaction: t });

@@ -25,16 +25,21 @@ function mapOrderResponse(order: any) {
   const plain = typeof order.get === 'function' ? order.get({ plain: true }) : order;
   const totalAmount = Number(plain.totalAmount ?? 0);
   const walletAmountUsed = Number(plain.walletAmountUsed ?? 0);
+  const originalTotalAmount = Number(plain.originalTotalAmount ?? totalAmount);
+  const razorpayAmountPaid = Number(
+    plain.razorpayAmountPaid ?? Math.max(0, originalTotalAmount - walletAmountUsed),
+  );
   return {
     ...plain,
     totalAmount,
     discountTotal: Number(plain.discountTotal ?? 0),
     walletAmountUsed,
+    originalTotalAmount,
+    razorpayAmountPaid,
     pendingCashbackAmount: Number(plain.pendingCashbackAmount ?? 0),
     cashbackCreditedAt: plain.cashbackCreditedAt ?? null,
     cashbackDiscountBearer: plain.cashbackDiscountBearer ?? null,
     paymentMethod: plain.paymentMethod ?? null,
-    razorpayAmountPaid: Math.max(0, Math.round((totalAmount - walletAmountUsed) * 100) / 100),
     customerName: plain.user?.name ?? null,
     subOrders: (plain.subOrders ?? []).map((sub: any) => ({
       ...sub,

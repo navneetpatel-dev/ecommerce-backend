@@ -115,9 +115,8 @@ async function resolveReturnShippingFeePaise(vendorId: string | null | undefined
   let fee = Number(settings.returnShippingFee ?? 0);
   if (vendorId) {
     const vendor = await Vendor.findByPk(vendorId);
-    const override = (vendor as any)?.returnShippingFee;
-    if (override != null && Number.isFinite(Number(override))) {
-      fee = Number(override);
+    if (vendor?.returnShippingFee != null && Number.isFinite(Number(vendor.returnShippingFee))) {
+      fee = Number(vendor.returnShippingFee);
     }
   }
   return toPaise(fee);
@@ -172,7 +171,7 @@ export class ReturnsService {
         throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_ORDER);
       }
       if (item.subOrder.status !== ORDER_STATUS.DELIVERED) {
-        throw new ForbiddenError('Item must be delivered before requesting a return');
+        throw new ForbiddenError(ERROR_MESSAGES.ITEM_MUST_BE_DELIVERED);
       }
 
       const settings = await settingsService.getPlatformSettings();
@@ -190,7 +189,7 @@ export class ReturnsService {
         transaction: t,
       });
       if (existing) {
-        throw new ValidationError({ orderItemId: ['A return already exists for this item'] });
+        throw new ValidationError(ERROR_MESSAGES.RETURN_ALREADY_EXISTS);
       }
 
       const created = await ReturnRequest.create(
@@ -462,40 +461,52 @@ export class ReturnsService {
       returnRequestId: row.id,
       actorId,
       transaction: t,
+      refundMerchandisePaise: reversal.refundMerchandisePaise,
+      orderMerchandiseBeforePaise:
+        Number(orderItem.subOrder.taxableAmountPaise ?? 0) + reversal.refundMerchandisePaise,
     });
 
     return { reversal, order, orderItem };
   }
 
-  private splitRefundAmounts(
+  private async splitRefundAmounts(
     order: Order,
     customerRefund: number,
-  ): { walletRefund: number; razorpayRefund: number; refundMethod: 'RAZORPAY' | 'WALLET_CREDIT' } {
-    const orderTotal = Number(order.totalAmount) + customerRefund; // pre-clawback total approx
-    // Prefer persisted original payment split using walletAmountUsed vs (original paid).
+    transaction: Transaction,
+  ): Promise<{ walletRefund: number; razorpayRefund: number; refundMethod: 'RAZORPAY' | 'WALLET_CREDIT' }> {
     const walletUsed = Number(order.walletAmountUsed ?? 0);
     const isCod = order.paymentMethod === PAYMENT_METHOD.COD;
+    const originalTotal = Math.max(
+      Number(order.originalTotalAmount ?? 0),
+      Number(order.razorpayAmountPaid ?? 0) + walletUsed,
+      walletUsed,
+    );
 
-    if (isCod || (!order.razorpayPaymentId && walletUsed >= 0 && !order.razorpayOrderId)) {
-      // COD / wallet-only path
-      if (isCod || walletUsed > 0) {
-        return {
-          walletRefund: customerRefund,
-          razorpayRefund: 0,
-          refundMethod: REFUND_METHOD.WALLET_CREDIT,
-        };
-      }
+    if (isCod) {
+      return {
+        walletRefund: customerRefund,
+        razorpayRefund: 0,
+        refundMethod: REFUND_METHOD.WALLET_CREDIT,
+      };
     }
 
-    // Reconstruct original order total from current + this refund.
-    const originalTotal = Math.max(orderTotal, walletUsed);
-    if (walletUsed <= 0) {
+    // Wallet-only checkout (no Razorpay charge).
+    if (walletUsed > 0 && Number(order.razorpayAmountPaid ?? 0) <= 0 && !order.razorpayPaymentId) {
+      return {
+        walletRefund: customerRefund,
+        razorpayRefund: 0,
+        refundMethod: REFUND_METHOD.WALLET_CREDIT,
+      };
+    }
+
+    if (walletUsed <= 0 || originalTotal <= 0) {
       return {
         walletRefund: 0,
         razorpayRefund: customerRefund,
         refundMethod: REFUND_METHOD.RAZORPAY,
       };
     }
+
     if (walletUsed >= originalTotal) {
       return {
         walletRefund: customerRefund,
@@ -504,13 +515,43 @@ export class ReturnsService {
       };
     }
 
-    const walletShare = Math.round((customerRefund * walletUsed) / originalTotal * 100) / 100;
-    const razorpayShare = Math.max(0, Math.round((customerRefund - walletShare) * 100) / 100);
+    // Cap by remaining refundable pools across prior returns on this order.
+    const subOrders = await SubOrder.findAll({
+      where: { orderId: order.id },
+      attributes: ['id'],
+      transaction,
+    });
+    const prior = await ReturnRequest.findAll({
+      where: {
+        subOrderId: { [Op.in]: subOrders.map((s) => s.id) },
+        refundAmount: { [Op.ne]: null },
+      },
+      attributes: ['walletRefundAmount', 'razorpayRefundAmount'],
+      transaction,
+    });
+    const walletAlready = prior.reduce((s, r) => s + Number(r.walletRefundAmount ?? 0), 0);
+    const razorpayAlready = prior.reduce((s, r) => s + Number(r.razorpayRefundAmount ?? 0), 0);
+    const walletRemaining = Math.max(0, Math.round((walletUsed - walletAlready) * 100) / 100);
+    const razorpayRemaining = Math.max(
+      0,
+      Math.round((Number(order.razorpayAmountPaid ?? originalTotal - walletUsed) - razorpayAlready) * 100) /
+        100,
+    );
+
+    let walletShare = Math.round(((customerRefund * walletUsed) / originalTotal) * 100) / 100;
+    walletShare = Math.min(walletShare, walletRemaining, customerRefund);
+    let razorpayShare = Math.round((customerRefund - walletShare) * 100) / 100;
+    if (razorpayShare > razorpayRemaining) {
+      const overflow = razorpayShare - razorpayRemaining;
+      razorpayShare = razorpayRemaining;
+      walletShare = Math.min(customerRefund - razorpayShare, walletRemaining);
+      void overflow;
+    }
+
     return {
       walletRefund: walletShare,
       razorpayRefund: razorpayShare,
-      refundMethod:
-        razorpayShare > 0 ? REFUND_METHOD.RAZORPAY : REFUND_METHOD.WALLET_CREDIT,
+      refundMethod: razorpayShare > 0 ? REFUND_METHOD.RAZORPAY : REFUND_METHOD.WALLET_CREDIT,
     };
   }
 
@@ -579,10 +620,16 @@ export class ReturnsService {
       }
 
       const nextStatus =
-        row.status === RETURN_STATUS.CLOSED ? RETURN_STATUS.CLOSED : RETURN_STATUS.REFUNDED;
+        row.status === RETURN_STATUS.CLOSED
+          ? RETURN_STATUS.CLOSED
+          : row.status === RETURN_STATUS.PICKUP_SCHEDULED ||
+              row.status === RETURN_STATUS.RECEIVED
+            ? row.status
+            : RETURN_STATUS.REFUNDED;
 
       await row.update(
         {
+          // Preserve logistics progress; only stamp REFUNDED when still at APPROVED.
           status: nextStatus,
           refundStatus: REFUND_STATUS.COMPLETED,
           resolvedById: actorId === 'system' ? row.resolvedById : actorId,
@@ -656,7 +703,7 @@ export class ReturnsService {
       if (status === RETURN_STATUS.APPROVED && row.refundAmount == null) {
         const { reversal, order } = await this.freezeVendorAccountingOnApprove(row, actorId, t);
         const customerRefund = fromPaise(reversal.customerRefundPaise);
-        const split = this.splitRefundAmounts(order, customerRefund);
+        const split = await this.splitRefundAmounts(order, customerRefund, t);
 
         // Restore order.totalAmount base for split: freeze already reduced it.
         // splitRefundAmounts reconstructs original using current + refund.
@@ -791,28 +838,44 @@ export class ReturnsService {
     razorpayRefundId?: string;
     paymentId: string;
     amountPaise: number;
+    returnRequestId?: string | null;
   }): Promise<void> {
-    const order = await Order.findOne({ where: { razorpayPaymentId: input.paymentId } });
-    if (!order) return;
+    let returnRow: ReturnRequest | null = null;
 
-    const subOrders = await SubOrder.findAll({
-      where: { orderId: order.id },
-      attributes: ['id'],
-    });
-    const subOrderIds = subOrders.map((s) => s.id);
-    if (subOrderIds.length === 0) return;
+    if (input.returnRequestId) {
+      returnRow = await ReturnRequest.findByPk(input.returnRequestId);
+    }
 
-    const returnRow = await ReturnRequest.findOne({
-      where: {
-        subOrderId: { [Op.in]: subOrderIds },
-        refundStatus: { [Op.in]: [REFUND_STATUS.PENDING, REFUND_STATUS.INITIATED] },
-        razorpayRefundAmount: { [Op.gt]: 0 },
-      },
-      order: [['updatedAt', 'DESC']],
-    });
+    if (!returnRow && input.razorpayRefundId) {
+      returnRow = await ReturnRequest.findOne({
+        where: { razorpayRefundId: input.razorpayRefundId },
+      });
+    }
+
+    if (!returnRow) {
+      const order = await Order.findOne({ where: { razorpayPaymentId: input.paymentId } });
+      if (!order) return;
+
+      const subOrders = await SubOrder.findAll({
+        where: { orderId: order.id },
+        attributes: ['id'],
+      });
+      const subOrderIds = subOrders.map((s) => s.id);
+      if (subOrderIds.length === 0) return;
+
+      returnRow = await ReturnRequest.findOne({
+        where: {
+          subOrderId: { [Op.in]: subOrderIds },
+          refundStatus: { [Op.in]: [REFUND_STATUS.PENDING, REFUND_STATUS.INITIATED] },
+          razorpayRefundAmount: { [Op.gt]: 0 },
+        },
+        order: [['updatedAt', 'DESC']],
+      });
+    }
+
     if (!returnRow) return;
 
-    if (input.razorpayRefundId) {
+    if (input.razorpayRefundId && returnRow.razorpayRefundId !== input.razorpayRefundId) {
       await returnRow.update({ razorpayRefundId: input.razorpayRefundId });
     }
 

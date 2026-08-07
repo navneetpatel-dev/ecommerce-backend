@@ -15,6 +15,8 @@ export class Vendor extends Model<InferAttributes<Vendor>, InferCreationAttribut
   declare suspensionReason: string | null;
   declare commissionRate: CreationOptional<number>;
   declare performanceScore: CreationOptional<number>;
+  /** Optional override for platform returnShippingFee (rupees). */
+  declare returnShippingFee: CreationOptional<number | null>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -46,6 +48,7 @@ export const initVendorModel = (sequelize: Sequelize) => {
       suspensionReason: { type: DataTypes.TEXT, allowNull: true },
       commissionRate: { type: DataTypes.DECIMAL(5, 2), defaultValue: 10.0 },
       performanceScore: { type: DataTypes.DECIMAL(5, 2), defaultValue: 0 },
+      returnShippingFee: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },
