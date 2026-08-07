@@ -44,6 +44,8 @@ export type CartView = {
   id: string | null;
   items: CartViewItem[];
   total: number;
+  appliedCoupon?: { code: string; discount: number; cashbackAmount: number; type: string } | null;
+  removedCouponReason?: string | null;
 };
 
 function mapCartItem(item: CartItem & { variant?: ProductVariant & { product?: any } }): CartViewItem {
@@ -140,7 +142,22 @@ export class CartService {
       .filter((item) => item.isAvailable)
       .reduce((sum, item) => sum + item.product.price * item.quantity, 0);
 
-    return { id: String(cart.id), items: mappedItems, total };
+    let appliedCoupon: CartView['appliedCoupon'] = null;
+    let removedCouponReason: string | null = null;
+    if (userId) {
+      const { couponsService } = await import('@modules/coupons/coupons.service');
+      const revalidated = await couponsService.revalidateCartCoupon(userId);
+      appliedCoupon = revalidated.appliedCoupon;
+      removedCouponReason = revalidated.removed ? revalidated.reason : null;
+    }
+
+    return {
+      id: String(cart.id),
+      items: mappedItems,
+      total,
+      appliedCoupon,
+      removedCouponReason,
+    };
   }
 
   /**

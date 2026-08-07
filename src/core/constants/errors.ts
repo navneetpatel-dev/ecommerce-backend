@@ -17,6 +17,12 @@ export const ERROR_CODES = {
   ITEMS_UNAVAILABLE: 'ITEMS_UNAVAILABLE',
   VENDOR_UNAVAILABLE: 'VENDOR_UNAVAILABLE',
   COUPON_INACTIVE: 'COUPON_INACTIVE',
+  COUPON_INVALID: 'COUPON_INVALID',
+  COUPON_NOT_APPLICABLE: 'COUPON_NOT_APPLICABLE',
+  COUPON_SCOPE: 'COUPON_SCOPE',
+  COUPON_RESTRICTION: 'COUPON_RESTRICTION',
+  COUPON_MIN_ORDER: 'COUPON_MIN_ORDER',
+  COUPON_STACK: 'COUPON_STACK',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -56,5 +62,11 @@ export const ERROR_MESSAGES = {
   ITEMS_UNAVAILABLE: 'Some items in your cart are no longer available',
   VENDOR_UNAVAILABLE: 'This seller is currently unavailable',
   COUPON_INACTIVE: 'Coupon is not active',
+  COUPON_INVALID: 'Coupon is invalid or expired',
+  COUPON_NOT_APPLICABLE: 'Coupon is not applicable to this cart',
+  COUPON_SCOPE: 'Coupon does not apply to items in your cart',
+  COUPON_RESTRICTION: 'You are not eligible for this coupon',
+  COUPON_MIN_ORDER: 'Order does not meet the minimum requirements for this coupon',
+  COUPON_STACK: 'This coupon cannot be combined with another coupon',
   SHOP_UNAVAILABLE: 'This shop is currently unavailable',
 } as const;

@@ -9,8 +9,14 @@ import { SubOrder } from '@database/models/subOrder.model';
 import { OrderItem } from '@database/models/orderItem.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
+import { Coupon } from '@database/models/coupon.model';
 import { WebhookEvent } from '@database/models/webhookEvent.model';
 import { cartService } from '@modules/cart/cart.service';
+import {
+  recordCouponUsage,
+  creditCashbackIfNeeded,
+  destroyCouponUsageForOrder,
+} from '@modules/coupons/couponEngine';
 import { ORDER_STATUS, PAYMENT_STATUS, COMMISSION_STATUS } from '@core/constants/statuses';
 import { ERROR_MESSAGES, ERROR_CODES } from '@core/constants/errors';
 import { RAZORPAY_MIN_AMOUNT_PAISE } from '@core/constants/http';
@@ -80,6 +86,8 @@ export class PaymentsService {
         });
       }
 
+      await destroyCouponUsageForOrder(order.id, t);
+
       await cartService.restoreItemsToUserCart(order.userId, restoreLines, t);
 
       await order.update(
@@ -92,12 +100,38 @@ export class PaymentsService {
     });
   }
 
+  private async applyCouponOnPaymentCaptured(order: Order, transaction: any) {
+    if (!order.couponId) return;
+    const coupon = await Coupon.findByPk(order.couponId, { transaction });
+    if (!coupon) return;
+
+    await recordCouponUsage({
+      couponId: coupon.id,
+      userId: order.userId,
+      orderId: order.id,
+      discountApplied: Number(order.discountTotal ?? 0),
+      actorId: order.userId,
+      transaction,
+    });
+
+    if (coupon.type === 'CASHBACK') {
+      const cashback = Number(coupon.value ?? 0);
+      const amount = Math.min(cashback, Number(order.totalAmount) + Number(order.discountTotal ?? 0));
+      await creditCashbackIfNeeded({
+        coupon,
+        userId: order.userId,
+        orderId: order.id,
+        cashbackAmount: amount,
+        transaction,
+      });
+    }
+  }
+
   async createRazorpayOrderForOrder(order: Order): Promise<RazorpayCheckoutPayload> {
     if (!razorpayConfigured || !env.RAZORPAY_KEY_ID) {
       throw new AppError(ERROR_MESSAGES.RAZORPAY_NOT_CONFIGURED, 503, ERROR_CODES.RAZORPAY_NOT_CONFIGURED);
     }
 
-    // Amount always from the Order row — never from the client
     const amountInPaise = Math.round(Number(order.totalAmount) * 100);
     if (amountInPaise < RAZORPAY_MIN_AMOUNT_PAISE) {
       throw new ValidationError('Order amount below Razorpay minimum');
@@ -180,7 +214,6 @@ export class PaymentsService {
       defaults: { provider: 'razorpay', eventId: event.id, payload: event as unknown as Record<string, unknown> },
     });
 
-    // Already processed — acknowledge without re-applying side effects
     if (!created) {
       return { received: true, duplicate: true };
     }
@@ -188,11 +221,25 @@ export class PaymentsService {
     if (event.event === 'payment.captured') {
       const payment = event.payload?.payment?.entity;
       if (payment?.order_id && payment?.id) {
-        await Order.update(
-          { paymentStatus: PAYMENT_STATUS.PAID, razorpayPaymentId: payment.id, status: ORDER_STATUS.CONFIRMED },
-          { where: { razorpayOrderId: payment.order_id } },
-        );
-        // ORDER_CONFIRMATION notification can be queued here when notifications are wired
+        await sequelize.transaction(async (t) => {
+          const order = await Order.findOne({
+            where: { razorpayOrderId: payment.order_id },
+            transaction: t,
+            lock: t.LOCK.UPDATE,
+          });
+          if (!order) return;
+          if (order.paymentStatus === PAYMENT_STATUS.PAID) return;
+
+          await order.update(
+            {
+              paymentStatus: PAYMENT_STATUS.PAID,
+              razorpayPaymentId: payment.id,
+              status: ORDER_STATUS.CONFIRMED,
+            },
+            { transaction: t },
+          );
+          await this.applyCouponOnPaymentCaptured(order, t);
+        });
       }
     }
 

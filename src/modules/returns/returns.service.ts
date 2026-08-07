@@ -1,16 +1,24 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ValidationError } from '@core/errors/ValidationError';
-import { ORDER_STATUS, RETURN_STATUS, type ReturnReason, type ReturnStatus } from '@core/constants/statuses';
+import {
+  COMMISSION_STATUS,
+  ORDER_STATUS,
+  RETURN_STATUS,
+  type ReturnReason,
+  type ReturnStatus,
+} from '@core/constants/statuses';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { OrderItem } from '@database/models/orderItem.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { Order } from '@database/models/order.model';
 import { User } from '@database/models/user.model';
+import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { sequelize } from '@database/models';
 import type { Transaction } from 'sequelize';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
+import { roundMoney } from '@modules/coupons/coupon.utils';
 
 const returnListInclude = [
   { model: OrderItem, as: 'orderItem', required: false, attributes: ['id', 'productName'] },
@@ -48,6 +56,23 @@ function serializeReturn(row: ReturnRequest | (ReturnRequest & { orderItem?: Ord
     productName: plain.orderItem?.productName ?? null,
     customerName: plain.user?.name ?? null,
   };
+}
+
+/** Line share of (unitPrice*qty - prorated suborder discount). */
+function computeLineRefundAmount(
+  item: OrderItem,
+  subOrder: SubOrder,
+  siblingItems: OrderItem[],
+): number {
+  const lineGross = Number(item.unitPrice) * Number(item.quantity);
+  const subtotal = siblingItems.reduce(
+    (sum, row) => sum + Number(row.unitPrice) * Number(row.quantity),
+    0,
+  );
+  const discountAmount = Number(subOrder.discountAmount ?? 0);
+  const lineDiscount =
+    subtotal > 0 ? roundMoney((discountAmount * lineGross) / subtotal) : 0;
+  return roundMoney(Math.max(0, lineGross - lineDiscount));
 }
 
 export class ReturnsService {
@@ -134,18 +159,73 @@ export class ReturnsService {
 
   async transition(id: string, status: ReturnStatus, actorId: string) {
     return sequelize.transaction(async (t: Transaction) => {
-      const row = await ReturnRequest.findByPk(id, { transaction: t });
+      const row = await ReturnRequest.findByPk(id, {
+        include: [
+          {
+            model: OrderItem,
+            as: 'orderItem',
+            include: [
+              {
+                model: SubOrder,
+                as: 'subOrder',
+                include: [{ model: OrderItem, as: 'items' }],
+              },
+            ],
+          },
+        ],
+        transaction: t,
+      });
       if (!row) throw new NotFoundError('ReturnRequest');
 
-      await row.update(
-        {
-          status,
-          resolvedById: RESOLVED_BY_STATUSES.includes(status) ? actorId : row.resolvedById,
-          resolvedAt: RESOLVED_AT_STATUSES.includes(status) ? new Date() : row.resolvedAt,
-          updatedBy: actorId,
-        },
-        { transaction: t },
-      );
+      const patch: Record<string, unknown> = {
+        status,
+        resolvedById: RESOLVED_BY_STATUSES.includes(status) ? actorId : row.resolvedById,
+        resolvedAt: RESOLVED_AT_STATUSES.includes(status) ? new Date() : row.resolvedAt,
+        updatedBy: actorId,
+      };
+
+      if (status === RETURN_STATUS.APPROVED || status === RETURN_STATUS.REFUNDED) {
+        const orderItem = (row as any).orderItem as OrderItem & {
+          subOrder: SubOrder & { items?: OrderItem[] };
+        };
+        if (orderItem?.subOrder) {
+          const siblings =
+            orderItem.subOrder.items ??
+            (await OrderItem.findAll({ where: { subOrderId: orderItem.subOrderId }, transaction: t }));
+          const refundAmount = computeLineRefundAmount(orderItem, orderItem.subOrder, siblings);
+          patch.refundAmount = refundAmount;
+
+          const ledger = await CommissionLedger.findOne({
+            where: { subOrderId: orderItem.subOrderId },
+            transaction: t,
+          });
+          if (ledger && Number(ledger.saleAmount) > 0) {
+            const subtotal = Number(orderItem.subOrder.subtotal);
+            const lineGross = Number(orderItem.unitPrice) * Number(orderItem.quantity);
+            const saleShare =
+              subtotal > 0 ? roundMoney((Number(ledger.saleAmount) * lineGross) / subtotal) : 0;
+            const commissionShare =
+              subtotal > 0
+                ? roundMoney((Number(ledger.commissionAmount) * lineGross) / subtotal)
+                : 0;
+            const nextSale = roundMoney(Math.max(0, Number(ledger.saleAmount) - saleShare));
+            const nextCommission = roundMoney(
+              Math.max(0, Number(ledger.commissionAmount) - commissionShare),
+            );
+            await ledger.update(
+              {
+                saleAmount: nextSale,
+                commissionAmount: nextCommission,
+                status: nextSale <= 0 ? COMMISSION_STATUS.CLAWED_BACK : ledger.status,
+                updatedBy: actorId,
+              },
+              { transaction: t },
+            );
+          }
+        }
+      }
+
+      await row.update(patch, { transaction: t });
 
       return serializeReturn(row as ReturnRequest & { orderItem?: OrderItem });
     });

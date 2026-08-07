@@ -11,8 +11,6 @@ import { ProductVariant } from '@database/models/productVariant.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { Address } from '@database/models/address.model';
 import { Vendor } from '@database/models/vendor.model';
-import { Coupon } from '@database/models/coupon.model';
-import { CouponUsage } from '@database/models/couponUsage.model';
 import { sequelize } from '@database/models';
 import { paymentsService } from '@modules/payments/payments.service';
 import { cartService } from '@modules/cart/cart.service';
@@ -20,6 +18,14 @@ import { getRatesForQuote } from '@modules/shipping/shipping.service';
 import { taxService } from '@modules/tax/tax.service';
 import { settingsService } from '@modules/settings/settings.service';
 import { categoriesService } from '@modules/categories/categories.service';
+import {
+  validateCoupon,
+  commissionSaleAmount,
+  recordCouponUsage,
+  creditCashbackIfNeeded,
+  resolveDiscountBearer,
+  type CartLineForCoupon,
+} from '@modules/coupons/couponEngine';
 import { resolveItemAvailability } from '@core/catalog/customerVisibility';
 import type {
   CancelCheckoutRequest,
@@ -30,9 +36,7 @@ import {
   ORDER_STATUS,
   PAYMENT_STATUS,
   PAYMENT_METHOD,
-  COUPON_STATUS,
   COMMISSION_STATUS,
-  VENDOR_STATUS,
 } from '@core/constants/statuses';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 
@@ -127,43 +131,19 @@ function vendorOriginState(vendor: Vendor | undefined): string {
   return String(vendor?.state ?? '').trim();
 }
 
-async function getCouponDiscount(
-  code: string | undefined,
-  userId: string,
-  subtotal: number,
-  shippingTotal: number,
-) {
-  if (!code) return { coupon: null, discount: 0 };
-  const coupon = await Coupon.findOne({ where: { code: code.toUpperCase(), status: COUPON_STATUS.ACTIVE } });
-  const now = new Date();
-  if (!coupon || coupon.startDate > now || coupon.endDate < now) {
-    throw new ValidationError('Coupon is invalid or expired');
-  }
-  if (coupon.usageLimitTotal != null && coupon.usedCount >= coupon.usageLimitTotal) {
-    throw new ValidationError(ERROR_MESSAGES.COUPON_USAGE_LIMIT);
-  }
-  if (coupon.usageLimitPerUser != null) {
-    const userUsage = await CouponUsage.count({ where: { couponId: coupon.id, userId } });
-    if (userUsage >= coupon.usageLimitPerUser) throw new ValidationError(ERROR_MESSAGES.COUPON_USAGE_LIMIT);
-  }
-  if (coupon.minOrderValue != null && subtotal < Number(coupon.minOrderValue)) {
-    throw new ValidationError(`Minimum order value is ${coupon.minOrderValue}`);
-  }
-  if (coupon.vendorId) {
-    const vendor = await Vendor.findByPk(coupon.vendorId);
-    if (!vendor || vendor.status !== VENDOR_STATUS.APPROVED) {
-      throw new AppError(ERROR_MESSAGES.VENDOR_UNAVAILABLE, 422, ERROR_CODES.VENDOR_UNAVAILABLE);
-    }
-  }
-  const value = Number(coupon.value ?? 0);
-  const discount = coupon.type === 'PERCENTAGE'
-    ? Math.min(subtotal * value / 100, Number(coupon.maxDiscountCap ?? Infinity))
-    : coupon.type === 'FLAT'
-      ? Math.min(value, subtotal)
-      : coupon.type === 'FREE_SHIPPING'
-        ? shippingTotal
-        : 0;
-  return { coupon, discount: Math.max(0, Math.round(discount * 100) / 100) };
+function toCouponLines(
+  items: (CartItem & { variant: ProductVariant & { product: any } })[],
+): CartLineForCoupon[] {
+  return items.map((item) => {
+    const product = item.variant.product;
+    return {
+      productId: String(product.id),
+      categoryId: product.categoryId ? String(product.categoryId) : null,
+      vendorId: product.vendorId ? String(product.vendorId) : null,
+      unitPrice: Number(item.variant.price),
+      quantity: Number(item.quantity),
+    };
+  });
 }
 
 export class CheckoutService {
@@ -179,7 +159,7 @@ export class CheckoutService {
       total: number;
     }>;
     grandTotal: number;
-    appliedCoupon: { code: string; discount: number } | null;
+    appliedCoupon: { code: string; discount: number; cashbackAmount?: number } | null;
   }> {
     const cart = await loadUserCart(userId);
 
@@ -192,7 +172,6 @@ export class CheckoutService {
       throw new NotFoundError('Shipping address');
     }
 
-    // Quote only available lines — unavailable items are blocked above.
     const availableItems = cart.items.filter((item) => {
       const product = item.variant?.product;
       const vendor = product?.vendor ?? product?.Vendor ?? null;
@@ -265,19 +244,42 @@ export class CheckoutService {
     const subtotal = vendorBreakdowns.reduce((sum, breakdown) => sum + breakdown.subtotal, 0);
     const shippingTotal = vendorBreakdowns.reduce((sum, breakdown) => sum + breakdown.shippingCost, 0);
     const taxTotal = vendorBreakdowns.reduce((sum, breakdown) => sum + breakdown.tax.total, 0);
-    const { coupon, discount } = await getCouponDiscount(data.couponCode, userId, subtotal, shippingTotal);
-    if (discount) {
-      const target = vendorBreakdowns[vendorBreakdowns.length - 1];
-      if (target) {
-        target.discount = discount;
-        target.total = Math.max(0, target.total - discount);
+    const shippingByVendor = Object.fromEntries(
+      vendorBreakdowns.map((b) => [b.vendorId, b.shippingCost]),
+    );
+
+    const couponCode = data.couponCode ?? cart.couponCode ?? undefined;
+    let discount = 0;
+    let cashbackAmount = 0;
+    let applied: { code: string; discount: number; cashbackAmount?: number } | null = null;
+
+    if (couponCode) {
+      const result = await validateCoupon({
+        code: couponCode,
+        userId,
+        lines: toCouponLines(quoteCart.items),
+        shippingTotal,
+        shippingByVendor,
+      });
+      if (!result.valid) {
+        throw new ValidationError(result.reason ?? ERROR_MESSAGES.COUPON_INVALID);
+      }
+      discount = result.discount;
+      cashbackAmount = result.cashbackAmount;
+      for (const breakdown of vendorBreakdowns) {
+        const share = result.vendorDiscountShares[breakdown.vendorId] ?? 0;
+        breakdown.discount = share;
+        breakdown.total = Math.max(0, breakdown.total - share);
+      }
+      if (result.coupon) {
+        applied = { code: result.coupon.code, discount, cashbackAmount };
       }
     }
 
     return {
       vendorBreakdowns,
       grandTotal: Math.max(0, subtotal + shippingTotal + taxTotal - discount),
-      appliedCoupon: coupon ? { code: coupon.code, discount } : null,
+      appliedCoupon: applied,
     };
   }
 
@@ -288,7 +290,6 @@ export class CheckoutService {
     const order = await sequelize.transaction(async (t) => {
       const cart = await loadUserCart(userId, t);
 
-      // Hard-block at order creation — vendor/product can change between page load and place order.
       assertCartItemsAvailable(cart);
 
       const shippingAddress = await Address.findOne({
@@ -338,12 +339,32 @@ export class CheckoutService {
         shippingTotal += shippingCost;
         taxTotal += taxAmount;
       }
-      const { coupon, discount: discountTotal } = await getCouponDiscount(
-        data.couponCode,
-        userId,
-        subtotal,
-        shippingTotal,
+
+      const couponCode = data.couponCode ?? cart.couponCode ?? undefined;
+      const shippingByVendor = Object.fromEntries(
+        Object.entries(vendorCharges).map(([id, c]) => [id, c.shippingCost]),
       );
+      let discountTotal = 0;
+      let cashbackAmount = 0;
+      let coupon = null as Awaited<ReturnType<typeof validateCoupon>>['coupon'];
+      let vendorDiscountShares: Record<string, number> = {};
+
+      if (couponCode) {
+        const result = await validateCoupon({
+          code: couponCode,
+          userId,
+          lines: toCouponLines(cart.items),
+          shippingTotal,
+          shippingByVendor,
+        });
+        if (!result.valid) {
+          throw new ValidationError(result.reason ?? ERROR_MESSAGES.COUPON_INVALID);
+        }
+        discountTotal = result.discount;
+        cashbackAmount = result.cashbackAmount;
+        coupon = result.coupon;
+        vendorDiscountShares = result.vendorDiscountShares;
+      }
 
       const orderRow = await Order.create({
         userId,
@@ -357,9 +378,12 @@ export class CheckoutService {
         razorpayPaymentId: null,
       }, { transaction: t });
 
+      const bearer = resolveDiscountBearer(coupon);
+
       for (const [vendorId, items] of Object.entries(itemsByVendor)) {
         const charges = vendorCharges[vendorId]!;
         const subOrderTotal = charges.subtotal;
+        const discountAmount = vendorDiscountShares[vendorId] ?? 0;
 
         const vendor = vendorMap[vendorId];
         const categoryId = items[0]!.variant.product.categoryId;
@@ -368,7 +392,8 @@ export class CheckoutService {
           vendor?.commissionRate,
           settings.defaultCommissionRate,
         );
-        const commissionAmount = subOrderTotal * (commissionRate / 100);
+        const saleAmount = commissionSaleAmount(subOrderTotal, discountAmount, bearer);
+        const commissionAmount = saleAmount * (commissionRate / 100);
 
         const subOrder = await SubOrder.create({
           orderId: orderRow.id,
@@ -377,6 +402,7 @@ export class CheckoutService {
           subtotal: subOrderTotal,
           shippingCost: charges.shippingCost,
           taxAmount: charges.taxAmount,
+          discountAmount,
           commissionAmount,
           trackingId: null,
         }, { transaction: t });
@@ -400,7 +426,7 @@ export class CheckoutService {
           await CommissionLedger.create({
             vendorId,
             subOrderId: subOrder.id,
-            saleAmount: subOrderTotal,
+            saleAmount,
             commissionRate,
             commissionAmount,
             status: COMMISSION_STATUS.PENDING,
@@ -408,18 +434,28 @@ export class CheckoutService {
         }
       }
 
-      if (coupon) {
-        await coupon.increment('usedCount', { by: 1, transaction: t });
-        await CouponUsage.create({
+      // Usage is webhook-driven for Razorpay. COD has no webhook — record on place.
+      if (coupon && data.paymentMethod === PAYMENT_METHOD.COD) {
+        await recordCouponUsage({
           couponId: coupon.id,
           userId,
           orderId: orderRow.id,
           discountApplied: discountTotal,
-          createdBy: userId,
-          updatedBy: userId,
-          deletedBy: null,
-        }, { transaction: t });
+          actorId: userId,
+          transaction: t,
+        });
+        if (cashbackAmount > 0) {
+          await creditCashbackIfNeeded({
+            coupon,
+            userId,
+            orderId: orderRow.id,
+            cashbackAmount,
+            transaction: t,
+          });
+        }
       }
+
+      await cart.update({ couponCode: null }, { transaction: t });
 
       await CartItem.destroy({
         where: { cartId: cart.id },
@@ -437,7 +473,6 @@ export class CheckoutService {
       };
     }
 
-    // COD — no Razorpay order; paymentStatus stays PENDING until fulfilled
     return { orderId: order.id };
   }
 
@@ -446,8 +481,6 @@ export class CheckoutService {
     data: CancelCheckoutRequest,
   ): Promise<{ restored: boolean; orderId: string }> {
     return sequelize.transaction(async (t) => {
-      // Lock first so concurrent cancel (modal dismiss + payment.failed + webhook)
-      // cannot both restore cart/stock.
       const locked = await Order.findByPk(data.orderId, {
         transaction: t,
         lock: t.LOCK.UPDATE,

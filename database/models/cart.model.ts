@@ -4,6 +4,7 @@ export class Cart extends Model<InferAttributes<Cart>, InferCreationAttributes<C
   declare id: CreationOptional<string>;
   declare userId: string | null;
   declare sessionId: string | null;
+  declare couponCode: string | null;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -22,6 +23,7 @@ export const initCartModel = (sequelize: Sequelize) => {
       id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
       userId: { type: DataTypes.UUID, unique: true, allowNull: true },
       sessionId: { type: DataTypes.STRING, unique: true, allowNull: true },
+      couponCode: { type: DataTypes.STRING, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

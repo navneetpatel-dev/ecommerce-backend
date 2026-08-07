@@ -151,10 +151,24 @@ export type PaymentMethod = (typeof PAYMENT_METHOD)[keyof typeof PAYMENT_METHOD]
 export const PAYMENT_METHOD_VALUES = Object.values(PAYMENT_METHOD) as [PaymentMethod, ...PaymentMethod[]];
 
 export const COUPON_STATUS = {
+  DRAFT: 'DRAFT',
   ACTIVE: 'ACTIVE',
-  INACTIVE: 'INACTIVE',
+  PAUSED: 'PAUSED',
   EXPIRED: 'EXPIRED',
+  ARCHIVED: 'ARCHIVED',
 } as const;
+export type CouponStatus = (typeof COUPON_STATUS)[keyof typeof COUPON_STATUS];
+export const COUPON_STATUS_VALUES = Object.values(COUPON_STATUS) as [CouponStatus, ...CouponStatus[]];
+
+export const DISCOUNT_BEARER = {
+  PLATFORM: 'PLATFORM',
+  VENDOR: 'VENDOR',
+} as const;
+export type DiscountBearer = (typeof DISCOUNT_BEARER)[keyof typeof DISCOUNT_BEARER];
+export const DISCOUNT_BEARER_VALUES = Object.values(DISCOUNT_BEARER) as [
+  DiscountBearer,
+  ...DiscountBearer[],
+];
 
 export const PAYOUT_STATUS = {
   PENDING: 'PENDING',
@@ -164,6 +178,7 @@ export const PAYOUT_STATUS = {
 export const COMMISSION_STATUS = {
   PENDING: 'PENDING',
   SETTLED: 'SETTLED',
+  CLAWED_BACK: 'CLAWED_BACK',
 } as const;
 
 export const NOTIFICATION_STATUS = {

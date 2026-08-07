@@ -31,6 +31,8 @@ export class Coupon extends Model<InferAttributes<Coupon>, InferCreationAttribut
   declare stackable: CreationOptional<boolean>;
   declare priority: CreationOptional<number>;
   declare status: 'DRAFT' | 'ACTIVE' | 'PAUSED' | 'EXPIRED' | 'ARCHIVED';
+  declare discountBearer: CreationOptional<'PLATFORM' | 'VENDOR'>;
+  declare batchId: string | null;
   declare createdById: string;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -42,6 +44,7 @@ export class Coupon extends Model<InferAttributes<Coupon>, InferCreationAttribut
   static associate(models: Record<string, any>) {
     Coupon.belongsTo(models.User, { as: 'createdBy', foreignKey: 'createdById' });
     Coupon.belongsTo(models.Vendor, { foreignKey: 'vendorId' });
+    Coupon.belongsTo(models.CouponBatch, { foreignKey: 'batchId', as: 'batch' });
     Coupon.hasMany(models.CouponUsage, { foreignKey: 'couponId' });
   }
 }
@@ -70,6 +73,12 @@ export const initCouponModel = (sequelize: Sequelize) => {
       stackable: { type: DataTypes.BOOLEAN, defaultValue: false },
       priority: { type: DataTypes.INTEGER, defaultValue: 0 },
       status: { type: DataTypes.ENUM('DRAFT', 'ACTIVE', 'PAUSED', 'EXPIRED', 'ARCHIVED'), defaultValue: 'DRAFT' },
+      discountBearer: {
+        type: DataTypes.ENUM('PLATFORM', 'VENDOR'),
+        allowNull: false,
+        defaultValue: 'PLATFORM',
+      },
+      batchId: { type: DataTypes.UUID, allowNull: true },
       createdById: { type: DataTypes.UUID, allowNull: false },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },
