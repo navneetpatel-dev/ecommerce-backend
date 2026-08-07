@@ -81,7 +81,7 @@ export const EMAIL_COPY = {
     KYC_DOCUMENT_REJECTED: 'A KYC document was rejected. Reason: {reason}',
     LOW_STOCK_ALERT: 'Stock for "{productName}" ({sku}) is low: {stock} remaining.',
     PAYOUT_PROCESSED: 'A payout of ₹{amount} has been processed.',
-    PAYOUT_FAILED: 'A payout of ₹{amount} failed. Reason: {reason}',
+    PAYOUT_FAILED: 'A payout of ₹{amount} failed{businessNameSuffix}. Reason: {reason}',
     ABANDONED_CART: 'You still have items waiting in your cart. Complete checkout before they sell out.',
     PRICE_DROP_ALERT: '"{productName}" dropped to ₹{price}.',
     BACK_IN_STOCK: '"{productName}" is back in stock.',

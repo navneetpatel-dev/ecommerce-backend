@@ -315,12 +315,17 @@ export class NotificationsService {
     });
   }
 
-  sendRefundProcessed(userId: string, returnId: string, templateData: EmailTemplateData = {}) {
+  sendRefundProcessed(
+    userId: string,
+    referenceId: string,
+    templateData: EmailTemplateData = {},
+    referenceType = 'ReturnRequest',
+  ) {
     return this.enqueue({
       userId,
       type: 'REFUND_PROCESSED',
-      referenceType: 'ReturnRequest',
-      referenceId: returnId,
+      referenceType,
+      referenceId,
       templateData,
     });
   }
@@ -420,7 +425,7 @@ export class NotificationsService {
       userId,
       type: 'PAYOUT_PROCESSED',
       referenceType: 'Payout',
-      referenceId: payoutId,
+      referenceId: `${payoutId}:${userId}`,
       templateData,
     });
   }
@@ -430,7 +435,7 @@ export class NotificationsService {
       userId,
       type: 'PAYOUT_FAILED',
       referenceType: 'Payout',
-      referenceId: payoutId,
+      referenceId: `${payoutId}:${userId}`,
       templateData,
     });
   }

@@ -1,6 +1,8 @@
 import { User } from '@database/models/user.model';
+import { Role } from '@database/models/role.model';
 import { Order } from '@database/models/order.model';
 import { SubOrder } from '@database/models/subOrder.model';
+import { ROLES } from '@core/constants/statuses';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { logger } from '@core/logger';
 
@@ -12,6 +14,18 @@ export async function findVendorOwnerUserId(vendorId: string | null | undefined)
     order: [['createdAt', 'ASC']],
   });
   return owner?.id ?? null;
+}
+
+/** Super-admin user ids for internal operational alerts. */
+export async function findSuperAdminUserIds(limit = 20): Promise<string[]> {
+  const adminRole = await Role.findOne({ where: { name: ROLES.SUPER_ADMIN } });
+  if (!adminRole) return [];
+  const admins = await User.findAll({
+    where: { roleId: adminRole.id },
+    attributes: ['id'],
+    limit,
+  });
+  return admins.map((admin) => admin.id);
 }
 
 /** Fire transactional emails after an order is paid / COD-confirmed. */

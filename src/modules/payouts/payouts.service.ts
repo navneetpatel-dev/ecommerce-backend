@@ -6,9 +6,35 @@ import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { COMMISSION_STATUS, PAYOUT_STATUS } from '@core/constants/statuses';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { notificationsService } from '@modules/notifications/notifications.service';
-import { findVendorOwnerUserId } from '@modules/notifications/orderNotifications';
+import {
+  findSuperAdminUserIds,
+  findVendorOwnerUserId,
+} from '@modules/notifications/orderNotifications';
 import { logger } from '@core/logger';
 import { Op } from 'sequelize';
+
+async function notifyPayoutFailed(params: {
+  vendorId: string;
+  payoutId: string;
+  amount: number;
+  reason: string;
+  businessName?: string | null;
+}) {
+  const templateData = {
+    amount: params.amount,
+    reason: params.reason,
+    businessName: params.businessName ?? undefined,
+    vendorId: params.vendorId,
+  };
+  const ownerId = await findVendorOwnerUserId(params.vendorId);
+  if (ownerId) {
+    void notificationsService.sendPayoutFailed(ownerId, params.payoutId, templateData);
+  }
+  const adminIds = await findSuperAdminUserIds();
+  for (const adminId of adminIds) {
+    void notificationsService.sendPayoutFailed(adminId, params.payoutId, templateData);
+  }
+}
 
 function serializePayout(row: Payout) {
   const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
@@ -130,13 +156,14 @@ export class PayoutsService {
           status: PAYOUT_STATUS.FAILED,
           createdBy: actorId,
         });
-        const ownerId = await findVendorOwnerUserId(vendorId);
-        if (ownerId) {
-          void notificationsService.sendPayoutFailed(ownerId, failed.id, {
-            amount: Number(failed.amount),
-            reason,
-          });
-        }
+        const vendor = await Vendor.findByPk(vendorId, { attributes: ['businessName'] });
+        void notifyPayoutFailed({
+          vendorId,
+          payoutId: failed.id,
+          amount: Number(failed.amount),
+          reason,
+          businessName: vendor?.businessName,
+        });
       }
     }
 

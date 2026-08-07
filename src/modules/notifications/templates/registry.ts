@@ -43,6 +43,9 @@ function bodyFor(type: NotificationType, data: EmailTemplateData): string {
     status: str(data, 'status'),
     reason: str(data, 'reason', '—'),
     businessName: str(data, 'businessName'),
+    businessNameSuffix: str(data, 'businessName')
+      ? ` for ${str(data, 'businessName')}`
+      : '',
     productName: str(data, 'productName'),
     sku: str(data, 'sku'),
     stock: str(data, 'stock'),

@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { Op } from 'sequelize';
 import { env } from '@config/env';
 import { razorpay, razorpayConfigured } from '@config/razorpay';
 import { AppError } from '@core/errors/AppError';
@@ -11,13 +12,19 @@ import { ProductVariant } from '@database/models/productVariant.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { Coupon } from '@database/models/coupon.model';
 import { WebhookEvent } from '@database/models/webhookEvent.model';
+import { ReturnRequest } from '@database/models/returnRequest.model';
 import { cartService } from '@modules/cart/cart.service';
 import {
   recordCouponUsage,
   creditCashbackIfNeeded,
   destroyCouponUsageForOrder,
 } from '@modules/coupons/couponEngine';
-import { ORDER_STATUS, PAYMENT_STATUS, COMMISSION_STATUS } from '@core/constants/statuses';
+import {
+  ORDER_STATUS,
+  PAYMENT_STATUS,
+  COMMISSION_STATUS,
+  RETURN_STATUS,
+} from '@core/constants/statuses';
 import { ERROR_MESSAGES, ERROR_CODES } from '@core/constants/errors';
 import { RAZORPAY_MIN_AMOUNT_PAISE } from '@core/constants/http';
 import { notifyOrderConfirmed } from '@modules/notifications/orderNotifications';
@@ -207,7 +214,17 @@ export class PaymentsService {
     const event = JSON.parse(bodyString) as {
       id: string;
       event: string;
-      payload?: { payment?: { entity?: { id: string; order_id: string } } };
+      payload?: {
+        payment?: { entity?: { id: string; order_id: string } };
+        refund?: {
+          entity?: {
+            id: string;
+            payment_id: string;
+            amount: number;
+            status?: string;
+          };
+        };
+      };
     };
 
     if (!event?.id) {
@@ -273,7 +290,74 @@ export class PaymentsService {
       }
     }
 
+    if (event.event === 'refund.processed' || event.event === 'refund.created') {
+      await this.handleRefundWebhook(event.payload?.refund?.entity);
+    }
+
     return { received: true, duplicate: false };
+  }
+
+  private async handleRefundWebhook(
+    refund:
+      | {
+          id: string;
+          payment_id: string;
+          amount: number;
+          status?: string;
+        }
+      | undefined,
+  ): Promise<void> {
+    if (!refund?.id || !refund.payment_id) return;
+    if (refund.status && refund.status !== 'processed' && refund.status !== 'created') return;
+
+    const order = await Order.findOne({ where: { razorpayPaymentId: refund.payment_id } });
+    if (!order?.userId) return;
+
+    const subOrders = await SubOrder.findAll({
+      where: { orderId: order.id },
+      attributes: ['id'],
+    });
+    const subOrderIds = subOrders.map((sub) => sub.id);
+
+    let returnId: string | null = null;
+    let refundAmount = Number(refund.amount ?? 0) / 100;
+
+    if (subOrderIds.length > 0) {
+      const returnRow = await ReturnRequest.findOne({
+        where: {
+          subOrderId: { [Op.in]: subOrderIds },
+          status: { [Op.in]: [RETURN_STATUS.REFUNDED, RETURN_STATUS.APPROVED] },
+        },
+        order: [['updatedAt', 'DESC']],
+      });
+      if (returnRow) {
+        returnId = returnRow.id;
+        if (returnRow.refundAmount != null) {
+          refundAmount = Number(returnRow.refundAmount);
+        }
+      }
+    }
+
+    const orderNumber = order.id.slice(0, 8).toUpperCase();
+    if (returnId) {
+      void notificationsService.sendRefundProcessed(order.userId, returnId, {
+        orderId: order.id,
+        orderNumber,
+        amount: refundAmount,
+      });
+      return;
+    }
+
+    void notificationsService.sendRefundProcessed(
+      order.userId,
+      refund.id,
+      {
+        orderId: order.id,
+        orderNumber,
+        amount: refundAmount,
+      },
+      'RazorpayRefund',
+    );
   }
 }
 

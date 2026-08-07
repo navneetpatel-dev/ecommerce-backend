@@ -4,7 +4,6 @@ import {
   VENDOR_STATUS,
   ORDER_STATUS,
   COMMISSION_STATUS,
-  ROLES,
 } from '@core/constants/statuses';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
@@ -23,9 +22,11 @@ import type {
   RejectDocumentRequest,
 } from './vendors.dto';
 import { User } from '@database/models/user.model';
-import { Role } from '@database/models/role.model';
 import { notificationsService } from '@modules/notifications/notifications.service';
-import { findVendorOwnerUserId } from '@modules/notifications/orderNotifications';
+import {
+  findSuperAdminUserIds,
+  findVendorOwnerUserId,
+} from '@modules/notifications/orderNotifications';
 
 function generateSlug(businessName: string): string {
   return businessName
@@ -80,18 +81,11 @@ export class VendorsService {
       businessName: vendor.businessName,
     });
 
-    const adminRole = await Role.findOne({ where: { name: ROLES.SUPER_ADMIN } });
-    if (adminRole) {
-      const admins = await User.findAll({
-        where: { roleId: adminRole.id },
-        attributes: ['id'],
-        limit: 20,
+    const adminIds = await findSuperAdminUserIds();
+    for (const adminId of adminIds) {
+      void notificationsService.sendAdminNewVendorPending(adminId, vendor.id, {
+        businessName: vendor.businessName,
       });
-      for (const admin of admins) {
-        void notificationsService.sendAdminNewVendorPending(admin.id, vendor.id, {
-          businessName: vendor.businessName,
-        });
-      }
     }
 
     return vendor;
