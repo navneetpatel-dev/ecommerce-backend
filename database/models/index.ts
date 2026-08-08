@@ -44,6 +44,7 @@ import { initDebitNoteModel, DebitNote } from './debitNote.model';
 import { initDocumentSequenceModel, DocumentSequence } from './documentSequence.model';
 import { initWalletLedgerModel, WalletLedger } from './walletLedger.model';
 import { initWalletWriteOffModel, WalletWriteOff } from './walletWriteOff.model';
+import { initReportExportLogModel, ReportExportLog } from './reportExportLog.model';
 
 const models = {
   Role: initRoleModel(sequelize),
@@ -91,6 +92,7 @@ const models = {
   DocumentSequence: initDocumentSequenceModel(sequelize),
   WalletLedger: initWalletLedgerModel(sequelize),
   WalletWriteOff: initWalletWriteOffModel(sequelize),
+  ReportExportLog: initReportExportLogModel(sequelize),
 };
 
 Object.values(models).forEach((model: any) => {
@@ -110,5 +112,5 @@ export {
   TaxRule, NotificationLog, AuditLog, WebhookEvent, HelpTicket,
   PlatformSetting, PromoBanner,
   TcsLedger, TdsLedger, CreditNote, DebitNote, DocumentSequence,
-  WalletLedger, WalletWriteOff,
+  WalletLedger, WalletWriteOff, ReportExportLog,
 };

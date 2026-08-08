@@ -35,6 +35,9 @@ export const ERROR_CODES = {
   ITEM_MUST_BE_DELIVERED: 'ITEM_MUST_BE_DELIVERED',
   RETURN_ALREADY_EXISTS: 'RETURN_ALREADY_EXISTS',
   VENDOR_NOT_LINKED: 'VENDOR_NOT_LINKED',
+  REPORT_NOT_FOUND: 'REPORT_NOT_FOUND',
+  REPORT_FORBIDDEN: 'REPORT_FORBIDDEN',
+  REPORT_EXPORT_NOT_READY: 'REPORT_EXPORT_NOT_READY',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -98,4 +101,7 @@ export const ERROR_MESSAGES = {
   NOT_YOUR_VENDOR_REPORT: 'Not your vendor report',
   REPORT_INVALID_RANGE: 'Report date range is invalid',
   REPORT_RECONCILIATION_MISMATCH: 'Settlement reconciliation does not balance for the selected period',
+  REPORT_NOT_FOUND: 'Report type not found',
+  REPORT_FORBIDDEN: 'You do not have access to this report',
+  REPORT_EXPORT_NOT_READY: 'Report export is not ready yet',
 } as const;

@@ -11,6 +11,8 @@ export class CreditNote extends Model<InferAttributes<CreditNote>, InferCreation
   declare taxPaise: number;
   declare totalPaise: number;
   declare taxBreakdown: CreationOptional<Record<string, unknown> | null>;
+  declare reason: CreationOptional<string | null>;
+  declare issuedAt: CreationOptional<Date | null>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -39,6 +41,8 @@ export const initCreditNoteModel = (sequelize: Sequelize) => {
       taxPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       totalPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       taxBreakdown: { type: DataTypes.JSONB, allowNull: true },
+      reason: { type: DataTypes.TEXT, allowNull: true },
+      issuedAt: { type: DataTypes.DATE, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

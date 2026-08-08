@@ -128,6 +128,12 @@ export class PayoutsService {
           }
 
           let amountPaise = 0;
+          const tdsRows: Array<{
+            orderId: string;
+            subOrderId: string;
+            taxableAmountPaise: number;
+            tdsAmountPaise: number;
+          }> = [];
           for (const row of locked) {
             const netPaise =
               row.netPayoutAmountPaise != null && Number(row.netPayoutAmountPaise) > 0
@@ -141,33 +147,27 @@ export class PayoutsService {
               row.taxableAmountPaise != null && Number(row.taxableAmountPaise) > 0
                 ? Number(row.taxableAmountPaise)
                 : toPaise(Number(row.taxableAmount ?? row.saleAmount));
+            // Section 194-O: TDS on gross vendor payout (net before TDS).
+            const grossPayoutPaise = netPaise;
             const tdsPaise =
-              tdsRate > 0 ? Math.round((taxablePaise * tdsRate) / 100) : 0;
+              tdsRate > 0 ? Math.round((grossPayoutPaise * tdsRate) / 100) : 0;
             amountPaise += Math.max(0, netPaise - tdsPaise);
 
             if (tdsPaise > 0) {
               const subOrder = (row as any).SubOrder as SubOrder | undefined;
               if (subOrder?.orderId) {
-                await TdsLedger.create(
-                  {
-                    orderId: subOrder.orderId,
-                    subOrderId: row.subOrderId,
-                    vendorId,
-                    taxableAmountPaise: taxablePaise,
-                    ratePercent: tdsRate,
-                    tdsAmountPaise: tdsPaise,
-                    createdBy: actorId,
-                    updatedBy: actorId,
-                    deletedBy: null,
-                  },
-                  { transaction },
-                );
+                tdsRows.push({
+                  orderId: subOrder.orderId,
+                  subOrderId: row.subOrderId,
+                  taxableAmountPaise: grossPayoutPaise,
+                  tdsAmountPaise: tdsPaise,
+                });
               }
             }
           }
 
           const amount = fromPaise(amountPaise);
-          const row = await Payout.create(
+          const payoutRow = await Payout.create(
             {
               vendorId,
               amount,
@@ -178,11 +178,33 @@ export class PayoutsService {
             },
             { transaction },
           );
+
+          const period = new Date(group.end).toISOString().slice(0, 7);
+          for (const tds of tdsRows) {
+            await TdsLedger.create(
+              {
+                orderId: tds.orderId,
+                subOrderId: tds.subOrderId,
+                vendorId,
+                payoutId: payoutRow.id,
+                taxableAmountPaise: tds.taxableAmountPaise,
+                ratePercent: tdsRate,
+                tdsAmountPaise: tds.tdsAmountPaise,
+                section: '194O',
+                period,
+                createdBy: actorId,
+                updatedBy: actorId,
+                deletedBy: null,
+              },
+              { transaction },
+            );
+          }
+
           await CommissionLedger.update(
             { status: COMMISSION_STATUS.SETTLED, updatedBy: actorId },
             { where: { id: locked.map((item) => item.id) }, transaction },
           );
-          return row;
+          return payoutRow;
         });
 
         created.push(payout);

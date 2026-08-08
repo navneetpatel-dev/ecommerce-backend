@@ -2,15 +2,21 @@ import { Op } from 'sequelize';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
-import { DISCOUNT_BEARER, PAYMENT_STATUS, COMMISSION_STATUS } from '@core/constants/statuses';
-import { Order } from '@database/models/order.model';
-import { SubOrder } from '@database/models/subOrder.model';
+import { DISCOUNT_BEARER, COMMISSION_STATUS } from '@core/constants/statuses';
+import { sequelize } from '@database/models';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
-import { Vendor } from '@database/models/vendor.model';
-import { WalletLedger } from '@database/models/walletLedger.model';
 import { WalletWriteOff } from '@database/models/walletWriteOff.model';
-import { toPaise, fromPaise } from '@modules/pricing/money';
+import { fromPaise } from '@modules/pricing/money';
+import { paginationOffset, buildPaginationMeta } from '@core/http/pagination';
+import { DEFAULT_PAGE_LIMIT } from '@core/constants/http';
 import type { ReportRangeQuery, WriteOffReportQuery } from './reports.dto';
+import { getReportDefinition } from './engine/reportRegistry';
+import {
+  inclusiveReportTo,
+  frozenPaise,
+  computeReconciliationSummary,
+} from './engine/queryHelpers';
+import { REPORT_EXPORT_PAGE_SIZE as ENGINE_EXPORT_PAGE } from './engine/types';
 
 function assertRange(query: ReportRangeQuery) {
   if (query.from > query.to) {
@@ -18,212 +24,104 @@ function assertRange(query: ReportRangeQuery) {
   }
 }
 
-/** Prefer frozen paise columns; fall back to DECIMAL rupees for legacy rows. */
-function frozenPaise(paiseValue: unknown, rupeeValue: unknown): number {
-  const paise = Number(paiseValue ?? 0);
-  const rupees = Number(rupeeValue ?? 0);
-  if (paise !== 0) return paise;
-  if (rupees === 0) return 0;
-  return toPaise(rupees);
-}
-
-function paidOrderInclude(from: Date, to: Date) {
+function engineRange(query: ReportRangeQuery) {
   return {
-    model: Order,
-    as: 'order',
-    required: true,
-    where: {
-      paymentStatus: PAYMENT_STATUS.PAID,
-      createdAt: { [Op.between]: [from, to] },
-    },
-    attributes: ['id', 'totalAmount', 'discountTotal', 'couponId', 'paymentStatus', 'createdAt'],
+    from: query.from,
+    to: inclusiveReportTo(query.to),
   };
 }
 
+/** Fetch every page of an engine report (legacy panels expect full arrays). */
+async function fetchAllEngineRows(reportType: string, filters: {
+  from: Date;
+  to: Date;
+  vendorId?: string | null;
+}) {
+  const def = getReportDefinition(reportType);
+  if (!def) throw new ValidationError(ERROR_MESSAGES.REPORT_NOT_FOUND);
+  const pageSize = ENGINE_EXPORT_PAGE;
+  const first = await def.query({ ...filters, page: 1, limit: pageSize });
+  if (first.total <= first.rows.length) return first;
+  const rows = [...first.rows];
+  const pages = Math.ceil(first.total / pageSize);
+  for (let page = 2; page <= pages; page += 1) {
+    const chunk = await def.query({ ...filters, page, limit: pageSize });
+    rows.push(...chunk.rows);
+  }
+  return { rows, total: first.total, meta: first.meta };
+}
+
 export class ReportsService {
+  /**
+   * Dashboard summary metrics — same SQL identity as engine reconciliation (no load-all).
+   */
   async adminSummary(query: ReportRangeQuery) {
     assertRange(query);
-    const subOrders = await SubOrder.findAll({
-      include: [paidOrderInclude(query.from, query.to)],
-    });
-
-    // Align commission/TCS/net to the same paid orders (frozen SubOrder period).
-    const subOrderIds = subOrders.map((sub) => sub.id);
-    const ledgers = subOrderIds.length
-      ? await CommissionLedger.findAll({
-          where: {
-            subOrderId: { [Op.in]: subOrderIds },
-            status: { [Op.ne]: COMMISSION_STATUS.CLAWED_BACK },
-          },
-        })
-      : [];
-
-    let gmvPaise = 0;
-    let taxCollectedPaise = 0;
-    let shippingPaise = 0;
-    let merchandiseDiscountPaise = 0;
-
-    for (const sub of subOrders) {
-      gmvPaise += frozenPaise(sub.subtotalPaise, sub.subtotal);
-      taxCollectedPaise += frozenPaise(sub.taxAmountPaise, sub.taxAmount);
-      const shippingCostPaise = frozenPaise(sub.shippingCostPaise, sub.shippingCost);
-      const shippingDiscountPaise = frozenPaise(
-        sub.shippingDiscountAmountPaise,
-        sub.shippingDiscountAmount,
-      );
-      shippingPaise += Math.max(0, shippingCostPaise - shippingDiscountPaise);
-      merchandiseDiscountPaise += frozenPaise(sub.discountAmountPaise, sub.discountAmount);
-    }
-
-    const orderIds = new Set(
-      subOrders
-        .map((sub) => (sub as SubOrder & { order?: Order }).order?.id)
-        .filter(Boolean) as string[],
-    );
-    const orders = await Order.findAll({
-      where: { id: { [Op.in]: [...orderIds] } },
-      attributes: ['id', 'totalAmount', 'discountTotal', 'couponId'],
-    });
-    const customerPaymentsPaise = orders.reduce(
-      (sum, order) => sum + toPaise(order.totalAmount),
-      0,
-    );
-
-    let commissionPaise = 0;
-    let tcsPaise = 0;
-    let netPayoutPaise = 0;
-    let platformDiscountPaise = 0;
-    let vendorDiscountPaise = 0;
-
-    for (const ledger of ledgers) {
-      commissionPaise += frozenPaise(ledger.commissionAmountPaise, ledger.commissionAmount);
-      tcsPaise += frozenPaise(ledger.tcsAmountPaise, ledger.tcsAmount);
-      netPayoutPaise += frozenPaise(
-        ledger.netPayoutAmountPaise,
-        ledger.netPayoutAmount != null
-          ? ledger.netPayoutAmount
-          : Number(ledger.saleAmount) - Number(ledger.commissionAmount),
-      );
-      const disc = frozenPaise(ledger.discountAmountPaise, ledger.discountAmount);
-      if (ledger.discountBearer === DISCOUNT_BEARER.VENDOR) vendorDiscountPaise += disc;
-      else if (ledger.discountBearer === DISCOUNT_BEARER.PLATFORM) platformDiscountPaise += disc;
-      else if (disc > 0) platformDiscountPaise += disc;
-    }
-
+    const range = engineRange(query);
+    const summary = await computeReconciliationSummary(range);
     return {
-      from: query.from,
-      to: query.to,
-      gmv: fromPaise(gmvPaise),
-      customerPayments: fromPaise(customerPaymentsPaise),
-      commissionEarned: fromPaise(commissionPaise),
-      taxCollected: fromPaise(taxCollectedPaise),
-      tcsCollected: fromPaise(tcsPaise),
-      shippingCollected: fromPaise(shippingPaise),
+      from: range.from,
+      to: range.to,
+      gmv: fromPaise(summary.gmvPaise),
+      customerPayments: fromPaise(summary.customerPaymentsPaise),
+      commissionEarned: fromPaise(summary.platformCommissionPaise),
+      taxCollected: fromPaise(summary.taxCollectedPaise),
+      tcsCollected: fromPaise(summary.tcsCollectedPaise),
+      shippingCollected: fromPaise(summary.shippingCollectedPaise),
       discountAbsorbed: {
-        platform: fromPaise(platformDiscountPaise),
-        vendor: fromPaise(vendorDiscountPaise),
-        merchandiseTotal: fromPaise(merchandiseDiscountPaise),
+        platform: fromPaise(summary.platformDiscountPaise),
+        vendor: fromPaise(summary.vendorDiscountPaise),
+        merchandiseTotal: fromPaise(summary.merchandiseDiscountPaise),
       },
-      vendorNetPayouts: fromPaise(netPayoutPaise),
+      vendorNetPayouts: fromPaise(summary.vendorNetPayoutsPaise),
     };
   }
 
+  /** Delegates to engine `vendor-settlement` so panels cannot drift from hub reports. */
   async adminVendorSettlements(query: ReportRangeQuery) {
     assertRange(query);
-    const ledgers = await CommissionLedger.findAll({
-      where: { createdAt: { [Op.between]: [query.from, query.to] } },
-      include: [{ model: Vendor, attributes: ['id', 'businessName'] }],
-    });
-
-    const byVendor = new Map<
-      string,
-      {
-        vendorId: string;
-        vendorName: string;
-        grossSales: number;
-        discountsAbsorbed: number;
-        commissionCharged: number;
-        tcsCharged: number;
-        netPaidOut: number;
-        pendingNet: number;
-        settledNet: number;
-      }
-    >();
-
-    for (const ledger of ledgers) {
-      const vendor = (ledger as any).Vendor as Vendor | undefined;
-      const key = ledger.vendorId;
-      const row = byVendor.get(key) ?? {
-        vendorId: key,
-        vendorName: vendor?.businessName ?? key,
+    const range = engineRange(query);
+    const result = await fetchAllEngineRows('vendor-settlement', range);
+    return {
+      from: range.from,
+      to: range.to,
+      vendors: result.rows.map((row) => ({
+        vendorId: String(row.vendorId ?? ''),
+        vendorName: String(row.vendorName ?? ''),
         grossSales: 0,
         discountsAbsorbed: 0,
         commissionCharged: 0,
         tcsCharged: 0,
-        netPaidOut: 0,
-        pendingNet: 0,
-        settledNet: 0,
-      };
-      const taxablePaise = frozenPaise(ledger.taxableAmountPaise, ledger.taxableAmount ?? ledger.saleAmount);
-      const netPaise = frozenPaise(
-        ledger.netPayoutAmountPaise,
-        ledger.netPayoutAmount != null
-          ? ledger.netPayoutAmount
-          : Number(ledger.saleAmount) - Number(ledger.commissionAmount),
-      );
-      const commissionPaise = frozenPaise(ledger.commissionAmountPaise, ledger.commissionAmount);
-      const tcsPaise = frozenPaise(ledger.tcsAmountPaise, ledger.tcsAmount);
-      const discPaise = frozenPaise(ledger.discountAmountPaise, ledger.discountAmount);
-
-      row.grossSales += fromPaise(taxablePaise);
-      if (ledger.discountBearer === DISCOUNT_BEARER.VENDOR) {
-        row.discountsAbsorbed += fromPaise(discPaise);
-      }
-      row.commissionCharged += fromPaise(commissionPaise);
-      row.tcsCharged += fromPaise(tcsPaise);
-      if (ledger.status === COMMISSION_STATUS.SETTLED) {
-        row.settledNet += fromPaise(netPaise);
-        row.netPaidOut += fromPaise(netPaise);
-      } else if (ledger.status === COMMISSION_STATUS.PENDING) {
-        row.pendingNet += fromPaise(netPaise);
-      }
-      byVendor.set(key, row);
-    }
-
-    return {
-      from: query.from,
-      to: query.to,
-      vendors: [...byVendor.values()],
+        netPaidOut: Number(row.payoutPaid ?? 0),
+        pendingNet: Number(row.pendingNet ?? 0),
+        settledNet: Number(row.settledNet ?? 0),
+      })),
     };
   }
 
+  /** Delegates to engine `reconciliation` (includes refunds-to-customer). */
   async adminReconciliation(query: ReportRangeQuery) {
     assertRange(query);
-    const summary = await this.adminSummary(query);
-    const expectedPaise = toPaise(summary.customerPayments);
-    const accountedPaise =
-      toPaise(summary.vendorNetPayouts) +
-      toPaise(summary.commissionEarned) +
-      toPaise(summary.taxCollected) +
-      toPaise(summary.tcsCollected) +
-      toPaise(summary.shippingCollected);
-    const differencePaise = expectedPaise - accountedPaise;
-    const balanced = differencePaise === 0;
-
+    const range = engineRange(query);
+    const def = getReportDefinition('reconciliation');
+    if (!def) throw new ValidationError(ERROR_MESSAGES.REPORT_NOT_FOUND);
+    const result = await def.query({ ...range, page: 1, limit: 1 });
+    const row = (result.meta ?? result.rows[0] ?? {}) as Record<string, unknown>;
     return {
-      from: query.from,
-      to: query.to,
-      customerPayments: summary.customerPayments,
-      vendorNetPayouts: summary.vendorNetPayouts,
-      platformCommission: summary.commissionEarned,
-      taxCollected: summary.taxCollected,
-      tcsCollected: summary.tcsCollected,
-      shippingCollected: summary.shippingCollected,
-      accountedTotal: fromPaise(accountedPaise),
-      difference: fromPaise(differencePaise),
-      balanced,
-      status: balanced ? 'BALANCED' : 'MISMATCH',
-      error: balanced ? null : ERROR_MESSAGES.REPORT_RECONCILIATION_MISMATCH,
+      from: range.from,
+      to: range.to,
+      customerPayments: Number(row.customerPayments ?? 0),
+      vendorNetPayouts: Number(row.vendorNetPayouts ?? 0),
+      platformCommission: Number(row.platformCommission ?? 0),
+      taxCollected: Number(row.taxCollected ?? 0),
+      tcsCollected: Number(row.tcsCollected ?? 0),
+      shippingCollected: Number(row.shippingCollected ?? 0),
+      refundsToCustomer: Number(row.refundsToCustomer ?? 0),
+      accountedTotal: Number(row.accountedTotal ?? 0),
+      difference: Number(row.difference ?? 0),
+      balanced: Boolean(row.balanced ?? row.status === 'BALANCED'),
+      status: String(row.status ?? 'MISMATCH'),
+      error: row.error ?? (row.status === 'BALANCED' ? null : ERROR_MESSAGES.REPORT_RECONCILIATION_MISMATCH),
     };
   }
 
@@ -232,12 +130,29 @@ export class ReportsService {
       throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_VENDOR_REPORT);
     }
     assertRange(query);
+    const range = engineRange(query);
 
     const ledgers = await CommissionLedger.findAll({
       where: {
         vendorId,
-        createdAt: { [Op.between]: [query.from, query.to] },
+        createdAt: { [Op.between]: [range.from, range.to] },
+        status: { [Op.ne]: COMMISSION_STATUS.CLAWED_BACK },
       },
+      attributes: [
+        'taxableAmountPaise',
+        'taxableAmount',
+        'saleAmount',
+        'netPayoutAmountPaise',
+        'netPayoutAmount',
+        'commissionAmountPaise',
+        'commissionAmount',
+        'tcsAmountPaise',
+        'tcsAmount',
+        'discountAmountPaise',
+        'discountAmount',
+        'discountBearer',
+        'status',
+      ],
     });
 
     let salesPaise = 0;
@@ -268,7 +183,6 @@ export class ReportsService {
       if (ledger.status === COMMISSION_STATUS.PENDING) pendingPaise += netRow;
       if (ledger.status === COMMISSION_STATUS.SETTLED) settledPaise += netRow;
 
-      // Own coupons: VENDOR bearer. Platform coupons on my items: PLATFORM bearer.
       if (discount > 0) {
         if (ledger.discountBearer === DISCOUNT_BEARER.VENDOR) {
           vendorCouponDiscountPaise += discount;
@@ -279,8 +193,8 @@ export class ReportsService {
     }
 
     return {
-      from: query.from,
-      to: query.to,
+      from: range.from,
+      to: range.to,
       vendorId,
       sales: fromPaise(salesPaise),
       commissionDeducted: fromPaise(commissionPaise),
@@ -295,41 +209,73 @@ export class ReportsService {
     };
   }
 
-  /** Outstanding customer wallet balances platform-wide (latest ledger per user). */
-  async walletLiabilityReport(_query: ReportRangeQuery): Promise<{
+  /**
+   * Outstanding customer wallet balances — DISTINCT ON latest ledger per user, SQL-paged.
+   */
+  async walletLiabilityReport(
+    query: ReportRangeQuery & { page?: number; limit?: number },
+  ): Promise<{
     totalLiability: number;
     customerCount: number;
     rows: Array<{ userId: string; balance: number; asOf: Date }>;
+    pagination: ReturnType<typeof buildPaginationMeta>;
   }> {
-    const ledgers = await WalletLedger.findAll({
-      order: [
-        ['userId', 'ASC'],
-        ['createdAt', 'DESC'],
-      ],
-      attributes: ['userId', 'balanceAfter', 'createdAt', 'type', 'amount'],
-    });
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.max(1, query.limit ?? DEFAULT_PAGE_LIMIT);
+    const offset = paginationOffset(page, limit);
 
-    const seen = new Set<string>();
-    const rows: Array<{ userId: string; balance: number; asOf: Date }> = [];
-    let totalLiability = 0;
-    for (const row of ledgers) {
-      if (seen.has(row.userId)) continue;
-      seen.add(row.userId);
-      const balance = Number(row.balanceAfter);
-      if (balance <= 0) continue;
-      totalLiability += balance;
-      rows.push({ userId: row.userId, balance, asOf: row.createdAt as Date });
-    }
+    const [[totals]] = (await sequelize.query(
+      `WITH latest AS (
+         SELECT DISTINCT ON ("userId")
+           "userId",
+           "balanceAfter",
+           "createdAt"
+         FROM wallet_ledgers
+         WHERE "deletedAt" IS NULL
+         ORDER BY "userId", "createdAt" DESC
+       )
+       SELECT
+         COUNT(*)::int AS "customerCount",
+         COALESCE(SUM("balanceAfter"), 0)::float AS "totalLiability"
+       FROM latest
+       WHERE "balanceAfter" > 0`,
+    )) as [Array<{ customerCount: number; totalLiability: number }>, unknown];
 
+    const [rows] = (await sequelize.query(
+      `WITH latest AS (
+         SELECT DISTINCT ON ("userId")
+           "userId" AS "userId",
+           "balanceAfter" AS balance,
+           "createdAt" AS "asOf"
+         FROM wallet_ledgers
+         WHERE "deletedAt" IS NULL
+         ORDER BY "userId", "createdAt" DESC
+       )
+       SELECT "userId", balance, "asOf"
+       FROM latest
+       WHERE balance > 0
+       ORDER BY balance DESC
+       LIMIT :limit OFFSET :offset`,
+      { replacements: { limit, offset } },
+    )) as [Array<{ userId: string; balance: number; asOf: Date }>, unknown];
+
+    const customerCount = Number(totals?.customerCount ?? 0);
     return {
-      totalLiability: Math.round(totalLiability * 100) / 100,
-      customerCount: rows.length,
-      rows,
+      totalLiability: Math.round(Number(totals?.totalLiability ?? 0) * 100) / 100,
+      customerCount,
+      rows: rows.map((r) => ({
+        userId: r.userId,
+        balance: Number(r.balance),
+        asOf: r.asOf,
+      })),
+      pagination: buildPaginationMeta(customerCount, page, limit),
     };
   }
 
-  /** Cashback write-offs: recovered vs written-off, filterable by bornBy. */
-  async cashbackWriteOffReport(query: WriteOffReportQuery): Promise<{
+  /** Cashback write-offs with SQL pagination; totals from a separate aggregate query. */
+  async cashbackWriteOffReport(
+    query: WriteOffReportQuery & { page?: number; limit?: number },
+  ): Promise<{
     from: Date;
     to: Date;
     bornBy: string | null;
@@ -346,41 +292,66 @@ export class ReportsService {
       referenceId: string;
       createdAt: Date;
     }>;
+    pagination: ReturnType<typeof buildPaginationMeta>;
   }> {
     assertRange(query);
+    const from = query.from;
+    const to = inclusiveReportTo(query.to);
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.max(1, query.limit ?? DEFAULT_PAGE_LIMIT);
+    const offset = paginationOffset(page, limit);
+
     const where: Record<string, unknown> = {
-      createdAt: { [Op.between]: [query.from, query.to] },
+      createdAt: { [Op.between]: [from, to] },
     };
     if (query.bornBy) where.bornBy = query.bornBy;
 
-    const writeOffs = await WalletWriteOff.findAll({ where, order: [['createdAt', 'DESC']] });
-    let recoveredTotal = 0;
-    let writtenOffTotal = 0;
-    const rows = writeOffs.map((row) => {
-      const recovered = Number(row.recoveredAmount);
-      const writtenOff = Number(row.writtenOffAmount);
-      recoveredTotal += recovered;
-      writtenOffTotal += writtenOff;
-      return {
+    const [totalsRaw, pageResult] = await Promise.all([
+      WalletWriteOff.findAll({
+        where,
+        attributes: [
+          [
+            sequelize.fn('COALESCE', sequelize.fn('SUM', sequelize.col('recoveredAmount')), 0),
+            'recoveredTotal',
+          ],
+          [
+            sequelize.fn('COALESCE', sequelize.fn('SUM', sequelize.col('writtenOffAmount')), 0),
+            'writtenOffTotal',
+          ],
+        ],
+        raw: true,
+      }),
+      WalletWriteOff.findAndCountAll({
+        where,
+        order: [['createdAt', 'DESC']],
+        limit,
+        offset,
+      }),
+    ]);
+
+    const aggregate = (totalsRaw[0] ?? {
+      recoveredTotal: 0,
+      writtenOffTotal: 0,
+    }) as { recoveredTotal: string | number; writtenOffTotal: string | number };
+
+    return {
+      from,
+      to,
+      bornBy: query.bornBy ?? null,
+      recoveredTotal: Math.round(Number(aggregate.recoveredTotal) * 100) / 100,
+      writtenOffTotal: Math.round(Number(aggregate.writtenOffTotal) * 100) / 100,
+      rows: pageResult.rows.map((row) => ({
         id: row.id,
         userId: row.userId,
         originalClawbackAmount: Number(row.originalClawbackAmount),
-        recoveredAmount: recovered,
-        writtenOffAmount: writtenOff,
+        recoveredAmount: Number(row.recoveredAmount),
+        writtenOffAmount: Number(row.writtenOffAmount),
         bornBy: row.bornBy,
         referenceType: row.referenceType,
         referenceId: row.referenceId,
         createdAt: row.createdAt as Date,
-      };
-    });
-
-    return {
-      from: query.from,
-      to: query.to,
-      bornBy: query.bornBy ?? null,
-      recoveredTotal: Math.round(recoveredTotal * 100) / 100,
-      writtenOffTotal: Math.round(writtenOffTotal * 100) / 100,
-      rows,
+      })),
+      pagination: buildPaginationMeta(pageResult.count, page, limit),
     };
   }
 
@@ -398,7 +369,6 @@ export class ReportsService {
     ].join('\n');
   }
 
-  /** Build a real PDF buffer for settlement statement export. */
   async toPdf(title: string, rows: Record<string, unknown>[]): Promise<Buffer> {
     const PDFDocument = (await import('pdfkit')).default;
     return new Promise((resolve, reject) => {

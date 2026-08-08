@@ -30,6 +30,7 @@ function subjectFor(type: NotificationType, data: EmailTemplateData): string {
     productName: str(data, 'productName'),
     code: str(data, 'code'),
     brand: EMAIL_COPY.brandName,
+    reportType: str(data, 'reportType'),
   });
 }
 
@@ -57,6 +58,8 @@ function bodyFor(type: NotificationType, data: EmailTemplateData): string {
     trackingSuffix: str(data, 'trackingId')
       ? ` (tracking: ${str(data, 'trackingId')})`
       : '',
+    reportType: str(data, 'reportType'),
+    rowCount: str(data, 'rowCount'),
   });
 }
 
@@ -107,6 +110,11 @@ function defaultCta(type: NotificationType, data: EmailTemplateData): { label?: 
       };
     case 'COUPON_OFFER_EXPIRING':
       return { label: EMAIL_COPY.ctaViewCart, url: str(data, 'actionUrl', `${base}/cart`) };
+    case 'REPORT_EXPORT_READY':
+      return {
+        label: EMAIL_COPY.ctaDownloadReport,
+        url: str(data, 'actionUrl', `${base}/admin/reports`),
+      };
     default:
       return { label: EMAIL_COPY.ctaOpenStore, url: base };
   }

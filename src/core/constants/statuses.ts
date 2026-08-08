@@ -214,6 +214,7 @@ export const DISCOUNT_BEARER_VALUES = Object.values(DISCOUNT_BEARER) as [
 export const DOCUMENT_SEQUENCE_KIND = {
   CREDIT_NOTE: 'CREDIT_NOTE',
   DEBIT_NOTE: 'DEBIT_NOTE',
+  TAX_INVOICE: 'TAX_INVOICE',
 } as const;
 export type DocumentSequenceKind =
   (typeof DOCUMENT_SEQUENCE_KIND)[keyof typeof DOCUMENT_SEQUENCE_KIND];

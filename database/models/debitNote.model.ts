@@ -10,6 +10,8 @@ export class DebitNote extends Model<InferAttributes<DebitNote>, InferCreationAt
   declare commissionPaise: number;
   declare tcsPaise: number;
   declare netClawbackPaise: number;
+  declare reason: CreationOptional<string | null>;
+  declare issuedAt: CreationOptional<Date | null>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -37,6 +39,8 @@ export const initDebitNoteModel = (sequelize: Sequelize) => {
       commissionPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       tcsPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       netClawbackPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      reason: { type: DataTypes.TEXT, allowNull: true },
+      issuedAt: { type: DataTypes.DATE, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

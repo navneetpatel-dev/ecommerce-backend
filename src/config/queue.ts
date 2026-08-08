@@ -25,6 +25,7 @@ export const QUEUE_NAMES = [
   'sms',
   'payout',
   'notification',
+  'report-export',
 ] as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[number];
@@ -85,6 +86,9 @@ export const queues = {
   get notification() {
     return ensureQueue('notification');
   },
+  get reportExport() {
+    return ensureQueue('report-export');
+  },
 };
 
 export const queueEvents = {
@@ -105,6 +109,9 @@ export const queueEvents = {
   },
   get notification() {
     return ensureQueueEvents('notification');
+  },
+  get reportExport() {
+    return ensureQueueEvents('report-export');
   },
 };
 

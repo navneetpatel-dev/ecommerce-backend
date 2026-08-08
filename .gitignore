@@ -2,6 +2,7 @@ node_modules/
 dist/
 logs/
 uploads/
+storage/
 .env
 *.log
 .DS_Store

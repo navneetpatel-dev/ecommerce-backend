@@ -621,6 +621,11 @@ export class CheckoutService {
         }
       }
 
+      // COD has no payment webhook — confirm placement so fulfillment + reports can see it.
+      if (data.paymentMethod === PAYMENT_METHOD.COD) {
+        await orderRow.update({ status: ORDER_STATUS.CONFIRMED }, { transaction: t });
+      }
+
       for (const [vendorId, prep] of Object.entries(vendorPrep)) {
         const priced = pricedByVendor[vendorId]!;
         const r = priced.rupees;
@@ -721,13 +726,23 @@ export class CheckoutService {
           }, { transaction: t });
 
           if (p.tcsPaise > 0) {
+            const tcsTotal = p.tcsPaise;
+            const useIgst = Number(p.tax.igst ?? 0) > 0;
+            const tcsCgstPaise = useIgst ? 0 : Math.floor(tcsTotal / 2);
+            const tcsSgstPaise = useIgst ? 0 : tcsTotal - tcsCgstPaise;
+            const tcsIgstPaise = useIgst ? tcsTotal : 0;
+            const period = new Date().toISOString().slice(0, 7);
             await TcsLedger.create({
               orderId: orderRow.id,
               subOrderId: subOrder.id,
               vendorId,
               taxableAmountPaise: p.taxablePaise,
               ratePercent: settings.tcsRatePercent,
-              tcsAmountPaise: p.tcsPaise,
+              tcsAmountPaise: tcsTotal,
+              tcsCgstPaise,
+              tcsSgstPaise,
+              tcsIgstPaise,
+              period,
               createdBy: userId,
               updatedBy: userId,
               deletedBy: null,
@@ -835,6 +850,10 @@ export class CheckoutService {
 
         await CommissionLedger.destroy({
           where: { subOrderId: subOrder.id, status: COMMISSION_STATUS.PENDING },
+          transaction: t,
+        });
+        await TcsLedger.destroy({
+          where: { subOrderId: subOrder.id },
           transaction: t,
         });
       }

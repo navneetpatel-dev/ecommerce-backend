@@ -14,6 +14,7 @@ export const EMAIL_COPY = {
   ctaLeaveReview: 'Leave a review',
   ctaViewCart: 'Return to cart',
   ctaVendorDashboard: 'Open vendor dashboard',
+  ctaDownloadReport: 'Download report',
 
   subjects: {
     EMAIL_VERIFICATION: 'Verify your email address',
@@ -46,6 +47,7 @@ export const EMAIL_COPY = {
     COUPON_USAGE_LIMIT: 'Coupon nearing usage limit — {code}',
     COUPON_EXPIRING: 'Coupon expiring soon — {code}',
     COUPON_OFFER_EXPIRING: 'Offer expiring soon — {code}',
+    REPORT_EXPORT_READY: 'Your report export is ready — {reportType}',
   } satisfies Record<NotificationType, string>,
 
   greetings: {
@@ -89,6 +91,8 @@ export const EMAIL_COPY = {
     COUPON_USAGE_LIMIT: 'Coupon {code} has used {usedCount} of {usageLimit} redemptions.',
     COUPON_EXPIRING: 'Coupon {code} expires on {expiresAt}.',
     COUPON_OFFER_EXPIRING: 'Your offer {code} expires on {expiresAt}. Apply it before it ends.',
+    REPORT_EXPORT_READY:
+      'Your {reportType} export ({rowCount} rows) is ready. Use the button below to download the Excel file from your account session.',
   } satisfies Record<NotificationType, string>,
 } as const;
 

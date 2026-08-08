@@ -8,6 +8,11 @@ export class TdsLedger extends Model<InferAttributes<TdsLedger>, InferCreationAt
   declare taxableAmountPaise: number;
   declare ratePercent: number;
   declare tdsAmountPaise: number;
+  declare payoutId: CreationOptional<string | null>;
+  /** Income-tax section — default 194O. */
+  declare section: CreationOptional<string>;
+  /** YYYY-MM period for TDS returns. */
+  declare period: CreationOptional<string | null>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -19,6 +24,7 @@ export class TdsLedger extends Model<InferAttributes<TdsLedger>, InferCreationAt
     TdsLedger.belongsTo(models.Order, { foreignKey: 'orderId' });
     TdsLedger.belongsTo(models.SubOrder, { foreignKey: 'subOrderId' });
     TdsLedger.belongsTo(models.Vendor, { foreignKey: 'vendorId' });
+    TdsLedger.belongsTo(models.Payout, { foreignKey: 'payoutId' });
   }
 }
 
@@ -32,6 +38,9 @@ export const initTdsLedgerModel = (sequelize: Sequelize) => {
       taxableAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       ratePercent: { type: DataTypes.DECIMAL(5, 2), allowNull: false, defaultValue: 0 },
       tdsAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      payoutId: { type: DataTypes.UUID, allowNull: true },
+      section: { type: DataTypes.STRING(16), allowNull: false, defaultValue: '194O' },
+      period: { type: DataTypes.STRING(7), allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

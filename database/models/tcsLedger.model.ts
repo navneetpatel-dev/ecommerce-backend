@@ -8,6 +8,11 @@ export class TcsLedger extends Model<InferAttributes<TcsLedger>, InferCreationAt
   declare taxableAmountPaise: number;
   declare ratePercent: number;
   declare tcsAmountPaise: number;
+  declare tcsCgstPaise: CreationOptional<number>;
+  declare tcsSgstPaise: CreationOptional<number>;
+  declare tcsIgstPaise: CreationOptional<number>;
+  /** YYYY-MM period for GSTR-8 filing. */
+  declare period: CreationOptional<string | null>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -32,6 +37,10 @@ export const initTcsLedgerModel = (sequelize: Sequelize) => {
       taxableAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       ratePercent: { type: DataTypes.DECIMAL(5, 2), allowNull: false, defaultValue: 0 },
       tcsAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      tcsCgstPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      tcsSgstPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      tcsIgstPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      period: { type: DataTypes.STRING(7), allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },
