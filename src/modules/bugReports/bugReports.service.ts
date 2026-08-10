@@ -31,6 +31,8 @@ import { nextPaddedDocumentNumber } from '@modules/pricing/documentSequence';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { settingsService } from '@modules/settings/settings.service';
 import { logAudit } from '@modules/audit/audit.service';
+import { usersService } from '@modules/users/users.service';
+import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import {
   assertAttachmentLimits,
 } from '@modules/supportTickets/mediaLimits';
@@ -375,8 +377,11 @@ export class BugReportsService {
       assertTransition(locked.status, BUG_REPORT_STATUS.TRIAGED);
 
       if (data.assignedToId) {
-        const assignee = await User.findByPk(data.assignedToId, { transaction: t });
-        if (!assignee) throw new ValidationError(ERROR_MESSAGES.NOT_FOUND);
+        await usersService.assertAssignableUser(
+          data.assignedToId,
+          PERMISSIONS.BUG_REPORT_MANAGE,
+          t,
+        );
       }
 
       await locked.update(

@@ -8,6 +8,7 @@ import {
   UpdateUserStatusSchema,
   CreateAddressSchema,
   UpdateAddressSchema,
+  ListAssigneesQuerySchema,
 } from './users.dto';
 
 export const getProfile = asyncHandler(async (req: Request, res: Response) => {
@@ -62,6 +63,12 @@ export const getUsers = asyncHandler(async (req: Request, res: Response) => {
   const query = GetUsersQuerySchema.parse(req.query);
   const result = await usersService.getUsers(query);
   res.json(ok(result.users, { pagination: result.pagination }));
+});
+
+export const listAssignees = asyncHandler(async (req: Request, res: Response) => {
+  const query = ListAssigneesQuerySchema.parse(req.query);
+  const assignees = await usersService.listAssignees(req.user!, query);
+  res.json(ok(assignees));
 });
 
 export const getUserById = asyncHandler(async (req: Request, res: Response) => {

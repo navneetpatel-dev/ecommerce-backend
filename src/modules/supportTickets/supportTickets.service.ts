@@ -1,6 +1,5 @@
 import { Op, QueryTypes, type Transaction, type WhereOptions } from 'sequelize';
 import { AppError } from '@core/errors/AppError';
-import { ValidationError } from '@core/errors/ValidationError';
 import {
   ADMIN_ROLES,
   DOCUMENT_SEQUENCE_KIND,
@@ -18,7 +17,6 @@ import { TicketMessage } from '@database/models/ticketMessage.model';
 import { TicketAttachment } from '@database/models/ticketAttachment.model';
 import { User } from '@database/models/user.model';
 import { Vendor } from '@database/models/vendor.model';
-import { Role } from '@database/models/role.model';
 import { Order } from '@database/models/order.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { sequelize } from '@database/models';
@@ -34,6 +32,8 @@ import { notificationsService } from '@modules/notifications/notifications.servi
 import { findVendorOwnerUserId } from '@modules/notifications/orderNotifications';
 import { settingsService } from '@modules/settings/settings.service';
 import { logAudit } from '@modules/audit/audit.service';
+import { usersService } from '@modules/users/users.service';
+import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { assertAttachmentLimits, assertCombinedAttachmentLimits } from './mediaLimits';
 import { assertRemoteVideoBackstop } from './mediaProbe';
 import type {
@@ -74,6 +74,7 @@ type Actor = {
 
 const ticketListInclude = [
   { model: User, as: 'customer', required: false, attributes: ['id', 'name'] },
+  { model: User, as: 'assignedTo', required: false, attributes: ['id', 'name'] },
   { model: Vendor, as: 'relatedVendor', required: false, attributes: ['id', 'businessName'] },
 ];
 
@@ -163,6 +164,7 @@ function serializeTicket(
     priority: plain.priority,
     status: plain.status,
     assignedToId: plain.assignedToId ?? null,
+    assignedToName: plain.assignedTo?.name ?? null,
     firstResponseAt: plain.firstResponseAt ?? null,
     resolvedAt: plain.resolvedAt ?? null,
     closedAt: plain.closedAt ?? null,
@@ -199,17 +201,11 @@ async function loadLatestMessagePreviews(
 }
 
 async function findTicketManagerUserIds(limit = 50): Promise<string[]> {
-  const roles = await Role.findAll({
-    where: { name: { [Op.in]: [ROLES.SUPER_ADMIN, ROLES.ADMIN_ORDER_MANAGER] } },
-    attributes: ['id'],
-  });
-  if (roles.length === 0) return [];
-  const users = await User.findAll({
-    where: { roleId: { [Op.in]: roles.map((r) => r.id) } },
-    attributes: ['id'],
+  const assignees = await usersService.findAssigneesByPermission(
+    PERMISSIONS.TICKET_MANAGE,
     limit,
-  });
-  return users.map((u) => u.id);
+  );
+  return assignees.map((u) => u.id);
 }
 
 async function assertTicketAccess(ticket: SupportTicket, actor: Actor): Promise<void> {
@@ -725,8 +721,11 @@ export class SupportTicketsService {
         throw new AppError(ERROR_MESSAGES.TICKET_FORBIDDEN, 403, ERROR_CODES.TICKET_FORBIDDEN);
       }
 
-      const assignee = await User.findByPk(assignedToId, { transaction: t });
-      if (!assignee) throw new ValidationError(ERROR_MESSAGES.NOT_FOUND);
+      await usersService.assertAssignableUser(
+        assignedToId,
+        PERMISSIONS.TICKET_MANAGE,
+        t,
+      );
 
       await locked.update(
         { assignedToId, updatedBy: actor.id },

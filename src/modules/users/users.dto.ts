@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { USER_STATUS_VALUES } from '@core/constants/statuses';
+import { PERMISSIONS } from '@core/permissions/permissionKeys';
 
 export const UpdateUserProfileSchema = z.object({
   name: z.string().min(1).max(120).optional(),
@@ -21,6 +22,11 @@ export const GetUsersQuerySchema = z.object({
   search: z.string().optional(),
 });
 
+/** Assignable staff for ticket / bug queues (must hold the requested manage permission). */
+export const ListAssigneesQuerySchema = z.object({
+  permission: z.enum([PERMISSIONS.TICKET_MANAGE, PERMISSIONS.BUG_REPORT_MANAGE]),
+});
+
 export const CreateAddressSchema = z.object({
   line1: z.string().min(1).max(255),
   line2: z.string().max(255).optional().nullable(),
@@ -36,5 +42,6 @@ export const UpdateAddressSchema = CreateAddressSchema.partial();
 export type UpdateUserProfileRequest = z.infer<typeof UpdateUserProfileSchema>;
 export type UpdateUserStatusRequest = z.infer<typeof UpdateUserStatusSchema>;
 export type GetUsersQuery = z.infer<typeof GetUsersQuerySchema>;
+export type ListAssigneesQuery = z.infer<typeof ListAssigneesQuerySchema>;
 export type CreateAddressRequest = z.infer<typeof CreateAddressSchema>;
 export type UpdateAddressRequest = z.infer<typeof UpdateAddressSchema>;

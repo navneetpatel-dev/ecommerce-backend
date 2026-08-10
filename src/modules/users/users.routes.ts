@@ -10,6 +10,7 @@ import {
   UpdateUserStatusSchema,
   CreateAddressSchema,
   UpdateAddressSchema,
+  ListAssigneesQuerySchema,
 } from './users.dto';
 
 const router = Router();
@@ -39,6 +40,15 @@ router.patch(
 );
 router.delete('/addresses/:addressId', authenticate, usersController.deleteAddress);
 router.post('/addresses/:addressId/default', authenticate, usersController.setDefaultAddress);
+
+// Assignee picker for ticket / bug queues — before `/:id`
+router.get(
+  '/assignees',
+  authenticate,
+  authorize(PERMISSIONS.TICKET_MANAGE, PERMISSIONS.BUG_REPORT_MANAGE),
+  validate(ListAssigneesQuerySchema, 'query'),
+  usersController.listAssignees,
+);
 
 // Admin user management
 router.get('/', authenticate, authorize(PERMISSIONS.USER_MANAGE), validate(GetUsersQuerySchema, 'query'), usersController.getUsers);

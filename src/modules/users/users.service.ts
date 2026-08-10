@@ -1,4 +1,5 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
+import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import {
   cascadeDeleteEntityMedia,
@@ -17,13 +18,28 @@ import { WishlistItem } from '@database/models/wishlistItem.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { sequelize } from '@database/models';
 import type { Transaction } from 'sequelize';
+import { QueryTypes } from 'sequelize';
+import { ROLES, USER_STATUS } from '@core/constants/statuses';
+import { ERROR_MESSAGES } from '@core/constants/errors';
+import { PERMISSIONS, type PermissionKey } from '@core/permissions/permissionKeys';
+import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
+import { ValidationError } from '@core/errors/ValidationError';
 import type {
   UpdateUserProfileRequest,
   UpdateUserStatusRequest,
   GetUsersQuery,
   CreateAddressRequest,
   UpdateAddressRequest,
+  ListAssigneesQuery,
 } from './users.dto';
+
+const ASSIGNEE_PERMISSIONS = [PERMISSIONS.TICKET_MANAGE, PERMISSIONS.BUG_REPORT_MANAGE] as const;
+
+export type AssigneeCandidate = {
+  id: string;
+  name: string;
+  email: string;
+};
 
 function serializeAddress(address: {
   id: string;
@@ -274,6 +290,100 @@ export class UsersService {
       users: rows.map(serializeProfile),
       pagination: buildPaginationMeta(count, query.page, query.limit),
     };
+  }
+
+  /**
+   * Active users whose role grants the given manage permission (or SUPER_ADMIN).
+   * Caller must already hold the same permission.
+   */
+  async listAssignees(
+    actor: { roleId: string; role: { name: string } },
+    query: ListAssigneesQuery,
+  ): Promise<AssigneeCandidate[]> {
+    const permission = query.permission;
+    if (!(ASSIGNEE_PERMISSIONS as readonly string[]).includes(permission)) {
+      throw new ForbiddenError(ERROR_MESSAGES.AUTH_REQUIRED);
+    }
+
+    const actorPerms = await resolvePermissionsForUser(actor);
+    if (!actorPerms.includes(permission as PermissionKey)) {
+      throw new ForbiddenError(`Missing permission: ${permission}`);
+    }
+
+    return this.findAssigneesByPermission(permission);
+  }
+
+  async findAssigneesByPermission(
+    permission: (typeof ASSIGNEE_PERMISSIONS)[number],
+    limit = 100,
+  ): Promise<AssigneeCandidate[]> {
+    const rows = await sequelize.query<AssigneeCandidate>(
+      `SELECT DISTINCT u.id, u.name, u.email
+       FROM users u
+       INNER JOIN roles r ON r.id = u."roleId" AND r."deletedAt" IS NULL
+       WHERE u."deletedAt" IS NULL
+         AND u.status = :status
+         AND (
+           r.name = :superAdmin
+           OR EXISTS (
+             SELECT 1
+             FROM "RolePermissions" rp
+             INNER JOIN permissions p ON p.id = rp."permissionId" AND p."deletedAt" IS NULL
+             WHERE rp."roleId" = u."roleId" AND p.key = :permission
+           )
+         )
+       ORDER BY u.name ASC
+       LIMIT :limit`,
+      {
+        replacements: {
+          status: USER_STATUS.ACTIVE,
+          superAdmin: ROLES.SUPER_ADMIN,
+          permission,
+          limit,
+        },
+        type: QueryTypes.SELECT,
+      },
+    );
+    return rows;
+  }
+
+  /** Ensures the user exists, is active, and holds the given manage permission. */
+  async assertAssignableUser(
+    userId: string,
+    permission: (typeof ASSIGNEE_PERMISSIONS)[number],
+    transaction?: Transaction,
+  ): Promise<void> {
+    const rows = await sequelize.query<{ id: string }>(
+      `SELECT u.id
+       FROM users u
+       INNER JOIN roles r ON r.id = u."roleId" AND r."deletedAt" IS NULL
+       WHERE u.id = :userId
+         AND u."deletedAt" IS NULL
+         AND u.status = :status
+         AND (
+           r.name = :superAdmin
+           OR EXISTS (
+             SELECT 1
+             FROM "RolePermissions" rp
+             INNER JOIN permissions p ON p.id = rp."permissionId" AND p."deletedAt" IS NULL
+             WHERE rp."roleId" = u."roleId" AND p.key = :permission
+           )
+         )
+       LIMIT 1`,
+      {
+        replacements: {
+          userId,
+          status: USER_STATUS.ACTIVE,
+          superAdmin: ROLES.SUPER_ADMIN,
+          permission,
+        },
+        type: QueryTypes.SELECT,
+        transaction,
+      },
+    );
+    if (rows.length === 0) {
+      throw new ValidationError(ERROR_MESSAGES.USER_NOT_FOUND_OR_BLOCKED);
+    }
   }
 
   async getUserById(userId: string) {
