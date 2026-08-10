@@ -15,6 +15,8 @@ export const EMAIL_COPY = {
   ctaViewCart: 'Return to cart',
   ctaVendorDashboard: 'Open vendor dashboard',
   ctaDownloadReport: 'Download report',
+  ctaViewTicket: 'View ticket',
+  ctaViewBugReport: 'View bug report',
 
   subjects: {
     EMAIL_VERIFICATION: 'Verify your email address',
@@ -48,6 +50,13 @@ export const EMAIL_COPY = {
     COUPON_EXPIRING: 'Coupon expiring soon — {code}',
     COUPON_OFFER_EXPIRING: 'Offer expiring soon — {code}',
     REPORT_EXPORT_READY: 'Your report export is ready — {reportType}',
+    TICKET_CREATED: 'New support ticket — {ticketNumber}',
+    TICKET_REPLIED: 'New reply on ticket — {ticketNumber}',
+    TICKET_RESOLVED: 'Ticket resolved — {ticketNumber}',
+    TICKET_REOPENED: 'Ticket reopened — {ticketNumber}',
+    BUG_REPORT_TRIAGED: 'Bug report triaged — {reportNumber}',
+    BUG_REPORT_FIXED: 'Bug report fixed — {reportNumber}',
+    BUG_REPORT_WONT_FIX: 'Bug report update — {reportNumber}',
   } satisfies Record<NotificationType, string>,
 
   greetings: {
@@ -93,6 +102,14 @@ export const EMAIL_COPY = {
     COUPON_OFFER_EXPIRING: 'Your offer {code} expires on {expiresAt}. Apply it before it ends.',
     REPORT_EXPORT_READY:
       'Your {reportType} export ({rowCount} rows) is ready. Use the button below to download the Excel file from your account session.',
+    TICKET_CREATED: 'A new support ticket {ticketNumber} was created: {subject}.',
+    TICKET_REPLIED: 'There is a new reply on support ticket {ticketNumber} ({subject}).',
+    TICKET_RESOLVED: 'Your support ticket {ticketNumber} ({subject}) has been resolved.',
+    TICKET_REOPENED: 'Support ticket {ticketNumber} ({subject}) was reopened by the customer.',
+    BUG_REPORT_TRIAGED: 'Your bug report {reportNumber} ({title}) has been triaged.',
+    BUG_REPORT_FIXED: 'Your bug report {reportNumber} ({title}) has been marked fixed.',
+    BUG_REPORT_WONT_FIX:
+      'Your bug report {reportNumber} ({title}) will not be fixed. Reason: {reason}',
   } satisfies Record<NotificationType, string>,
 } as const;
 

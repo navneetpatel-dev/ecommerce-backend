@@ -70,6 +70,9 @@ const envSchema = z.object({
 
   LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
 
+  /** App version stamped onto bug reports (build-time / deploy env). */
+  APP_VERSION: z.string().default('1.0.0'),
+
   /** When true, orphan cleanup logs candidates but does not delete. */
   S3_ORPHAN_CLEANUP_DRY_RUN: z
     .union([z.boolean(), z.string()])

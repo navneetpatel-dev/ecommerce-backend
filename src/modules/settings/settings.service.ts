@@ -14,6 +14,10 @@ export type PlatformSettingsPayload = {
   returnShippingFee: number;
   supportEmail: string;
   supportHours: string;
+  /** Days after resolve during which a customer may reopen a support ticket. */
+  ticketReopenWindowDays: number;
+  /** Days after FIXED before a bug report auto-transitions to VERIFIED. */
+  bugVerifyWindowDays: number;
 };
 
 const SETTINGS_KEY = 'platform';
@@ -29,6 +33,8 @@ const DEFAULTS: PlatformSettingsPayload = {
   returnShippingFee: 0,
   supportEmail: 'support@inkandbrass.example',
   supportHours: 'Mon–Sat, 9:00 AM–7:00 PM',
+  ticketReopenWindowDays: 7,
+  bugVerifyWindowDays: 7,
 };
 
 export const settingsService = {

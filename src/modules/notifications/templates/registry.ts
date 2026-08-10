@@ -31,6 +31,8 @@ function subjectFor(type: NotificationType, data: EmailTemplateData): string {
     code: str(data, 'code'),
     brand: EMAIL_COPY.brandName,
     reportType: str(data, 'reportType'),
+    ticketNumber: str(data, 'ticketNumber'),
+    reportNumber: str(data, 'reportNumber'),
   });
 }
 
@@ -60,6 +62,10 @@ function bodyFor(type: NotificationType, data: EmailTemplateData): string {
       : '',
     reportType: str(data, 'reportType'),
     rowCount: str(data, 'rowCount'),
+    ticketNumber: str(data, 'ticketNumber'),
+    subject: str(data, 'subject'),
+    reportNumber: str(data, 'reportNumber'),
+    title: str(data, 'title'),
   });
 }
 
@@ -114,6 +120,21 @@ function defaultCta(type: NotificationType, data: EmailTemplateData): { label?: 
       return {
         label: EMAIL_COPY.ctaDownloadReport,
         url: str(data, 'actionUrl', `${base}/admin/reports`),
+      };
+    case 'TICKET_CREATED':
+    case 'TICKET_REPLIED':
+    case 'TICKET_RESOLVED':
+    case 'TICKET_REOPENED':
+      return {
+        label: EMAIL_COPY.ctaViewTicket,
+        url: str(data, 'actionUrl', `${base}/support/tickets/${str(data, 'ticketId', '')}`),
+      };
+    case 'BUG_REPORT_TRIAGED':
+    case 'BUG_REPORT_FIXED':
+    case 'BUG_REPORT_WONT_FIX':
+      return {
+        label: EMAIL_COPY.ctaViewBugReport,
+        url: str(data, 'actionUrl', `${base}/support/bug-reports/${str(data, 'bugReportId', '')}`),
       };
     default:
       return { label: EMAIL_COPY.ctaOpenStore, url: base };

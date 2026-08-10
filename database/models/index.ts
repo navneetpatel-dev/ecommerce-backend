@@ -47,6 +47,12 @@ import { initDocumentSequenceModel, DocumentSequence } from './documentSequence.
 import { initWalletLedgerModel, WalletLedger } from './walletLedger.model';
 import { initWalletWriteOffModel, WalletWriteOff } from './walletWriteOff.model';
 import { initReportExportLogModel, ReportExportLog } from './reportExportLog.model';
+import { initSupportTicketModel, SupportTicket } from './supportTicket.model';
+import { initTicketMessageModel, TicketMessage } from './ticketMessage.model';
+import { initTicketAttachmentModel, TicketAttachment } from './ticketAttachment.model';
+import { initBugReportModel, BugReport } from './bugReport.model';
+import { initBugReportAttachmentModel, BugReportAttachment } from './bugReportAttachment.model';
+import { initBugReportCommentModel, BugReportComment } from './bugReportComment.model';
 
 const models = {
   Role: initRoleModel(sequelize),
@@ -97,6 +103,12 @@ const models = {
   WalletLedger: initWalletLedgerModel(sequelize),
   WalletWriteOff: initWalletWriteOffModel(sequelize),
   ReportExportLog: initReportExportLogModel(sequelize),
+  SupportTicket: initSupportTicketModel(sequelize),
+  TicketMessage: initTicketMessageModel(sequelize),
+  TicketAttachment: initTicketAttachmentModel(sequelize),
+  BugReport: initBugReportModel(sequelize),
+  BugReportAttachment: initBugReportAttachmentModel(sequelize),
+  BugReportComment: initBugReportCommentModel(sequelize),
 };
 
 Object.values(models).forEach((model: any) => {
@@ -117,4 +129,6 @@ export {
   PlatformSetting, PromoBanner,
   TcsLedger, TdsLedger, CreditNote, DebitNote, DocumentSequence,
   WalletLedger, WalletWriteOff, ReportExportLog,
+  SupportTicket, TicketMessage, TicketAttachment,
+  BugReport, BugReportAttachment, BugReportComment,
 };

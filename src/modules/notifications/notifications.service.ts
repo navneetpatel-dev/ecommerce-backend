@@ -518,6 +518,76 @@ export class NotificationsService {
       urgency: 'marketing',
     });
   }
+
+  sendTicketCreated(userId: string, ticketId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({
+      userId,
+      type: 'TICKET_CREATED',
+      referenceType: 'SupportTicket',
+      referenceId: `${ticketId}:${userId}`,
+      templateData: { ...templateData, ticketId },
+    });
+  }
+
+  sendTicketReplied(userId: string, ticketId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({
+      userId,
+      type: 'TICKET_REPLIED',
+      referenceType: 'SupportTicket',
+      referenceId: `${ticketId}:reply:${todayBucket()}:${userId}`,
+      templateData: { ...templateData, ticketId },
+    });
+  }
+
+  sendTicketResolved(userId: string, ticketId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({
+      userId,
+      type: 'TICKET_RESOLVED',
+      referenceType: 'SupportTicket',
+      referenceId: ticketId,
+      templateData: { ...templateData, ticketId },
+    });
+  }
+
+  sendTicketReopened(userId: string, ticketId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({
+      userId,
+      type: 'TICKET_REOPENED',
+      referenceType: 'SupportTicket',
+      referenceId: `${ticketId}:reopen:${todayBucket()}`,
+      templateData: { ...templateData, ticketId },
+    });
+  }
+
+  sendBugReportTriaged(userId: string, bugReportId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({
+      userId,
+      type: 'BUG_REPORT_TRIAGED',
+      referenceType: 'BugReport',
+      referenceId: bugReportId,
+      templateData: { ...templateData, bugReportId },
+    });
+  }
+
+  sendBugReportFixed(userId: string, bugReportId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({
+      userId,
+      type: 'BUG_REPORT_FIXED',
+      referenceType: 'BugReport',
+      referenceId: bugReportId,
+      templateData: { ...templateData, bugReportId },
+    });
+  }
+
+  sendBugReportWontFix(userId: string, bugReportId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({
+      userId,
+      type: 'BUG_REPORT_WONT_FIX',
+      referenceType: 'BugReport',
+      referenceId: bugReportId,
+      templateData: { ...templateData, bugReportId },
+    });
+  }
 }
 
 export const notificationsService = new NotificationsService();

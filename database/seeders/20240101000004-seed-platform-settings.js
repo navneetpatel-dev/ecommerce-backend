@@ -12,6 +12,8 @@ const PLATFORM_VALUE = {
   freeShippingThreshold: 500,
   supportEmail: 'support@inkandbrass.example',
   supportHours: 'Mon–Sat, 9:00 AM–7:00 PM',
+  ticketReopenWindowDays: 7,
+  bugVerifyWindowDays: 7,
 };
 
 module.exports = {

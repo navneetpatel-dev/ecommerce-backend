@@ -128,14 +128,20 @@ async function processWishlistPriceDrops(): Promise<number> {
 export async function runNotificationSchedulerTick(): Promise<void> {
   try {
     const { processPendingCashbackCredits } = await import('@modules/wallet/cashback.service');
-    const [abandoned, lowStock, reviews, priceDrops, cashbacks] = await Promise.all([
-      processAbandonedCarts(),
-      processLowStock(),
-      processReviewRequests(),
-      processWishlistPriceDrops(),
-      processPendingCashbackCredits(),
-    ]);
-    const total = abandoned + lowStock + reviews + priceDrops + cashbacks;
+    const { supportTicketsService } = await import('@modules/supportTickets/supportTickets.service');
+    const { bugReportsService } = await import('@modules/bugReports/bugReports.service');
+    const [abandoned, lowStock, reviews, priceDrops, cashbacks, ticketsClosed, bugsVerified] =
+      await Promise.all([
+        processAbandonedCarts(),
+        processLowStock(),
+        processReviewRequests(),
+        processWishlistPriceDrops(),
+        processPendingCashbackCredits(),
+        supportTicketsService.closeExpiredResolved(),
+        bugReportsService.markVerifiedIfDue(),
+      ]);
+    const total =
+      abandoned + lowStock + reviews + priceDrops + cashbacks + ticketsClosed + bugsVerified;
     if (total > 0) {
       logger.info('Notification scheduler tick', {
         abandoned,
@@ -143,6 +149,8 @@ export async function runNotificationSchedulerTick(): Promise<void> {
         reviews,
         priceDrops,
         cashbacks,
+        ticketsClosed,
+        bugsVerified,
       });
     }
   } catch (error) {

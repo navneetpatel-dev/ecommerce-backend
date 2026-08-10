@@ -31,6 +31,8 @@ export const API_MOUNTS = {
   reports: '/reports',
   wallet: '/wallet',
   uploads: '/uploads',
+  supportTickets: '/support-tickets',
+  bugReports: '/bug-reports',
 } as const;
 
 export const HEALTH_PATH = '/health';

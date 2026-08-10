@@ -29,6 +29,8 @@ import homepageRoutes from '@modules/homepage/homepage.routes';
 import reportsRoutes from '@modules/reports/reports.routes';
 import walletRoutes from '@modules/wallet/wallet.routes';
 import uploadsRoutes from '@modules/uploads/uploads.routes';
+import supportTicketsRoutes from '@modules/supportTickets/supportTickets.routes';
+import bugReportsRoutes from '@modules/bugReports/bugReports.routes';
 
 const router = Router();
 
@@ -61,5 +63,7 @@ router.use(API_MOUNTS.homepage, homepageRoutes);
 router.use(API_MOUNTS.reports, reportsRoutes);
 router.use(API_MOUNTS.wallet, walletRoutes);
 router.use(API_MOUNTS.uploads, uploadsRoutes);
+router.use(API_MOUNTS.supportTickets, supportTicketsRoutes);
+router.use(API_MOUNTS.bugReports, bugReportsRoutes);
 
 export { router as routes };

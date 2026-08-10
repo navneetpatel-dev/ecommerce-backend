@@ -10,7 +10,9 @@ export type NotificationType =
   | 'LOW_STOCK_ALERT' | 'PAYOUT_PROCESSED' | 'PAYOUT_FAILED'
   | 'ABANDONED_CART' | 'PRICE_DROP_ALERT' | 'BACK_IN_STOCK' | 'ADMIN_NEW_VENDOR_PENDING'
   | 'COUPON_USAGE_LIMIT' | 'COUPON_EXPIRING' | 'COUPON_OFFER_EXPIRING'
-  | 'REPORT_EXPORT_READY';
+  | 'REPORT_EXPORT_READY'
+  | 'TICKET_CREATED' | 'TICKET_REPLIED' | 'TICKET_RESOLVED' | 'TICKET_REOPENED'
+  | 'BUG_REPORT_TRIAGED' | 'BUG_REPORT_FIXED' | 'BUG_REPORT_WONT_FIX';
 
 export class NotificationLog extends Model<InferAttributes<NotificationLog>, InferCreationAttributes<NotificationLog>> {
   declare id: CreationOptional<string>;
