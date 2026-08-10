@@ -34,11 +34,31 @@ const envSchema = z.object({
   RAZORPAY_KEY_SECRET: z.string().optional(),
   RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
 
-  SES_FROM_EMAIL: z.string().default('noreply@ecommerce.com'),
+  /**
+   * Mail driver. Add a MailProvider in mail.providers.ts + register it in mail.ts
+   * when introducing another email system. `auto` resolves: ses → smtp → console.
+   */
+  MAIL_DRIVER: z.enum(['auto', 'console', 'ses', 'smtp']).default('auto'),
+  MAIL_FROM_EMAIL: z.string().default('noreply@ecommerce.com'),
+  MAIL_FROM_NAME: z.string().default('Ecommerce'),
+
   /** Optional SES configuration set (bounce/complaint events). */
   SES_CONFIGURATION_SET: z.string().optional(),
-  /** Force console transport even when AWS credentials exist (local debugging). */
-  EMAIL_TRANSPORT: z.enum(['auto', 'ses', 'console']).default('auto'),
+
+  /** SMTP settings when MAIL_DRIVER=smtp (any SMTP-compatible service). */
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_SECURE: z
+    .union([z.boolean(), z.string()])
+    .optional()
+    .transform((v) => {
+      if (v === undefined) return false;
+      if (typeof v === 'boolean') return v;
+      return v === 'true' || v === '1';
+    }),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+
   /** Public storefront URL used in email CTAs. */
   CLIENT_URL: z.string().default('http://localhost:5173'),
   /** Hours of cart inactivity before abandoned-cart marketing email. */
@@ -54,9 +74,44 @@ const envSchema = z.object({
 
   ADMIN_EMAIL: z.string().default('admin@ecommerce.com'),
   ADMIN_PASSWORD: z.string().default('Admin@123'),
+}).superRefine((data, ctx) => {
+  if (data.MAIL_DRIVER === 'smtp') {
+    if (!data.SMTP_HOST) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['SMTP_HOST'],
+        message: 'SMTP_HOST is required when MAIL_DRIVER=smtp',
+      });
+    }
+  }
+
+  if (data.MAIL_DRIVER === 'ses') {
+    if (!data.AWS_ACCESS_KEY_ID || !data.AWS_SECRET_ACCESS_KEY) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['AWS_ACCESS_KEY_ID'],
+        message: 'AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are required when MAIL_DRIVER=ses',
+      });
+    }
+  }
 });
 
-const parsed = envSchema.safeParse(process.env);
+/** Map legacy EMAIL_TRANSPORT / SES_FROM_EMAIL into the current mail schema. */
+function withMailLegacyAliases(raw: NodeJS.ProcessEnv): Record<string, unknown> {
+  const transport = raw.EMAIL_TRANSPORT;
+  const legacyDriver =
+    transport === 'ses' || transport === 'console' || transport === 'auto'
+      ? transport
+      : undefined;
+
+  return {
+    ...raw,
+    MAIL_DRIVER: raw.MAIL_DRIVER ?? legacyDriver,
+    MAIL_FROM_EMAIL: raw.MAIL_FROM_EMAIL ?? raw.SES_FROM_EMAIL,
+  };
+}
+
+const parsed = envSchema.safeParse(withMailLegacyAliases(process.env));
 
 if (!parsed.success) {
   console.error('❌ Invalid environment variables:');

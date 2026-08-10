@@ -4,7 +4,7 @@ import { User } from '@database/models/user.model';
 import { NOTIFICATION_STATUS } from '@core/constants/statuses';
 import { logger } from '@core/logger';
 import { getQueueConnection } from '@config/queue';
-import { sendEmail } from '@config/ses';
+import { sendEmail } from '@config/mail';
 import { EMAIL_JOB_NAME, type EmailJobPayload } from '@modules/notifications/notifications.service';
 import {
   isMarketingNotification,
