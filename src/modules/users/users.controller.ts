@@ -67,8 +67,8 @@ export const getUsers = asyncHandler(async (req: Request, res: Response) => {
 
 export const listAssignees = asyncHandler(async (req: Request, res: Response) => {
   const query = ListAssigneesQuerySchema.parse(req.query);
-  const assignees = await usersService.listAssignees(req.user!, query);
-  res.json(ok(assignees));
+  const result = await usersService.listAssignees(req.user!, query);
+  res.json(ok(result.users, { pagination: result.pagination }));
 });
 
 export const getUserById = asyncHandler(async (req: Request, res: Response) => {

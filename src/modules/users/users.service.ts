@@ -299,7 +299,7 @@ export class UsersService {
   async listAssignees(
     actor: { roleId: string; role: { name: string } },
     query: ListAssigneesQuery,
-  ): Promise<AssigneeCandidate[]> {
+  ) {
     const permission = query.permission;
     if (!(ASSIGNEE_PERMISSIONS as readonly string[]).includes(permission)) {
       throw new ForbiddenError(ERROR_MESSAGES.AUTH_REQUIRED);
@@ -310,41 +310,87 @@ export class UsersService {
       throw new ForbiddenError(`Missing permission: ${permission}`);
     }
 
-    return this.findAssigneesByPermission(permission);
+    const offset = paginationOffset(query.page, query.limit);
+    const { rows, count } = await this.findAssigneesPage({
+      permission,
+      limit: query.limit,
+      offset,
+      search: query.search,
+    });
+
+    return {
+      users: rows,
+      pagination: buildPaginationMeta(count, query.page, query.limit),
+    };
   }
 
   async findAssigneesByPermission(
     permission: (typeof ASSIGNEE_PERMISSIONS)[number],
     limit = 100,
   ): Promise<AssigneeCandidate[]> {
+    const { rows } = await this.findAssigneesPage({ permission, limit, offset: 0 });
+    return rows;
+  }
+
+  async findAssigneesPage(params: {
+    permission: (typeof ASSIGNEE_PERMISSIONS)[number];
+    limit: number;
+    offset: number;
+    search?: string;
+  }): Promise<{ rows: AssigneeCandidate[]; count: number }> {
+    const search = params.search?.trim();
+    const searchPattern = search ? `%${search}%` : null;
+
+    const whereSql = `
+      FROM users u
+      INNER JOIN roles r ON r.id = u."roleId" AND r."deletedAt" IS NULL
+      WHERE u."deletedAt" IS NULL
+        AND u.status = :status
+        AND (
+          r.name = :superAdmin
+          OR EXISTS (
+            SELECT 1
+            FROM "RolePermissions" rp
+            INNER JOIN permissions p ON p.id = rp."permissionId" AND p."deletedAt" IS NULL
+            WHERE rp."roleId" = u."roleId" AND p.key = :permission
+          )
+        )
+        AND (
+          :searchPattern::text IS NULL
+          OR u.name ILIKE :searchPattern
+          OR u.email ILIKE :searchPattern
+        )
+    `;
+
+    const replacements = {
+      status: USER_STATUS.ACTIVE,
+      superAdmin: ROLES.SUPER_ADMIN,
+      permission: params.permission,
+      searchPattern,
+      limit: params.limit,
+      offset: params.offset,
+    };
+
+    const countRows = await sequelize.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM (
+         SELECT DISTINCT u.id
+         ${whereSql}
+       ) counted`,
+      { replacements, type: QueryTypes.SELECT },
+    );
+
     const rows = await sequelize.query<AssigneeCandidate>(
       `SELECT DISTINCT u.id, u.name, u.email
-       FROM users u
-       INNER JOIN roles r ON r.id = u."roleId" AND r."deletedAt" IS NULL
-       WHERE u."deletedAt" IS NULL
-         AND u.status = :status
-         AND (
-           r.name = :superAdmin
-           OR EXISTS (
-             SELECT 1
-             FROM "RolePermissions" rp
-             INNER JOIN permissions p ON p.id = rp."permissionId" AND p."deletedAt" IS NULL
-             WHERE rp."roleId" = u."roleId" AND p.key = :permission
-           )
-         )
+       ${whereSql}
        ORDER BY u.name ASC
-       LIMIT :limit`,
-      {
-        replacements: {
-          status: USER_STATUS.ACTIVE,
-          superAdmin: ROLES.SUPER_ADMIN,
-          permission,
-          limit,
-        },
-        type: QueryTypes.SELECT,
-      },
+       LIMIT :limit OFFSET :offset`,
+      { replacements, type: QueryTypes.SELECT },
     );
-    return rows;
+
+    return {
+      rows,
+      count: Number(countRows[0]?.count ?? 0),
+    };
   }
 
   /** Ensures the user exists, is active, and holds the given manage permission. */
