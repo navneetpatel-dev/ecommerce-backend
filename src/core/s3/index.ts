@@ -18,6 +18,17 @@ export {
 } from './constants';
 export { parseDataUrl } from './parseDataUrl';
 export {
+  IMAGE_MIME_TYPES,
+  DOCUMENT_MIME_TYPES,
+  IMAGE_UPLOAD_SPECS,
+  getImageUploadSpec,
+  imageUploadSpecKey,
+  assertValidUploadContentType,
+  assertValidUploadSize,
+  type ImageUploadSpec,
+  type ImageMimeType,
+} from './imageSpecs';
+export {
   deleteS3ObjectByUrl,
   deleteS3ObjectsByUrls,
   deleteS3ObjectIfReplaced,

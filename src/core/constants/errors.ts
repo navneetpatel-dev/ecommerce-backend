@@ -39,6 +39,7 @@ export const ERROR_CODES = {
   REPORT_FORBIDDEN: 'REPORT_FORBIDDEN',
   REPORT_EXPORT_NOT_READY: 'REPORT_EXPORT_NOT_READY',
   S3_NOT_CONFIGURED: 'S3_NOT_CONFIGURED',
+  S3_ACCESS_DENIED: 'S3_ACCESS_DENIED',
   UPLOAD_FAILED: 'UPLOAD_FAILED',
   UPLOAD_FORBIDDEN: 'UPLOAD_FORBIDDEN',
   VENDOR_KYC_INCOMPLETE: 'VENDOR_KYC_INCOMPLETE',
@@ -49,6 +50,8 @@ export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
 
 /** Repeated error messages (2+ call sites). One-off messages stay inline. */
 export const ERROR_MESSAGES = {
+  FORBIDDEN: 'You do not have permission to perform this action',
+  NOT_FOUND: 'Not found',
   INSUFFICIENT_STOCK: 'Insufficient stock',
   COUPON_USAGE_LIMIT: 'Coupon usage limit reached',
   COUPON_PRIORITY: 'A higher-priority coupon is already applied',
@@ -119,8 +122,12 @@ export const ERROR_MESSAGES = {
   REPORT_FORBIDDEN: 'You do not have access to this report',
   REPORT_EXPORT_NOT_READY: 'Report export is not ready yet',
   S3_NOT_CONFIGURED:
-    'File upload requires AWS S3. Configure AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, and S3_BUCKET.',
+    'File upload is not available right now. Please try again later.',
+  S3_ACCESS_DENIED:
+    'File upload is temporarily unavailable. Please try again later or contact support.',
   UPLOAD_INVALID_DATA_URL: 'Invalid file data URL',
+  UPLOAD_INVALID_CONTENT_TYPE: 'File type is not allowed for this upload',
+  UPLOAD_EMPTY: 'File is empty',
   UPLOAD_TOO_LARGE: 'File must be under 5MB',
   UPLOAD_INVALID_PURPOSE: 'Upload purpose is not valid for this entity type',
   UPLOAD_FAILED: 'File upload failed',

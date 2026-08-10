@@ -103,14 +103,33 @@ export const logger = winston.createLogger({
   exitOnError: false,
 });
 
-// Helper function to log errors with full context
+/** Walk error.cause until the deepest Error (e.g. AWS AccessDenied under AppError). */
+export function unwrapRootError(error: unknown): unknown {
+  if (!(error instanceof Error)) return error;
+  let current: Error = error;
+  while (current.cause instanceof Error) {
+    current = current.cause;
+  }
+  return current;
+}
+
+// Helper function to log errors with full context (including error.cause chain).
+function serializeErrorForLog(error: unknown): unknown {
+  if (!(error instanceof Error)) return error;
+  const entry: Record<string, unknown> = {
+    name: error.name,
+    message: error.message,
+    stack: error.stack,
+  };
+  if (error.cause !== undefined) {
+    entry.cause = serializeErrorForLog(error.cause);
+  }
+  return entry;
+}
+
 export const logError = (message: string, error: unknown, meta?: Record<string, unknown>) =>
   logger.error(message, {
-    error: error instanceof Error ? { 
-      message: error.message, 
-      stack: error.stack,
-      name: error.name,
-    } : error,
+    error: serializeErrorForLog(error),
     ...meta,
   });
 

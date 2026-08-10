@@ -1,21 +1,45 @@
 import { Request, Response, NextFunction, ErrorRequestHandler } from 'express';
 import { AppError } from '@core/errors';
-import { logger, logError } from '@core/logger';
+import { logError, unwrapRootError } from '@core/logger';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
+import { toPublicErrorBody } from '@core/http/publicError';
 
-export const errorHandlerMiddleware: ErrorRequestHandler = (err: Error, req: Request, res: Response, _next: NextFunction) => {
+export const errorHandlerMiddleware: ErrorRequestHandler = (
+  err: Error,
+  req: Request,
+  res: Response,
+  _next: NextFunction,
+) => {
   if (err instanceof AppError) {
-    logger.warn(err.message, { code: err.code, requestId: req.requestId });
+    const rootError = unwrapRootError(err);
+    logError('API error', rootError, {
+      code: err.code,
+      statusCode: err.statusCode,
+      publicMessage: err.message,
+      details: err.details,
+      requestId: req.requestId,
+      path: req.path,
+      method: req.method,
+    });
+
     res.status(err.statusCode).json({
       success: false,
-      error: { code: err.code, message: err.message, details: err.details },
+      error: toPublicErrorBody(err),
     });
     return;
   }
 
-  logError('Unhandled error', err, { requestId: req.requestId });
+  logError('Unhandled error', err, {
+    requestId: req.requestId,
+    path: req.path,
+    method: req.method,
+  });
+
   res.status(500).json({
     success: false,
-    error: { code: ERROR_CODES.INTERNAL_ERROR, message: ERROR_MESSAGES.INTERNAL_ERROR },
+    error: {
+      code: ERROR_CODES.INTERNAL_ERROR,
+      message: ERROR_MESSAGES.INTERNAL_ERROR,
+    },
   });
 };

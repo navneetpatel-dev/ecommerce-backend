@@ -8,6 +8,8 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env } from '@config/env';
+import { AppError } from '@core/errors';
+import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { logger } from '@core/logger';
 
 /** Default expiry for KYC / private object viewing. */
@@ -64,10 +66,14 @@ export async function signedGetObjectUrl(
   );
 }
 
-/** Pre-signed PUT for direct client upload (Phase 1). */
+/**
+ * Pre-signed PUT for direct client upload (Phase 1).
+ * `contentLength` is signed so S3 rejects bodies that don't match the declared size.
+ */
 export async function signedPutObjectUrl(
   key: string,
   contentType: string,
+  contentLength: number,
   expiresInSeconds = SIGNED_PUT_EXPIRES_SECONDS,
 ): Promise<string> {
   if (!s3Client) {
@@ -79,6 +85,7 @@ export async function signedPutObjectUrl(
       Bucket: S3_BUCKET,
       Key: key,
       ContentType: contentType,
+      ContentLength: contentLength,
     }),
     { expiresIn: expiresInSeconds },
   );
@@ -111,6 +118,23 @@ export function extractS3KeyFromUrl(url: string | null | undefined): string | nu
   return null;
 }
 
+function isS3AccessDenied(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const name = 'name' in error ? String((error as { name: unknown }).name) : '';
+  const message = 'message' in error ? String((error as { message: unknown }).message) : '';
+  return name === 'AccessDenied' || /not authorized to perform: s3:/i.test(message);
+}
+
+function rethrowS3Error(error: unknown): never {
+  if (isS3AccessDenied(error)) {
+    throw new AppError(ERROR_MESSAGES.S3_ACCESS_DENIED, 503, ERROR_CODES.S3_ACCESS_DENIED, undefined, {
+      cause: error,
+    });
+  }
+  if (error instanceof Error) throw error;
+  throw new Error(String(error));
+}
+
 export async function uploadObject(params: {
   key: string;
   body: Buffer;
@@ -134,7 +158,7 @@ export async function uploadObject(params: {
         ? {}
         : { CacheControl: 'public, max-age=31536000, immutable' }),
     }),
-  );
+  ).catch(rethrowS3Error);
 
   return publicObjectUrl(params.key);
 }
