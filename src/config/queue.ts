@@ -26,6 +26,7 @@ export const QUEUE_NAMES = [
   'payout',
   'notification',
   'report-export',
+  's3-orphan-cleanup',
 ] as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[number];
@@ -89,6 +90,9 @@ export const queues = {
   get reportExport() {
     return ensureQueue('report-export');
   },
+  get s3OrphanCleanup() {
+    return ensureQueue('s3-orphan-cleanup');
+  },
 };
 
 export const queueEvents = {
@@ -112,6 +116,9 @@ export const queueEvents = {
   },
   get reportExport() {
     return ensureQueueEvents('report-export');
+  },
+  get s3OrphanCleanup() {
+    return ensureQueueEvents('s3-orphan-cleanup');
   },
 };
 

@@ -5,12 +5,8 @@ export const UpdateUserProfileSchema = z.object({
   name: z.string().min(1).max(120).optional(),
   phone: z.string().max(20).optional().nullable(),
   emailMarketingConsent: z.boolean().optional(),
-});
-
-export const UploadAvatarSchema = z.object({
-  dataUrl: z
-    .string()
-    .regex(/^data:image\/(png|jpeg|jpg|webp);base64,/, 'Invalid image data URL'),
+  /** Phase 2 attach — URL from POST /api/uploads (users/avatar). */
+  avatarUrl: z.string().url().optional().nullable(),
 });
 
 export const UpdateUserStatusSchema = z.object({
@@ -38,7 +34,6 @@ export const CreateAddressSchema = z.object({
 export const UpdateAddressSchema = CreateAddressSchema.partial();
 
 export type UpdateUserProfileRequest = z.infer<typeof UpdateUserProfileSchema>;
-export type UploadAvatarRequest = z.infer<typeof UploadAvatarSchema>;
 export type UpdateUserStatusRequest = z.infer<typeof UpdateUserStatusSchema>;
 export type GetUsersQuery = z.infer<typeof GetUsersQuerySchema>;
 export type CreateAddressRequest = z.infer<typeof CreateAddressSchema>;

@@ -12,5 +12,6 @@ router.post('/', authenticate, validate(CreateReturnRequestSchema), returnsContr
 router.get('/', authenticate, returnsController.list);
 router.get('/admin', authenticate, authorize(PERMISSIONS.ORDER_REFUND), returnsController.listAdmin);
 router.patch('/:id/transition', authenticate, authorize(PERMISSIONS.ORDER_REFUND), validate(TransitionReturnSchema), returnsController.transition);
+router.delete('/:id', authenticate, authorize(PERMISSIONS.ORDER_REFUND), returnsController.remove);
 
 export default router;

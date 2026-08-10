@@ -66,6 +66,11 @@ export const AddImageSchema = z.object({
   isPrimary: z.boolean().default(false),
 });
 
+export const ReplaceImageSchema = z.object({
+  url: z.string().url(),
+  isPrimary: z.boolean().optional(),
+});
+
 export type CreateProductRequest = z.infer<typeof CreateProductSchema>;
 export type UpdateProductRequest = z.infer<typeof UpdateProductSchema>;
 export type GetProductsQuery = z.infer<typeof GetProductsQuerySchema>;
@@ -74,3 +79,4 @@ export type RejectProductRequest = z.infer<typeof RejectProductSchema>;
 export type AddVariantRequest = z.infer<typeof AddVariantSchema>;
 export type UpdateVariantRequest = z.infer<typeof UpdateVariantSchema>;
 export type AddImageRequest = z.infer<typeof AddImageSchema>;
+export type ReplaceImageRequest = z.infer<typeof ReplaceImageSchema>;

@@ -10,7 +10,6 @@ import {
   UpdateUserStatusSchema,
   CreateAddressSchema,
   UpdateAddressSchema,
-  UploadAvatarSchema,
 } from './users.dto';
 
 const router = Router();
@@ -20,7 +19,6 @@ router.get('/me', authenticate, usersController.getProfile);
 router.patch('/me', authenticate, validate(UpdateUserProfileSchema), usersController.updateProfile);
 router.delete('/me', authenticate, usersController.deleteOwnAccount);
 router.get('/me/export', authenticate, usersController.exportAccount);
-router.post('/me/avatar', authenticate, validate(UploadAvatarSchema), usersController.uploadAvatar);
 
 router.get('/profile', authenticate, usersController.getProfile);
 router.patch('/profile', authenticate, validate(UpdateUserProfileSchema), usersController.updateProfile);

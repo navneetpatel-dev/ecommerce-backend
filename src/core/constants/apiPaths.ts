@@ -30,6 +30,7 @@ export const API_MOUNTS = {
   homepage: '/homepage',
   reports: '/reports',
   wallet: '/wallet',
+  uploads: '/uploads',
 } as const;
 
 export const HEALTH_PATH = '/health';

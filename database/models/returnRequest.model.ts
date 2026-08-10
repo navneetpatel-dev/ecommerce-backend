@@ -20,6 +20,7 @@ export class ReturnRequest extends Model<InferAttributes<ReturnRequest>, InferCr
   declare reason: string;
   declare reasonCode: ReturnReason;
   declare status: ReturnStatus;
+  declare photoUrls: CreationOptional<string[]>;
   declare refundMethod: CreationOptional<RefundMethod | null>;
   declare refundStatus: CreationOptional<RefundStatus>;
   declare refundAmount: number | null;
@@ -64,6 +65,11 @@ export const initReturnRequestModel = (sequelize: Sequelize) => {
       status: {
         type: DataTypes.ENUM(...RETURN_STATUS_VALUES),
         defaultValue: RETURN_STATUS.REQUESTED,
+      },
+      photoUrls: {
+        type: DataTypes.JSONB,
+        allowNull: false,
+        defaultValue: [],
       },
       refundMethod: { type: DataTypes.ENUM(...REFUND_METHOD_VALUES), allowNull: true },
       refundStatus: {

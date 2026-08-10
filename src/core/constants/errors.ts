@@ -38,6 +38,11 @@ export const ERROR_CODES = {
   REPORT_NOT_FOUND: 'REPORT_NOT_FOUND',
   REPORT_FORBIDDEN: 'REPORT_FORBIDDEN',
   REPORT_EXPORT_NOT_READY: 'REPORT_EXPORT_NOT_READY',
+  S3_NOT_CONFIGURED: 'S3_NOT_CONFIGURED',
+  UPLOAD_FAILED: 'UPLOAD_FAILED',
+  UPLOAD_FORBIDDEN: 'UPLOAD_FORBIDDEN',
+  VENDOR_KYC_INCOMPLETE: 'VENDOR_KYC_INCOMPLETE',
+  VENDOR_KYC_BLOCKS_PRODUCT: 'VENDOR_KYC_BLOCKS_PRODUCT',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -65,7 +70,16 @@ export const ERROR_MESSAGES = {
   EMAIL_ALREADY_REGISTERED: 'Email already registered',
   ACCOUNT_BLOCKED: 'Account is blocked',
   VENDOR_NOT_PENDING: 'Vendor is not in PENDING status',
+  VENDOR_KYC_INCOMPLETE:
+    'Vendor cannot be approved until all required KYC documents are uploaded and verified',
+  VENDOR_KYC_BLOCKS_PRODUCT:
+    'This category requires additional verified KYC documents before the product can go live',
+  VENDOR_BUSINESS_NAME_EXISTS: 'Business name already exists',
+  VENDOR_CATEGORIES_INVALID: 'One or more categories are invalid',
+  VENDOR_ENTITY_TYPE_REQUIRED: 'Business entity type is required',
   PRODUCT_NAME_EXISTS: 'Product name already exists',
+  PRODUCT_NOT_DRAFT: 'Product is not in DRAFT status',
+  PRODUCT_NOT_PENDING_APPROVAL: 'Product is not pending approval',
   CATEGORY_NAME_EXISTS: 'Category name already exists',
   CATEGORY_HAS_SUBCATEGORIES: 'Cannot delete category with subcategories',
   CATEGORY_HAS_PRODUCTS: 'Cannot delete category while products still use it',
@@ -104,4 +118,11 @@ export const ERROR_MESSAGES = {
   REPORT_NOT_FOUND: 'Report type not found',
   REPORT_FORBIDDEN: 'You do not have access to this report',
   REPORT_EXPORT_NOT_READY: 'Report export is not ready yet',
+  S3_NOT_CONFIGURED:
+    'File upload requires AWS S3. Configure AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, and S3_BUCKET.',
+  UPLOAD_INVALID_DATA_URL: 'Invalid file data URL',
+  UPLOAD_TOO_LARGE: 'File must be under 5MB',
+  UPLOAD_INVALID_PURPOSE: 'Upload purpose is not valid for this entity type',
+  UPLOAD_FAILED: 'File upload failed',
+  UPLOAD_FORBIDDEN: 'You do not have permission to upload for this entity',
 } as const;

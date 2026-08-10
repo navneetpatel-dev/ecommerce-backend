@@ -113,8 +113,12 @@ export const me = asyncHandler(async (req: Request, res: Response) => {
     id: user.id,
     email: user.email,
     name: user.name,
+    phone: user.phone,
     role: roleName,
     vendorId: user.vendorId,
+    emailVerified: user.emailVerified,
+    emailMarketingConsent: user.emailMarketingConsent,
+    avatarUrl: user.avatarUrl,
     permissions,
   }));
 });

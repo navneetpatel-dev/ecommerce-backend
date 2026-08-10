@@ -36,6 +36,10 @@ import { walletService } from '@modules/wallet/wallet.service';
 import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
 import { clawbackCashbackForReturn } from '@modules/wallet/cashback.service';
 import { paymentsService } from '@modules/payments/payments.service';
+import {
+  cascadeDeleteEntityMedia,
+  S3_ENTITY_TYPES,
+} from '@core/s3';
 
 const returnListInclude = [
   { model: OrderItem, as: 'orderItem', required: false, attributes: ['id', 'productName'] },
@@ -46,6 +50,7 @@ type CreateReturnInput = {
   orderItemId: string;
   reasonCode: ReturnReason;
   reason: string;
+  photoUrls?: string[];
 };
 
 const ALLOWED_TRANSITIONS: Record<ReturnStatus, ReturnStatus[]> = {
@@ -112,6 +117,7 @@ function serializeReturn(row: ReturnRequest | (ReturnRequest & { orderItem?: Ord
     reason: plain.reason,
     reasonCode: plain.reasonCode,
     status: plain.status,
+    photoUrls: Array.isArray(plain.photoUrls) ? plain.photoUrls : [],
     refundMethod: plain.refundMethod ?? null,
     refundStatus: plain.refundStatus ?? REFUND_STATUS.NONE,
     refundAmount: plain.refundAmount != null ? Number(plain.refundAmount) : null,
@@ -229,6 +235,7 @@ export class ReturnsService {
           userId,
           reason: data.reason,
           reasonCode: data.reasonCode,
+          photoUrls: data.photoUrls ?? [],
           status: RETURN_STATUS.REQUESTED,
           refundStatus: REFUND_STATUS.NONE,
           refundAmount: null,
@@ -896,6 +903,17 @@ export class ReturnsService {
     }
 
     await this.completeRefundTrack(returnRow.id, 'system');
+  }
+
+  /** Soft-delete a return and cascade S3 photos (prefix + referenced URLs). */
+  async delete(returnId: string, actorUserId: string) {
+    const row = await ReturnRequest.findByPk(returnId);
+    if (!row) throw new NotFoundError('ReturnRequest');
+
+    const photoUrls = Array.isArray(row.photoUrls) ? row.photoUrls : [];
+    await row.update({ deletedBy: actorUserId });
+    await row.destroy();
+    await cascadeDeleteEntityMedia(S3_ENTITY_TYPES.RETURNS, returnId, photoUrls);
   }
 }
 

@@ -162,7 +162,11 @@ export class NotificationsService {
     try {
       await queue.add(EMAIL_JOB_NAME, payload, {
         ...options,
-        jobId: `${payload.type}:${payload.referenceId}:${payload.notificationLogId}`,
+        // BullMQ rejects custom jobId values that contain `:`.
+        jobId: `${payload.type}-${payload.referenceId}-${payload.notificationLogId}`.replace(
+          /:/g,
+          '-',
+        ),
       });
     } catch (error) {
       logger.error('Failed to enqueue email job', {
@@ -405,7 +409,8 @@ export class NotificationsService {
       userId,
       type: 'KYC_DOCUMENT_REJECTED',
       referenceType: 'VendorDocument',
-      referenceId: documentId,
+      // Unique per rejection so a later reject of the same document still notifies.
+      referenceId: `${documentId}-reject-${Date.now()}`,
       templateData,
     });
   }

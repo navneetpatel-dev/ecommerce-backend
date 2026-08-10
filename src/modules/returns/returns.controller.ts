@@ -24,3 +24,8 @@ export const transition = asyncHandler(async (req: Request, res: Response) => {
   const updated = await returnsService.transition(req.params.id!, req.body.status, req.user!.id);
   res.json(ok(updated));
 });
+
+export const remove = asyncHandler(async (req: Request, res: Response) => {
+  await returnsService.delete(req.params.id!, req.user!.id);
+  res.status(204).send();
+});

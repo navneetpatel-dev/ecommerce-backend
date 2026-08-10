@@ -1,13 +1,10 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
-import { ValidationError } from '@core/errors/ValidationError';
-import { AppError } from '@core/errors';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import {
-  deleteObject,
-  extractS3KeyFromUrl,
-  isS3Configured,
-  uploadObject,
-} from '@config/s3';
+  cascadeDeleteEntityMedia,
+  deleteS3ObjectIfReplaced,
+  S3_ENTITY_TYPES,
+} from '@core/s3';
 import { usersRepository } from './users.repository';
 import { addressesRepository } from './addresses.repository';
 import { authRepository } from '../auth/auth.repository';
@@ -26,9 +23,7 @@ import type {
   GetUsersQuery,
   CreateAddressRequest,
   UpdateAddressRequest,
-  UploadAvatarRequest,
 } from './users.dto';
-import { MAX_AVATAR_BYTES } from '@core/constants/http';
 
 function serializeAddress(address: {
   id: string;
@@ -96,54 +91,22 @@ export class UsersService {
       if (data.emailMarketingConsent !== undefined) {
         patch.emailMarketingConsent = data.emailMarketingConsent;
       }
+      if (data.avatarUrl !== undefined) {
+        patch.avatarUrl = data.avatarUrl;
+      }
 
       await usersRepository.update(userId, patch as any, { transaction: t });
+
+      if (data.avatarUrl !== undefined) {
+        await deleteS3ObjectIfReplaced(user.avatarUrl, data.avatarUrl);
+      }
+
       const updated = await usersRepository.findById(userId, {
         include: profileInclude,
         transaction: t,
       });
       return serializeProfile(updated!);
     });
-  }
-
-  async uploadAvatar(userId: string, data: UploadAvatarRequest) {
-    if (!isS3Configured()) {
-      throw new AppError(
-        'Profile photo upload requires AWS S3. Configure AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, and S3_BUCKET.',
-        503,
-        'S3_NOT_CONFIGURED',
-      );
-    }
-
-    const match = /^data:image\/(png|jpeg|jpg|webp);base64,(.+)$/i.exec(data.dataUrl);
-    if (!match) {
-      throw new ValidationError({ dataUrl: ['Invalid image data URL'] });
-    }
-
-    const extRaw = match[1]!.toLowerCase();
-    const ext = extRaw === 'jpg' ? 'jpeg' : extRaw;
-    const contentType = `image/${ext}`;
-    const buffer = Buffer.from(match[2]!, 'base64');
-    if (buffer.byteLength > MAX_AVATAR_BYTES) {
-      throw new ValidationError({ dataUrl: ['Image must be under 1.5MB'] });
-    }
-
-    const user = await usersRepository.findById(userId);
-    if (!user) throw new NotFoundError('User');
-
-    const fileExt = ext === 'jpeg' ? 'jpg' : ext;
-    const key = `avatars/${userId}/${Date.now()}.${fileExt}`;
-    const avatarUrl = await uploadObject({ key, body: buffer, contentType });
-
-    const previousKey = extractS3KeyFromUrl(user.avatarUrl);
-    await usersRepository.update(userId, { avatarUrl } as any);
-
-    if (previousKey && previousKey.startsWith('avatars/')) {
-      await deleteObject(previousKey);
-    }
-
-    const updated = await usersRepository.findById(userId, { include: profileInclude });
-    return serializeProfile(updated!);
   }
 
   async exportAccountData(userId: string) {
@@ -292,6 +255,8 @@ export class UsersService {
       if (!user) throw new NotFoundError('User');
       await authRepository.deleteRefreshTokensByUser(userId);
       await usersRepository.softDelete(userId, { transaction: t });
+    }).then(async () => {
+      await cascadeDeleteEntityMedia(S3_ENTITY_TYPES.USERS, userId);
     });
   }
 
@@ -328,11 +293,12 @@ export class UsersService {
   }
 
   async deleteUser(userId: string) {
-    return sequelize.transaction(async (t: Transaction) => {
+    await sequelize.transaction(async (t: Transaction) => {
       const user = await usersRepository.findById(userId, { transaction: t });
       if (!user) throw new NotFoundError('User');
       await usersRepository.softDelete(userId, { transaction: t });
     });
+    await cascadeDeleteEntityMedia(S3_ENTITY_TYPES.USERS, userId);
   }
 }
 

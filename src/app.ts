@@ -42,7 +42,7 @@ app.use(compression());
 
 app.use(WEBHOOKS_RAW_PATH, express.raw({ type: 'application/json' }));
 
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 app.use(mongoSanitize());
 

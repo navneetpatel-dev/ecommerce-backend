@@ -14,6 +14,14 @@ const resourceQueries: Record<ResourceType, string> = {
   vendor: 'SELECT id as "vendorId" FROM vendors WHERE id = :id',
 };
 
+function isAdminBypass(roleName: string): boolean {
+  return (
+    roleName === ROLES.SUPER_ADMIN ||
+    roleName === ROLES.ADMIN_CATALOG_MANAGER ||
+    roleName === ROLES.ADMIN_ORDER_MANAGER
+  );
+}
+
 export const checkOwnership = (resourceType: ResourceType) => {
   return async (req: Request, _res: Response, next: NextFunction) => {
     const user = req.user;
@@ -21,11 +29,7 @@ export const checkOwnership = (resourceType: ResourceType) => {
       return next(new ForbiddenError(ERROR_MESSAGES.AUTH_REQUIRED));
     }
 
-    if (
-      user.role.name === ROLES.SUPER_ADMIN ||
-      user.role.name === ROLES.ADMIN_CATALOG_MANAGER ||
-      user.role.name === ROLES.ADMIN_ORDER_MANAGER
-    ) {
+    if (isAdminBypass(user.role.name)) {
       return next();
     }
 
@@ -41,7 +45,49 @@ export const checkOwnership = (resourceType: ResourceType) => {
     }
 
     if (resource.vendorId !== user.vendorId) {
-      return next(new ForbiddenError('Not your resource'));
+      const message =
+        resourceType === 'product'
+          ? ERROR_MESSAGES.NOT_YOUR_PRODUCT
+          : resourceType === 'suborder'
+            ? ERROR_MESSAGES.NOT_YOUR_ORDER
+            : 'Not your resource';
+      return next(new ForbiddenError(message));
+    }
+
+    next();
+  };
+};
+
+/** Resolves product_images.imageId → product.vendorId for image mutation routes. */
+export const checkProductImageOwnership = () => {
+  return async (req: Request, _res: Response, next: NextFunction) => {
+    const user = req.user;
+    if (!user) {
+      return next(new ForbiddenError(ERROR_MESSAGES.AUTH_REQUIRED));
+    }
+
+    if (isAdminBypass(user.role.name)) {
+      return next();
+    }
+
+    const imageId = req.params.imageId;
+    const [row] = await sequelize.query<{ vendorId: string | null }>(
+      `SELECT p."vendorId"
+       FROM product_images pi
+       INNER JOIN products p ON p.id = pi."productId"
+       WHERE pi.id = :imageId
+         AND pi."deletedAt" IS NULL
+         AND p."deletedAt" IS NULL
+       LIMIT 1`,
+      { replacements: { imageId }, type: QueryTypes.SELECT },
+    );
+
+    if (!row) {
+      return next(new NotFoundError('ProductImage'));
+    }
+
+    if (row.vendorId !== user.vendorId) {
+      return next(new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_PRODUCT));
     }
 
     next();

@@ -2,6 +2,11 @@ import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { CATEGORY_STATUS } from '@core/constants/statuses';
+import {
+  cascadeDeleteEntityMedia,
+  deleteS3ObjectIfReplaced,
+  S3_ENTITY_TYPES,
+} from '@core/s3';
 import { categoriesRepository } from './categories.repository';
 import { Category } from '@database/models/category.model';
 import { CategoryAttribute } from '@database/models/categoryAttribute.model';
@@ -326,6 +331,12 @@ export class CategoriesService {
       if (data.commissionRate !== undefined) updateData.commissionRate = data.commissionRate;
 
       await categoriesRepository.update(id, updateData, { transaction: t });
+
+      if (data.imageUrl !== undefined) {
+        const nextUrl = data.imageUrl?.trim() ? data.imageUrl.trim() : null;
+        await deleteS3ObjectIfReplaced(category.imageUrl, nextUrl);
+      }
+
       return this.getCategoryById(id);
     });
   }
@@ -360,7 +371,7 @@ export class CategoriesService {
   }
 
   async deleteCategory(id: string) {
-    return sequelize.transaction(async (t: Transaction) => {
+    const imageUrl = await sequelize.transaction(async (t: Transaction) => {
       const category = await categoriesRepository.findWithChildren(id);
       if (!category) throw new NotFoundError('Category');
 
@@ -374,8 +385,11 @@ export class CategoriesService {
         throw new ValidationError(ERROR_MESSAGES.CATEGORY_HAS_PRODUCTS);
       }
 
+      const url = category.imageUrl;
       await categoriesRepository.delete(id, { transaction: t });
+      return url;
     });
+    await cascadeDeleteEntityMedia(S3_ENTITY_TYPES.CATEGORIES, id, [imageUrl]);
   }
 
   async listAttributes(categoryId: string) {

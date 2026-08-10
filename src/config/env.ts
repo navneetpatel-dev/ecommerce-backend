@@ -70,6 +70,16 @@ const envSchema = z.object({
 
   LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
 
+  /** When true, orphan cleanup logs candidates but does not delete. */
+  S3_ORPHAN_CLEANUP_DRY_RUN: z
+    .union([z.boolean(), z.string()])
+    .optional()
+    .transform((v) => {
+      if (v === undefined) return false;
+      if (typeof v === 'boolean') return v;
+      return v === 'true' || v === '1';
+    }),
+
   SENTRY_DSN: z.string().optional(),
 
   ADMIN_EMAIL: z.string().default('admin@ecommerce.com'),

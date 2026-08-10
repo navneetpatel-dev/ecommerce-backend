@@ -8,7 +8,6 @@ import {
   UpdateUserStatusSchema,
   CreateAddressSchema,
   UpdateAddressSchema,
-  UploadAvatarSchema,
 } from './users.dto';
 
 export const getProfile = asyncHandler(async (req: Request, res: Response) => {
@@ -19,12 +18,6 @@ export const getProfile = asyncHandler(async (req: Request, res: Response) => {
 export const updateProfile = asyncHandler(async (req: Request, res: Response) => {
   const dto = UpdateUserProfileSchema.parse(req.body);
   const user = await usersService.updateProfile(req.user!.id, dto);
-  res.json(ok(user));
-});
-
-export const uploadAvatar = asyncHandler(async (req: Request, res: Response) => {
-  const dto = UploadAvatarSchema.parse(req.body);
-  const user = await usersService.uploadAvatar(req.user!.id, dto);
   res.json(ok(user));
 });
 

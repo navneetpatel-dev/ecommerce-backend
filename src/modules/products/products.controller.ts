@@ -11,6 +11,7 @@ import {
   AddVariantSchema,
   UpdateVariantSchema,
   AddImageSchema,
+  ReplaceImageSchema,
 } from './products.dto';
 
 /** Admin/vendor dashboards stay unscoped; shoppers use customerVisible. */
@@ -144,6 +145,12 @@ export const addImage = asyncHandler(async (req: Request, res: Response) => {
 export const deleteImage = asyncHandler(async (req: Request, res: Response) => {
   await productsService.deleteImage(req.params.imageId!);
   res.status(204).send();
+});
+
+export const replaceImage = asyncHandler(async (req: Request, res: Response) => {
+  const dto = ReplaceImageSchema.parse(req.body);
+  const image = await productsService.replaceImage(req.params.imageId!, dto);
+  res.json(ok(image));
 });
 
 export const setPrimaryImage = asyncHandler(async (req: Request, res: Response) => {

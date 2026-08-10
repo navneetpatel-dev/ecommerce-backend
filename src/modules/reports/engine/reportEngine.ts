@@ -10,6 +10,7 @@ import { ReportExportLog } from '@database/models/reportExportLog.model';
 import { buildPaginationMeta } from '@core/http/pagination';
 import { areQueuesReady, queues, DEFAULT_TRANSACTIONAL_JOB_OPTIONS } from '@config/queue';
 import { isS3Configured, uploadObject } from '@config/s3';
+import { buildS3Key, S3_ENTITY_TYPES, S3_PURPOSES } from '@core/s3';
 import { logger } from '@core/logger';
 import { env } from '@config/env';
 import { notificationsService } from '@modules/notifications/notifications.service';
@@ -243,7 +244,8 @@ export class ReportEngine {
     const full = await fetchAllRows(def.query, filters);
     const buffer = await buildExcelBuffer(def.columns, full.rows, def.type);
     const filename = buildReportFilename(def.type, filters.from, filters.to);
-    const stored = await persistExportFile(`reports/${actor.id}/${filename}`, buffer);
+    const key = buildS3Key(S3_ENTITY_TYPES.REPORTS, actor.id, S3_PURPOSES.EXPORT, filename);
+    const stored = await persistExportFile(key, buffer);
     const log = await ReportExportLog.create({
       userId: actor.id,
       reportType: def.type,
@@ -292,7 +294,8 @@ export class ReportEngine {
       const full = await fetchAllRows(def.query, filters);
       const buffer = await buildExcelBuffer(def.columns, full.rows, def.type);
       const filename = buildReportFilename(def.type, filters.from, filters.to);
-      const stored = await persistExportFile(`reports/${log.userId}/${filename}`, buffer);
+      const key = buildS3Key(S3_ENTITY_TYPES.REPORTS, log.userId, S3_PURPOSES.EXPORT, filename);
+      const stored = await persistExportFile(key, buffer);
       await log.update({
         status: 'READY',
         rowCount: full.total,

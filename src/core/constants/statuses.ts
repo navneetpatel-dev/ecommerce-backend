@@ -39,6 +39,31 @@ export const VENDOR_STATUS = {
 export type VendorStatus = (typeof VENDOR_STATUS)[keyof typeof VENDOR_STATUS];
 export const VENDOR_STATUS_VALUES = Object.values(VENDOR_STATUS) as [VendorStatus, ...VendorStatus[]];
 
+export const VENDOR_ENTITY_TYPE = {
+  SOLE_PROPRIETORSHIP: 'SOLE_PROPRIETORSHIP',
+  PARTNERSHIP: 'PARTNERSHIP',
+  LLP: 'LLP',
+  PRIVATE_LIMITED: 'PRIVATE_LIMITED',
+} as const;
+export type VendorEntityType = (typeof VENDOR_ENTITY_TYPE)[keyof typeof VENDOR_ENTITY_TYPE];
+export const VENDOR_ENTITY_TYPE_VALUES = Object.values(VENDOR_ENTITY_TYPE) as [
+  VendorEntityType,
+  ...VendorEntityType[],
+];
+
+/** Checklist status for a required KYC document type. */
+export const VENDOR_DOCUMENT_CHECKLIST_STATUS = {
+  NOT_UPLOADED: 'NOT_UPLOADED',
+  PENDING_REVIEW: 'PENDING_REVIEW',
+  VERIFIED: 'VERIFIED',
+  REJECTED: 'REJECTED',
+} as const;
+export type VendorDocumentChecklistStatus =
+  (typeof VENDOR_DOCUMENT_CHECKLIST_STATUS)[keyof typeof VENDOR_DOCUMENT_CHECKLIST_STATUS];
+export const VENDOR_DOCUMENT_CHECKLIST_STATUS_VALUES = Object.values(
+  VENDOR_DOCUMENT_CHECKLIST_STATUS,
+) as [VendorDocumentChecklistStatus, ...VendorDocumentChecklistStatus[]];
+
 /** Why a cart/wishlist line is not purchaseable (live catalog gate). */
 export const UNAVAILABLE_REASON = {
   OUT_OF_STOCK: 'OUT_OF_STOCK',
@@ -87,6 +112,24 @@ export type PromoBannerLinkType = (typeof PROMO_BANNER_LINK_TYPE)[keyof typeof P
 export const PROMO_BANNER_LINK_TYPE_VALUES = Object.values(PROMO_BANNER_LINK_TYPE) as [
   PromoBannerLinkType,
   ...PromoBannerLinkType[],
+];
+
+export const VENDOR_DOCUMENT_TYPE = {
+  GST_CERT: 'GST_CERT',
+  PAN: 'PAN',
+  AADHAAR: 'AADHAAR',
+  BANK_PROOF: 'BANK_PROOF',
+  ADDRESS_PROOF: 'ADDRESS_PROOF',
+  INCORPORATION_CERT: 'INCORPORATION_CERT',
+  PARTNERSHIP_DEED: 'PARTNERSHIP_DEED',
+  AUTHORIZED_SIGNATORY_ID: 'AUTHORIZED_SIGNATORY_ID',
+  FSSAI_LICENSE: 'FSSAI_LICENSE',
+  CATEGORY_TRADE_LICENSE: 'CATEGORY_TRADE_LICENSE',
+} as const;
+export type VendorDocumentType = (typeof VENDOR_DOCUMENT_TYPE)[keyof typeof VENDOR_DOCUMENT_TYPE];
+export const VENDOR_DOCUMENT_TYPE_VALUES = Object.values(VENDOR_DOCUMENT_TYPE) as [
+  VendorDocumentType,
+  ...VendorDocumentType[],
 ];
 
 export const USER_STATUS = {

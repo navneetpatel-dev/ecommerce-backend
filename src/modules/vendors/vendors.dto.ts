@@ -1,17 +1,28 @@
 import { z } from 'zod';
-import { VENDOR_STATUS_VALUES } from '@core/constants/statuses';
+import {
+  VENDOR_DOCUMENT_TYPE_VALUES,
+  VENDOR_ENTITY_TYPE_VALUES,
+  VENDOR_STATUS_VALUES,
+} from '@core/constants/statuses';
 import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from '@core/constants/http';
 
 export const RegisterVendorSchema = z.object({
   businessName: z.string().min(1),
+  entityType: z.enum(VENDOR_ENTITY_TYPE_VALUES),
+  categoryIds: z.array(z.string().uuid()).min(1),
   gstNumber: z.string().optional(),
   state: z.string().min(2).optional(),
-  bankDetails: z.record(z.unknown()),
+  bankDetails: z.record(z.unknown()).default({}),
   description: z.string().optional(),
+  /** Optional soft-check fields (not stored separately; mirrored into bankDetails when present). */
+  panHolderName: z.string().optional(),
+  bankAccountHolderName: z.string().optional(),
 });
 
 export const UpdateVendorSchema = z.object({
   businessName: z.string().min(1).optional(),
+  entityType: z.enum(VENDOR_ENTITY_TYPE_VALUES).optional(),
+  categoryIds: z.array(z.string().uuid()).min(1).optional(),
   gstNumber: z.string().optional(),
   state: z.string().min(2).optional(),
   bankDetails: z.record(z.unknown()).optional(),
@@ -42,12 +53,24 @@ export const GetVendorsQuerySchema = z.object({
 });
 
 export const UploadDocumentSchema = z.object({
-  type: z.enum(['GST_CERT', 'PAN', 'BANK_PROOF']),
+  type: z.enum(VENDOR_DOCUMENT_TYPE_VALUES),
   url: z.string().url(),
 });
 
 export const RejectDocumentSchema = z.object({
   reason: z.string().min(1),
+});
+
+export const ResolveDocumentsQuerySchema = z.object({
+  entityType: z.enum(VENDOR_ENTITY_TYPE_VALUES),
+  categoryIds: z
+    .union([z.string(), z.array(z.string())])
+    .optional()
+    .transform((value) => {
+      if (!value) return [] as string[];
+      const raw = Array.isArray(value) ? value : value.split(',');
+      return raw.map((part) => part.trim()).filter(Boolean);
+    }),
 });
 
 export type RegisterVendorRequest = z.infer<typeof RegisterVendorSchema>;
@@ -58,3 +81,4 @@ export type SuspendVendorRequest = z.infer<typeof SuspendVendorSchema>;
 export type GetVendorsQuery = z.infer<typeof GetVendorsQuerySchema>;
 export type UploadDocumentRequest = z.infer<typeof UploadDocumentSchema>;
 export type RejectDocumentRequest = z.infer<typeof RejectDocumentSchema>;
+export type ResolveDocumentsQuery = z.infer<typeof ResolveDocumentsQuerySchema>;

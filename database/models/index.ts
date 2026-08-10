@@ -6,6 +6,8 @@ import { initUserModel, User } from './user.model';
 import { initRefreshTokenModel, RefreshToken } from './refreshToken.model';
 import { initAddressModel, Address } from './address.model';
 import { initVendorDocumentModel, VendorDocument } from './vendorDocument.model';
+import { initVendorCategoryModel, VendorCategory } from './vendorCategory.model';
+import { initDocumentRequirementModel, DocumentRequirement } from './documentRequirement.model';
 import { initCategoryModel, Category } from './category.model';
 import { initCategoryAttributeModel, CategoryAttribute } from './categoryAttribute.model';
 import { initProductModel, Product } from './product.model';
@@ -54,6 +56,8 @@ const models = {
   RefreshToken: initRefreshTokenModel(sequelize),
   Address: initAddressModel(sequelize),
   VendorDocument: initVendorDocumentModel(sequelize),
+  VendorCategory: initVendorCategoryModel(sequelize),
+  DocumentRequirement: initDocumentRequirementModel(sequelize),
   Category: initCategoryModel(sequelize),
   CategoryAttribute: initCategoryAttributeModel(sequelize),
   Product: initProductModel(sequelize),
@@ -104,7 +108,7 @@ Object.values(models).forEach((model: any) => {
 export { sequelize };
 export {
   Role, Permission, Vendor, User, RefreshToken, Address,
-  VendorDocument, Category, CategoryAttribute, Product, ProductCategory, ProductVariant, ProductImage,
+  VendorDocument, VendorCategory, DocumentRequirement, Category, CategoryAttribute, Product, ProductCategory, ProductVariant, ProductImage,
   Cart, CartItem, Order, SubOrder, OrderItem,
   Coupon, CouponBatch, CouponUsage, CommissionLedger, Payout,
   Review, ReviewVote, Wishlist, WishlistItem,

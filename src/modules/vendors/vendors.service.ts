@@ -1,17 +1,23 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
-import {
-  VENDOR_STATUS,
-  ORDER_STATUS,
-  COMMISSION_STATUS,
-} from '@core/constants/statuses';
-import { ERROR_MESSAGES } from '@core/constants/errors';
+import { AppError } from '@core/errors/AppError';
+import { ROLES, VENDOR_STATUS, ORDER_STATUS, COMMISSION_STATUS } from '@core/constants/statuses';
+import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
+import {
+  deleteS3ObjectIfReplaced,
+  cascadeDeleteEntityMedia,
+  S3_ENTITY_TYPES,
+} from '@core/s3';
+import { extractS3KeyFromUrl, signedGetObjectUrl } from '@config/s3';
 import { vendorsRepository } from './vendors.repository';
 import { VendorDocument } from '@database/models/vendorDocument.model';
+import { VendorCategory } from '@database/models/vendorCategory.model';
+import { Category } from '@database/models/category.model';
+import { Role } from '@database/models/role.model';
 import { sequelize } from '@database/models';
-import { QueryTypes } from 'sequelize';
+import { Op, QueryTypes, type Transaction } from 'sequelize';
 import type {
   RegisterVendorRequest,
   UpdateVendorRequest,
@@ -21,6 +27,7 @@ import type {
   GetVendorsQuery,
   UploadDocumentRequest,
   RejectDocumentRequest,
+  ResolveDocumentsQuery,
 } from './vendors.dto';
 import { User } from '@database/models/user.model';
 import { notificationsService } from '@modules/notifications/notifications.service';
@@ -28,12 +35,67 @@ import {
   findSuperAdminUserIds,
   findVendorOwnerUserId,
 } from '@modules/notifications/orderNotifications';
+import { logAudit } from '@modules/audit/audit.service';
+import { clearPermissionCache, resolvePermissionsForUser } from '@middleware/rbac.middleware';
+import { PERMISSIONS } from '@core/permissions/permissionKeys';
+import {
+  areCategoryDocumentsSatisfied,
+  buildKycChecklist,
+  resolveRequiredDocuments,
+} from './documentRequirements';
 
 function generateSlug(businessName: string): string {
   return businessName
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '');
+}
+
+function normalizeName(value: string | undefined | null): string {
+  return (value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function detectNameMismatch(
+  panHolderName?: string,
+  bankAccountHolderName?: string,
+): boolean {
+  const pan = normalizeName(panHolderName);
+  const bank = normalizeName(bankAccountHolderName);
+  if (!pan || !bank) return false;
+  return pan !== bank;
+}
+
+async function assertCategoriesExist(categoryIds: string[], transaction?: Transaction) {
+  const rows = await Category.findAll({
+    where: { id: { [Op.in]: categoryIds } },
+    attributes: ['id'],
+    transaction,
+  });
+  if (rows.length !== categoryIds.length) {
+    throw new ValidationError({ categoryIds: [ERROR_MESSAGES.VENDOR_CATEGORIES_INVALID] });
+  }
+}
+
+async function syncVendorCategories(
+  vendorId: string,
+  categoryIds: string[],
+  transaction: Transaction,
+) {
+  await VendorCategory.destroy({ where: { vendorId }, transaction, force: true });
+  if (categoryIds.length === 0) return;
+  await VendorCategory.bulkCreate(
+    categoryIds.map((categoryId) => ({ vendorId, categoryId })),
+    { transaction },
+  );
+}
+
+async function getVendorCategoryIds(vendorId: string, transaction?: Transaction) {
+  const links = await VendorCategory.findAll({
+    where: { vendorId },
+    attributes: ['categoryId'],
+    transaction,
+  });
+  return links.map((link) => link.categoryId);
 }
 
 export class VendorsService {
@@ -47,7 +109,6 @@ export class VendorsService {
     const vendor = await vendorsRepository.findOne({
       where: { slug, status: VENDOR_STATUS.APPROVED },
     });
-    // Suspended/pending/missing are indistinguishable to shoppers — no reason leak.
     if (!vendor) throw new NotFoundError('Vendor');
     return {
       id: vendor.id,
@@ -58,25 +119,69 @@ export class VendorsService {
     };
   }
 
+  async previewRequiredDocuments(query: ResolveDocumentsQuery) {
+    const requiredDocumentTypes = await resolveRequiredDocuments(
+      query.entityType,
+      query.categoryIds,
+    );
+    return { requiredDocumentTypes };
+  }
+
   async registerVendor(userId: string, data: RegisterVendorRequest) {
+    const nameMismatchWarning = detectNameMismatch(
+      data.panHolderName,
+      data.bankAccountHolderName,
+    );
+
+    const bankDetails = {
+      ...(data.bankDetails ?? {}),
+      ...(data.panHolderName ? { panHolderName: data.panHolderName } : {}),
+      ...(data.bankAccountHolderName
+        ? { accountHolderName: data.bankAccountHolderName }
+        : {}),
+    };
+
     const vendor = await sequelize.transaction(async (t) => {
       const slug = generateSlug(data.businessName);
-      
-      // Check if slug already exists
       const existing = await vendorsRepository.findBySlug(slug);
       if (existing) {
-        throw new ValidationError('Business name already exists');
+        throw new ValidationError(ERROR_MESSAGES.VENDOR_BUSINESS_NAME_EXISTS);
       }
 
-      const created = await vendorsRepository.create({
-        ...data,
-        slug,
-        status: VENDOR_STATUS.PENDING,
-      }, { transaction: t });
+      await assertCategoriesExist(data.categoryIds, t);
 
-      await User.update({ vendorId: created.id }, { where: { id: userId }, transaction: t });
+      const created = await vendorsRepository.create(
+        {
+          businessName: data.businessName,
+          gstNumber: data.gstNumber ?? null,
+          state: data.state ?? null,
+          entityType: data.entityType,
+          bankDetails,
+          description: data.description ?? null,
+          slug,
+          status: VENDOR_STATUS.PENDING,
+        } as any,
+        { transaction: t },
+      );
+
+      await syncVendorCategories(created.id, data.categoryIds, t);
+
+      const ownerRole = await Role.findOne({
+        where: { name: ROLES.VENDOR_OWNER },
+        transaction: t,
+      });
+      if (!ownerRole) {
+        throw new ValidationError(ERROR_MESSAGES.VENDOR_NOT_LINKED);
+      }
+
+      await User.update(
+        { vendorId: created.id, roleId: ownerRole.id },
+        { where: { id: userId }, transaction: t },
+      );
       return created;
     });
+
+    clearPermissionCache();
 
     void notificationsService.sendVendorApplicationReceived(userId, vendor.id, {
       businessName: vendor.businessName,
@@ -89,7 +194,13 @@ export class VendorsService {
       });
     }
 
-    return vendor;
+    const checklist = await buildKycChecklist(vendor.id, vendor.entityType, data.categoryIds);
+    return {
+      vendor,
+      requiredDocumentTypes: checklist.requiredDocumentTypes,
+      checklist: checklist.items,
+      nameMismatchWarning,
+    };
   }
 
   async getVendors(query: GetVendorsQuery) {
@@ -101,8 +212,21 @@ export class VendorsService {
       offset,
     });
 
+    const vendors = await Promise.all(
+      rows.map(async (row) => {
+        const plain = row.get({ plain: true });
+        const categoryIds = await getVendorCategoryIds(row.id);
+        const checklist = await buildKycChecklist(row.id, row.entityType, categoryIds);
+        return {
+          ...plain,
+          categoryIds,
+          kycComplete: checklist.isComplete,
+        };
+      }),
+    );
+
     return {
-      vendors: rows,
+      vendors,
       pagination: buildPaginationMeta(count, query.page, query.limit),
     };
   }
@@ -110,7 +234,11 @@ export class VendorsService {
   async getVendorById(vendorId: string) {
     const vendor = await vendorsRepository.findById(vendorId);
     if (!vendor) throw new NotFoundError('Vendor');
-    return vendor;
+    const categoryIds = await getVendorCategoryIds(vendorId);
+    return {
+      ...vendor.get({ plain: true }),
+      categoryIds,
+    };
   }
 
   async getMyVendor(userVendorId: string | null | undefined) {
@@ -128,105 +256,199 @@ export class VendorsService {
   }
 
   async updateVendor(vendorId: string, data: UpdateVendorRequest) {
-    return sequelize.transaction(async (t) => {
+    await sequelize.transaction(async (t) => {
       const vendor = await vendorsRepository.findById(vendorId, { transaction: t });
       if (!vendor) throw new NotFoundError('Vendor');
 
-      await vendorsRepository.update(vendorId, data, { transaction: t });
-      return this.getVendorById(vendorId);
+      if (data.categoryIds) {
+        await assertCategoriesExist(data.categoryIds, t);
+        await syncVendorCategories(vendorId, data.categoryIds, t);
+      }
+
+      const { categoryIds: _categoryIds, ...vendorFields } = data;
+      await vendorsRepository.update(vendorId, vendorFields as any, { transaction: t });
+
+      if (data.logoUrl !== undefined) {
+        await deleteS3ObjectIfReplaced(vendor.logoUrl, data.logoUrl);
+      }
+      if (data.bannerUrl !== undefined) {
+        await deleteS3ObjectIfReplaced(vendor.bannerUrl, data.bannerUrl);
+      }
     });
+
+    // Reload after commit — uncommitted vendor_categories are invisible on another connection.
+    return this.getVendorById(vendorId);
   }
 
-  async approveVendor(vendorId: string, data: ApproveVendorRequest) {
-    return sequelize.transaction(async (t) => {
+  async getKycChecklist(vendorId: string) {
+    const vendor = await vendorsRepository.findById(vendorId);
+    if (!vendor) throw new NotFoundError('Vendor');
+    return buildKycChecklist(vendorId, vendor.entityType);
+  }
+
+  async getMyKycChecklist(userVendorId: string | null | undefined) {
+    if (!userVendorId) {
+      throw new ForbiddenError(ERROR_MESSAGES.VENDOR_NOT_LINKED);
+    }
+    return this.getKycChecklist(userVendorId);
+  }
+
+  async approveVendor(vendorId: string, data: ApproveVendorRequest, actorId: string) {
+    const checklist = await buildKycChecklist(
+      vendorId,
+      (await vendorsRepository.findById(vendorId))?.entityType,
+    );
+    if (!checklist.isComplete) {
+      throw new AppError(ERROR_MESSAGES.VENDOR_KYC_INCOMPLETE, 422, ERROR_CODES.VENDOR_KYC_INCOMPLETE);
+    }
+
+    await sequelize.transaction(async (t) => {
       const vendor = await vendorsRepository.findById(vendorId, { transaction: t });
       if (!vendor) throw new NotFoundError('Vendor');
       if (vendor.status !== VENDOR_STATUS.PENDING) {
         throw new ValidationError(ERROR_MESSAGES.VENDOR_NOT_PENDING);
       }
 
-      await vendorsRepository.update(vendorId, {
-        status: VENDOR_STATUS.APPROVED,
-        commissionRate: data.commissionRate ?? vendor.commissionRate,
-        rejectionReason: null,
-        suspensionReason: null,
-      }, { transaction: t });
-
-      return this.getVendorById(vendorId);
-    }).then(async (updated) => {
-      const ownerId = await findVendorOwnerUserId(vendorId);
-      if (ownerId) {
-        void notificationsService.sendVendorApproved(ownerId, vendorId, {
-          businessName: updated.businessName,
-        });
-      }
-      return updated;
+      await vendorsRepository.update(
+        vendorId,
+        {
+          status: VENDOR_STATUS.APPROVED,
+          commissionRate: data.commissionRate ?? vendor.commissionRate,
+          rejectionReason: null,
+          suspensionReason: null,
+        },
+        { transaction: t },
+      );
     });
+
+    const updated = await this.getVendorById(vendorId);
+    await logAudit({
+      actorId,
+      action: 'VENDOR_APPROVE',
+      entityType: 'Vendor',
+      entityId: vendorId,
+      metadata: { commissionRate: data.commissionRate ?? null },
+    });
+    const ownerId = await findVendorOwnerUserId(vendorId);
+    if (ownerId) {
+      void notificationsService.sendVendorApproved(ownerId, vendorId, {
+        businessName: updated.businessName,
+      });
+    }
+    return updated;
   }
 
-  async rejectVendor(vendorId: string, data: RejectVendorRequest) {
-    return sequelize.transaction(async (t) => {
+  async rejectVendor(vendorId: string, data: RejectVendorRequest, actorId: string) {
+    await sequelize.transaction(async (t) => {
       const vendor = await vendorsRepository.findById(vendorId, { transaction: t });
       if (!vendor) throw new NotFoundError('Vendor');
       if (vendor.status !== VENDOR_STATUS.PENDING) {
         throw new ValidationError(ERROR_MESSAGES.VENDOR_NOT_PENDING);
       }
 
-      await vendorsRepository.update(vendorId, {
-        status: VENDOR_STATUS.REJECTED,
-        rejectionReason: data.reason,
-      }, { transaction: t });
-
-      return this.getVendorById(vendorId);
-    }).then(async (updated) => {
-      const ownerId = await findVendorOwnerUserId(vendorId);
-      if (ownerId) {
-        void notificationsService.sendVendorRejected(ownerId, vendorId, {
-          businessName: updated.businessName,
-          reason: data.reason,
-        });
-      }
-      return updated;
+      await vendorsRepository.update(
+        vendorId,
+        {
+          status: VENDOR_STATUS.REJECTED,
+          rejectionReason: data.reason,
+        },
+        { transaction: t },
+      );
     });
+
+    const updated = await this.getVendorById(vendorId);
+    await logAudit({
+      actorId,
+      action: 'VENDOR_REJECT',
+      entityType: 'Vendor',
+      entityId: vendorId,
+      metadata: { reason: data.reason },
+    });
+    const ownerId = await findVendorOwnerUserId(vendorId);
+    if (ownerId) {
+      void notificationsService.sendVendorRejected(ownerId, vendorId, {
+        businessName: updated.businessName,
+        reason: data.reason,
+      });
+    }
+    return updated;
   }
 
-  async suspendVendor(vendorId: string, data: SuspendVendorRequest) {
-    return sequelize.transaction(async (t) => {
+  async suspendVendor(vendorId: string, data: SuspendVendorRequest, actorId: string) {
+    await sequelize.transaction(async (t) => {
       const vendor = await vendorsRepository.findById(vendorId, { transaction: t });
       if (!vendor) throw new NotFoundError('Vendor');
 
-      await vendorsRepository.update(vendorId, {
-        status: VENDOR_STATUS.SUSPENDED,
-        suspensionReason: data.reason,
-      }, { transaction: t });
-
-      return this.getVendorById(vendorId);
-    }).then(async (updated) => {
-      const ownerId = await findVendorOwnerUserId(vendorId);
-      if (ownerId) {
-        void notificationsService.sendVendorSuspended(ownerId, vendorId, {
-          businessName: updated.businessName,
-          reason: data.reason,
-        });
-      }
-      return updated;
+      await vendorsRepository.update(
+        vendorId,
+        {
+          status: VENDOR_STATUS.SUSPENDED,
+          suspensionReason: data.reason,
+        },
+        { transaction: t },
+      );
     });
+
+    const updated = await this.getVendorById(vendorId);
+    await logAudit({
+      actorId,
+      action: 'VENDOR_SUSPEND',
+      entityType: 'Vendor',
+      entityId: vendorId,
+      metadata: { reason: data.reason },
+    });
+    const ownerId = await findVendorOwnerUserId(vendorId);
+    if (ownerId) {
+      void notificationsService.sendVendorSuspended(ownerId, vendorId, {
+        businessName: updated.businessName,
+        reason: data.reason,
+      });
+    }
+    return updated;
   }
 
   async uploadDocument(vendorId: string, data: UploadDocumentRequest) {
-    return sequelize.transaction(async (t) => {
+    const { document, previousUrl } = await sequelize.transaction(async (t) => {
       const vendor = await vendorsRepository.findById(vendorId, { transaction: t });
       if (!vendor) throw new NotFoundError('Vendor');
 
-      const document = await VendorDocument.create({
-        vendorId,
-        type: data.type,
-        url: data.url,
-        verified: false,
-      }, { transaction: t });
+      const existing = await VendorDocument.findOne({
+        where: { vendorId, type: data.type },
+        transaction: t,
+      });
 
-      return document;
+      if (existing) {
+        const previousUrl = existing.url;
+        await existing.update(
+          {
+            url: data.url,
+            verified: false,
+            verifiedById: null,
+            // Clear rejectedAt so checklist returns to PENDING_REVIEW; keep reason visible.
+            rejectedAt: null,
+          },
+          { transaction: t },
+        );
+        return { document: existing, previousUrl };
+      }
+
+      const created = await VendorDocument.create(
+        {
+          vendorId,
+          type: data.type,
+          url: data.url,
+          verified: false,
+          verifiedById: null,
+          rejectionReason: null,
+          rejectedAt: null,
+        },
+        { transaction: t },
+      );
+      return { document: created, previousUrl: null as string | null };
     });
+
+    await deleteS3ObjectIfReplaced(previousUrl, data.url);
+    return document;
   }
 
   async getVendorDocuments(vendorId: string) {
@@ -236,26 +458,101 @@ export class VendorsService {
     return VendorDocument.findAll({ where: { vendorId } });
   }
 
-  async verifyDocument(documentId: string) {
-    return sequelize.transaction(async (t) => {
-      const document = await VendorDocument.findByPk(documentId, { transaction: t });
-      if (!document) throw new NotFoundError('VendorDocument');
+  async uploadMyDocument(userVendorId: string | null | undefined, data: UploadDocumentRequest) {
+    if (!userVendorId) {
+      throw new ForbiddenError(ERROR_MESSAGES.VENDOR_NOT_LINKED);
+    }
+    return this.uploadDocument(userVendorId, data);
+  }
 
-      await document.update({ verified: true }, { transaction: t });
-      return document;
+  async getMyDocuments(userVendorId: string | null | undefined) {
+    if (!userVendorId) {
+      throw new ForbiddenError(ERROR_MESSAGES.VENDOR_NOT_LINKED);
+    }
+    return this.getVendorDocuments(userVendorId);
+  }
+
+  async deleteVendor(vendorId: string) {
+    const media = await sequelize.transaction(async (t) => {
+      const vendor = await vendorsRepository.findById(vendorId, { transaction: t });
+      if (!vendor) throw new NotFoundError('Vendor');
+
+      const docs = await VendorDocument.findAll({
+        where: { vendorId },
+        attributes: ['url'],
+        transaction: t,
+        paranoid: false,
+      });
+
+      await VendorDocument.destroy({ where: { vendorId }, transaction: t });
+      await VendorCategory.destroy({ where: { vendorId }, transaction: t });
+      await vendorsRepository.softDelete(vendorId, { transaction: t });
+
+      return {
+        urls: [vendor.logoUrl, vendor.bannerUrl, ...docs.map((d) => d.url)],
+      };
     });
+
+    await cascadeDeleteEntityMedia(S3_ENTITY_TYPES.VENDORS, vendorId, media.urls);
+  }
+
+  async verifyDocument(documentId: string, actorId: string) {
+    const document = await sequelize.transaction(async (t) => {
+      const row = await VendorDocument.findByPk(documentId, { transaction: t });
+      if (!row) throw new NotFoundError('VendorDocument');
+
+      await row.update(
+        {
+          verified: true,
+          verifiedById: actorId,
+          rejectionReason: null,
+          rejectedAt: null,
+        },
+        { transaction: t },
+      );
+      return row;
+    });
+
+    await logAudit({
+      actorId,
+      action: 'VENDOR_DOCUMENT_VERIFY',
+      entityType: 'VendorDocument',
+      entityId: document.id,
+      metadata: { vendorId: document.vendorId, type: document.type },
+    });
+    return document;
   }
 
   async rejectDocument(
     documentId: string,
     data: RejectDocumentRequest,
-  ): Promise<{ id: string; rejected: boolean }> {
+    actorId: string,
+  ): Promise<{ id: string; rejected: boolean; rejectionReason: string }> {
     const document = await sequelize.transaction(async (t) => {
       const row = await VendorDocument.findByPk(documentId, { transaction: t });
       if (!row) throw new NotFoundError('VendorDocument');
-      await row.update({ verified: false }, { transaction: t });
-      await row.destroy({ transaction: t });
+      await row.update(
+        {
+          verified: false,
+          verifiedById: null,
+          rejectionReason: data.reason,
+          rejectedAt: new Date(),
+        },
+        { transaction: t },
+      );
       return row;
+    });
+
+    await logAudit({
+      actorId,
+      action: 'VENDOR_DOCUMENT_REJECT',
+      entityType: 'VendorDocument',
+      entityId: document.id,
+      metadata: {
+        vendorId: document.vendorId,
+        type: document.type,
+        reason: data.reason,
+      },
     });
 
     const ownerId = await findVendorOwnerUserId(document.vendorId);
@@ -264,7 +561,51 @@ export class VendorsService {
         reason: data.reason,
       });
     }
-    return { id: document.id, rejected: true };
+    return { id: document.id, rejected: true, rejectionReason: data.reason };
+  }
+
+  /** Used by products module to gate LIVE for category-specific KYC. */
+  async assertCategoriesKycSatisfied(vendorId: string, categoryIds: string[]) {
+    const vendor = await vendorsRepository.findById(vendorId);
+    if (!vendor) throw new NotFoundError('Vendor');
+    const ok = await areCategoryDocumentsSatisfied(vendorId, vendor.entityType, categoryIds);
+    if (!ok) {
+      throw new AppError(
+        ERROR_MESSAGES.VENDOR_KYC_BLOCKS_PRODUCT,
+        422,
+        ERROR_CODES.VENDOR_KYC_BLOCKS_PRODUCT,
+      );
+    }
+  }
+
+  /**
+   * Returns a short-lived signed GET URL for a KYC document.
+   * Allowed for the owning vendor or admins with vendor manage/approve.
+   */
+  async getDocumentViewUrl(
+    documentId: string,
+    actor: { vendorId?: string | null; roleId: string; role: { name: string } },
+  ) {
+    const document = await VendorDocument.findByPk(documentId);
+    if (!document) throw new NotFoundError('VendorDocument');
+
+    const ownsDocument = Boolean(actor.vendorId && actor.vendorId === document.vendorId);
+    if (!ownsDocument) {
+      const perms = await resolvePermissionsForUser(actor);
+      const canManage = perms.some(
+        (key) => key === PERMISSIONS.VENDOR_MANAGE || key === PERMISSIONS.VENDOR_APPROVE,
+      );
+      if (!canManage) {
+        throw new ForbiddenError(ERROR_MESSAGES.AUTH_REQUIRED);
+      }
+    }
+
+    const key = extractS3KeyFromUrl(document.url);
+    if (!key) {
+      return { url: document.url };
+    }
+    const url = await signedGetObjectUrl(key);
+    return { url };
   }
 
   async getDashboardSummary(vendorId: string): Promise<{

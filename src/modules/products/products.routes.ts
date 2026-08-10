@@ -2,7 +2,7 @@ import { Router } from 'express';
 import * as productsController from './products.controller';
 import { authenticate, optionalAuthenticate } from '@middleware/auth.middleware';
 import { authorize } from '@middleware/rbac.middleware';
-import { checkOwnership } from '@middleware/ownership.middleware';
+import { checkOwnership, checkProductImageOwnership } from '@middleware/ownership.middleware';
 import { validate } from '@middleware/validate.middleware';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import {
@@ -13,6 +13,7 @@ import {
   AddVariantSchema,
   UpdateVariantSchema,
   AddImageSchema,
+  ReplaceImageSchema,
 } from './products.dto';
 
 const router = Router();
@@ -39,8 +40,35 @@ router.patch('/variants/:variantId', authenticate, authorize(PERMISSIONS.PRODUCT
 router.delete('/variants/:variantId', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE), productsController.deleteVariant);
 
 // Image management
-router.post('/:id/images', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE), validate(AddImageSchema), productsController.addImage);
-router.delete('/images/:imageId', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE), productsController.deleteImage);
-router.patch('/images/:imageId/primary', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE), productsController.setPrimaryImage);
+router.post(
+  '/:id/images',
+  authenticate,
+  authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE),
+  checkOwnership('product'),
+  validate(AddImageSchema),
+  productsController.addImage,
+);
+router.patch(
+  '/images/:imageId',
+  authenticate,
+  authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE),
+  checkProductImageOwnership(),
+  validate(ReplaceImageSchema),
+  productsController.replaceImage,
+);
+router.delete(
+  '/images/:imageId',
+  authenticate,
+  authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE),
+  checkProductImageOwnership(),
+  productsController.deleteImage,
+);
+router.patch(
+  '/images/:imageId/primary',
+  authenticate,
+  authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE),
+  checkProductImageOwnership(),
+  productsController.setPrimaryImage,
+);
 
 export default router;

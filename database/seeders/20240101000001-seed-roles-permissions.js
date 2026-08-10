@@ -20,6 +20,7 @@ const PERMISSION_KEYS = [
   'user.manage', 'vendor.manage', 'vendor.approve', 'product.manage', 'product.approve',
   'category.manage', 'order.manage', 'order.refund', 'coupon.manage', 'commission.view',
   'payout.manage', 'review.moderate', 'tax.manage', 'shipping.manage', 'settings.manage',
+  'banner.manage',
   'audit.view', 'analytics.view', 'product.create', 'product.update', 'product.delete',
   'suborder.manage', 'payout.view', 'review.respond',
 ];
@@ -27,7 +28,10 @@ const PERMISSION_KEYS = [
 const ROLE_PERMISSIONS = {
   SUPER_ADMIN: PERMISSION_KEYS,
   ADMIN_ORDER_MANAGER: ['order.manage', 'order.refund', 'analytics.view', 'audit.view'],
-  ADMIN_CATALOG_MANAGER: ['product.manage', 'product.approve', 'category.manage', 'review.moderate', 'analytics.view', 'audit.view'],
+  ADMIN_CATALOG_MANAGER: [
+    'product.manage', 'product.approve', 'category.manage', 'banner.manage',
+    'review.moderate', 'analytics.view', 'audit.view',
+  ],
   VENDOR_OWNER: ['product.create', 'product.update', 'product.delete', 'suborder.manage', 'payout.view', 'review.respond'],
   VENDOR_STAFF: ['product.update', 'suborder.manage'],
   CUSTOMER: [],

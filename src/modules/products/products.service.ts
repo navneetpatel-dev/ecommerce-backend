@@ -1,9 +1,16 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
+import { AppError } from '@core/errors/AppError';
 import { PRODUCT_STATUS, REVIEW_STATUS } from '@core/constants/statuses';
-import { ERROR_MESSAGES } from '@core/constants/errors';
+import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
+import {
+  cascadeDeleteEntityMedia,
+  deleteS3ObjectByUrl,
+  deleteS3ObjectIfReplaced,
+  S3_ENTITY_TYPES,
+} from '@core/s3';
 import { productsRepository } from './products.repository';
 import { Category } from '@database/models/category.model';
 import { Vendor } from '@database/models/vendor.model';
@@ -16,6 +23,7 @@ import { sequelize } from '@database/models';
 import { categoriesService } from '@modules/categories/categories.service';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { findVendorOwnerUserId } from '@modules/notifications/orderNotifications';
+import { vendorsService } from '@modules/vendors/vendors.service';
 import type { Transaction } from 'sequelize';
 import type {
   CreateProductRequest,
@@ -223,7 +231,7 @@ export class ProductsService {
   }
 
   async updateProduct(id: string, vendorId: string | null, data: UpdateProductRequest) {
-    return sequelize.transaction(async (t) => {
+    await sequelize.transaction(async (t) => {
       const product = await productsRepository.findById(id, { transaction: t });
       if (!product) throw new NotFoundError('Product');
 
@@ -252,17 +260,40 @@ export class ProductsService {
         await productsRepository.update(id, updateData, { transaction: t });
       }
 
+      const primaryCategoryId = productFields.categoryId ?? product.categoryId;
       if (secondaryCategoryIds !== undefined) {
-        const primaryCategoryId = productFields.categoryId ?? product.categoryId;
         await syncSecondaryCategories(id, primaryCategoryId, secondaryCategoryIds, t);
       }
 
-      return this.getProductById(id);
+      const nextStatus =
+        (typeof updateData.status === 'string' ? updateData.status : null) ?? product.status;
+      const isLiveOrPending =
+        nextStatus === PRODUCT_STATUS.LIVE || nextStatus === PRODUCT_STATUS.PENDING_APPROVAL;
+      const ownerVendorId = product.vendorId;
+      if (isLiveOrPending && ownerVendorId) {
+        let secondaryIds: string[];
+        if (secondaryCategoryIds !== undefined) {
+          secondaryIds = secondaryCategoryIds.filter((cid) => cid !== primaryCategoryId);
+        } else {
+          const secondary = await ProductCategory.findAll({
+            where: { productId: id },
+            attributes: ['categoryId'],
+            transaction: t,
+          });
+          secondaryIds = secondary.map((link) => link.categoryId);
+        }
+        await vendorsService.assertCategoriesKycSatisfied(ownerVendorId, [
+          primaryCategoryId,
+          ...secondaryIds,
+        ]);
+      }
     });
+
+    return this.getProductById(id);
   }
 
   async deleteProduct(id: string, vendorId: string | null) {
-    return sequelize.transaction(async (t) => {
+    const imageUrls = await sequelize.transaction(async (t) => {
       const product = await productsRepository.findById(id, { transaction: t });
       if (!product) throw new NotFoundError('Product');
 
@@ -270,13 +301,22 @@ export class ProductsService {
         throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_PRODUCT);
       }
 
-      // Soft delete - can be restored later
+      const images = await ProductImage.findAll({
+        where: { productId: id },
+        attributes: ['url'],
+        transaction: t,
+      });
+
+      await ProductImage.destroy({ where: { productId: id }, transaction: t });
       await productsRepository.softDelete(id, { transaction: t });
+      return images.map((img) => img.url);
     });
+
+    await cascadeDeleteEntityMedia(S3_ENTITY_TYPES.PRODUCTS, id, imageUrls);
   }
 
   async submitForApproval(id: string, vendorId: string) {
-    return sequelize.transaction(async (t) => {
+    await sequelize.transaction(async (t) => {
       const product = await productsRepository.findById(id, { transaction: t });
       if (!product) throw new NotFoundError('Product');
 
@@ -285,30 +325,61 @@ export class ProductsService {
       }
 
       if (product.status !== PRODUCT_STATUS.DRAFT) {
-        throw new ValidationError('Product is not in DRAFT status');
+        throw new ValidationError(ERROR_MESSAGES.PRODUCT_NOT_DRAFT);
       }
 
+      const secondary = await ProductCategory.findAll({
+        where: { productId: id },
+        attributes: ['categoryId'],
+        transaction: t,
+      });
+      const categoryIds = [
+        product.categoryId,
+        ...secondary.map((row) => row.categoryId),
+      ].filter(Boolean);
+      await vendorsService.assertCategoriesKycSatisfied(vendorId, categoryIds);
+
       await productsRepository.update(id, { status: PRODUCT_STATUS.PENDING_APPROVAL }, { transaction: t });
-      return this.getProductById(id);
     });
+
+    return this.getProductById(id);
   }
 
   async approveProduct(id: string, adminId: string) {
-    const product = await sequelize.transaction(async (t) => {
+    await sequelize.transaction(async (t) => {
       const row = await productsRepository.findById(id, { transaction: t });
       if (!row) throw new NotFoundError('Product');
 
       if (row.status !== PRODUCT_STATUS.PENDING_APPROVAL) {
-        throw new ValidationError('Product is not pending approval');
+        throw new ValidationError(ERROR_MESSAGES.PRODUCT_NOT_PENDING_APPROVAL);
       }
+
+      const secondary = await ProductCategory.findAll({
+        where: { productId: id },
+        attributes: ['categoryId'],
+        transaction: t,
+      });
+      const categoryIds = [
+        row.categoryId,
+        ...secondary.map((link) => link.categoryId),
+      ].filter(Boolean);
+      if (!row.vendorId) {
+        throw new AppError(
+          ERROR_MESSAGES.VENDOR_KYC_BLOCKS_PRODUCT,
+          422,
+          ERROR_CODES.VENDOR_KYC_BLOCKS_PRODUCT,
+        );
+      }
+      await vendorsService.assertCategoriesKycSatisfied(row.vendorId, categoryIds);
 
       await productsRepository.update(id, {
         status: PRODUCT_STATUS.LIVE,
         approvedById: adminId,
         rejectionNote: null,
       }, { transaction: t });
-      return this.getProductById(id);
     });
+
+    const product = await this.getProductById(id);
 
     const ownerId = await findVendorOwnerUserId(product.vendorId);
     if (ownerId) {
@@ -320,21 +391,21 @@ export class ProductsService {
   }
 
   async rejectProduct(id: string, data: RejectProductRequest) {
-    const product = await sequelize.transaction(async (t) => {
+    await sequelize.transaction(async (t) => {
       const row = await productsRepository.findById(id, { transaction: t });
       if (!row) throw new NotFoundError('Product');
 
       if (row.status !== PRODUCT_STATUS.PENDING_APPROVAL) {
-        throw new ValidationError('Product is not pending approval');
+        throw new ValidationError(ERROR_MESSAGES.PRODUCT_NOT_PENDING_APPROVAL);
       }
 
       await productsRepository.update(id, {
         status: PRODUCT_STATUS.REJECTED,
         rejectionNote: data.rejectionNote,
       }, { transaction: t });
-
-      return this.getProductById(id);
     });
+
+    const product = await this.getProductById(id);
 
     const ownerId = await findVendorOwnerUserId(product.vendorId);
     if (ownerId) {
@@ -416,13 +487,41 @@ export class ProductsService {
   }
 
   async deleteImage(imageId: string) {
-    return sequelize.transaction(async (t) => {
+    const image = await sequelize.transaction(async (t) => {
+      const row = await ProductImage.findByPk(imageId, { transaction: t });
+      if (!row) throw new NotFoundError('ProductImage');
+      await row.destroy({ transaction: t });
+      return row;
+    });
+    await deleteS3ObjectByUrl(image.url);
+  }
+
+  /** Phase 2 replace — swaps image URL and deletes the previous S3 object. */
+  async replaceImage(imageId: string, data: { url: string; isPrimary?: boolean }) {
+    const previousUrl = await sequelize.transaction(async (t) => {
       const image = await ProductImage.findByPk(imageId, { transaction: t });
       if (!image) throw new NotFoundError('ProductImage');
 
-      // Hard delete images - they're detail records
-      await image.destroy({ transaction: t });
+      const previous = image.url;
+      if (data.isPrimary) {
+        await ProductImage.update(
+          { isPrimary: false },
+          { where: { productId: image.productId }, transaction: t },
+        );
+      }
+      await image.update(
+        {
+          url: data.url,
+          ...(data.isPrimary !== undefined ? { isPrimary: data.isPrimary } : {}),
+        },
+        { transaction: t },
+      );
+      return previous;
     });
+
+    await deleteS3ObjectIfReplaced(previousUrl, data.url);
+    const updated = await ProductImage.findByPk(imageId);
+    return updated!;
   }
 
   async setPrimaryImage(imageId: string) {

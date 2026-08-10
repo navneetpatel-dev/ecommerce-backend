@@ -28,6 +28,7 @@ import settingsRoutes from '@modules/settings/settings.routes';
 import homepageRoutes from '@modules/homepage/homepage.routes';
 import reportsRoutes from '@modules/reports/reports.routes';
 import walletRoutes from '@modules/wallet/wallet.routes';
+import uploadsRoutes from '@modules/uploads/uploads.routes';
 
 const router = Router();
 
@@ -59,5 +60,6 @@ router.use(API_MOUNTS.settings, settingsRoutes);
 router.use(API_MOUNTS.homepage, homepageRoutes);
 router.use(API_MOUNTS.reports, reportsRoutes);
 router.use(API_MOUNTS.wallet, walletRoutes);
+router.use(API_MOUNTS.uploads, uploadsRoutes);
 
 export { router as routes };

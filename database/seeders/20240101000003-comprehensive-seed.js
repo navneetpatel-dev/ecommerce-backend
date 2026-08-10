@@ -183,7 +183,9 @@ module.exports = {
         bankDetails: JSON.stringify({ accountNumber: `000${String(i).padStart(12, '0')}`, ifscCode: `SBIN00${String(i).padStart(4, '0')}`, accountHolderName: vendorNames[i], bankName: 'State Bank of India' }),
         logoUrl: VENDOR_LOGOS[i % VENDOR_LOGOS.length], bannerUrl: null,
         description: `${vendorNames[i]} — premium quality products with fast shipping.`,
-        status: approved ? 'APPROVED' : 'PENDING', commissionRate: randomInt(8, 18), performanceScore: parseFloat((Math.random() * 3 + 2).toFixed(2)),
+        status: approved ? 'APPROVED' : 'PENDING',
+        entityType: 'SOLE_PROPRIETORSHIP',
+        commissionRate: randomInt(8, 18), performanceScore: parseFloat((Math.random() * 3 + 2).toFixed(2)),
         createdAt: now, updatedAt: now,
       });
       vendorOwners.push({
@@ -200,7 +202,14 @@ module.exports = {
         emailVerified: true, emailMarketingConsent: false, emailSuppressed: false,
         createdAt: now, updatedAt: now,
       });
-      for (const docType of ['GST_CERT', 'PAN', 'BANK_PROOF']) {
+      for (const docType of [
+        'GST_CERT',
+        'PAN',
+        'AADHAAR',
+        'BANK_PROOF',
+        'ADDRESS_PROOF',
+        'AUTHORIZED_SIGNATORY_ID',
+      ]) {
         vendorDocuments.push({
           id: uuidv4(), vendorId, type: docType, url: `https://docs.example.com/${docType.toLowerCase()}_${slugify(vendorNames[i])}.pdf`,
           verified: approved, createdAt: now, updatedAt: now,
