@@ -1,8 +1,13 @@
 import { sequelize } from '@database/models';
 import { QueryTypes } from 'sequelize';
 import { PRODUCT_STATUS, VENDOR_STATUS } from '@core/constants/statuses';
-import { SEARCH_AUTOCOMPLETE_LIMIT } from '@core/constants/search';
+import {
+  SEARCH_AUTOCOMPLETE_FUZZY_MIN_LENGTH,
+  SEARCH_AUTOCOMPLETE_INFIX_MIN_LENGTH,
+  SEARCH_AUTOCOMPLETE_LIMIT,
+} from '@core/constants/search';
 import type { SearchSuggestionDto } from './search.dto';
+import { buildAutocompleteLikePatterns } from './search.utils';
 
 export interface SearchParams {
   term: string;
@@ -110,6 +115,9 @@ export class SearchRepository {
   }
 
   async autocomplete(term: string, limit = SEARCH_AUTOCOMPLETE_LIMIT): Promise<SearchSuggestionDto[]> {
+    const normalized = term.trim();
+    const { prefixPattern, infixPattern } = buildAutocompleteLikePatterns(normalized);
+
     const rows = await sequelize.query<AutocompleteRow>(
       `
       SELECT
@@ -118,18 +126,40 @@ export class SearchRepository {
         p.slug,
         p."basePrice",
         COALESCE(img.url, '') AS "imageUrl",
-        similarity(p.name, :term) AS score
+        CASE
+          WHEN p.name ILIKE :prefixPattern ESCAPE '\\' THEN 0
+          WHEN char_length(:term) >= :infixMinLen AND p.name ILIKE :infixPattern ESCAPE '\\' THEN 1
+          ELSE 2
+        END AS match_tier,
+        GREATEST(
+          word_similarity(:term, p.name),
+          similarity(p.name, :term)
+        ) AS score
       FROM products p
       JOIN vendors v ON v.id = p."vendorId" AND v."deletedAt" IS NULL
       ${primaryImageLateral}
-      WHERE p.name % :term
-        AND ${liveProductFilters}
-      ORDER BY score DESC, p.name ASC
+      WHERE ${liveProductFilters}
+        AND (
+          p.name ILIKE :prefixPattern ESCAPE '\\'
+          OR (
+            char_length(:term) >= :infixMinLen
+            AND p.name ILIKE :infixPattern ESCAPE '\\'
+          )
+          OR (
+            char_length(:term) >= :fuzzyMinLen
+            AND p.name % :term
+          )
+        )
+      ORDER BY match_tier ASC, score DESC, char_length(p.name) ASC, p.name ASC
       LIMIT :limit
       `,
       {
         replacements: {
-          term,
+          term: normalized,
+          prefixPattern,
+          infixPattern,
+          infixMinLen: SEARCH_AUTOCOMPLETE_INFIX_MIN_LENGTH,
+          fuzzyMinLen: SEARCH_AUTOCOMPLETE_FUZZY_MIN_LENGTH,
           limit,
           liveStatus: PRODUCT_STATUS.LIVE,
           approvedStatus: VENDOR_STATUS.APPROVED,
