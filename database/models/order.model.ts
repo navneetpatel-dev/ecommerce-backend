@@ -38,6 +38,7 @@ export class Order extends Model<InferAttributes<Order>, InferCreationAttributes
     Order.belongsTo(models.Coupon, { as: 'coupon', foreignKey: 'couponId' });
     Order.belongsTo(models.Address, { as: 'shippingAddress', foreignKey: 'shippingAddressId' });
     Order.hasMany(models.SubOrder, { foreignKey: 'orderId', as: 'subOrders' });
+    Order.hasMany(models.SupportTicket, { foreignKey: 'relatedOrderId', as: 'supportTickets' });
   }
 }
 

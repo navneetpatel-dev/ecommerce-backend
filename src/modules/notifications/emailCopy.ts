@@ -57,6 +57,7 @@ export const EMAIL_COPY = {
     BUG_REPORT_TRIAGED: 'Bug report triaged — {reportNumber}',
     BUG_REPORT_FIXED: 'Bug report fixed — {reportNumber}',
     BUG_REPORT_WONT_FIX: 'Bug report update — {reportNumber}',
+    BUG_REPORT_DUPLICATE: 'Bug report marked duplicate — {reportNumber}',
   } satisfies Record<NotificationType, string>,
 
   greetings: {
@@ -110,6 +111,8 @@ export const EMAIL_COPY = {
     BUG_REPORT_FIXED: 'Your bug report {reportNumber} ({title}) has been marked fixed.',
     BUG_REPORT_WONT_FIX:
       'Your bug report {reportNumber} ({title}) will not be fixed. Reason: {reason}',
+    BUG_REPORT_DUPLICATE:
+      'Your bug report {reportNumber} ({title}) was marked as a duplicate of {duplicateOfReportNumber}.',
   } satisfies Record<NotificationType, string>,
 } as const;
 

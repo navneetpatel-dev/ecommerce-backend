@@ -9,6 +9,7 @@ import {
   CreateBugReportSchema,
   DuplicateBugReportSchema,
   TriageBugReportSchema,
+  UpdateBugAssignmentSchema,
   WontFixBugReportSchema,
 } from './bugReports.dto';
 import * as bugReportsController from './bugReports.controller';
@@ -34,6 +35,13 @@ router.post(
   authorize(PERMISSIONS.BUG_REPORT_MANAGE),
   validate(TriageBugReportSchema),
   bugReportsController.triage,
+);
+router.post(
+  '/:id/assignment',
+  authenticate,
+  authorize(PERMISSIONS.BUG_REPORT_MANAGE),
+  validate(UpdateBugAssignmentSchema),
+  bugReportsController.updateAssignment,
 );
 router.post(
   '/:id/status',

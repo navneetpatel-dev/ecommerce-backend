@@ -54,8 +54,10 @@ export class SupportTicket extends Model<
     SupportTicket.belongsTo(models.User, { foreignKey: 'customerId', as: 'customer' });
     SupportTicket.belongsTo(models.User, { foreignKey: 'assignedToId', as: 'assignedTo' });
     SupportTicket.belongsTo(models.Vendor, { foreignKey: 'relatedVendorId', as: 'relatedVendor' });
+    SupportTicket.belongsTo(models.Order, { foreignKey: 'relatedOrderId', as: 'relatedOrder' });
     SupportTicket.hasMany(models.TicketMessage, { foreignKey: 'ticketId', as: 'messages' });
     SupportTicket.hasMany(models.TicketAttachment, { foreignKey: 'ticketId', as: 'attachments' });
+    SupportTicket.hasMany(models.TicketRead, { foreignKey: 'ticketId', as: 'reads' });
   }
 }
 

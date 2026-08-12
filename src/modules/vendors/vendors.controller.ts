@@ -9,6 +9,7 @@ import {
   RejectVendorSchema,
   SuspendVendorSchema,
   GetVendorsQuerySchema,
+  VendorDirectoryQuerySchema,
   UploadDocumentSchema,
   RejectDocumentSchema,
   ResolveDocumentsQuerySchema,
@@ -34,6 +35,12 @@ export const registerVendor = asyncHandler(async (req: Request, res: Response) =
 export const getVendors = asyncHandler(async (req: Request, res: Response) => {
   const query = GetVendorsQuerySchema.parse(req.query);
   const result = await vendorsService.getVendors(query);
+  res.json(ok(result.vendors, { pagination: result.pagination }));
+});
+
+export const listApprovedDirectory = asyncHandler(async (req: Request, res: Response) => {
+  const query = VendorDirectoryQuerySchema.parse(req.query);
+  const result = await vendorsService.listApprovedDirectory(query);
   res.json(ok(result.vendors, { pagination: result.pagination }));
 });
 

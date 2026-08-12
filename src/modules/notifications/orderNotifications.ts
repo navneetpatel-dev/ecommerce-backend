@@ -16,6 +16,37 @@ export async function findVendorOwnerUserId(vendorId: string | null | undefined)
   return owner?.id ?? null;
 }
 
+/**
+ * Prefer an active VENDOR_STAFF user for the shop; fall back to VENDOR_OWNER, then any user on the vendor.
+ */
+export async function findVendorStaffUserId(
+  vendorId: string | null | undefined,
+): Promise<string | null> {
+  if (!vendorId) return null;
+
+  const staffRole = await Role.findOne({ where: { name: ROLES.VENDOR_STAFF } });
+  if (staffRole) {
+    const staff = await User.findOne({
+      where: { vendorId, roleId: staffRole.id },
+      attributes: ['id'],
+      order: [['createdAt', 'ASC']],
+    });
+    if (staff?.id) return staff.id;
+  }
+
+  const ownerRole = await Role.findOne({ where: { name: ROLES.VENDOR_OWNER } });
+  if (ownerRole) {
+    const owner = await User.findOne({
+      where: { vendorId, roleId: ownerRole.id },
+      attributes: ['id'],
+      order: [['createdAt', 'ASC']],
+    });
+    if (owner?.id) return owner.id;
+  }
+
+  return findVendorOwnerUserId(vendorId);
+}
+
 /** Super-admin user ids for internal operational alerts. */
 export async function findSuperAdminUserIds(limit = 20): Promise<string[]> {
   const adminRole = await Role.findOne({ where: { name: ROLES.SUPER_ADMIN } });

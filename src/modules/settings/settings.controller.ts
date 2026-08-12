@@ -11,6 +11,9 @@ export const getPublicSettings = asyncHandler(async (_req: Request, res: Respons
     defaultReturnWindow: settings.defaultReturnWindow,
     supportEmail: settings.supportEmail,
     supportHours: settings.supportHours,
+    ticketReopenWindowDays: settings.ticketReopenWindowDays,
+    bugVerifyWindowDays: settings.bugVerifyWindowDays,
+    bugCloseWindowDays: settings.bugCloseWindowDays,
   }));
 });
 

@@ -25,6 +25,7 @@ import type {
   RejectVendorRequest,
   SuspendVendorRequest,
   GetVendorsQuery,
+  VendorDirectoryQuery,
   UploadDocumentRequest,
   RejectDocumentRequest,
   ResolveDocumentsQuery,
@@ -224,6 +225,29 @@ export class VendorsService {
         };
       }),
     );
+
+    return {
+      vendors,
+      pagination: buildPaginationMeta(count, query.page, query.limit),
+    };
+  }
+
+  async listApprovedDirectory(query: VendorDirectoryQuery) {
+    const offset = paginationOffset(query.page, query.limit);
+    const { rows, count } = await vendorsRepository.findWithFilters({
+      status: VENDOR_STATUS.APPROVED,
+      search: query.search,
+      limit: query.limit,
+      offset,
+    });
+
+    const vendors = rows.map((row) => {
+      const plain = row.get({ plain: true });
+      return {
+        id: plain.id as string,
+        businessName: plain.businessName as string,
+      };
+    });
 
     return {
       vendors,

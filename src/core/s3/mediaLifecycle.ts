@@ -1,12 +1,14 @@
 import {
+  copyObject,
   deleteByPrefix,
   deleteObject,
   deleteObjects,
   extractS3KeyFromUrl,
   isS3Configured,
+  publicObjectUrl,
 } from '@config/s3';
 import { logger } from '@core/logger';
-import { buildS3EntityPrefix } from './buildS3Key';
+import { buildS3EntityPrefix, buildS3Key } from './buildS3Key';
 import type { S3EntityType } from './constants';
 
 /** Deletes the S3 object pointed to by a public URL (no-op if not our key). */
@@ -46,6 +48,38 @@ export async function deleteS3ObjectIfReplaced(
 ): Promise<void> {
   if (!previousUrl || previousUrl === nextUrl) return;
   await deleteS3ObjectByUrl(previousUrl);
+}
+
+/**
+ * Copy draft-entity uploads under the final entity id and return the rebased public URLs.
+ * When S3 is not configured, returns the input URLs unchanged.
+ */
+export async function rebaseAttachmentUrlsToEntity(params: {
+  entityType: S3EntityType;
+  entityId: string;
+  purpose: 'attachments';
+  urls: string[];
+}): Promise<string[]> {
+  if (!isS3Configured() || params.urls.length === 0) return params.urls;
+
+  const nextUrls: string[] = [];
+  for (const url of params.urls) {
+    const sourceKey = extractS3KeyFromUrl(url);
+    if (!sourceKey) {
+      nextUrls.push(url);
+      continue;
+    }
+    const filename = sourceKey.split('/').pop() || 'file.bin';
+    const destKey = buildS3Key(params.entityType, params.entityId, params.purpose, filename);
+    if (sourceKey === destKey) {
+      nextUrls.push(url);
+      continue;
+    }
+    await copyObject(sourceKey, destKey);
+    nextUrls.push(publicObjectUrl(destKey));
+    await deleteObject(sourceKey, { strict: false }).catch(() => undefined);
+  }
+  return nextUrls;
 }
 
 /**

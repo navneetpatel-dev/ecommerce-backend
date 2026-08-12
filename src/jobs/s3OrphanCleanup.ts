@@ -11,6 +11,8 @@ import { User } from '@database/models/user.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { PromoBanner } from '@database/models/promoBanner.model';
 import { ReportExportLog } from '@database/models/reportExportLog.model';
+import { TicketAttachment } from '@database/models/ticketAttachment.model';
+import { BugReportAttachment } from '@database/models/bugReportAttachment.model';
 
 export const S3_ORPHAN_CLEANUP_JOB = 's3-orphan-cleanup';
 
@@ -29,23 +31,35 @@ function collectKeysFromUrls(urls: Array<string | null | undefined>, into: Set<s
 async function loadReferencedKeys(): Promise<Set<string>> {
   const keys = new Set<string>();
 
-  const [images, vendors, documents, categories, users, returns, banners, exports] =
-    await Promise.all([
-      ProductImage.findAll({
-        attributes: ['url'],
-        include: [{ model: Product, attributes: [], required: true }],
-      }),
-      Vendor.findAll({ attributes: ['logoUrl', 'bannerUrl'] }),
-      VendorDocument.findAll({
-        attributes: ['url'],
-        include: [{ model: Vendor, attributes: [], required: true }],
-      }),
-      Category.findAll({ attributes: ['imageUrl'] }),
-      User.findAll({ attributes: ['avatarUrl'] }),
-      ReturnRequest.findAll({ attributes: ['photoUrls'] }),
-      PromoBanner.findAll({ attributes: ['imageUrl'] }),
-      ReportExportLog.findAll({ attributes: ['fileKey', 'fileUrl'] }),
-    ]);
+  const [
+    images,
+    vendors,
+    documents,
+    categories,
+    users,
+    returns,
+    banners,
+    exports,
+    ticketAttachments,
+    bugAttachments,
+  ] = await Promise.all([
+    ProductImage.findAll({
+      attributes: ['url'],
+      include: [{ model: Product, attributes: [], required: true }],
+    }),
+    Vendor.findAll({ attributes: ['logoUrl', 'bannerUrl'] }),
+    VendorDocument.findAll({
+      attributes: ['url'],
+      include: [{ model: Vendor, attributes: [], required: true }],
+    }),
+    Category.findAll({ attributes: ['imageUrl'] }),
+    User.findAll({ attributes: ['avatarUrl'] }),
+    ReturnRequest.findAll({ attributes: ['photoUrls'] }),
+    PromoBanner.findAll({ attributes: ['imageUrl'] }),
+    ReportExportLog.findAll({ attributes: ['fileKey', 'fileUrl'] }),
+    TicketAttachment.findAll({ attributes: ['url'] }),
+    BugReportAttachment.findAll({ attributes: ['url'] }),
+  ]);
 
   collectKeysFromUrls(
     images.map((r) => r.url),
@@ -79,6 +93,14 @@ async function loadReferencedKeys(): Promise<Set<string>> {
     if (row.fileKey) keys.add(row.fileKey);
     collectKeysFromUrls([row.fileUrl], keys);
   }
+  collectKeysFromUrls(
+    ticketAttachments.map((a) => a.url),
+    keys,
+  );
+  collectKeysFromUrls(
+    bugAttachments.map((a) => a.url),
+    keys,
+  );
 
   return keys;
 }

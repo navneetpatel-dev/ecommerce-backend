@@ -18,6 +18,8 @@ export type PlatformSettingsPayload = {
   ticketReopenWindowDays: number;
   /** Days after FIXED before a bug report auto-transitions to VERIFIED. */
   bugVerifyWindowDays: number;
+  /** Days after VERIFIED before a bug report auto-transitions to CLOSED. */
+  bugCloseWindowDays: number;
 };
 
 const SETTINGS_KEY = 'platform';
@@ -35,6 +37,7 @@ const DEFAULTS: PlatformSettingsPayload = {
   supportHours: 'Mon–Sat, 9:00 AM–7:00 PM',
   ticketReopenWindowDays: 7,
   bugVerifyWindowDays: 7,
+  bugCloseWindowDays: 7,
 };
 
 export const settingsService = {

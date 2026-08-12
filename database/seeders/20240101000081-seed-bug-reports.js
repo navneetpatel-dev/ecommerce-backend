@@ -105,6 +105,17 @@ module.exports = {
         status === 'WONT_FIX'
           ? new Date(createdAt.getTime() + 30 * 60_000)
           : null;
+      const inProgressAt =
+        status === 'IN_PROGRESS' ||
+        status === 'FIXED' ||
+        status === 'VERIFIED' ||
+        status === 'CLOSED'
+          ? new Date(createdAt.getTime() + 10 * 60_000)
+          : null;
+      const verifiedAt =
+        status === 'VERIFIED' || status === 'CLOSED'
+          ? new Date(createdAt.getTime() + 45 * 60_000)
+          : null;
 
       reports.push({
         id,
@@ -129,7 +140,9 @@ module.exports = {
         userRole: reporter.userRole,
         occurredAt: createdAt,
         triagedAt: triaged,
+        inProgressAt,
         resolvedAt: resolved,
+        verifiedAt,
         wontFixReason: status === 'WONT_FIX' ? 'Seeded wont-fix reason' : null,
         createdBy: reporter.id,
         updatedBy: null,
@@ -138,6 +151,19 @@ module.exports = {
         updatedAt: createdAt,
         deletedAt: null,
       });
+    }
+
+    // One FIXED bug resolved outside the (default 7-day) bugVerifyWindowDays, so the
+    // auto-verify sweep (`markVerifiedIfDue`) has a candidate to act on out of the box.
+    if (reports.length > 2) {
+      const autoVerifyCandidate = reports[2];
+      autoVerifyCandidate.status = 'FIXED';
+      autoVerifyCandidate.duplicateOfId = null;
+      autoVerifyCandidate.triagedAt = new Date(autoVerifyCandidate.createdAt.getTime() + 5 * 60_000);
+      autoVerifyCandidate.inProgressAt = new Date(autoVerifyCandidate.createdAt.getTime() + 10 * 60_000);
+      autoVerifyCandidate.resolvedAt = new Date(now.getTime() - 9 * 24 * 60 * 60 * 1000);
+      autoVerifyCandidate.verifiedAt = null;
+      autoVerifyCandidate.wontFixReason = null;
     }
 
     // Link a few DUPLICATE rows to the first report after bulk insert update.
@@ -187,6 +213,28 @@ module.exports = {
       await queryInterface.bulkInsert('bug_report_comments', comments.slice(i, i + chunkSize));
     }
 
+    // Placeholder screenshots on the first 3 reports (idempotent with the early skip above).
+    const attachments = [];
+    for (let i = 0; i < Math.min(3, reports.length); i += 1) {
+      const createdAt = reports[i].createdAt;
+      attachments.push({
+        id: uuidv4(),
+        bugReportId: reports[i].id,
+        url: `https://example.com/seed/bug-report-${i + 1}-screenshot.png`,
+        type: 'SCREENSHOT',
+        durationSeconds: null,
+        createdBy: reports[i].reporterId,
+        updatedBy: null,
+        deletedBy: null,
+        createdAt,
+        updatedAt: createdAt,
+        deletedAt: null,
+      });
+    }
+    if (attachments.length > 0) {
+      await queryInterface.bulkInsert('bug_report_attachments', attachments);
+    }
+
     await queryInterface.sequelize.query(
       `UPDATE document_sequences
        SET "nextValue" = GREATEST("nextValue", :nextValue), "updatedAt" = :now
@@ -197,11 +245,16 @@ module.exports = {
     console.log(
       `seed-bug-reports: inserted ${reports.length} reports` +
         `${comments.length ? ` and ${comments.length} comments` : ''}` +
+        `${attachments.length ? ` and ${attachments.length} attachments` : ''}` +
         `${duplicateIndexes.length ? ` (${duplicateIndexes.length} duplicates linked)` : ''}`,
     );
   },
 
   async down(queryInterface) {
+    await queryInterface.sequelize.query(
+      `DELETE FROM bug_report_attachments
+       WHERE url LIKE 'https://example.com/seed/bug-report-%-screenshot.png'`,
+    );
     await queryInterface.sequelize.query(
       `DELETE FROM bug_report_comments WHERE body LIKE 'Seeded internal triage note %'`,
     );

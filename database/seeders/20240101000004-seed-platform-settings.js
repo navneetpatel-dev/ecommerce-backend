@@ -14,6 +14,7 @@ const PLATFORM_VALUE = {
   supportHours: 'Mon–Sat, 9:00 AM–7:00 PM',
   ticketReopenWindowDays: 7,
   bugVerifyWindowDays: 7,
+  bugCloseWindowDays: 7,
 };
 
 module.exports = {

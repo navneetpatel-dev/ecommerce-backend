@@ -1,6 +1,6 @@
 import { AuditLog } from '@database/models/auditLog.model';
 import { User } from '@database/models/user.model';
-import { Op } from 'sequelize';
+import { Op, type Transaction } from 'sequelize';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 
 export async function logAudit(input: {
@@ -9,8 +9,13 @@ export async function logAudit(input: {
   entityType: string;
   entityId: string;
   metadata?: Record<string, unknown>;
+  transaction?: Transaction;
 }) {
-  return AuditLog.create({ ...input, metadata: input.metadata ?? {}, createdBy: input.actorId });
+  const { transaction, ...payload } = input;
+  return AuditLog.create(
+    { ...payload, metadata: payload.metadata ?? {}, createdBy: payload.actorId },
+    transaction ? { transaction } : undefined,
+  );
 }
 
 function serializeAuditLog(row: AuditLog) {

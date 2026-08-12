@@ -316,6 +316,7 @@ export class UsersService {
       limit: query.limit,
       offset,
       search: query.search,
+      vendorId: query.vendorId,
     });
 
     return {
@@ -337,9 +338,12 @@ export class UsersService {
     limit: number;
     offset: number;
     search?: string;
+    vendorId?: string;
   }): Promise<{ rows: AssigneeCandidate[]; count: number }> {
     const search = params.search?.trim();
     const searchPattern = search ? `%${search}%` : null;
+    const includeVendorMembers =
+      params.permission === PERMISSIONS.TICKET_MANAGE && Boolean(params.vendorId);
 
     const whereSql = `
       FROM users u
@@ -354,6 +358,11 @@ export class UsersService {
             INNER JOIN permissions p ON p.id = rp."permissionId" AND p."deletedAt" IS NULL
             WHERE rp."roleId" = u."roleId" AND p.key = :permission
           )
+          OR (
+            :includeVendorMembers
+            AND u."vendorId" = :vendorId
+            AND r.name IN (:vendorOwner, :vendorStaff)
+          )
         )
         AND (
           :searchPattern::text IS NULL
@@ -367,6 +376,10 @@ export class UsersService {
       superAdmin: ROLES.SUPER_ADMIN,
       permission: params.permission,
       searchPattern,
+      includeVendorMembers,
+      vendorId: params.vendorId ?? null,
+      vendorOwner: ROLES.VENDOR_OWNER,
+      vendorStaff: ROLES.VENDOR_STAFF,
       limit: params.limit,
       offset: params.offset,
     };
@@ -422,6 +435,56 @@ export class UsersService {
           status: USER_STATUS.ACTIVE,
           superAdmin: ROLES.SUPER_ADMIN,
           permission,
+        },
+        type: QueryTypes.SELECT,
+        transaction,
+      },
+    );
+    if (rows.length === 0) {
+      throw new ValidationError(ERROR_MESSAGES.USER_NOT_FOUND_OR_BLOCKED);
+    }
+  }
+
+  /**
+   * Ticket reassignment: allow TICKET_MANAGE holders, or active vendor
+   * owner/staff belonging to the ticket's related vendor.
+   */
+  async assertTicketAssignee(
+    userId: string,
+    relatedVendorId: string | null,
+    transaction?: Transaction,
+  ): Promise<void> {
+    const rows = await sequelize.query<{ id: string }>(
+      `SELECT u.id
+       FROM users u
+       INNER JOIN roles r ON r.id = u."roleId" AND r."deletedAt" IS NULL
+       WHERE u.id = :userId
+         AND u."deletedAt" IS NULL
+         AND u.status = :status
+         AND (
+           r.name = :superAdmin
+           OR EXISTS (
+             SELECT 1
+             FROM "RolePermissions" rp
+             INNER JOIN permissions p ON p.id = rp."permissionId" AND p."deletedAt" IS NULL
+             WHERE rp."roleId" = u."roleId" AND p.key = :permission
+           )
+           OR (
+             :relatedVendorId::uuid IS NOT NULL
+             AND u."vendorId" = :relatedVendorId
+             AND r.name IN (:vendorOwner, :vendorStaff)
+           )
+         )
+       LIMIT 1`,
+      {
+        replacements: {
+          userId,
+          status: USER_STATUS.ACTIVE,
+          superAdmin: ROLES.SUPER_ADMIN,
+          permission: PERMISSIONS.TICKET_MANAGE,
+          relatedVendorId,
+          vendorOwner: ROLES.VENDOR_OWNER,
+          vendorStaff: ROLES.VENDOR_STAFF,
         },
         type: QueryTypes.SELECT,
         transaction,

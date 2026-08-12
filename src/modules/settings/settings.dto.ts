@@ -11,8 +11,10 @@ export const UpdateSettingsSchema = z.object({
   returnShippingFee: z.number().min(0).default(0),
   supportEmail: z.string().email(),
   supportHours: z.string().min(1),
-  ticketReopenWindowDays: z.number().int().positive().default(7),
-  bugVerifyWindowDays: z.number().int().positive().default(7),
+  /** Required on admin save so omitted fields cannot silently reset to defaults. */
+  ticketReopenWindowDays: z.number().int().positive().max(365),
+  bugVerifyWindowDays: z.number().int().positive().max(365),
+  bugCloseWindowDays: z.number().int().positive().max(365),
 });
 
 export type UpdateSettingsRequest = z.infer<typeof UpdateSettingsSchema>;

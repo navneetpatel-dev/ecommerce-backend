@@ -212,9 +212,20 @@ module.exports = {
           userRole: 'CUSTOMER',
           occurredAt: createdAt,
           triagedAt: status === 'NEW' ? null : new Date(createdAt.getTime() + 5 * 60_000),
+          inProgressAt:
+            status === 'IN_PROGRESS' ||
+            status === 'FIXED' ||
+            status === 'VERIFIED' ||
+            status === 'CLOSED'
+              ? new Date(createdAt.getTime() + 10 * 60_000)
+              : null,
           resolvedAt:
             status === 'FIXED' || status === 'VERIFIED' || status === 'CLOSED' || status === 'WONT_FIX'
               ? new Date(createdAt.getTime() + 30 * 60_000)
+              : null,
+          verifiedAt:
+            status === 'VERIFIED' || status === 'CLOSED'
+              ? new Date(createdAt.getTime() + 45 * 60_000)
               : null,
           wontFixReason: status === 'WONT_FIX' ? 'Amit seed wont-fix reason' : null,
           createdBy: user.id,

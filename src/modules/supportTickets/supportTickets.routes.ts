@@ -11,6 +11,7 @@ import {
   RateSupportTicketSchema,
   ReassignSupportTicketSchema,
   ReplySupportTicketSchema,
+  UpdatePrioritySchema,
 } from './supportTickets.dto';
 import * as supportTicketsController from './supportTickets.controller';
 
@@ -64,6 +65,19 @@ router.post(
   authorize(PERMISSIONS.TICKET_MANAGE),
   validate(ReassignSupportTicketSchema),
   supportTicketsController.reassign,
+);
+router.post(
+  '/:id/priority',
+  authenticate,
+  authorize(PERMISSIONS.TICKET_MANAGE),
+  validate(UpdatePrioritySchema),
+  supportTicketsController.updatePriority,
+);
+router.post(
+  '/:id/escalate',
+  authenticate,
+  authorize(PERMISSIONS.TICKET_MANAGE),
+  supportTicketsController.escalate,
 );
 router.post(
   '/:id/rate',

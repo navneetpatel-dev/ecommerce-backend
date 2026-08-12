@@ -1,29 +1,33 @@
 import { Router } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
-import { ok } from '@core/http/ApiResponse';
+import { AppError } from '@core/errors/AppError';
+import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { authenticate, optionalAuthenticate } from '@middleware/auth.middleware';
-import { validate } from '@middleware/validate.middleware';
-import { CreateHelpTicketSchema } from './help.dto';
-import { helpService } from './help.service';
 
 const router = Router();
+
+/** Legacy contact-form API — replaced by Support Tickets (`/api/support-tickets`). */
+function legacyHelpGone(): never {
+  throw new AppError(
+    ERROR_MESSAGES.HELP_LEGACY_REPLACED,
+    410,
+    ERROR_CODES.HELP_LEGACY_REPLACED,
+  );
+}
 
 router.post(
   '/tickets',
   optionalAuthenticate,
-  validate(CreateHelpTicketSchema),
-  asyncHandler(async (req, res) => {
-    const ticket = await helpService.createTicket(req.body, req.user?.id ?? null);
-    res.status(201).json(ok(ticket));
+  asyncHandler(async () => {
+    legacyHelpGone();
   }),
 );
 
 router.get(
   '/tickets/mine',
   authenticate,
-  asyncHandler(async (req, res) => {
-    const tickets = await helpService.listTicketsForUser(req.user!.id);
-    res.json(ok(tickets));
+  asyncHandler(async () => {
+    legacyHelpGone();
   }),
 );
 

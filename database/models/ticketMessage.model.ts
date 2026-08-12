@@ -8,6 +8,7 @@ import {
   NonAttribute,
 } from 'sequelize';
 import type { TicketSenderRole } from '@core/constants/statuses';
+import { TICKET_SENDER_ROLE_VALUES } from '@core/constants/statuses';
 
 export class TicketMessage extends Model<
   InferAttributes<TicketMessage>,
@@ -41,7 +42,13 @@ export const initTicketMessageModel = (sequelize: Sequelize) => {
       id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
       ticketId: { type: DataTypes.UUID, allowNull: false },
       senderId: { type: DataTypes.UUID, allowNull: false },
-      senderRole: { type: DataTypes.STRING(64), allowNull: false },
+      senderRole: {
+        type: DataTypes.STRING(64),
+        allowNull: false,
+        validate: {
+          isIn: [TICKET_SENDER_ROLE_VALUES],
+        },
+      },
       body: { type: DataTypes.TEXT, allowNull: false },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },

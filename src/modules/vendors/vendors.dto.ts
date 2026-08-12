@@ -52,6 +52,12 @@ export const GetVendorsQuerySchema = z.object({
   search: z.string().optional(),
 });
 
+export const VendorDirectoryQuerySchema = z.object({
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(MAX_PAGE_LIMIT).default(DEFAULT_PAGE_LIMIT),
+  search: z.string().optional(),
+});
+
 export const UploadDocumentSchema = z.object({
   type: z.enum(VENDOR_DOCUMENT_TYPE_VALUES),
   url: z.string().url(),
@@ -79,6 +85,7 @@ export type ApproveVendorRequest = z.infer<typeof ApproveVendorSchema>;
 export type RejectVendorRequest = z.infer<typeof RejectVendorSchema>;
 export type SuspendVendorRequest = z.infer<typeof SuspendVendorSchema>;
 export type GetVendorsQuery = z.infer<typeof GetVendorsQuerySchema>;
+export type VendorDirectoryQuery = z.infer<typeof VendorDirectoryQuerySchema>;
 export type UploadDocumentRequest = z.infer<typeof UploadDocumentSchema>;
 export type RejectDocumentRequest = z.infer<typeof RejectDocumentSchema>;
 export type ResolveDocumentsQuery = z.infer<typeof ResolveDocumentsQuerySchema>;

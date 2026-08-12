@@ -5,6 +5,7 @@ import {
   DeleteObjectCommand,
   DeleteObjectsCommand,
   ListObjectsV2Command,
+  CopyObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env } from '@config/env';
@@ -67,6 +68,21 @@ export async function signedGetObjectUrl(
 }
 
 /**
+ * Sign many S3 keys in one pass — dedupes keys so threads with repeated objects
+ * do not pay N identical signing round-trips.
+ */
+export async function signedGetObjectUrlMap(
+  keys: Array<string | null | undefined>,
+  expiresInSeconds = SIGNED_GET_EXPIRES_SECONDS,
+): Promise<Map<string, string>> {
+  const unique = [...new Set(keys.filter((key): key is string => Boolean(key)))];
+  const entries = await Promise.all(
+    unique.map(async (key) => [key, await signedGetObjectUrl(key, expiresInSeconds)] as const),
+  );
+  return new Map(entries);
+}
+
+/**
  * Pre-signed PUT for direct client upload (Phase 1).
  * `contentLength` is signed so S3 rejects bodies that don't match the declared size.
  */
@@ -89,6 +105,23 @@ export async function signedPutObjectUrl(
     }),
     { expiresIn: expiresInSeconds },
   );
+}
+
+/** Server-side copy used to rebase draft-UUID uploads onto the final entity id. */
+export async function copyObject(sourceKey: string, destKey: string): Promise<void> {
+  if (!s3Client) return;
+  if (sourceKey === destKey) return;
+  try {
+    await s3Client.send(
+      new CopyObjectCommand({
+        Bucket: S3_BUCKET,
+        CopySource: `${S3_BUCKET}/${sourceKey}`,
+        Key: destKey,
+      }),
+    );
+  } catch (error) {
+    rethrowS3Error(error);
+  }
 }
 
 export function extractS3KeyFromUrl(url: string | null | undefined): string | null {

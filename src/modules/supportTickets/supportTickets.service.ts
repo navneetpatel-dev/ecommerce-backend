@@ -1,11 +1,13 @@
-import { Op, QueryTypes, type Transaction, type WhereOptions } from 'sequelize';
+import { Op, type Transaction, type WhereOptions } from 'sequelize';
 import { AppError } from '@core/errors/AppError';
 import {
   ADMIN_ROLES,
   DOCUMENT_SEQUENCE_KIND,
   ROLES,
+  SUPPORT_TICKET_CATEGORY,
   SUPPORT_TICKET_PRIORITY,
   SUPPORT_TICKET_STATUS,
+  TICKET_ATTACHMENT_TYPE,
   TICKET_SENDER_ROLE,
   VENDOR_ROLES,
   type SupportTicketStatus,
@@ -15,6 +17,7 @@ import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { SupportTicket } from '@database/models/supportTicket.model';
 import { TicketMessage } from '@database/models/ticketMessage.model';
 import { TicketAttachment } from '@database/models/ticketAttachment.model';
+import { TicketRead } from '@database/models/ticketRead.model';
 import { User } from '@database/models/user.model';
 import { Vendor } from '@database/models/vendor.model';
 import { Order } from '@database/models/order.model';
@@ -29,46 +32,35 @@ import {
 } from '@core/http/keysetPagination';
 import { nextPaddedDocumentNumber } from '@modules/pricing/documentSequence';
 import { notificationsService } from '@modules/notifications/notifications.service';
-import { findVendorOwnerUserId } from '@modules/notifications/orderNotifications';
+import {
+  findSuperAdminUserIds,
+  findVendorStaffUserId,
+} from '@modules/notifications/orderNotifications';
+import { ticketPortalUrlForGroup, ticketPortalGroupForUser } from '@modules/notifications/portalLinks';
 import { settingsService } from '@modules/settings/settings.service';
 import { logAudit } from '@modules/audit/audit.service';
 import { usersService } from '@modules/users/users.service';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
-import { assertAttachmentLimits, assertCombinedAttachmentLimits } from './mediaLimits';
-import { assertRemoteVideoBackstop } from './mediaProbe';
+import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
+import { rebaseAttachmentUrlsToEntity, S3_ENTITY_TYPES } from '@core/s3';
+import { extractS3KeyFromUrl, signedGetObjectUrlMap } from '@config/s3';
+import { assertAttachmentLimits, assertCombinedAttachmentLimits } from '@core/media';
+import { assertRemoteVideoBackstop } from '@core/media';
 import type {
   AdminTicketListQuery,
   CreateSupportTicketRequest,
+  CustomerTicketListQuery,
   RateSupportTicketRequest,
   ReplySupportTicketRequest,
+  UpdatePriorityRequest,
   VendorTicketListQuery,
 } from './supportTickets.dto';
-
-const ALLOWED_TRANSITIONS: Record<SupportTicketStatus, SupportTicketStatus[]> = {
-  [SUPPORT_TICKET_STATUS.OPEN]: [
-    SUPPORT_TICKET_STATUS.IN_PROGRESS,
-    SUPPORT_TICKET_STATUS.RESOLVED,
-    SUPPORT_TICKET_STATUS.CLOSED,
-  ],
-  [SUPPORT_TICKET_STATUS.IN_PROGRESS]: [
-    SUPPORT_TICKET_STATUS.RESOLVED,
-    SUPPORT_TICKET_STATUS.CLOSED,
-  ],
-  [SUPPORT_TICKET_STATUS.RESOLVED]: [
-    SUPPORT_TICKET_STATUS.REOPENED,
-    SUPPORT_TICKET_STATUS.CLOSED,
-  ],
-  [SUPPORT_TICKET_STATUS.REOPENED]: [
-    SUPPORT_TICKET_STATUS.IN_PROGRESS,
-    SUPPORT_TICKET_STATUS.RESOLVED,
-    SUPPORT_TICKET_STATUS.CLOSED,
-  ],
-  [SUPPORT_TICKET_STATUS.CLOSED]: [],
-};
+import { TICKET_ALLOWED_TRANSITIONS } from './supportTickets.lifecycle';
 
 type Actor = {
   id: string;
   vendorId: string | null;
+  roleId: string;
   role: { name: string };
 };
 
@@ -79,7 +71,7 @@ const ticketListInclude = [
 ];
 
 function assertTransition(from: SupportTicketStatus, to: SupportTicketStatus) {
-  const allowed = ALLOWED_TRANSITIONS[from] ?? [];
+  const allowed = TICKET_ALLOWED_TRANSITIONS[from] ?? [];
   if (!allowed.includes(to)) {
     throw new AppError(
       ERROR_MESSAGES.TICKET_INVALID_TRANSITION,
@@ -112,22 +104,41 @@ function isVendorActor(actor: Actor): boolean {
   return (VENDOR_ROLES as readonly string[]).includes(actor.role.name) && Boolean(actor.vendorId);
 }
 
-function serializeAttachment(row: TicketAttachment) {
-  const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
-  return {
-    id: plain.id,
-    ticketId: plain.ticketId,
-    messageId: plain.messageId ?? null,
-    url: plain.url,
-    type: plain.type,
-    durationSeconds: plain.durationSeconds ?? null,
-    createdAt: plain.createdAt,
-  };
+async function serializeAttachments(rows: TicketAttachment[]) {
+  const plains = rows.map((row) =>
+    typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row,
+  );
+  const keyByIndex = plains.map((plain) => extractS3KeyFromUrl(plain.url));
+  const signedByKey = await signedGetObjectUrlMap(keyByIndex);
+  return plains.map((plain, index) => {
+    const key = keyByIndex[index];
+    return {
+      id: plain.id,
+      ticketId: plain.ticketId,
+      messageId: plain.messageId ?? null,
+      url: (key && signedByKey.get(key)) || plain.url,
+      type: plain.type,
+      durationSeconds: plain.durationSeconds ?? null,
+      createdAt: plain.createdAt,
+    };
+  });
 }
 
-function serializeMessage(row: TicketMessage & { sender?: User; attachments?: TicketAttachment[] }) {
-  const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
-  return {
+type SerializedAttachment = Awaited<ReturnType<typeof serializeAttachments>>[number];
+
+async function serializeMessages(
+  rows: Array<TicketMessage & { sender?: User; attachments?: TicketAttachment[] }>,
+) {
+  const plains = rows.map((row) =>
+    typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row,
+  );
+  const allAttachments = plains.flatMap((plain) =>
+    Array.isArray(plain.attachments) ? (plain.attachments as TicketAttachment[]) : [],
+  );
+  const signedAttachments = await serializeAttachments(allAttachments);
+  const byId = new Map(signedAttachments.map((item) => [item.id, item]));
+
+  return plains.map((plain) => ({
     id: plain.id,
     ticketId: plain.ticketId,
     senderId: plain.senderId,
@@ -136,17 +147,30 @@ function serializeMessage(row: TicketMessage & { sender?: User; attachments?: Ti
     body: plain.body,
     createdAt: plain.createdAt,
     attachments: Array.isArray(plain.attachments)
-      ? plain.attachments.map((a: TicketAttachment) => serializeAttachment(a))
+      ? (plain.attachments as TicketAttachment[])
+          .map((row) => {
+            const id =
+              typeof (row as any).get === 'function'
+                ? (row as any).get({ plain: true }).id
+                : (row as any).id;
+            return byId.get(id);
+          })
+          .filter(Boolean)
       : [],
-  };
+  }));
 }
+
+type SerializedMessage = Awaited<ReturnType<typeof serializeMessages>>[number];
 
 function serializeTicket(
   row: SupportTicket,
   extras: {
     latestMessagePreview?: string | null;
-    messages?: ReturnType<typeof serializeMessage>[];
-    attachments?: ReturnType<typeof serializeAttachment>[];
+    hasUnread?: boolean;
+    messages?: SerializedMessage[];
+    attachments?: SerializedAttachment[];
+    imageAttachmentCount?: number;
+    videoAttachmentCount?: number;
   } = {},
 ) {
   const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
@@ -172,32 +196,12 @@ function serializeTicket(
     createdAt: plain.createdAt,
     updatedAt: plain.updatedAt,
     latestMessagePreview: extras.latestMessagePreview ?? null,
+    hasUnread: extras.hasUnread ?? false,
     messages: extras.messages,
     attachments: extras.attachments,
+    imageAttachmentCount: extras.imageAttachmentCount ?? 0,
+    videoAttachmentCount: extras.videoAttachmentCount ?? 0,
   };
-}
-
-async function loadLatestMessagePreviews(
-  ticketIds: string[],
-): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
-  if (ticketIds.length === 0) return map;
-
-  const rows = await sequelize.query<{ ticketId: string; body: string }>(
-    `SELECT DISTINCT ON ("ticketId") "ticketId", body
-     FROM ticket_messages
-     WHERE "ticketId" IN (:ticketIds) AND "deletedAt" IS NULL
-     ORDER BY "ticketId", "createdAt" DESC, id DESC`,
-    {
-      replacements: { ticketIds },
-      type: QueryTypes.SELECT,
-    },
-  );
-
-  for (const row of rows) {
-    map.set(row.ticketId, row.body.slice(0, 160));
-  }
-  return map;
 }
 
 async function findTicketManagerUserIds(limit = 50): Promise<string[]> {
@@ -208,13 +212,36 @@ async function findTicketManagerUserIds(limit = 50): Promise<string[]> {
   return assignees.map((u) => u.id);
 }
 
+async function markTicketRead(
+  ticketId: string,
+  userId: string,
+  transaction?: Transaction,
+) {
+  const now = new Date();
+  const existing = await TicketRead.findOne({ where: { ticketId, userId }, transaction });
+  if (existing) await existing.update({ lastReadAt: now }, { transaction });
+  else await TicketRead.create({ ticketId, userId, lastReadAt: now }, { transaction });
+}
+
 async function assertTicketAccess(ticket: SupportTicket, actor: Actor): Promise<void> {
-  if (isAdminActor(actor)) return;
+  if (isAdminActor(actor)) {
+    const permissions = await resolvePermissionsForUser(actor);
+    if (permissions.includes(PERMISSIONS.TICKET_MANAGE)) return;
+    throw new AppError(ERROR_MESSAGES.TICKET_FORBIDDEN, 403, ERROR_CODES.TICKET_FORBIDDEN);
+  }
   if (ticket.customerId === actor.id) return;
   if (isVendorActor(actor) && ticket.relatedVendorId && ticket.relatedVendorId === actor.vendorId) {
     return;
   }
   throw new AppError(ERROR_MESSAGES.TICKET_FORBIDDEN, 403, ERROR_CODES.TICKET_FORBIDDEN);
+}
+
+async function assertTicketAssignee(
+  ticket: SupportTicket,
+  assignedToId: string,
+  t?: Transaction,
+): Promise<void> {
+  await usersService.assertTicketAssignee(assignedToId, ticket.relatedVendorId, t);
 }
 
 async function getTicketOrThrow(id: string, transaction?: Transaction): Promise<SupportTicket> {
@@ -244,6 +271,7 @@ export class SupportTicketsService {
 
       let relatedOrderId = data.relatedOrderId ?? null;
       let relatedVendorId: string | null = null;
+      const clientVendorId = data.relatedVendorId ?? null;
 
       if (relatedOrderId) {
         const order = await Order.findByPk(relatedOrderId, {
@@ -260,13 +288,56 @@ export class SupportTicketsService {
         ];
         if (vendorIds.length === 1) {
           relatedVendorId = vendorIds[0]!;
+          if (clientVendorId && clientVendorId !== relatedVendorId) {
+            throw new AppError(
+              ERROR_MESSAGES.TICKET_VENDOR_INVALID,
+              422,
+              ERROR_CODES.TICKET_VENDOR_INVALID,
+            );
+          }
+        } else if (vendorIds.length > 1) {
+          if (!clientVendorId) {
+            throw new AppError(
+              ERROR_MESSAGES.TICKET_VENDOR_REQUIRED,
+              422,
+              ERROR_CODES.TICKET_VENDOR_REQUIRED,
+            );
+          }
+          if (!vendorIds.includes(clientVendorId)) {
+            throw new AppError(
+              ERROR_MESSAGES.TICKET_VENDOR_INVALID,
+              422,
+              ERROR_CODES.TICKET_VENDOR_INVALID,
+            );
+          }
+          relatedVendorId = clientVendorId;
         }
       } else {
         relatedOrderId = null;
+        if (data.category === SUPPORT_TICKET_CATEGORY.VENDOR) {
+          if (!clientVendorId) {
+            throw new AppError(
+              ERROR_MESSAGES.TICKET_VENDOR_REQUIRED,
+              422,
+              ERROR_CODES.TICKET_VENDOR_REQUIRED,
+            );
+          }
+          const vendor = await Vendor.findByPk(clientVendorId, { transaction: t });
+          if (!vendor) {
+            throw new AppError(
+              ERROR_MESSAGES.TICKET_VENDOR_INVALID,
+              422,
+              ERROR_CODES.TICKET_VENDOR_INVALID,
+            );
+          }
+          relatedVendorId = clientVendorId;
+        } else {
+          relatedVendorId = null;
+        }
       }
 
       const assignedToId = relatedVendorId
-        ? await findVendorOwnerUserId(relatedVendorId)
+        ? await findVendorStaffUserId(relatedVendorId)
         : null;
 
       const ticket = await SupportTicket.create(
@@ -307,11 +378,18 @@ export class SupportTicketsService {
 
       const attachments = data.attachmentUrls ?? [];
       if (attachments.length > 0) {
+        const rawUrls = attachments.map((a) => a.url);
+        const rebased = await rebaseAttachmentUrlsToEntity({
+          entityType: S3_ENTITY_TYPES.TICKETS,
+          entityId: ticket.id,
+          purpose: 'attachments',
+          urls: rawUrls,
+        });
         await TicketAttachment.bulkCreate(
-          attachments.map((a) => ({
+          attachments.map((a, i) => ({
             ticketId: ticket.id,
             messageId: message.id,
-            url: a.url,
+            url: rebased[i] ?? a.url,
             type: a.type,
             durationSeconds: a.durationSeconds ?? null,
             createdBy: actor.id,
@@ -327,21 +405,42 @@ export class SupportTicketsService {
         action: 'SUPPORT_TICKET_CREATED',
         entityType: 'SupportTicket',
         entityId: ticket.id,
-        metadata: { ticketNumber, status: ticket.status },
+        metadata: {
+          ticketNumber,
+          status: ticket.status,
+          assignedToId,
+          relatedVendorId,
+        },
+        transaction: t,
       });
+      if (assignedToId) {
+        await logAudit({
+          actorId: actor.id,
+          action: 'SUPPORT_TICKET_ASSIGNED',
+          entityType: 'SupportTicket',
+          entityId: ticket.id,
+          metadata: { from: null, to: assignedToId, automated: true },
+          transaction: t,
+        });
+      }
 
       const notifyIds = new Set<string>();
-      if (ticket.relatedVendorId) {
-        const ownerId = await findVendorOwnerUserId(ticket.relatedVendorId);
-        if (ownerId) notifyIds.add(ownerId);
+      let recipientGroup: 'vendor' | 'admin' = 'admin';
+      if (ticket.relatedVendorId && assignedToId) {
+        notifyIds.add(assignedToId);
+        recipientGroup = 'vendor';
       } else {
+        // Vendor-implicated tickets with no staff, and admin-queue tickets, notify ticket managers.
         for (const id of await findTicketManagerUserIds()) notifyIds.add(id);
+        recipientGroup = 'admin';
       }
 
       for (const userId of notifyIds) {
         void notificationsService.sendTicketCreated(userId, ticket.id, {
           ticketNumber,
           subject: ticket.subject,
+          actionUrl: ticketPortalUrlForGroup(ticket.id, recipientGroup),
+          portalGroup: recipientGroup,
         });
       }
 
@@ -355,85 +454,157 @@ export class SupportTicketsService {
   private async listWithKeyset(
     where: WhereOptions,
     query: KeysetQuery,
+    actor: Actor,
   ) {
     const cursor = decodeCursor(query.cursor);
     const keysetWhere = buildKeysetWhere(cursor, query.direction);
+    const actorIdLiteral = sequelize.escape(actor.id);
     const rows = await SupportTicket.findAll({
       where: keysetWhere ? { [Op.and]: [where, keysetWhere] } : where,
+      attributes: {
+        include: [
+          // One correlated subquery for latest-message fields (was 3 separate subselects).
+          [
+            sequelize.literal(`(
+              SELECT json_build_object(
+                'body', tm.body,
+                'senderId', tm."senderId",
+                'createdAt', tm."createdAt"
+              )
+              FROM ticket_messages tm
+              WHERE tm."ticketId" = "SupportTicket".id AND tm."deletedAt" IS NULL
+              ORDER BY tm."createdAt" DESC, tm.id DESC
+              LIMIT 1
+            )`),
+            'latestMessageMeta',
+          ],
+          [
+            sequelize.literal(`(
+              SELECT tr."lastReadAt" FROM ticket_reads tr
+              WHERE tr."ticketId" = "SupportTicket".id AND tr."userId" = ${actorIdLiteral}
+              LIMIT 1
+            )`),
+            'lastReadAt',
+          ],
+        ],
+      },
       include: ticketListInclude,
       order: keysetOrder(query.direction),
       limit: query.limit + 1,
     });
     const page = buildKeysetPage(rows, query.limit);
-    const previews = await loadLatestMessagePreviews(page.items.map((t) => t.id));
     return {
-      items: page.items.map((row) =>
-        serializeTicket(row, { latestMessagePreview: previews.get(row.id) ?? null }),
-      ),
+      items: page.items.map((row) => {
+        const plain: any =
+          typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
+        const metaRaw = plain.latestMessageMeta ?? (row as any).get?.('latestMessageMeta') ?? null;
+        const meta =
+          typeof metaRaw === 'string'
+            ? (JSON.parse(metaRaw) as {
+                body?: string;
+                senderId?: string;
+                createdAt?: string;
+              })
+            : metaRaw && typeof metaRaw === 'object'
+              ? (metaRaw as { body?: string; senderId?: string; createdAt?: string })
+              : null;
+        const previewRaw = meta?.body ?? null;
+        const previewSenderId = meta?.senderId ?? null;
+        const latestAt = meta?.createdAt ?? null;
+        const lastReadAt = plain.lastReadAt ?? (row as any).get?.('lastReadAt') ?? null;
+        const hasUnread = Boolean(
+          previewSenderId &&
+            previewSenderId !== actor.id &&
+            (!lastReadAt || (latestAt && new Date(latestAt) > new Date(lastReadAt))),
+        );
+        return serializeTicket(row, {
+          latestMessagePreview:
+            typeof previewRaw === 'string' ? previewRaw.slice(0, 160) : previewRaw,
+          hasUnread,
+        });
+      }),
       nextCursor: page.nextCursor,
     };
   }
 
-  async listMine(actor: Actor, query: KeysetQuery) {
-    return this.listWithKeyset({ customerId: actor.id }, query);
+  async listMine(actor: Actor, query: CustomerTicketListQuery) {
+    const where: WhereOptions = { customerId: actor.id };
+    if (query.status) where.status = query.status;
+    if (query.priority) where.priority = query.priority;
+    if (query.category) where.category = query.category;
+    return this.listWithKeyset(where, query, actor);
   }
 
   async listVendor(actor: Actor, query: VendorTicketListQuery) {
     if (!isVendorActor(actor)) {
       throw new AppError(ERROR_MESSAGES.TICKET_FORBIDDEN, 403, ERROR_CODES.TICKET_FORBIDDEN);
     }
-    const where: WhereOptions = { relatedVendorId: actor.vendorId };
-    if (query.status) where.status = query.status;
-    if (query.priority) where.priority = query.priority;
-    if (query.category) where.category = query.category;
-    return this.listWithKeyset(where, query);
+    const filters: WhereOptions = {
+      relatedVendorId: actor.vendorId,
+    };
+    const extras: WhereOptions = {};
+    if (query.status) extras.status = query.status;
+    if (query.priority) extras.priority = query.priority;
+    if (query.category) extras.category = query.category;
+    const where: WhereOptions =
+      Object.keys(extras).length > 0 ? { [Op.and]: [filters, extras] } : filters;
+    return this.listWithKeyset(where, query, actor);
   }
 
-  async listAdmin(query: AdminTicketListQuery) {
+  async listAdmin(query: AdminTicketListQuery, actor: Actor) {
     const where: WhereOptions = {};
     if (query.status) where.status = query.status;
     if (query.priority) where.priority = query.priority;
     if (query.category) where.category = query.category;
     if (query.vendorId) where.relatedVendorId = query.vendorId;
-    return this.listWithKeyset(where, query);
+    return this.listWithKeyset(where, query, actor);
   }
 
-  async getById(id: string, actor: Actor, messageLimit = 20) {
+  /**
+   * Ticket-level metadata + description attachments only. Message history is intentionally
+   * NOT embedded here — the FE conversation view always uses `listMessages` (keyset paginated),
+   * so eagerly loading messages here would be redundant work on every ticket page load.
+   */
+  async getById(id: string, actor: Actor) {
     const ticket = await getTicketOrThrow(id);
     await assertTicketAccess(ticket, actor);
+    await markTicketRead(id, actor.id);
 
-    const messages = await TicketMessage.findAll({
+    const firstMessage = await TicketMessage.findOne({
       where: { ticketId: id },
-      include: [
-        { model: User, as: 'sender', attributes: ['id', 'name'], required: false },
-        { model: TicketAttachment, as: 'attachments', required: false },
-      ],
+      attributes: ['id'],
       order: [
-        ['createdAt', 'DESC'],
-        ['id', 'DESC'],
+        ['createdAt', 'ASC'],
+        ['id', 'ASC'],
       ],
-      limit: messageLimit + 1,
-    });
-    const messagePage = buildKeysetPage(messages, messageLimit);
-    const attachments = await TicketAttachment.findAll({
-      where: { ticketId: id },
-      order: [['createdAt', 'ASC']],
     });
 
-    return {
-      ...serializeTicket(ticket, {
-        messages: messagePage.items.map((m) =>
-          serializeMessage(m as TicketMessage & { sender?: User; attachments?: TicketAttachment[] }),
-        ),
-        attachments: attachments.map(serializeAttachment),
+    const [descriptionAttachments, imageAttachmentCount, videoAttachmentCount] = await Promise.all([
+      firstMessage
+        ? TicketAttachment.findAll({
+            where: { ticketId: id, messageId: firstMessage.id },
+            order: [['createdAt', 'ASC']],
+          })
+        : Promise.resolve([] as TicketAttachment[]),
+      TicketAttachment.count({
+        where: { ticketId: id, type: TICKET_ATTACHMENT_TYPE.IMAGE },
       }),
-      messagesNextCursor: messagePage.nextCursor,
-    };
+      TicketAttachment.count({
+        where: { ticketId: id, type: TICKET_ATTACHMENT_TYPE.VIDEO },
+      }),
+    ]);
+
+    return serializeTicket(ticket, {
+      attachments: await serializeAttachments(descriptionAttachments),
+      imageAttachmentCount,
+      videoAttachmentCount,
+    });
   }
 
   async listMessages(id: string, actor: Actor, query: KeysetQuery) {
     const ticket = await getTicketOrThrow(id);
     await assertTicketAccess(ticket, actor);
+    await markTicketRead(id, actor.id);
 
     const cursor = decodeCursor(query.cursor);
     const keysetWhere = buildKeysetWhere(cursor, query.direction ?? 'older');
@@ -450,8 +621,8 @@ export class SupportTicketsService {
     });
     const page = buildKeysetPage(rows, query.limit);
     return {
-      items: page.items.map((m) =>
-        serializeMessage(m as TicketMessage & { sender?: User; attachments?: TicketAttachment[] }),
+      items: await serializeMessages(
+        page.items as Array<TicketMessage & { sender?: User; attachments?: TicketAttachment[] }>,
       ),
       nextCursor: page.nextCursor,
     };
@@ -467,6 +638,17 @@ export class SupportTicketsService {
         throw new AppError(ERROR_MESSAGES.TICKET_NOT_FOUND, 404, ERROR_CODES.TICKET_NOT_FOUND);
       }
       await assertTicketAccess(locked, actor);
+
+      if (
+        locked.status === SUPPORT_TICKET_STATUS.CLOSED ||
+        locked.status === SUPPORT_TICKET_STATUS.RESOLVED
+      ) {
+        throw new AppError(
+          ERROR_MESSAGES.TICKET_MUST_REOPEN,
+          422,
+          ERROR_CODES.TICKET_MUST_REOPEN,
+        );
+      }
 
       const existingAttachments = await TicketAttachment.findAll({
         where: { ticketId: id },
@@ -495,11 +677,17 @@ export class SupportTicketsService {
 
       const attachments = data.attachmentUrls ?? [];
       if (attachments.length > 0) {
+        const rebased = await rebaseAttachmentUrlsToEntity({
+          entityType: S3_ENTITY_TYPES.TICKETS,
+          entityId: id,
+          purpose: 'attachments',
+          urls: attachments.map((a) => a.url),
+        });
         await TicketAttachment.bulkCreate(
-          attachments.map((a) => ({
+          attachments.map((a, i) => ({
             ticketId: id,
             messageId: message.id,
-            url: a.url,
+            url: rebased[i] ?? a.url,
             type: a.type,
             durationSeconds: a.durationSeconds ?? null,
             createdBy: actor.id,
@@ -531,25 +719,32 @@ export class SupportTicketsService {
         entityType: 'SupportTicket',
         entityId: id,
         metadata: { messageId: message.id, status: updates.status ?? locked.status },
+        transaction: t,
       });
 
-      const notifyIds = new Set<string>();
-      if (actor.id !== locked.customerId) notifyIds.add(locked.customerId);
+      const notifyRecipients = new Map<string, 'customer' | 'vendor' | 'admin' | 'lookup'>();
+      if (actor.id !== locked.customerId) notifyRecipients.set(locked.customerId, 'customer');
       if (locked.assignedToId && locked.assignedToId !== actor.id) {
-        notifyIds.add(locked.assignedToId);
+        notifyRecipients.set(locked.assignedToId, 'lookup');
       } else if (locked.relatedVendorId) {
-        const ownerId = await findVendorOwnerUserId(locked.relatedVendorId);
-        if (ownerId && ownerId !== actor.id) notifyIds.add(ownerId);
+        const staffId = await findVendorStaffUserId(locked.relatedVendorId);
+        if (staffId && staffId !== actor.id) notifyRecipients.set(staffId, 'vendor');
       } else if (senderRole === TICKET_SENDER_ROLE.CUSTOMER) {
         for (const adminId of await findTicketManagerUserIds()) {
-          if (adminId !== actor.id) notifyIds.add(adminId);
+          if (adminId !== actor.id) notifyRecipients.set(adminId, 'admin');
         }
       }
 
-      for (const userId of notifyIds) {
+      for (const [userId, group] of notifyRecipients) {
+        const portalGroup =
+          group === 'lookup' ? await ticketPortalGroupForUser(userId) : group;
+        const actionUrl = ticketPortalUrlForGroup(id, portalGroup);
         void notificationsService.sendTicketReplied(userId, id, {
           ticketNumber: locked.ticketNumber,
           subject: locked.subject,
+          actionUrl,
+          portalGroup,
+          messageId: message.id,
         });
       }
 
@@ -568,15 +763,8 @@ export class SupportTicketsService {
         throw new AppError(ERROR_MESSAGES.TICKET_NOT_FOUND, 404, ERROR_CODES.TICKET_NOT_FOUND);
       }
 
-      if (isAdminActor(actor)) {
-        // ok
-      } else if (
-        isVendorActor(actor) &&
-        locked.relatedVendorId &&
-        locked.relatedVendorId === actor.vendorId
-      ) {
-        // ok
-      } else {
+      await assertTicketAccess(locked, actor);
+      if (!isAdminActor(actor) && !isVendorActor(actor)) {
         throw new AppError(ERROR_MESSAGES.TICKET_FORBIDDEN, 403, ERROR_CODES.TICKET_FORBIDDEN);
       }
 
@@ -586,6 +774,7 @@ export class SupportTicketsService {
         {
           status: SUPPORT_TICKET_STATUS.RESOLVED,
           resolvedAt: now,
+          firstResponseAt: locked.firstResponseAt ?? now,
           updatedBy: actor.id,
         },
         { transaction: t },
@@ -597,11 +786,15 @@ export class SupportTicketsService {
         entityType: 'SupportTicket',
         entityId: id,
         metadata: { status: SUPPORT_TICKET_STATUS.RESOLVED },
+        transaction: t,
       });
 
       void notificationsService.sendTicketResolved(locked.customerId, id, {
         ticketNumber: locked.ticketNumber,
         subject: locked.subject,
+        actionUrl: ticketPortalUrlForGroup(id, 'customer'),
+        portalGroup: 'customer',
+        resolvedAt: now.toISOString(),
       });
 
       return serializeTicket(await getTicketOrThrow(id, t));
@@ -651,21 +844,30 @@ export class SupportTicketsService {
         entityType: 'SupportTicket',
         entityId: id,
         metadata: { status: SUPPORT_TICKET_STATUS.REOPENED },
+        transaction: t,
       });
 
-      const notifyIds = new Set<string>();
-      if (locked.assignedToId) notifyIds.add(locked.assignedToId);
+      const notifyRecipients = new Map<string, 'vendor' | 'admin' | 'lookup'>();
+      if (locked.assignedToId) notifyRecipients.set(locked.assignedToId, 'lookup');
       else if (locked.relatedVendorId) {
-        const ownerId = await findVendorOwnerUserId(locked.relatedVendorId);
-        if (ownerId) notifyIds.add(ownerId);
+        const staffId = await findVendorStaffUserId(locked.relatedVendorId);
+        if (staffId) notifyRecipients.set(staffId, 'vendor');
       } else {
-        for (const adminId of await findTicketManagerUserIds()) notifyIds.add(adminId);
+        for (const adminId of await findTicketManagerUserIds()) {
+          notifyRecipients.set(adminId, 'admin');
+        }
       }
 
-      for (const userId of notifyIds) {
+      for (const [userId, group] of notifyRecipients) {
+        const portalGroup =
+          group === 'lookup' ? await ticketPortalGroupForUser(userId) : group;
+        const actionUrl = ticketPortalUrlForGroup(id, portalGroup);
         void notificationsService.sendTicketReopened(userId, id, {
           ticketNumber: locked.ticketNumber,
           subject: locked.subject,
+          actionUrl,
+          portalGroup,
+          reopenedAt: new Date().toISOString(),
         });
       }
 
@@ -702,6 +904,7 @@ export class SupportTicketsService {
         entityType: 'SupportTicket',
         entityId: id,
         metadata: { status: SUPPORT_TICKET_STATUS.CLOSED },
+        transaction: t,
       });
 
       return serializeTicket(await getTicketOrThrow(id, t));
@@ -721,12 +924,9 @@ export class SupportTicketsService {
         throw new AppError(ERROR_MESSAGES.TICKET_FORBIDDEN, 403, ERROR_CODES.TICKET_FORBIDDEN);
       }
 
-      await usersService.assertAssignableUser(
-        assignedToId,
-        PERMISSIONS.TICKET_MANAGE,
-        t,
-      );
+      await assertTicketAssignee(locked, assignedToId, t);
 
+      const fromAssignee = locked.assignedToId;
       await locked.update(
         { assignedToId, updatedBy: actor.id },
         { transaction: t },
@@ -737,7 +937,90 @@ export class SupportTicketsService {
         action: 'SUPPORT_TICKET_REASSIGNED',
         entityType: 'SupportTicket',
         entityId: id,
-        metadata: { assignedToId },
+        metadata: { from: fromAssignee, to: assignedToId },
+        transaction: t,
+      });
+
+      return serializeTicket(await getTicketOrThrow(id, t));
+    });
+  }
+
+  async escalate(id: string, actor: Actor) {
+    return sequelize.transaction(async (t) => {
+      const locked = await SupportTicket.findByPk(id, {
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+      if (!locked) {
+        throw new AppError(ERROR_MESSAGES.TICKET_NOT_FOUND, 404, ERROR_CODES.TICKET_NOT_FOUND);
+      }
+      if (!isAdminActor(actor)) {
+        throw new AppError(ERROR_MESSAGES.TICKET_FORBIDDEN, 403, ERROR_CODES.TICKET_FORBIDDEN);
+      }
+
+      const fromPriority = locked.priority;
+      const toPriority = SUPPORT_TICKET_PRIORITY.URGENT;
+      const fromAssignee = locked.assignedToId;
+      const [adminAssigneeId] = await findTicketManagerUserIds(1);
+      const updates: {
+        priority: typeof toPriority;
+        updatedBy: string;
+        assignedToId?: string | null;
+      } = {
+        priority: toPriority,
+        updatedBy: actor.id,
+      };
+      // Escalate into the admin queue when a ticket manager is available.
+      if (adminAssigneeId && fromAssignee !== adminAssigneeId) {
+        updates.assignedToId = adminAssigneeId;
+      }
+
+      await locked.update(updates, { transaction: t });
+
+      await logAudit({
+        actorId: actor.id,
+        action: 'SUPPORT_TICKET_ESCALATED',
+        entityType: 'SupportTicket',
+        entityId: id,
+        metadata: {
+          from: fromPriority,
+          to: toPriority,
+          fromAssignee,
+          toAssignee: updates.assignedToId ?? fromAssignee,
+        },
+        transaction: t,
+      });
+
+      return serializeTicket(await getTicketOrThrow(id, t));
+    });
+  }
+
+  async updatePriority(id: string, actor: Actor, data: UpdatePriorityRequest) {
+    return sequelize.transaction(async (t) => {
+      const locked = await SupportTicket.findByPk(id, {
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+      if (!locked) {
+        throw new AppError(ERROR_MESSAGES.TICKET_NOT_FOUND, 404, ERROR_CODES.TICKET_NOT_FOUND);
+      }
+      if (!isAdminActor(actor)) {
+        throw new AppError(ERROR_MESSAGES.TICKET_FORBIDDEN, 403, ERROR_CODES.TICKET_FORBIDDEN);
+      }
+
+      const fromPriority = locked.priority;
+      await locked.update(
+        { priority: data.priority, updatedBy: actor.id },
+        { transaction: t },
+      );
+
+      await logAudit({
+        actorId: actor.id,
+        action: 'SUPPORT_TICKET_PRIORITY_UPDATED',
+        entityType: 'SupportTicket',
+        entityId: id,
+        metadata: { from: fromPriority, to: data.priority },
+        transaction: t,
       });
 
       return serializeTicket(await getTicketOrThrow(id, t));
@@ -756,7 +1039,10 @@ export class SupportTicketsService {
       if (locked.customerId !== actor.id) {
         throw new AppError(ERROR_MESSAGES.TICKET_FORBIDDEN, 403, ERROR_CODES.TICKET_FORBIDDEN);
       }
-      if (locked.status !== SUPPORT_TICKET_STATUS.RESOLVED) {
+      const ratable =
+        locked.status === SUPPORT_TICKET_STATUS.RESOLVED ||
+        (locked.status === SUPPORT_TICKET_STATUS.CLOSED && locked.resolvedAt != null);
+      if (!ratable || locked.customerSatisfactionRating != null) {
         throw new AppError(
           ERROR_MESSAGES.TICKET_RATE_NOT_ALLOWED,
           422,
@@ -778,6 +1064,7 @@ export class SupportTicketsService {
         entityType: 'SupportTicket',
         entityId: id,
         metadata: { rating: data.rating },
+        transaction: t,
       });
 
       return serializeTicket(await getTicketOrThrow(id, t));
@@ -801,35 +1088,41 @@ export class SupportTicketsService {
       limit,
     });
 
+    const [superAdminId] = await findSuperAdminUserIds(1);
+    if (!superAdminId) return 0;
+
     let count = 0;
     for (const ticket of due) {
-      await sequelize.transaction(async (t) => {
+      const updated = await sequelize.transaction(async (t) => {
         const locked = await SupportTicket.findByPk(ticket.id, {
           transaction: t,
           lock: t.LOCK.UPDATE,
         });
-        if (!locked || locked.status !== SUPPORT_TICKET_STATUS.RESOLVED) return;
+        if (!locked || locked.status !== SUPPORT_TICKET_STATUS.RESOLVED) return false;
         assertTransition(locked.status, SUPPORT_TICKET_STATUS.CLOSED);
         await locked.update(
           {
             status: SUPPORT_TICKET_STATUS.CLOSED,
             closedAt: new Date(),
-            updatedBy: null,
+            updatedBy: superAdminId,
           },
           { transaction: t },
         );
         await logAudit({
-          actorId: locked.customerId,
+          actorId: superAdminId,
           action: 'SUPPORT_TICKET_AUTO_CLOSED',
           entityType: 'SupportTicket',
           entityId: locked.id,
           metadata: {
             from: SUPPORT_TICKET_STATUS.RESOLVED,
             to: SUPPORT_TICKET_STATUS.CLOSED,
+            automated: true,
           },
+          transaction: t,
         });
+        return true;
       });
-      count += 1;
+      if (updated) count += 1;
     }
     return count;
   }

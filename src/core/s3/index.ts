@@ -37,4 +37,5 @@ export {
   deleteS3ObjectsByUrls,
   deleteS3ObjectIfReplaced,
   cascadeDeleteEntityMedia,
+  rebaseAttachmentUrlsToEntity,
 } from './mediaLifecycle';

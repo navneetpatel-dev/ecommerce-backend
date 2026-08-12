@@ -1,11 +1,8 @@
-import { Op, type WhereOptions } from 'sequelize';
+import { Op, type Transaction, type WhereOptions } from 'sequelize';
 import { AppError } from '@core/errors/AppError';
-import { ValidationError } from '@core/errors/ValidationError';
 import {
-  ADMIN_ROLES,
   BUG_AFFECTED_MODULE,
   BUG_REPORTER_ROLE,
-  BUG_REPORT_SEVERITY,
   BUG_REPORT_STATUS,
   DOCUMENT_SEQUENCE_KIND,
   ROLES,
@@ -29,57 +26,64 @@ import {
 import { parseUserAgent } from '@core/http/parseUserAgent';
 import { nextPaddedDocumentNumber } from '@modules/pricing/documentSequence';
 import { notificationsService } from '@modules/notifications/notifications.service';
+import { bugReportPortalUrl } from '@modules/notifications/portalLinks';
+import { findSuperAdminUserIds } from '@modules/notifications/orderNotifications';
 import { settingsService } from '@modules/settings/settings.service';
 import { logAudit } from '@modules/audit/audit.service';
 import { usersService } from '@modules/users/users.service';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
+import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
+import { extractS3KeyFromUrl, signedGetObjectUrlMap } from '@config/s3';
+import { rebaseAttachmentUrlsToEntity, S3_ENTITY_TYPES } from '@core/s3';
 import {
   assertAttachmentLimits,
-} from '@modules/supportTickets/mediaLimits';
-import { assertRemoteVideoBackstop } from '@modules/supportTickets/mediaProbe';
+} from '@core/media';
+import { assertRemoteVideoBackstop } from '@core/media';
+import { AuditLog } from '@database/models/auditLog.model';
 import type {
   AdminBugListQuery,
   BugCommentRequest,
   BugStatusRequest,
   CreateBugReportRequest,
   DuplicateBugReportRequest,
+  MineBugListQuery,
   TriageBugReportRequest,
+  UpdateBugAssignmentRequest,
   WontFixBugReportRequest,
 } from './bugReports.dto';
+import { BUG_ALLOWED_TRANSITIONS } from './bugReports.lifecycle';
 
-const ALLOWED_TRANSITIONS: Record<BugReportStatus, BugReportStatus[]> = {
-  [BUG_REPORT_STATUS.NEW]: [
-    BUG_REPORT_STATUS.TRIAGED,
-    BUG_REPORT_STATUS.DUPLICATE,
-    BUG_REPORT_STATUS.WONT_FIX,
-    BUG_REPORT_STATUS.CLOSED,
-  ],
-  [BUG_REPORT_STATUS.TRIAGED]: [
-    BUG_REPORT_STATUS.IN_PROGRESS,
-    BUG_REPORT_STATUS.DUPLICATE,
-    BUG_REPORT_STATUS.WONT_FIX,
-    BUG_REPORT_STATUS.CLOSED,
-  ],
-  [BUG_REPORT_STATUS.IN_PROGRESS]: [
-    BUG_REPORT_STATUS.FIXED,
-    BUG_REPORT_STATUS.DUPLICATE,
-    BUG_REPORT_STATUS.WONT_FIX,
-    BUG_REPORT_STATUS.CLOSED,
-  ],
-  [BUG_REPORT_STATUS.FIXED]: [
-    BUG_REPORT_STATUS.VERIFIED,
-    BUG_REPORT_STATUS.CLOSED,
-    BUG_REPORT_STATUS.IN_PROGRESS,
-  ],
-  [BUG_REPORT_STATUS.VERIFIED]: [BUG_REPORT_STATUS.CLOSED],
-  [BUG_REPORT_STATUS.CLOSED]: [],
-  [BUG_REPORT_STATUS.WONT_FIX]: [],
-  [BUG_REPORT_STATUS.DUPLICATE]: [],
-};
+/** Statuses where triage fields (severity/module/assignee) may be updated without a status change. */
+const ASSIGNMENT_EDITABLE_STATUSES: BugReportStatus[] = [
+  BUG_REPORT_STATUS.TRIAGED,
+  BUG_REPORT_STATUS.IN_PROGRESS,
+  BUG_REPORT_STATUS.FIXED,
+];
+
+/** Public timeline actions visible to reporters (excludes internal comments). */
+const PUBLIC_BUG_TIMELINE_ACTIONS = new Set([
+  'BUG_REPORT_CREATED',
+  'BUG_REPORT_TRIAGED',
+  'BUG_REPORT_STATUS',
+  'BUG_REPORT_DUPLICATE',
+  'BUG_REPORT_WONT_FIX',
+  'BUG_REPORT_VERIFIED',
+  'BUG_REPORT_AUTO_VERIFIED',
+  'BUG_REPORT_AUTO_CLOSED',
+]);
+
+const ADMIN_BUG_TIMELINE_ACTIONS = new Set([
+  ...PUBLIC_BUG_TIMELINE_ACTIONS,
+  'BUG_REPORT_ASSIGNMENT_UPDATED',
+]);
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type Actor = {
   id: string;
   vendorId: string | null;
+  roleId: string;
   role: { name: string };
 };
 
@@ -91,10 +95,12 @@ const FORBIDDEN_REPORTER_KEYS = [
   'duplicateOfId',
   'triagedAt',
   'resolvedAt',
+  'verifiedAt',
+  'inProgressAt',
 ] as const;
 
 function assertTransition(from: BugReportStatus, to: BugReportStatus) {
-  const allowed = ALLOWED_TRANSITIONS[from] ?? [];
+  const allowed = BUG_ALLOWED_TRANSITIONS[from] ?? [];
   if (!allowed.includes(to)) {
     throw new AppError(
       ERROR_MESSAGES.BUG_INVALID_TRANSITION,
@@ -102,10 +108,6 @@ function assertTransition(from: BugReportStatus, to: BugReportStatus) {
       ERROR_CODES.BUG_INVALID_TRANSITION,
     );
   }
-}
-
-function isAdminActor(actor: Actor): boolean {
-  return (ADMIN_ROLES as readonly string[]).includes(actor.role.name);
 }
 
 function toReporterRole(roleName: string): BugReporterRole {
@@ -131,16 +133,30 @@ function assertNoReporterTriageFields(body: Record<string, unknown>) {
   }
 }
 
-function serializeAttachment(row: BugReportAttachment) {
-  const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
-  return {
-    id: plain.id,
-    bugReportId: plain.bugReportId,
-    url: plain.url,
-    type: plain.type,
-    durationSeconds: plain.durationSeconds ?? null,
-    createdAt: plain.createdAt,
-  };
+async function assertBugManagePermission(actor: Actor): Promise<void> {
+  const permissions = await resolvePermissionsForUser(actor);
+  if (!permissions.includes(PERMISSIONS.BUG_REPORT_MANAGE)) {
+    throw new AppError(ERROR_MESSAGES.BUG_FORBIDDEN, 403, ERROR_CODES.BUG_FORBIDDEN);
+  }
+}
+
+async function serializeAttachments(rows: BugReportAttachment[]) {
+  const plains = rows.map((row) =>
+    typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row,
+  );
+  const keyByIndex = plains.map((plain) => extractS3KeyFromUrl(plain.url));
+  const signedByKey = await signedGetObjectUrlMap(keyByIndex);
+  return plains.map((plain, index) => {
+    const key = keyByIndex[index];
+    return {
+      id: plain.id,
+      bugReportId: plain.bugReportId,
+      url: (key && signedByKey.get(key)) || plain.url,
+      type: plain.type,
+      durationSeconds: plain.durationSeconds ?? null,
+      createdAt: plain.createdAt,
+    };
+  });
 }
 
 function serializeComment(row: BugReportComment & { author?: User }) {
@@ -155,11 +171,69 @@ function serializeComment(row: BugReportComment & { author?: User }) {
   };
 }
 
+type SerializedAttachment = Awaited<ReturnType<typeof serializeAttachments>>[number];
+
+type TimelineEntry = {
+  action: string;
+  createdAt: string | Date;
+  status: string | null;
+  from: string | null;
+  to: string | null;
+  automated: boolean;
+  duplicateOfReportNumber: string | null;
+};
+
+async function loadBugTimeline(
+  bugReportId: string,
+  includeInternal: boolean,
+  transaction?: Transaction,
+): Promise<TimelineEntry[]> {
+  const allowed = includeInternal ? ADMIN_BUG_TIMELINE_ACTIONS : PUBLIC_BUG_TIMELINE_ACTIONS;
+  const rows = await AuditLog.findAll({
+    where: {
+      entityType: 'BugReport',
+      entityId: bugReportId,
+      action: { [Op.in]: [...allowed] },
+    },
+    order: [['createdAt', 'ASC']],
+    limit: 100,
+    attributes: ['action', 'metadata', 'createdAt'],
+    transaction,
+  });
+
+  return rows.map((row) => {
+    const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
+    const metadata = (plain.metadata ?? {}) as Record<string, unknown>;
+    return {
+      action: plain.action,
+      createdAt: plain.createdAt,
+      status: typeof metadata.status === 'string' ? metadata.status : null,
+      from: typeof metadata.from === 'string' ? metadata.from : null,
+      to: typeof metadata.to === 'string' ? metadata.to : null,
+      automated: metadata.automated === true,
+      duplicateOfReportNumber:
+        typeof metadata.duplicateOfReportNumber === 'string'
+          ? metadata.duplicateOfReportNumber
+          : null,
+    };
+  });
+}
+
+function normalizeDuplicateRef(raw: string): { id?: string; reportNumber?: string } {
+  const value = raw.trim();
+  if (UUID_RE.test(value)) return { id: value };
+  const upper = value.toUpperCase();
+  if (/^BUG-\d+$/.test(upper)) return { reportNumber: upper };
+  if (/^\d+$/.test(upper)) return { reportNumber: `BUG-${upper.padStart(6, '0')}` };
+  return { reportNumber: upper };
+}
+
 function serializeBugReport(
   row: BugReport,
   extras: {
-    attachments?: ReturnType<typeof serializeAttachment>[];
+    attachments?: SerializedAttachment[];
     comments?: ReturnType<typeof serializeComment>[];
+    timeline?: TimelineEntry[];
     includeInternal?: boolean;
   } = {},
 ) {
@@ -175,7 +249,8 @@ function serializeBugReport(
     stepsToReproduce: plain.stepsToReproduce ?? null,
     severity: plain.severity,
     status: plain.status,
-    duplicateOfId: plain.duplicateOfId ?? null,
+    duplicateOfId: plain.duplicateOfId ?? plain.duplicateOf?.id ?? null,
+    duplicateOfReportNumber: plain.duplicateOf?.reportNumber ?? null,
     assignedToId: plain.assignedToId ?? null,
     assignedToName: plain.assignedTo?.name ?? null,
     affectedModule: plain.affectedModule,
@@ -189,11 +264,14 @@ function serializeBugReport(
     userRole: plain.userRole,
     occurredAt: plain.occurredAt,
     triagedAt: plain.triagedAt ?? null,
+    inProgressAt: plain.inProgressAt ?? null,
     resolvedAt: plain.resolvedAt ?? null,
+    verifiedAt: plain.verifiedAt ?? null,
     wontFixReason: plain.wontFixReason ?? null,
     createdAt: plain.createdAt,
     updatedAt: plain.updatedAt,
     attachments: extras.attachments,
+    timeline: extras.timeline ?? [],
   };
 
   if (extras.includeInternal) {
@@ -202,8 +280,8 @@ function serializeBugReport(
   return base;
 }
 
-async function assertBugAccess(bug: BugReport, actor: Actor): Promise<void> {
-  if (isAdminActor(actor)) return;
+function assertBugAccess(bug: BugReport, actor: Actor, hasManagePermission: boolean): void {
+  if (hasManagePermission) return;
   if (bug.reporterId === actor.id) return;
   throw new AppError(ERROR_MESSAGES.BUG_FORBIDDEN, 403, ERROR_CODES.BUG_FORBIDDEN);
 }
@@ -237,7 +315,7 @@ export class BugReportsService {
           title: data.title,
           description: data.description,
           stepsToReproduce: data.stepsToReproduce ?? null,
-          severity: BUG_REPORT_SEVERITY.MEDIUM,
+          severity: null,
           status: BUG_REPORT_STATUS.NEW,
           duplicateOfId: null,
           assignedToId: null,
@@ -252,7 +330,9 @@ export class BugReportsService {
           userRole: actor.role.name,
           occurredAt: new Date(),
           triagedAt: null,
+          inProgressAt: null,
           resolvedAt: null,
+          verifiedAt: null,
           wontFixReason: null,
           createdBy: actor.id,
           updatedBy: null,
@@ -263,10 +343,16 @@ export class BugReportsService {
 
       const attachments = data.attachmentUrls ?? [];
       if (attachments.length > 0) {
+        const rebasedUrls = await rebaseAttachmentUrlsToEntity({
+          entityType: S3_ENTITY_TYPES.BUG_REPORTS,
+          entityId: bug.id,
+          purpose: 'attachments',
+          urls: attachments.map((a) => a.url),
+        });
         await BugReportAttachment.bulkCreate(
-          attachments.map((a) => ({
+          attachments.map((a, index) => ({
             bugReportId: bug.id,
-            url: a.url,
+            url: rebasedUrls[index] ?? a.url,
             type: a.type,
             durationSeconds: a.durationSeconds ?? null,
             createdBy: actor.id,
@@ -283,6 +369,7 @@ export class BugReportsService {
         entityType: 'BugReport',
         entityId: bug.id,
         metadata: { reportNumber, status: bug.status },
+        transaction: t,
       });
 
       const created = await BugReport.findByPk(bug.id, {
@@ -293,7 +380,7 @@ export class BugReportsService {
         transaction: t,
       });
       return serializeBugReport(created!, {
-        attachments: ((created as any)?.attachments ?? []).map(serializeAttachment),
+        attachments: await serializeAttachments((created as any)?.attachments ?? []),
       });
     });
   }
@@ -317,8 +404,11 @@ export class BugReportsService {
     };
   }
 
-  async listMine(actor: Actor, query: KeysetQuery) {
-    return this.listWithKeyset({ reporterId: actor.id }, query);
+  async listMine(actor: Actor, query: MineBugListQuery) {
+    const where: WhereOptions = { reporterId: actor.id };
+    if (query.status) where.status = query.status;
+    if (query.severity) where.severity = query.severity;
+    return this.listWithKeyset(where, query);
   }
 
   async listAdmin(query: AdminBugListQuery) {
@@ -330,44 +420,45 @@ export class BugReportsService {
     return this.listWithKeyset(where, query);
   }
 
-  async getById(id: string, actor: Actor) {
+  async getById(id: string, actor: Actor, transaction?: Transaction) {
     const bug = await BugReport.findByPk(id, {
       include: [
         { model: User, as: 'reporter', attributes: ['id', 'name'], required: false },
         { model: User, as: 'assignedTo', attributes: ['id', 'name'], required: false },
+        {
+          model: BugReport,
+          as: 'duplicateOf',
+          attributes: ['id', 'reportNumber'],
+          required: false,
+        },
         { model: BugReportAttachment, as: 'attachments', required: false },
       ],
+      transaction,
     });
     if (!bug) {
       throw new AppError(ERROR_MESSAGES.BUG_NOT_FOUND, 404, ERROR_CODES.BUG_NOT_FOUND);
     }
-    await assertBugAccess(bug, actor);
 
-    const includeInternal = isAdminActor(actor);
-    let comments: ReturnType<typeof serializeComment>[] = [];
-    if (includeInternal) {
-      const rows = await BugReportComment.findAll({
-        where: { bugReportId: id },
-        include: [{ model: User, as: 'author', attributes: ['id', 'name'], required: false }],
-        order: [
-          ['createdAt', 'ASC'],
-          ['id', 'ASC'],
-        ],
-      });
-      comments = rows.map((r) => serializeComment(r as BugReportComment & { author?: User }));
-    }
+    const permissions = await resolvePermissionsForUser(actor);
+    const hasManagePermission = permissions.includes(PERMISSIONS.BUG_REPORT_MANAGE);
+    assertBugAccess(bug, actor, hasManagePermission);
+
+    const includeInternal = hasManagePermission;
+    const [attachments, timeline] = await Promise.all([
+      serializeAttachments((bug as any).attachments ?? []),
+      loadBugTimeline(bug.id, includeInternal, transaction),
+    ]);
 
     return serializeBugReport(bug, {
-      attachments: ((bug as any).attachments ?? []).map(serializeAttachment),
-      comments,
+      attachments,
+      comments: [],
+      timeline,
       includeInternal,
     });
   }
 
   async triage(id: string, actor: Actor, data: TriageBugReportRequest) {
-    if (!isAdminActor(actor)) {
-      throw new AppError(ERROR_MESSAGES.BUG_FORBIDDEN, 403, ERROR_CODES.BUG_FORBIDDEN);
-    }
+    await assertBugManagePermission(actor);
 
     return sequelize.transaction(async (t) => {
       const locked = await BugReport.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
@@ -406,21 +497,74 @@ export class BugReportsService {
           affectedModule: data.affectedModule,
           assignedToId: data.assignedToId ?? null,
         },
+        transaction: t,
       });
 
       void notificationsService.sendBugReportTriaged(locked.reporterId, id, {
         reportNumber: locked.reportNumber,
         title: locked.title,
+        actionUrl: bugReportPortalUrl(id, locked.reporterRole),
+        reporterRole: locked.reporterRole,
       });
 
-      return this.getById(id, actor);
+      return this.getById(id, actor, t);
+    });
+  }
+
+  /** Updates triage fields (severity/module/assignee) without requiring a NEW→TRIAGED transition. */
+  async updateAssignment(id: string, actor: Actor, data: UpdateBugAssignmentRequest) {
+    await assertBugManagePermission(actor);
+
+    return sequelize.transaction(async (t) => {
+      const locked = await BugReport.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
+      if (!locked) {
+        throw new AppError(ERROR_MESSAGES.BUG_NOT_FOUND, 404, ERROR_CODES.BUG_NOT_FOUND);
+      }
+      if (!ASSIGNMENT_EDITABLE_STATUSES.includes(locked.status)) {
+        throw new AppError(
+          ERROR_MESSAGES.BUG_INVALID_TRANSITION,
+          422,
+          ERROR_CODES.BUG_INVALID_TRANSITION,
+        );
+      }
+
+      if (data.assignedToId) {
+        await usersService.assertAssignableUser(
+          data.assignedToId,
+          PERMISSIONS.BUG_REPORT_MANAGE,
+          t,
+        );
+      }
+
+      await locked.update(
+        {
+          severity: data.severity,
+          affectedModule: data.affectedModule,
+          assignedToId: data.assignedToId ?? locked.assignedToId,
+          updatedBy: actor.id,
+        },
+        { transaction: t },
+      );
+
+      await logAudit({
+        actorId: actor.id,
+        action: 'BUG_REPORT_ASSIGNMENT_UPDATED',
+        entityType: 'BugReport',
+        entityId: id,
+        metadata: {
+          severity: data.severity,
+          affectedModule: data.affectedModule,
+          assignedToId: data.assignedToId ?? null,
+        },
+        transaction: t,
+      });
+
+      return this.getById(id, actor, t);
     });
   }
 
   async updateStatus(id: string, actor: Actor, data: BugStatusRequest) {
-    if (!isAdminActor(actor)) {
-      throw new AppError(ERROR_MESSAGES.BUG_FORBIDDEN, 403, ERROR_CODES.BUG_FORBIDDEN);
-    }
+    await assertBugManagePermission(actor);
 
     return sequelize.transaction(async (t) => {
       const locked = await BugReport.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
@@ -429,14 +573,21 @@ export class BugReportsService {
       }
 
       const next = data.status as BugReportStatus;
-      assertTransition(locked.status, next);
+      const fromStatus = locked.status as BugReportStatus;
+      assertTransition(fromStatus, next);
 
       const updates: Partial<BugReport> = {
         status: next,
         updatedBy: actor.id,
       };
+      if (next === BUG_REPORT_STATUS.IN_PROGRESS && !locked.inProgressAt) {
+        updates.inProgressAt = new Date();
+      }
       if (next === BUG_REPORT_STATUS.FIXED) {
         updates.resolvedAt = new Date();
+      }
+      if (next === BUG_REPORT_STATUS.VERIFIED && !locked.verifiedAt) {
+        updates.verifiedAt = new Date();
       }
 
       await locked.update(updates, { transaction: t });
@@ -446,25 +597,27 @@ export class BugReportsService {
         action: 'BUG_REPORT_STATUS',
         entityType: 'BugReport',
         entityId: id,
-        metadata: { status: next },
+        metadata: { from: fromStatus, to: next, status: next },
+        transaction: t,
       });
 
       if (next === BUG_REPORT_STATUS.FIXED) {
         void notificationsService.sendBugReportFixed(locked.reporterId, id, {
           reportNumber: locked.reportNumber,
           title: locked.title,
+          actionUrl: bugReportPortalUrl(id, locked.reporterRole),
+          reporterRole: locked.reporterRole,
         });
       }
 
-      return this.getById(id, actor);
+      return this.getById(id, actor, t);
     });
   }
 
   async markDuplicate(id: string, actor: Actor, data: DuplicateBugReportRequest) {
-    if (!isAdminActor(actor)) {
-      throw new AppError(ERROR_MESSAGES.BUG_FORBIDDEN, 403, ERROR_CODES.BUG_FORBIDDEN);
-    }
-    if (!data.duplicateOfId) {
+    await assertBugManagePermission(actor);
+    const ref = normalizeDuplicateRef(data.duplicateOf);
+    if (!ref.id && !ref.reportNumber) {
       throw new AppError(
         ERROR_MESSAGES.BUG_DUPLICATE_TARGET_REQUIRED,
         422,
@@ -477,20 +630,40 @@ export class BugReportsService {
       if (!locked) {
         throw new AppError(ERROR_MESSAGES.BUG_NOT_FOUND, 404, ERROR_CODES.BUG_NOT_FOUND);
       }
-      if (data.duplicateOfId === id) {
-        throw new ValidationError(ERROR_MESSAGES.BUG_DUPLICATE_TARGET_REQUIRED);
-      }
 
-      const target = await BugReport.findByPk(data.duplicateOfId, { transaction: t });
+      const target = ref.id
+        ? await BugReport.findByPk(ref.id, { transaction: t })
+        : await BugReport.findOne({
+            where: { reportNumber: ref.reportNumber },
+            transaction: t,
+          });
       if (!target) {
         throw new AppError(ERROR_MESSAGES.BUG_NOT_FOUND, 404, ERROR_CODES.BUG_NOT_FOUND);
+      }
+      if (target.id === id) {
+        throw new AppError(
+          ERROR_MESSAGES.BUG_DUPLICATE_TARGET_INVALID,
+          422,
+          ERROR_CODES.BUG_DUPLICATE_TARGET_INVALID,
+        );
+      }
+      if (
+        target.status === BUG_REPORT_STATUS.DUPLICATE ||
+        target.status === BUG_REPORT_STATUS.CLOSED ||
+        target.status === BUG_REPORT_STATUS.WONT_FIX
+      ) {
+        throw new AppError(
+          ERROR_MESSAGES.BUG_DUPLICATE_TARGET_INVALID,
+          422,
+          ERROR_CODES.BUG_DUPLICATE_TARGET_INVALID,
+        );
       }
 
       assertTransition(locked.status, BUG_REPORT_STATUS.DUPLICATE);
       await locked.update(
         {
           status: BUG_REPORT_STATUS.DUPLICATE,
-          duplicateOfId: data.duplicateOfId,
+          duplicateOfId: target.id,
           resolvedAt: new Date(),
           updatedBy: actor.id,
         },
@@ -502,17 +675,27 @@ export class BugReportsService {
         action: 'BUG_REPORT_DUPLICATE',
         entityType: 'BugReport',
         entityId: id,
-        metadata: { duplicateOfId: data.duplicateOfId },
+        metadata: {
+          duplicateOfId: target.id,
+          duplicateOfReportNumber: target.reportNumber,
+        },
+        transaction: t,
       });
 
-      return this.getById(id, actor);
+      void notificationsService.sendBugReportDuplicate(locked.reporterId, id, {
+        reportNumber: locked.reportNumber,
+        title: locked.title,
+        actionUrl: bugReportPortalUrl(id, locked.reporterRole),
+        reporterRole: locked.reporterRole,
+        duplicateOfReportNumber: target.reportNumber,
+      });
+
+      return this.getById(id, actor, t);
     });
   }
 
   async wontFix(id: string, actor: Actor, data: WontFixBugReportRequest) {
-    if (!isAdminActor(actor)) {
-      throw new AppError(ERROR_MESSAGES.BUG_FORBIDDEN, 403, ERROR_CODES.BUG_FORBIDDEN);
-    }
+    await assertBugManagePermission(actor);
     if (!data.reason?.trim()) {
       throw new AppError(
         ERROR_MESSAGES.BUG_WONT_FIX_REASON_REQUIRED,
@@ -544,15 +727,18 @@ export class BugReportsService {
         entityType: 'BugReport',
         entityId: id,
         metadata: { reason: data.reason.trim() },
+        transaction: t,
       });
 
       void notificationsService.sendBugReportWontFix(locked.reporterId, id, {
         reportNumber: locked.reportNumber,
         title: locked.title,
+        actionUrl: bugReportPortalUrl(id, locked.reporterRole),
+        reporterRole: locked.reporterRole,
         reason: data.reason.trim(),
       });
 
-      return this.getById(id, actor);
+      return this.getById(id, actor, t);
     });
   }
 
@@ -562,13 +748,19 @@ export class BugReportsService {
       if (!locked) {
         throw new AppError(ERROR_MESSAGES.BUG_NOT_FOUND, 404, ERROR_CODES.BUG_NOT_FOUND);
       }
-      if (locked.reporterId !== actor.id && !isAdminActor(actor)) {
+
+      const permissions = await resolvePermissionsForUser(actor);
+      const hasManagePermission = permissions.includes(PERMISSIONS.BUG_REPORT_MANAGE);
+      if (locked.reporterId !== actor.id && !hasManagePermission) {
         throw new AppError(ERROR_MESSAGES.BUG_FORBIDDEN, 403, ERROR_CODES.BUG_FORBIDDEN);
       }
+
       assertTransition(locked.status, BUG_REPORT_STATUS.VERIFIED);
+      const now = new Date();
       await locked.update(
         {
           status: BUG_REPORT_STATUS.VERIFIED,
+          verifiedAt: now,
           updatedBy: actor.id,
         },
         { transaction: t },
@@ -579,14 +771,14 @@ export class BugReportsService {
         entityType: 'BugReport',
         entityId: id,
         metadata: { status: BUG_REPORT_STATUS.VERIFIED },
+        transaction: t,
       });
-      return this.getById(id, actor);
+      return this.getById(id, actor, t);
     });
   }
 
   /**
    * Auto-verify FIXED bugs past `bugVerifyWindowDays`.
-   * Intended for a future scheduler job — safe to call opportunistically.
    */
   async markVerifiedIfDue(limit = 100): Promise<number> {
     const settings = await settingsService.getPlatformSettings();
@@ -601,71 +793,133 @@ export class BugReportsService {
       limit,
     });
 
+    const [actorId] = await findSuperAdminUserIds(1);
+    if (!actorId) return 0;
+
     let count = 0;
     for (const bug of due) {
-      await sequelize.transaction(async (t) => {
+      const updated = await sequelize.transaction(async (t) => {
         const locked = await BugReport.findByPk(bug.id, {
           transaction: t,
           lock: t.LOCK.UPDATE,
         });
-        if (!locked || locked.status !== BUG_REPORT_STATUS.FIXED) return;
+        if (!locked || locked.status !== BUG_REPORT_STATUS.FIXED) return false;
         assertTransition(locked.status, BUG_REPORT_STATUS.VERIFIED);
+        const now = new Date();
         await locked.update(
-          { status: BUG_REPORT_STATUS.VERIFIED },
+          { status: BUG_REPORT_STATUS.VERIFIED, verifiedAt: now },
           { transaction: t },
         );
         await logAudit({
-          actorId: locked.reporterId,
+          actorId,
           action: 'BUG_REPORT_AUTO_VERIFIED',
           entityType: 'BugReport',
           entityId: locked.id,
           metadata: {
             from: BUG_REPORT_STATUS.FIXED,
             to: BUG_REPORT_STATUS.VERIFIED,
+            automated: true,
           },
+          transaction: t,
         });
+        return true;
       });
-      count += 1;
+      if (updated) count += 1;
+    }
+    return count;
+  }
+
+  /**
+   * Auto-close VERIFIED bugs past `bugCloseWindowDays` (based on verifiedAt).
+   */
+  async markClosedIfDue(limit = 100): Promise<number> {
+    const settings = await settingsService.getPlatformSettings();
+    const cutoff = new Date(
+      Date.now() - settings.bugCloseWindowDays * 24 * 60 * 60 * 1000,
+    );
+    const due = await BugReport.findAll({
+      where: {
+        status: BUG_REPORT_STATUS.VERIFIED,
+        verifiedAt: { [Op.lte]: cutoff },
+      },
+      limit,
+    });
+
+    const [actorId] = await findSuperAdminUserIds(1);
+    if (!actorId) return 0;
+
+    let count = 0;
+    for (const bug of due) {
+      const updated = await sequelize.transaction(async (t) => {
+        const locked = await BugReport.findByPk(bug.id, {
+          transaction: t,
+          lock: t.LOCK.UPDATE,
+        });
+        if (!locked || locked.status !== BUG_REPORT_STATUS.VERIFIED) return false;
+        assertTransition(locked.status, BUG_REPORT_STATUS.CLOSED);
+        await locked.update(
+          { status: BUG_REPORT_STATUS.CLOSED, updatedBy: actorId },
+          { transaction: t },
+        );
+        await logAudit({
+          actorId,
+          action: 'BUG_REPORT_AUTO_CLOSED',
+          entityType: 'BugReport',
+          entityId: locked.id,
+          metadata: {
+            from: BUG_REPORT_STATUS.VERIFIED,
+            to: BUG_REPORT_STATUS.CLOSED,
+            automated: true,
+          },
+          transaction: t,
+        });
+        return true;
+      });
+      if (updated) count += 1;
     }
     return count;
   }
 
   async addComment(id: string, actor: Actor, data: BugCommentRequest) {
-    if (!isAdminActor(actor)) {
-      throw new AppError(ERROR_MESSAGES.BUG_FORBIDDEN, 403, ERROR_CODES.BUG_FORBIDDEN);
-    }
-    const bug = await BugReport.findByPk(id);
-    if (!bug) {
-      throw new AppError(ERROR_MESSAGES.BUG_NOT_FOUND, 404, ERROR_CODES.BUG_NOT_FOUND);
-    }
+    await assertBugManagePermission(actor);
 
-    const comment = await BugReportComment.create({
-      bugReportId: id,
-      authorId: actor.id,
-      body: data.body,
-      createdBy: actor.id,
-      updatedBy: null,
-      deletedBy: null,
-    });
+    return sequelize.transaction(async (t) => {
+      const bug = await BugReport.findByPk(id, { transaction: t });
+      if (!bug) {
+        throw new AppError(ERROR_MESSAGES.BUG_NOT_FOUND, 404, ERROR_CODES.BUG_NOT_FOUND);
+      }
 
-    await logAudit({
-      actorId: actor.id,
-      action: 'BUG_REPORT_COMMENT',
-      entityType: 'BugReport',
-      entityId: id,
-      metadata: { commentId: comment.id },
-    });
+      const comment = await BugReportComment.create(
+        {
+          bugReportId: id,
+          authorId: actor.id,
+          body: data.body,
+          createdBy: actor.id,
+          updatedBy: null,
+          deletedBy: null,
+        },
+        { transaction: t },
+      );
 
-    const withAuthor = await BugReportComment.findByPk(comment.id, {
-      include: [{ model: User, as: 'author', attributes: ['id', 'name'], required: false }],
+      await logAudit({
+        actorId: actor.id,
+        action: 'BUG_REPORT_COMMENT',
+        entityType: 'BugReport',
+        entityId: id,
+        metadata: { commentId: comment.id },
+        transaction: t,
+      });
+
+      const withAuthor = await BugReportComment.findByPk(comment.id, {
+        include: [{ model: User, as: 'author', attributes: ['id', 'name'], required: false }],
+        transaction: t,
+      });
+      return serializeComment(withAuthor as BugReportComment & { author?: User });
     });
-    return serializeComment(withAuthor as BugReportComment & { author?: User });
   }
 
   async listComments(id: string, actor: Actor, query: KeysetQuery) {
-    if (!isAdminActor(actor)) {
-      throw new AppError(ERROR_MESSAGES.BUG_FORBIDDEN, 403, ERROR_CODES.BUG_FORBIDDEN);
-    }
+    await assertBugManagePermission(actor);
     const bug = await BugReport.findByPk(id);
     if (!bug) {
       throw new AppError(ERROR_MESSAGES.BUG_NOT_FOUND, 404, ERROR_CODES.BUG_NOT_FOUND);

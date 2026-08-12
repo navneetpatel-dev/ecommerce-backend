@@ -10,7 +10,6 @@ import {
 import {
   BUG_AFFECTED_MODULE,
   BUG_AFFECTED_MODULE_VALUES,
-  BUG_REPORT_SEVERITY,
   BUG_REPORT_SEVERITY_VALUES,
   BUG_REPORT_STATUS,
   BUG_REPORT_STATUS_VALUES,
@@ -29,7 +28,7 @@ export class BugReport extends Model<InferAttributes<BugReport>, InferCreationAt
   declare title: string;
   declare description: string;
   declare stepsToReproduce: string | null;
-  declare severity: CreationOptional<BugReportSeverity>;
+  declare severity: BugReportSeverity | null;
   declare status: CreationOptional<BugReportStatus>;
   declare duplicateOfId: string | null;
   declare assignedToId: string | null;
@@ -44,7 +43,9 @@ export class BugReport extends Model<InferAttributes<BugReport>, InferCreationAt
   declare userRole: string;
   declare occurredAt: Date;
   declare triagedAt: Date | null;
+  declare inProgressAt: Date | null;
   declare resolvedAt: Date | null;
+  declare verifiedAt: Date | null;
   declare wontFixReason: string | null;
   declare createdBy: string | null;
   declare updatedBy: string | null;
@@ -55,6 +56,7 @@ export class BugReport extends Model<InferAttributes<BugReport>, InferCreationAt
 
   declare reporter?: NonAttribute<{ id: string; name: string }>;
   declare assignedTo?: NonAttribute<{ id: string; name: string }>;
+  declare duplicateOf?: NonAttribute<{ id: string; reportNumber: string }>;
   declare attachments?: NonAttribute<unknown[]>;
   declare comments?: NonAttribute<unknown[]>;
 
@@ -82,8 +84,8 @@ export const initBugReportModel = (sequelize: Sequelize) => {
       stepsToReproduce: { type: DataTypes.TEXT, allowNull: true },
       severity: {
         type: DataTypes.ENUM(...BUG_REPORT_SEVERITY_VALUES),
-        allowNull: false,
-        defaultValue: BUG_REPORT_SEVERITY.MEDIUM,
+        allowNull: true,
+        defaultValue: null,
       },
       status: {
         type: DataTypes.ENUM(...BUG_REPORT_STATUS_VALUES),
@@ -107,7 +109,9 @@ export const initBugReportModel = (sequelize: Sequelize) => {
       userRole: { type: DataTypes.STRING(64), allowNull: false },
       occurredAt: { type: DataTypes.DATE, allowNull: false },
       triagedAt: { type: DataTypes.DATE, allowNull: true },
+      inProgressAt: { type: DataTypes.DATE, allowNull: true },
       resolvedAt: { type: DataTypes.DATE, allowNull: true },
+      verifiedAt: { type: DataTypes.DATE, allowNull: true },
       wontFixReason: { type: DataTypes.TEXT, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },

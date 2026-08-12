@@ -36,7 +36,6 @@ import { initTaxRuleModel, TaxRule } from './taxRule.model';
 import { initNotificationLogModel, NotificationLog } from './notificationLog.model';
 import { initAuditLogModel, AuditLog } from './auditLog.model';
 import { initWebhookEventModel, WebhookEvent } from './webhookEvent.model';
-import { initHelpTicketModel, HelpTicket } from './helpTicket.model';
 import { initPlatformSettingModel, PlatformSetting } from './platformSetting.model';
 import { initPromoBannerModel, PromoBanner } from './promoBanner.model';
 import { initTcsLedgerModel, TcsLedger } from './tcsLedger.model';
@@ -50,9 +49,11 @@ import { initReportExportLogModel, ReportExportLog } from './reportExportLog.mod
 import { initSupportTicketModel, SupportTicket } from './supportTicket.model';
 import { initTicketMessageModel, TicketMessage } from './ticketMessage.model';
 import { initTicketAttachmentModel, TicketAttachment } from './ticketAttachment.model';
+import { initTicketReadModel, TicketRead } from './ticketRead.model';
 import { initBugReportModel, BugReport } from './bugReport.model';
 import { initBugReportAttachmentModel, BugReportAttachment } from './bugReportAttachment.model';
 import { initBugReportCommentModel, BugReportComment } from './bugReportComment.model';
+import { initNewsletterSubscriberModel, NewsletterSubscriber } from './newsletterSubscriber.model';
 
 const models = {
   Role: initRoleModel(sequelize),
@@ -92,7 +93,6 @@ const models = {
   NotificationLog: initNotificationLogModel(sequelize),
   AuditLog: initAuditLogModel(sequelize),
   WebhookEvent: initWebhookEventModel(sequelize),
-  HelpTicket: initHelpTicketModel(sequelize),
   PlatformSetting: initPlatformSettingModel(sequelize),
   PromoBanner: initPromoBannerModel(sequelize),
   TcsLedger: initTcsLedgerModel(sequelize),
@@ -106,9 +106,11 @@ const models = {
   SupportTicket: initSupportTicketModel(sequelize),
   TicketMessage: initTicketMessageModel(sequelize),
   TicketAttachment: initTicketAttachmentModel(sequelize),
+  TicketRead: initTicketReadModel(sequelize),
   BugReport: initBugReportModel(sequelize),
   BugReportAttachment: initBugReportAttachmentModel(sequelize),
   BugReportComment: initBugReportCommentModel(sequelize),
+  NewsletterSubscriber: initNewsletterSubscriberModel(sequelize),
 };
 
 Object.values(models).forEach((model: any) => {
@@ -125,10 +127,11 @@ export {
   Coupon, CouponBatch, CouponUsage, CommissionLedger, Payout,
   Review, ReviewVote, Wishlist, WishlistItem,
   ShippingZone, ShippingRate, Shipment, ReturnRequest,
-  TaxRule, NotificationLog, AuditLog, WebhookEvent, HelpTicket,
+  TaxRule, NotificationLog, AuditLog, WebhookEvent,
   PlatformSetting, PromoBanner,
   TcsLedger, TdsLedger, CreditNote, DebitNote, DocumentSequence,
   WalletLedger, WalletWriteOff, ReportExportLog,
-  SupportTicket, TicketMessage, TicketAttachment,
+  SupportTicket, TicketMessage, TicketAttachment, TicketRead,
   BugReport, BugReportAttachment, BugReportComment,
+  NewsletterSubscriber,
 };

@@ -32,11 +32,34 @@ module.exports = {
     const [vendors] = await queryInterface.sequelize.query(
       `SELECT id FROM vendors WHERE "deletedAt" IS NULL LIMIT 20`,
     );
+    const [vendorStaff] = await queryInterface.sequelize.query(
+      `SELECT u.id AS "userId", u."vendorId"
+       FROM users u
+       INNER JOIN roles r ON r.id = u."roleId"
+       WHERE r.name IN ('VENDOR_OWNER', 'VENDOR_STAFF')
+         AND u."vendorId" IS NOT NULL
+         AND u."deletedAt" IS NULL
+       LIMIT 50`,
+    );
+    const [admins] = await queryInterface.sequelize.query(
+      `SELECT u.id
+       FROM users u
+       INNER JOIN roles r ON r.id = u."roleId"
+       WHERE r.name IN ('SUPER_ADMIN', 'ADMIN_ORDER_MANAGER')
+         AND u."deletedAt" IS NULL
+       LIMIT 10`,
+    );
 
     if (customers.length === 0) {
       console.log('seed-support-tickets: no customers found — skipping');
       return;
     }
+
+    const staffByVendor = new Map();
+    for (const row of vendorStaff) {
+      if (!staffByVendor.has(row.vendorId)) staffByVendor.set(row.vendorId, row.userId);
+    }
+    const adminId = admins.length > 0 ? admins[0].id : null;
 
     const now = new Date();
     const tickets = [];
@@ -50,6 +73,9 @@ module.exports = {
       const vendor = vendors.length > 0 ? pick(vendors, i) : null;
       const status = pick(STATUSES, i);
       const createdAt = new Date(now.getTime() - i * 60_000);
+      const assignedToId = vendor
+        ? staffByVendor.get(vendor.id) ?? null
+        : adminId;
       const ticket = {
         id,
         ticketNumber: `TKT-${String(100000 + i).padStart(6, '0')}`,
@@ -61,7 +87,7 @@ module.exports = {
         relatedVendorId: vendor ? vendor.id : null,
         priority: pick(PRIORITIES, i),
         status,
-        assignedToId: null,
+        assignedToId,
         firstResponseAt: status === 'OPEN' ? null : createdAt,
         resolvedAt: status === 'RESOLVED' || status === 'CLOSED' ? createdAt : null,
         closedAt: status === 'CLOSED' ? createdAt : null,
@@ -95,15 +121,23 @@ module.exports = {
     // One ticket with 80+ messages for thread pagination testing.
     if (heavyTicketId) {
       const customerId = tickets[0].customerId;
+      const staffSenderId =
+        tickets[0].assignedToId || adminId || customerId;
+      const staffRole = tickets[0].assignedToId
+        ? 'VENDOR'
+        : adminId
+          ? 'SUPER_ADMIN'
+          : 'CUSTOMER';
       for (let m = 0; m < 85; m += 1) {
         const createdAt = new Date(now.getTime() - m * 30_000);
+        const fromCustomer = m % 3 !== 0;
         messages.push({
           id: uuidv4(),
           ticketId: heavyTicketId,
-          senderId: customerId,
-          senderRole: m % 3 === 0 ? 'ADMIN' : 'CUSTOMER',
+          senderId: fromCustomer ? customerId : staffSenderId,
+          senderRole: fromCustomer ? 'CUSTOMER' : staffRole,
           body: `Seeded thread message ${m + 1} on heavy ticket.`,
-          createdBy: customerId,
+          createdBy: fromCustomer ? customerId : staffSenderId,
           updatedBy: null,
           deletedBy: null,
           createdAt,

@@ -3,12 +3,13 @@ import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { keysetQuerySchema } from '@core/http/keysetPagination';
 import { supportTicketsService } from './supportTickets.service';
-import { AdminTicketListQuerySchema, VendorTicketListQuerySchema } from './supportTickets.dto';
+import { AdminTicketListQuerySchema, CustomerTicketListQuerySchema, VendorTicketListQuerySchema } from './supportTickets.dto';
 
 function actorFromReq(req: Request) {
   return {
     id: req.user!.id,
     vendorId: req.user!.vendorId,
+    roleId: req.user!.roleId,
     role: { name: req.user!.role.name },
   };
 }
@@ -19,7 +20,7 @@ export const create = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const listMine = asyncHandler(async (req: Request, res: Response) => {
-  const query = keysetQuerySchema.parse(req.query);
+  const query = CustomerTicketListQuerySchema.parse(req.query);
   const result = await supportTicketsService.listMine(actorFromReq(req), query);
   res.json(ok(result.items, { nextCursor: result.nextCursor }));
 });
@@ -32,7 +33,7 @@ export const listVendor = asyncHandler(async (req: Request, res: Response) => {
 
 export const listAdmin = asyncHandler(async (req: Request, res: Response) => {
   const query = AdminTicketListQuerySchema.parse(req.query);
-  const result = await supportTicketsService.listAdmin(query);
+  const result = await supportTicketsService.listAdmin(query, actorFromReq(req));
   res.json(ok(result.items, { nextCursor: result.nextCursor }));
 });
 
@@ -80,6 +81,20 @@ export const reassign = asyncHandler(async (req: Request, res: Response) => {
     req.params.id!,
     actorFromReq(req),
     req.body.assignedToId,
+  );
+  res.json(ok(updated));
+});
+
+export const escalate = asyncHandler(async (req: Request, res: Response) => {
+  const updated = await supportTicketsService.escalate(req.params.id!, actorFromReq(req));
+  res.json(ok(updated));
+});
+
+export const updatePriority = asyncHandler(async (req: Request, res: Response) => {
+  const updated = await supportTicketsService.updatePriority(
+    req.params.id!,
+    actorFromReq(req),
+    req.body,
   );
   res.json(ok(updated));
 });

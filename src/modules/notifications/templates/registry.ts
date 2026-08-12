@@ -1,6 +1,7 @@
 import type { NotificationType } from '@database/models/notificationLog.model';
 import { env } from '@config/env';
 import { EMAIL_COPY, formatEmailCopy } from '../emailCopy';
+import { bugReportPortalUrl, ticketPortalUrlForGroup } from '../portalLinks';
 import { escapeHtml, renderEmailLayout } from './layout';
 
 export type EmailTemplateData = Record<string, unknown>;
@@ -124,18 +125,33 @@ function defaultCta(type: NotificationType, data: EmailTemplateData): { label?: 
     case 'TICKET_CREATED':
     case 'TICKET_REPLIED':
     case 'TICKET_RESOLVED':
-    case 'TICKET_REOPENED':
+    case 'TICKET_REOPENED': {
+      const ticketId = str(data, 'ticketId', '');
+      const portalGroupRaw = str(data, 'portalGroup', 'customer');
+      const portalGroup =
+        portalGroupRaw === 'admin' || portalGroupRaw === 'vendor' ? portalGroupRaw : 'customer';
       return {
         label: EMAIL_COPY.ctaViewTicket,
-        url: str(data, 'actionUrl', `${base}/support/tickets/${str(data, 'ticketId', '')}`),
+        url: str(data, 'actionUrl', ticketPortalUrlForGroup(ticketId, portalGroup)),
       };
+    }
     case 'BUG_REPORT_TRIAGED':
     case 'BUG_REPORT_FIXED':
     case 'BUG_REPORT_WONT_FIX':
+    case 'BUG_REPORT_DUPLICATE': {
+      // Prefer caller actionUrl. If missing, use role-aware portal when reporterRole is present;
+      // otherwise a neutral support path (do not assume customer vs vendor incorrectly).
+      const bugReportId = str(data, 'bugReportId', '');
+      const reporterRole = str(data, 'reporterRole', '');
+      const fallback =
+        bugReportId && reporterRole
+          ? bugReportPortalUrl(bugReportId, reporterRole)
+          : `${base}/support/bug-reports/${bugReportId}`;
       return {
         label: EMAIL_COPY.ctaViewBugReport,
-        url: str(data, 'actionUrl', `${base}/support/bug-reports/${str(data, 'bugReportId', '')}`),
+        url: str(data, 'actionUrl', fallback),
       };
+    }
     default:
       return { label: EMAIL_COPY.ctaOpenStore, url: base };
   }

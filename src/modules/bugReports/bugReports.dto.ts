@@ -15,7 +15,7 @@ const AttachmentSchema = z.object({
   durationSeconds: z.number().int().positive().nullable().optional(),
 });
 
-/** Reporter create body — triage-only fields must not appear. pageUrl is server-captured. */
+/** Reporter create body — severity/assignee/module/status remain admin-only (triage fields). */
 export const CreateBugReportSchema = z
   .object({
     title: z.string().trim().min(1).max(255),
@@ -31,6 +31,9 @@ export const TriageBugReportSchema = z.object({
   assignedToId: z.string().uuid().nullable().optional(),
 });
 
+/** Same shape as triage — used to update severity/assignee/module without a status transition. */
+export const UpdateBugAssignmentSchema = TriageBugReportSchema;
+
 export const BugStatusSchema = z.object({
   status: z.enum([
     BUG_REPORT_STATUS.IN_PROGRESS,
@@ -40,8 +43,9 @@ export const BugStatusSchema = z.object({
   ]),
 });
 
+/** Accepts a bug UUID or human report number (e.g. BUG-000123). */
 export const DuplicateBugReportSchema = z.object({
-  duplicateOfId: z.string().uuid(),
+  duplicateOf: z.string().trim().min(1).max(64),
 });
 
 export const WontFixBugReportSchema = z.object({
@@ -59,10 +63,18 @@ export const AdminBugListQuerySchema = keysetQuerySchema.extend({
   reporterRole: z.enum(BUG_REPORTER_ROLE_VALUES).optional(),
 });
 
+/** Reporter list — status/severity filters only (no admin-only fields). */
+export const MineBugListQuerySchema = keysetQuerySchema.extend({
+  status: z.enum(BUG_REPORT_STATUS_VALUES).optional(),
+  severity: z.enum(BUG_REPORT_SEVERITY_VALUES).optional(),
+});
+
 export type CreateBugReportRequest = z.infer<typeof CreateBugReportSchema>;
 export type TriageBugReportRequest = z.infer<typeof TriageBugReportSchema>;
+export type UpdateBugAssignmentRequest = z.infer<typeof UpdateBugAssignmentSchema>;
 export type BugStatusRequest = z.infer<typeof BugStatusSchema>;
 export type DuplicateBugReportRequest = z.infer<typeof DuplicateBugReportSchema>;
 export type WontFixBugReportRequest = z.infer<typeof WontFixBugReportSchema>;
 export type BugCommentRequest = z.infer<typeof BugCommentSchema>;
 export type AdminBugListQuery = z.infer<typeof AdminBugListQuerySchema>;
+export type MineBugListQuery = z.infer<typeof MineBugListQuerySchema>;

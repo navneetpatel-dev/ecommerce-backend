@@ -11,6 +11,7 @@ import {
   RejectVendorSchema,
   SuspendVendorSchema,
   GetVendorsQuerySchema,
+  VendorDirectoryQuerySchema,
   UploadDocumentSchema,
   RejectDocumentSchema,
   ResolveDocumentsQuerySchema,
@@ -33,6 +34,14 @@ router.get(
   '/document-requirements',
   validate(ResolveDocumentsQuerySchema, 'query'),
   vendorsController.previewRequiredDocuments,
+);
+
+// Approved vendor directory for support ticket vendor picker
+router.get(
+  '/directory',
+  authenticate,
+  validate(VendorDirectoryQuerySchema, 'query'),
+  vendorsController.listApprovedDirectory,
 );
 
 // Public vendor registration

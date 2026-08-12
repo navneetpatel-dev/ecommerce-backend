@@ -530,31 +530,46 @@ export class NotificationsService {
   }
 
   sendTicketReplied(userId: string, ticketId: string, templateData: EmailTemplateData = {}) {
+    const messageId =
+      typeof templateData.messageId === 'string' && templateData.messageId
+        ? templateData.messageId
+        : `${Date.now()}`;
     return this.enqueue({
       userId,
       type: 'TICKET_REPLIED',
       referenceType: 'SupportTicket',
-      referenceId: `${ticketId}:reply:${todayBucket()}:${userId}`,
+      // Unique per message so same-day follow-up replies still notify.
+      referenceId: `${ticketId}:reply:${messageId}:${userId}`,
       templateData: { ...templateData, ticketId },
     });
   }
 
   sendTicketResolved(userId: string, ticketId: string, templateData: EmailTemplateData = {}) {
+    const resolvedAt =
+      typeof templateData.resolvedAt === 'string' && templateData.resolvedAt
+        ? templateData.resolvedAt
+        : new Date().toISOString();
     return this.enqueue({
       userId,
       type: 'TICKET_RESOLVED',
       referenceType: 'SupportTicket',
-      referenceId: ticketId,
+      // Unique per resolve cycle so reopen → resolve notifies again.
+      referenceId: `${ticketId}:resolved:${resolvedAt}:${userId}`,
       templateData: { ...templateData, ticketId },
     });
   }
 
   sendTicketReopened(userId: string, ticketId: string, templateData: EmailTemplateData = {}) {
+    const reopenedAt =
+      typeof templateData.reopenedAt === 'string' && templateData.reopenedAt
+        ? templateData.reopenedAt
+        : new Date().toISOString();
     return this.enqueue({
       userId,
       type: 'TICKET_REOPENED',
       referenceType: 'SupportTicket',
-      referenceId: `${ticketId}:reopen:${todayBucket()}`,
+      // Unique per reopen event (not calendar-day bucket).
+      referenceId: `${ticketId}:reopen:${reopenedAt}:${userId}`,
       templateData: { ...templateData, ticketId },
     });
   }
@@ -574,7 +589,8 @@ export class NotificationsService {
       userId,
       type: 'BUG_REPORT_FIXED',
       referenceType: 'BugReport',
-      referenceId: bugReportId,
+      // Bucket so re-FIXED after IN_PROGRESS can notify again the same day.
+      referenceId: `${bugReportId}:fixed:${todayBucket()}`,
       templateData: { ...templateData, bugReportId },
     });
   }
@@ -583,6 +599,16 @@ export class NotificationsService {
     return this.enqueue({
       userId,
       type: 'BUG_REPORT_WONT_FIX',
+      referenceType: 'BugReport',
+      referenceId: bugReportId,
+      templateData: { ...templateData, bugReportId },
+    });
+  }
+
+  sendBugReportDuplicate(userId: string, bugReportId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({
+      userId,
+      type: 'BUG_REPORT_DUPLICATE',
       referenceType: 'BugReport',
       referenceId: bugReportId,
       templateData: { ...templateData, bugReportId },
