@@ -228,8 +228,8 @@ module.exports = {
         {
           id: cartId,
           userId: customerId,
-          couponCode: 'CS-COUPON-PLATFORM-10',
-          couponCodes: JSON.stringify(['CS-COUPON-PLATFORM-10', 'CS-COUPON-VENDOR-FLAT']),
+          couponCode: null,
+          couponCodes: JSON.stringify([]),
           createdAt: now,
           updatedAt: now,
         },
@@ -237,15 +237,14 @@ module.exports = {
     } else {
       await queryInterface.sequelize.query(
         `UPDATE carts
-         SET "couponCode" = 'CS-COUPON-PLATFORM-10',
-             "couponCodes" = :codes::jsonb,
+         SET "couponCode" = NULL,
+             "couponCodes" = '[]'::jsonb,
              "updatedAt" = :now
          WHERE id = :cartId`,
         {
           replacements: {
             cartId,
             now,
-            codes: JSON.stringify(['CS-COUPON-PLATFORM-10', 'CS-COUPON-VENDOR-FLAT']),
           },
         },
       );
@@ -270,7 +269,7 @@ module.exports = {
       ]);
     }
 
-    console.log('✓ Multi-vendor cart seed (cs-coupon platform code applied)');
+    console.log('✓ Multi-vendor cart seed (no coupon pre-applied)');
   },
 
   async down(queryInterface) {

@@ -407,16 +407,18 @@ export class CartService {
     data: UpdateCartItemRequest,
   ): Promise<CartView> {
     await sequelize.transaction(async (t) => {
-      const itemResult = await CartItem.findByPk(itemId, {
-        include: ['variant'],
+      // Postgres rejects FOR UPDATE on the nullable side of an OUTER JOIN.
+      // Lock the cart line alone, then load the variant without a lock.
+      const item = await CartItem.findByPk(itemId, {
         transaction: t,
         lock: t.LOCK.UPDATE,
       });
+      if (!item) throw new NotFoundError('CartItem');
 
-      if (!itemResult) throw new NotFoundError('CartItem');
+      const variant = await ProductVariant.findByPk(item.variantId, { transaction: t });
+      if (!variant) throw new NotFoundError('ProductVariant');
 
-      const item = itemResult as CartItem & { variant: ProductVariant };
-      const quantity = clampQuantity(data.quantity, item.variant.stock);
+      const quantity = clampQuantity(data.quantity, variant.stock);
       if (quantity < 1) {
         throw new ValidationError(ERROR_MESSAGES.INSUFFICIENT_STOCK);
       }
