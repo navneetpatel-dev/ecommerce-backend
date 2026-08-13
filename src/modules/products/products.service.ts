@@ -64,6 +64,13 @@ function mapProductResponse(product: Product, reviewCount = 0) {
     variants,
     secondaryCategories,
     basePrice: Number(plain.basePrice ?? 0),
+    compareAtPrice:
+      plain.compareAtPrice != null && plain.compareAtPrice !== ''
+        ? Number(plain.compareAtPrice)
+        : null,
+    specs: plain.specs && typeof plain.specs === 'object' ? plain.specs : {},
+    highlights: Array.isArray(plain.highlights) ? plain.highlights : [],
+    brand: plain.brand ?? null,
     avgRating: Number(plain.avgRating ?? 0),
     reviewCount: Number(plain.reviewCount ?? reviewCount ?? 0),
     stock: Number(plain.stock ?? stockFromVariants),

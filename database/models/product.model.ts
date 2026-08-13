@@ -11,6 +11,10 @@ export class Product extends Model<InferAttributes<Product>, InferCreationAttrib
   declare slug: string;
   declare description: string;
   declare basePrice: number;
+  declare compareAtPrice: number | null;
+  declare brand: string | null;
+  declare specs: CreationOptional<Record<string, string>>;
+  declare highlights: CreationOptional<string[]>;
   declare status: ProductStatus;
   declare approvedById: string | null;
   declare rejectionNote: string | null;
@@ -64,6 +68,10 @@ export const initProductModel = (sequelize: Sequelize) => {
       slug: { type: DataTypes.STRING, unique: true, allowNull: false },
       description: { type: DataTypes.TEXT, allowNull: false },
       basePrice: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
+      compareAtPrice: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+      brand: { type: DataTypes.STRING, allowNull: true },
+      specs: { type: DataTypes.JSONB, allowNull: false, defaultValue: {} },
+      highlights: { type: DataTypes.ARRAY(DataTypes.TEXT), allowNull: false, defaultValue: [] },
       status: {
         type: DataTypes.ENUM(...(Object.values(PRODUCT_STATUS) as [string, ...string[]])),
         defaultValue: PRODUCT_STATUS.DRAFT,
