@@ -15,6 +15,8 @@ export class Product extends Model<InferAttributes<Product>, InferCreationAttrib
   declare brand: string | null;
   declare specs: CreationOptional<Record<string, string>>;
   declare highlights: CreationOptional<string[]>;
+  declare deliveryNote: string | null;
+  declare returnNote: string | null;
   declare status: ProductStatus;
   declare approvedById: string | null;
   declare rejectionNote: string | null;
@@ -72,6 +74,8 @@ export const initProductModel = (sequelize: Sequelize) => {
       brand: { type: DataTypes.STRING, allowNull: true },
       specs: { type: DataTypes.JSONB, allowNull: false, defaultValue: {} },
       highlights: { type: DataTypes.ARRAY(DataTypes.TEXT), allowNull: false, defaultValue: [] },
+      deliveryNote: { type: DataTypes.TEXT, allowNull: true },
+      returnNote: { type: DataTypes.TEXT, allowNull: true },
       status: {
         type: DataTypes.ENUM(...(Object.values(PRODUCT_STATUS) as [string, ...string[]])),
         defaultValue: PRODUCT_STATUS.DRAFT,

@@ -1,3 +1,5 @@
+import { PRODUCT_FIELD_LIMITS } from './product';
+
 /** Machine-readable API error codes (response `error.code`). */
 export const ERROR_CODES = {
   UNAUTHORIZED: 'UNAUTHORIZED',
@@ -106,6 +108,10 @@ export const ERROR_MESSAGES = {
   VENDOR_CATEGORIES_INVALID: 'One or more categories are invalid',
   VENDOR_ENTITY_TYPE_REQUIRED: 'Business entity type is required',
   PRODUCT_NAME_EXISTS: 'Product name already exists',
+  PRODUCT_COMPARE_AT_BELOW_PRICE: 'MRP must be greater than or equal to the selling price',
+  PRODUCT_SPECS_TOO_MANY: `Too many specification rows (maximum ${PRODUCT_FIELD_LIMITS.SPECS_MAX})`,
+  PRODUCT_SPEC_KEY_INVALID: `Specification labels must be between 1 and ${PRODUCT_FIELD_LIMITS.SPEC_KEY_MAX} characters`,
+  PRODUCT_SPEC_DUPLICATE_KEY: 'Specification labels must be unique',
   PRODUCT_NOT_DRAFT: 'Product is not in DRAFT status',
   PRODUCT_NOT_PENDING_APPROVAL: 'Product is not pending approval',
   CATEGORY_NAME_EXISTS: 'Category name already exists',

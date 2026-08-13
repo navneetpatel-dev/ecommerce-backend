@@ -161,6 +161,21 @@ export const shippingService = {
 
     return shipment;
   },
+
+  async getVendorFreeShippingThreshold(vendorId: string): Promise<number | null> {
+    const rates = await ShippingRate.findAll({
+      where: {
+        vendorId,
+        freeShippingThreshold: { [Op.ne]: null },
+      },
+      attributes: ['freeShippingThreshold'],
+    });
+    const amounts = rates
+      .map((rate) => Number(rate.freeShippingThreshold))
+      .filter((amount) => Number.isFinite(amount) && amount >= 0);
+    if (!amounts.length) return null;
+    return Math.min(...amounts);
+  },
 };
 
 export const { resolveZonesForPincode, getRatesForQuote } = shippingService;

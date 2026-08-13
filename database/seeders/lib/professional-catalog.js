@@ -1,5 +1,19 @@
 'use strict';
 
+/** Keep in sync with backend `core/constants/product.ts`. */
+const PRODUCT_FIELD_LIMITS = {
+  BRAND_MAX: 80,
+  TAG_MAX: 40,
+  HIGHLIGHT_MAX: 160,
+  SPEC_KEY_MAX: 60,
+  SPEC_VALUE_MAX: 200,
+  NOTE_MAX: 500,
+};
+
+function clip(value, max) {
+  return String(value ?? '').trim().slice(0, max);
+}
+
 /** Deterministic pseudo-random in [0, 1). */
 function seededUnit(seed) {
   const x = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
@@ -50,6 +64,10 @@ const CATEGORY_FAMILIES = {
       'Easy care — machine washable',
       'Free exchange on size mismatch',
     ],
+    notes: () => ({
+      deliveryNote: 'Packed in a garment-safe mailer. Steam or iron on reverse if creased in transit.',
+      returnNote: 'Size exchanges are accepted when tags and the hygiene seal are intact.',
+    }),
   },
   electronics: {
     brands: ['TechNova', 'PulseGear', 'ZenByte', 'CircuitOne', 'VoltEdge'],
@@ -72,6 +90,10 @@ const CATEGORY_FAMILIES = {
       'Secure packaging with tamper seal',
       'Pan-India service support',
     ],
+    notes: () => ({
+      deliveryNote: 'Ships in manufacturer packaging plus an outer carton. Signature may be required on delivery.',
+      returnNote: 'Dead-on-arrival replacements need the warranty card, invoice, and all accessories in the box.',
+    }),
   },
   home: {
     brands: ['HomeCraft', 'LivingEssentials', 'Nest & Bloom', 'ArtisanHome', 'PureNest'],
@@ -94,6 +116,10 @@ const CATEGORY_FAMILIES = {
       'Compact packaging — minimal waste',
       'Ideal for gifting',
     ],
+    notes: () => ({
+      deliveryNote: 'Fragile pieces ship with extra padding. Please unpack and inspect on delivery.',
+      returnNote: 'Unused items in original packing can be returned. Assembly marks void the return.',
+    }),
   },
   sports: {
     brands: ['ActivePulse', 'StrideMax', 'PeakForm', 'FlexRun', 'SportHive'],
@@ -114,6 +140,10 @@ const CATEGORY_FAMILIES = {
       'Reinforced stitching at stress points',
       'Designed for mobility and comfort',
     ],
+    notes: () => ({
+      deliveryNote: 'Packed to keep its shape in transit. Usually leaves the warehouse the next working day.',
+      returnNote: 'Unworn items with tags attached can be returned. Used or washed goods are not eligible.',
+    }),
   },
   beauty: {
     brands: ['GlowKind', 'PureDerm', 'VelvetSkin', 'AuraCare', 'Botanica'],
@@ -134,6 +164,10 @@ const CATEGORY_FAMILIES = {
       'Travel-friendly packaging',
       'Cruelty-free formulation',
     ],
+    notes: () => ({
+      deliveryNote: 'Sealed units only. We do not ship products close to expiry.',
+      returnNote: 'Opened or unsealed cosmetics cannot be returned. Damaged-in-transit replacements are allowed.',
+    }),
   },
   default: {
     brands: ['Marketplace Select', 'Everyday Essentials', 'PrimePick', 'ValuePlus'],
@@ -152,6 +186,10 @@ const CATEGORY_FAMILIES = {
       'Secure packaging',
       'Fast dispatch from verified seller',
     ],
+    notes: () => ({
+      deliveryNote: 'Packed securely and handed to the courier within one working day of the order.',
+      returnNote: 'Unused items in original condition can be returned with the invoice.',
+    }),
   },
 };
 
@@ -215,14 +253,27 @@ function buildProductEnrichment(product) {
   const compareAtPrice = Math.round(basePrice * (1 + markup));
 
   const tags = [
-    brand,
-    product.category_name,
+    clip(brand, PRODUCT_FIELD_LIMITS.TAG_MAX),
+    clip(product.category_name, PRODUCT_FIELD_LIMITS.TAG_MAX),
     seededUnit(seed + 7) > 0.55 ? 'Bestseller' : 'Featured',
     seededUnit(seed + 13) > 0.7 ? 'New arrival' : 'Top rated',
-  ];
+  ].filter(Boolean);
+
+  const rawSpecs = profile.specs(product.name, product.category_name);
+  const specs = {};
+  for (const [key, value] of Object.entries(rawSpecs)) {
+    specs[clip(key, PRODUCT_FIELD_LIMITS.SPEC_KEY_MAX)] = clip(
+      value,
+      PRODUCT_FIELD_LIMITS.SPEC_VALUE_MAX,
+    );
+  }
+
+  const policyNotes = profile.notes
+    ? profile.notes()
+    : CATEGORY_FAMILIES.default.notes();
 
   return {
-    brand,
+    brand: clip(brand, PRODUCT_FIELD_LIMITS.BRAND_MAX),
     compareAtPrice,
     description: buildDescription({
       name: product.name,
@@ -230,9 +281,13 @@ function buildProductEnrichment(product) {
       categoryName: product.category_name,
       family,
     }),
-    specs: profile.specs(product.name, product.category_name),
-    highlights: profile.highlights(brand),
+    specs,
+    highlights: profile.highlights(brand).map((item) =>
+      clip(item, PRODUCT_FIELD_LIMITS.HIGHLIGHT_MAX),
+    ),
     tags: [...new Set(tags)],
+    deliveryNote: clip(policyNotes.deliveryNote, PRODUCT_FIELD_LIMITS.NOTE_MAX),
+    returnNote: clip(policyNotes.returnNote, PRODUCT_FIELD_LIMITS.NOTE_MAX),
     family,
     profile,
   };

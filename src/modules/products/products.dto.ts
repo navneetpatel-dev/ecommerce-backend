@@ -1,25 +1,101 @@
 import { z } from 'zod';
 import { PRODUCT_STATUS_VALUES } from '@core/constants/statuses';
 import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from '@core/constants/http';
+import { PRODUCT_FIELD_LIMITS } from '@core/constants/product';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 
-export const CreateProductSchema = z.object({
-  categoryId: z.string().uuid(),
-  /** Optional secondary tags (ProductCategory); canonical categoryId stays primary. */
-  secondaryCategoryIds: z.array(z.string().uuid()).max(20).default([]),
-  name: z.string().min(1),
-  description: z.string().min(1),
-  basePrice: z.number().positive(),
-  tags: z.array(z.string()).default([]),
-});
+const emptyToNull = (value: unknown) =>
+  typeof value === 'string' && value.trim() === '' ? null : typeof value === 'string' ? value.trim() : value;
 
-export const UpdateProductSchema = z.object({
-  categoryId: z.string().uuid().optional(),
-  secondaryCategoryIds: z.array(z.string().uuid()).max(20).optional(),
-  name: z.string().min(1).optional(),
-  description: z.string().min(1).optional(),
-  basePrice: z.number().positive().optional(),
-  tags: z.array(z.string()).optional(),
-});
+const optionalNullableText = (max: number) =>
+  z.preprocess(emptyToNull, z.string().max(max).nullable().optional());
+
+const stringList = (itemMax: number, listMax: number, required: boolean) => {
+  const item = z.string().trim().min(1).max(itemMax);
+  const list = z.array(item).max(listMax);
+  return required ? list.default([]) : list.optional();
+};
+
+const specsSchema = (required: boolean) => {
+  const record = z
+    .record(z.string().trim().min(1).max(PRODUCT_FIELD_LIMITS.SPEC_VALUE_MAX))
+    .superRefine((value, ctx) => {
+      const keys = Object.keys(value);
+      if (keys.length > PRODUCT_FIELD_LIMITS.SPECS_MAX) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: ERROR_MESSAGES.PRODUCT_SPECS_TOO_MANY,
+        });
+      }
+      const seen = new Set<string>();
+      for (const key of keys) {
+        const trimmed = key.trim();
+        if (!trimmed || trimmed.length > PRODUCT_FIELD_LIMITS.SPEC_KEY_MAX) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: ERROR_MESSAGES.PRODUCT_SPEC_KEY_INVALID,
+          });
+        }
+        const normalized = trimmed.toLowerCase();
+        if (seen.has(normalized)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: ERROR_MESSAGES.PRODUCT_SPEC_DUPLICATE_KEY,
+          });
+        }
+        seen.add(normalized);
+      }
+    });
+  return required ? record.default({}) : record.optional();
+};
+
+function assertCompareAtPrice(data: { basePrice?: number; compareAtPrice?: number | null }, ctx: z.RefinementCtx) {
+  if (data.compareAtPrice == null || data.basePrice == null) return;
+  if (Number(data.compareAtPrice) < Number(data.basePrice)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['compareAtPrice'],
+      message: ERROR_MESSAGES.PRODUCT_COMPARE_AT_BELOW_PRICE,
+    });
+  }
+}
+
+export const CreateProductSchema = z
+  .object({
+    categoryId: z.string().uuid(),
+    /** Optional secondary tags (ProductCategory); canonical categoryId stays primary. */
+    secondaryCategoryIds: z.array(z.string().uuid()).max(20).default([]),
+    name: z.string().trim().min(1).max(PRODUCT_FIELD_LIMITS.NAME_MAX),
+    description: z.string().trim().min(1).max(PRODUCT_FIELD_LIMITS.DESCRIPTION_MAX),
+    basePrice: z.number().positive(),
+    compareAtPrice: z.number().positive().nullable().optional(),
+    brand: optionalNullableText(PRODUCT_FIELD_LIMITS.BRAND_MAX),
+    tags: stringList(PRODUCT_FIELD_LIMITS.TAG_MAX, PRODUCT_FIELD_LIMITS.TAGS_MAX, true),
+    highlights: stringList(PRODUCT_FIELD_LIMITS.HIGHLIGHT_MAX, PRODUCT_FIELD_LIMITS.HIGHLIGHTS_MAX, true),
+    specs: specsSchema(true),
+    deliveryNote: optionalNullableText(PRODUCT_FIELD_LIMITS.NOTE_MAX),
+    returnNote: optionalNullableText(PRODUCT_FIELD_LIMITS.NOTE_MAX),
+  })
+  .superRefine(assertCompareAtPrice);
+
+export const UpdateProductSchema = z
+  .object({
+    categoryId: z.string().uuid().optional(),
+    secondaryCategoryIds: z.array(z.string().uuid()).max(20).optional(),
+    name: z.string().trim().min(1).max(PRODUCT_FIELD_LIMITS.NAME_MAX).optional(),
+    description: z.string().trim().min(1).max(PRODUCT_FIELD_LIMITS.DESCRIPTION_MAX).optional(),
+    basePrice: z.number().positive().optional(),
+    compareAtPrice: z.number().positive().nullable().optional(),
+    brand: optionalNullableText(PRODUCT_FIELD_LIMITS.BRAND_MAX),
+    tags: stringList(PRODUCT_FIELD_LIMITS.TAG_MAX, PRODUCT_FIELD_LIMITS.TAGS_MAX, false),
+    highlights: stringList(PRODUCT_FIELD_LIMITS.HIGHLIGHT_MAX, PRODUCT_FIELD_LIMITS.HIGHLIGHTS_MAX, false),
+    specs: specsSchema(false),
+    deliveryNote: optionalNullableText(PRODUCT_FIELD_LIMITS.NOTE_MAX),
+    returnNote: optionalNullableText(PRODUCT_FIELD_LIMITS.NOTE_MAX),
+  })
+  .superRefine(assertCompareAtPrice);
 
 export const GetProductsQuerySchema = z
   .object({

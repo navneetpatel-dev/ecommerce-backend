@@ -78,6 +78,8 @@ module.exports = {
            specs = :specs::jsonb,
            highlights = ARRAY(SELECT jsonb_array_elements_text(:highlightsJson::jsonb)),
            tags = ARRAY(SELECT jsonb_array_elements_text(:tagsJson::jsonb)),
+           "deliveryNote" = :deliveryNote,
+           "returnNote" = :returnNote,
            "updatedAt" = :updatedAt
          WHERE id = :id`,
         {
@@ -89,6 +91,8 @@ module.exports = {
             specs: JSON.stringify(enrichment.specs),
             highlightsJson: JSON.stringify(enrichment.highlights),
             tagsJson: JSON.stringify(enrichment.tags),
+            deliveryNote: enrichment.deliveryNote,
+            returnNote: enrichment.returnNote,
             updatedAt: now,
           },
         },
@@ -157,7 +161,9 @@ module.exports = {
         brand = NULL,
         "compareAtPrice" = NULL,
         specs = '{}'::jsonb,
-        highlights = ARRAY[]::text[]
+        highlights = ARRAY[]::text[],
+        "deliveryNote" = NULL,
+        "returnNote" = NULL
     `);
   },
 };

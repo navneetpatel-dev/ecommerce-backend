@@ -24,6 +24,7 @@ import { categoriesService } from '@modules/categories/categories.service';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { findVendorOwnerUserId } from '@modules/notifications/orderNotifications';
 import { vendorsService } from '@modules/vendors/vendors.service';
+import { shippingService } from '@modules/shipping/shipping.service';
 import type { Transaction } from 'sequelize';
 import type {
   CreateProductRequest,
@@ -71,6 +72,8 @@ function mapProductResponse(product: Product, reviewCount = 0) {
     specs: plain.specs && typeof plain.specs === 'object' ? plain.specs : {},
     highlights: Array.isArray(plain.highlights) ? plain.highlights : [],
     brand: plain.brand ?? null,
+    deliveryNote: plain.deliveryNote ?? null,
+    returnNote: plain.returnNote ?? null,
     avgRating: Number(plain.avgRating ?? 0),
     reviewCount: Number(plain.reviewCount ?? reviewCount ?? 0),
     stock: Number(plain.stock ?? stockFromVariants),
@@ -81,6 +84,15 @@ function mapProductResponse(product: Product, reviewCount = 0) {
     vendorName:
       plain.vendor?.businessName ?? plain.Vendor?.businessName ?? plain.vendorName ?? null,
   };
+}
+
+async function mapDetailResponse(product: Product, reviewCount = 0) {
+  const mapped = mapProductResponse(product, reviewCount);
+  const vendorId = mapped.vendorId ?? mapped.vendor?.id ?? null;
+  const vendorFreeShippingThreshold = vendorId
+    ? await shippingService.getVendorFreeShippingThreshold(vendorId)
+    : null;
+  return { ...mapped, vendorFreeShippingThreshold };
 }
 
 async function syncSecondaryCategories(
@@ -226,7 +238,7 @@ export class ProductsService {
     const reviewCount = await Review.count({
       where: { productId: product.id, status: REVIEW_STATUS.APPROVED },
     });
-    return mapProductResponse(product, reviewCount);
+    return mapDetailResponse(product, reviewCount);
   }
 
   async getProductBySlug(slug: string, options: { customerFacing?: boolean } = {}) {
@@ -234,7 +246,10 @@ export class ProductsService {
       ? await productsRepository.findVisibleBySlug(slug)
       : await productsRepository.findBySlug(slug);
     if (!product) throw new NotFoundError('Product');
-    return mapProductResponse(product);
+    const reviewCount = await Review.count({
+      where: { productId: product.id, status: REVIEW_STATUS.APPROVED },
+    });
+    return mapDetailResponse(product, reviewCount);
   }
 
   async updateProduct(id: string, vendorId: string | null, data: UpdateProductRequest) {
@@ -253,6 +268,20 @@ export class ProductsService {
       }
 
       const updateData: Record<string, unknown> = { ...productFields };
+
+      const nextBasePrice =
+        productFields.basePrice != null ? Number(productFields.basePrice) : Number(product.basePrice);
+      const nextCompareAt =
+        productFields.compareAtPrice !== undefined
+          ? productFields.compareAtPrice == null
+            ? null
+            : Number(productFields.compareAtPrice)
+          : product.compareAtPrice == null
+            ? null
+            : Number(product.compareAtPrice);
+      if (nextCompareAt != null && nextCompareAt < nextBasePrice) {
+        throw new ValidationError(ERROR_MESSAGES.PRODUCT_COMPARE_AT_BELOW_PRICE);
+      }
 
       if (productFields.name) {
         const slug = generateSlug(productFields.name);
