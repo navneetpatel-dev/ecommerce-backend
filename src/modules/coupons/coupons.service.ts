@@ -757,7 +757,7 @@ export class CouponsService {
   }
 
   async eligibleCoupons(
-    userId: string,
+    userId: string | null,
     opts: { limit?: number; productId?: string } = {},
   ): Promise<
     Array<{
@@ -771,7 +771,9 @@ export class CouponsService {
     const limit = opts.limit ?? 5;
     const lines = opts.productId
       ? await loadProductPreviewLines(opts.productId)
-      : (await loadCartLines(userId)).lines;
+      : userId
+        ? (await loadCartLines(userId)).lines
+        : [];
     if (lines.length === 0) return [];
 
     const shippingTotal = await previewShippingTotal();

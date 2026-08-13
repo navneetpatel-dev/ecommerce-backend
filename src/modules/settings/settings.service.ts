@@ -20,6 +20,9 @@ export type PlatformSettingsPayload = {
   bugVerifyWindowDays: number;
   /** Days after VERIFIED before a bug report auto-transitions to CLOSED. */
   bugCloseWindowDays: number;
+  codEnabled: boolean;
+  codMinOrderValue: number;
+  codMaxOrderValue: number | null;
 };
 
 const SETTINGS_KEY = 'platform';
@@ -38,6 +41,9 @@ const DEFAULTS: PlatformSettingsPayload = {
   ticketReopenWindowDays: 7,
   bugVerifyWindowDays: 7,
   bugCloseWindowDays: 7,
+  codEnabled: true,
+  codMinOrderValue: 0,
+  codMaxOrderValue: null,
 };
 
 export const settingsService = {

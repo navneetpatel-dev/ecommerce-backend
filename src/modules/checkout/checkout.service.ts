@@ -46,8 +46,10 @@ import {
   WALLET_REFERENCE_TYPE,
 } from '@core/constants/statuses';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
+import { resolveCodForCatalogItems } from '@modules/products/pdpPolicy';
 import { notifyOrderConfirmed } from '@modules/notifications/orderNotifications';
 import { notificationsService } from '@modules/notifications/notifications.service';
+
 function groupBy<T>(array: T[], keyFn: (item: T) => string): Record<string, T[]> {
   return array.reduce((acc, item) => {
     const key = keyFn(item);
@@ -139,6 +141,19 @@ function vendorOriginState(vendor: Vendor | undefined): string {
   return String(vendor?.state ?? '').trim();
 }
 
+function catalogItemsForCod(
+  items: (CartItem & { variant: ProductVariant & { product: any } })[],
+) {
+  return items.map((item) => {
+    const product = item.variant?.product;
+    return {
+      categoryId: product?.categoryId ?? null,
+      codEnabled: product?.codEnabled ?? null,
+      vendor: product?.vendor ?? product?.Vendor ?? null,
+    };
+  });
+}
+
 function toCouponLines(
   items: (CartItem & { variant: ProductVariant & { product: any } })[],
 ): CartLineForCoupon[] {
@@ -216,6 +231,7 @@ export class CheckoutService {
     amountDue: number;
     appliedCoupon: { code: string; discount: number; cashbackAmount?: number } | null;
     appliedCoupons: Array<{ code: string; discount: number; cashbackAmount?: number }>;
+    codAvailable: boolean;
   }> {
     const cart = await loadUserCart(userId);
 
@@ -396,6 +412,10 @@ export class CheckoutService {
       grandTotal,
     );
     const amountDue = Math.round((grandTotal - walletAmountToUse) * 100) / 100;
+    const codAvailable = await resolveCodForCatalogItems(
+      catalogItemsForCod(quoteCart.items),
+      grandTotal,
+    );
 
     return {
       vendorBreakdowns,
@@ -406,6 +426,7 @@ export class CheckoutService {
       amountDue,
       appliedCoupon: applied,
       appliedCoupons,
+      codAvailable,
     };
   }
 
@@ -552,6 +573,15 @@ export class CheckoutService {
       }
 
       const orderTotalRupees = fromPaise(customerGrandTotalPaise);
+      if (data.paymentMethod === PAYMENT_METHOD.COD) {
+        const codAvailable = await resolveCodForCatalogItems(
+          catalogItemsForCod(cart.items),
+          orderTotalRupees,
+        );
+        if (!codAvailable) {
+          throw new ValidationError(ERROR_MESSAGES.COD_NOT_AVAILABLE);
+        }
+      }
       const requestedWallet = Math.max(0, Number(data.walletAmountToUse ?? 0));
       let walletAmountUsed = 0;
       if (requestedWallet > 0) {

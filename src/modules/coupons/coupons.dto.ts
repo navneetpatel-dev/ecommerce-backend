@@ -178,6 +178,11 @@ export const EligibleCouponsQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(20).optional(),
 });
 
+export const PublicEligibleCouponsQuerySchema = z.object({
+  productId: z.string().uuid(),
+  limit: z.coerce.number().int().positive().max(20).optional(),
+});
+
 const templateObjectSchema = couponObjectSchema.omit({ code: true });
 
 export const BulkGenerateSchema = z.object({

@@ -13,6 +13,7 @@ import {
   BulkGenerateSchema,
   StatusSchema,
   EligibleCouponsQuerySchema,
+  PublicEligibleCouponsQuerySchema,
 } from './coupons.dto';
 import * as couponsController from './coupons.controller';
 
@@ -34,6 +35,11 @@ router.get(
   authenticate,
   validate(EligibleCouponsQuerySchema, 'query'),
   couponsController.eligibleCoupons,
+);
+router.get(
+  '/eligible-public',
+  validate(PublicEligibleCouponsQuerySchema, 'query'),
+  couponsController.eligibleCouponsPublic,
 );
 
 // Vendor (authenticate + vendorId; no COUPON_MANAGE)

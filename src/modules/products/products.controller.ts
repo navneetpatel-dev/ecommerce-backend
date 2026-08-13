@@ -43,6 +43,7 @@ const PRODUCT_LIST_QUERY_KEYS = new Set([
   'rating',
   'sort',
   'includeDescendants',
+  'excludeProductId',
 ]);
 
 function extractAttributeFilters(query: Request['query']): Record<string, string[]> {

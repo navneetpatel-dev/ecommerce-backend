@@ -17,6 +17,14 @@ export class Product extends Model<InferAttributes<Product>, InferCreationAttrib
   declare highlights: CreationOptional<string[]>;
   declare deliveryNote: string | null;
   declare returnNote: string | null;
+  declare warrantyMonths: number | null;
+  declare warrantyType: string | null;
+  declare hsnCode: string | null;
+  declare seoTitle: string | null;
+  declare seoDescription: string | null;
+  declare videoUrl: string | null;
+  declare sizeChartUrl: string | null;
+  declare codEnabled: boolean | null;
   declare status: ProductStatus;
   declare approvedById: string | null;
   declare rejectionNote: string | null;
@@ -53,7 +61,7 @@ export class Product extends Model<InferAttributes<Product>, InferCreationAttrib
           as: 'vendor',
           required: true,
           where: { status: VENDOR_STATUS.APPROVED },
-          attributes: ['id', 'businessName', 'slug', 'logoUrl', 'commissionRate'],
+          attributes: ['id', 'businessName', 'slug', 'logoUrl', 'commissionRate', 'performanceScore', 'returnShippingFee', 'codEnabled'],
         },
       ],
     });
@@ -76,6 +84,14 @@ export const initProductModel = (sequelize: Sequelize) => {
       highlights: { type: DataTypes.ARRAY(DataTypes.TEXT), allowNull: false, defaultValue: [] },
       deliveryNote: { type: DataTypes.TEXT, allowNull: true },
       returnNote: { type: DataTypes.TEXT, allowNull: true },
+      warrantyMonths: { type: DataTypes.INTEGER, allowNull: true },
+      warrantyType: { type: DataTypes.STRING, allowNull: true },
+      hsnCode: { type: DataTypes.STRING, allowNull: true },
+      seoTitle: { type: DataTypes.STRING, allowNull: true },
+      seoDescription: { type: DataTypes.TEXT, allowNull: true },
+      videoUrl: { type: DataTypes.TEXT, allowNull: true },
+      sizeChartUrl: { type: DataTypes.TEXT, allowNull: true },
+      codEnabled: { type: DataTypes.BOOLEAN, allowNull: true },
       status: {
         type: DataTypes.ENUM(...(Object.values(PRODUCT_STATUS) as [string, ...string[]])),
         defaultValue: PRODUCT_STATUS.DRAFT,

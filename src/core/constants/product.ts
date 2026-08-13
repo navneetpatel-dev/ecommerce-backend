@@ -11,4 +11,11 @@ export const PRODUCT_FIELD_LIMITS = {
   SPEC_VALUE_MAX: 200,
   SPECS_MAX: 30,
   NOTE_MAX: 500,
+  HSN_MAX: 16,
+  SEO_TITLE_MAX: 255,
+  SEO_DESCRIPTION_MAX: 2000,
+  WARRANTY_MONTHS_MAX: 120,
 } as const;
+
+/** Matches `product_variants.lowStockAt` default. */
+export const VARIANT_LOW_STOCK_DEFAULT = 5;

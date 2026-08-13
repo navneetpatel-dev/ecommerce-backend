@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PRODUCT_STATUS_VALUES } from '@core/constants/statuses';
+import { PRODUCT_STATUS_VALUES, WARRANTY_TYPE_VALUES } from '@core/constants/statuses';
 import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from '@core/constants/http';
 import { PRODUCT_FIELD_LIMITS } from '@core/constants/product';
 import { ERROR_MESSAGES } from '@core/constants/errors';
@@ -9,6 +9,9 @@ const emptyToNull = (value: unknown) =>
 
 const optionalNullableText = (max: number) =>
   z.preprocess(emptyToNull, z.string().max(max).nullable().optional());
+
+const optionalNullableUrl = (max: number) =>
+  z.preprocess(emptyToNull, z.string().url().max(max).nullable().optional());
 
 const stringList = (itemMax: number, listMax: number, required: boolean) => {
   const item = z.string().trim().min(1).max(itemMax);
@@ -77,6 +80,14 @@ export const CreateProductSchema = z
     specs: specsSchema(true),
     deliveryNote: optionalNullableText(PRODUCT_FIELD_LIMITS.NOTE_MAX),
     returnNote: optionalNullableText(PRODUCT_FIELD_LIMITS.NOTE_MAX),
+    warrantyMonths: z.number().int().min(0).max(PRODUCT_FIELD_LIMITS.WARRANTY_MONTHS_MAX).nullable().optional(),
+    warrantyType: z.enum(WARRANTY_TYPE_VALUES).nullable().optional(),
+    hsnCode: optionalNullableText(PRODUCT_FIELD_LIMITS.HSN_MAX),
+    seoTitle: optionalNullableText(PRODUCT_FIELD_LIMITS.SEO_TITLE_MAX),
+    seoDescription: optionalNullableText(PRODUCT_FIELD_LIMITS.SEO_DESCRIPTION_MAX),
+    videoUrl: optionalNullableUrl(2048),
+    sizeChartUrl: optionalNullableUrl(2048),
+    codEnabled: z.boolean().nullable().optional(),
   })
   .superRefine(assertCompareAtPrice);
 
@@ -94,6 +105,14 @@ export const UpdateProductSchema = z
     specs: specsSchema(false),
     deliveryNote: optionalNullableText(PRODUCT_FIELD_LIMITS.NOTE_MAX),
     returnNote: optionalNullableText(PRODUCT_FIELD_LIMITS.NOTE_MAX),
+    warrantyMonths: z.number().int().min(0).max(PRODUCT_FIELD_LIMITS.WARRANTY_MONTHS_MAX).nullable().optional(),
+    warrantyType: z.enum(WARRANTY_TYPE_VALUES).nullable().optional(),
+    hsnCode: optionalNullableText(PRODUCT_FIELD_LIMITS.HSN_MAX),
+    seoTitle: optionalNullableText(PRODUCT_FIELD_LIMITS.SEO_TITLE_MAX),
+    seoDescription: optionalNullableText(PRODUCT_FIELD_LIMITS.SEO_DESCRIPTION_MAX),
+    videoUrl: optionalNullableUrl(2048),
+    sizeChartUrl: optionalNullableUrl(2048),
+    codEnabled: z.boolean().nullable().optional(),
   })
   .superRefine(assertCompareAtPrice);
 
@@ -113,6 +132,7 @@ export const GetProductsQuerySchema = z
       .union([z.literal('true'), z.literal('false'), z.boolean()])
       .optional()
       .transform((value) => value === true || value === 'true'),
+    excludeProductId: z.string().uuid().optional(),
   })
   .passthrough();
 
@@ -128,6 +148,7 @@ export const AddVariantSchema = z.object({
   price: z.number().positive(),
   stock: z.number().int().nonnegative().default(0),
   lowStockAt: z.number().int().nonnegative().default(5),
+  weightGrams: z.number().int().positive().optional(),
 });
 
 export const UpdateVariantSchema = z.object({
@@ -135,11 +156,13 @@ export const UpdateVariantSchema = z.object({
   price: z.number().positive().optional(),
   stock: z.number().int().nonnegative().optional(),
   lowStockAt: z.number().int().nonnegative().optional(),
+  weightGrams: z.number().int().positive().optional(),
 });
 
 export const AddImageSchema = z.object({
   url: z.string().url(),
   isPrimary: z.boolean().default(false),
+  variantId: z.string().uuid().nullable().optional(),
 });
 
 export const ReplaceImageSchema = z.object({

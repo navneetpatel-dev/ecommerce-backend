@@ -15,6 +15,9 @@ export const UpdateSettingsSchema = z.object({
   ticketReopenWindowDays: z.number().int().positive().max(365),
   bugVerifyWindowDays: z.number().int().positive().max(365),
   bugCloseWindowDays: z.number().int().positive().max(365),
+  codEnabled: z.boolean().default(true),
+  codMinOrderValue: z.number().min(0).default(0),
+  codMaxOrderValue: z.number().min(0).nullable().default(null),
 });
 
 export type UpdateSettingsRequest = z.infer<typeof UpdateSettingsSchema>;

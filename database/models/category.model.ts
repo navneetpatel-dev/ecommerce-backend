@@ -16,6 +16,10 @@ export class Category extends Model<InferAttributes<Category>, InferCreationAttr
   declare seoTitle: string | null;
   declare seoDescription: string | null;
   declare commissionRate: number | null;
+  declare returnWindowDays: number | null;
+  declare codEnabled: CreationOptional<boolean>;
+  declare defaultWarrantyMonths: number | null;
+  declare defaultWarrantyType: string | null;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -57,6 +61,10 @@ export const initCategoryModel = (sequelize: Sequelize) => {
       seoTitle: { type: DataTypes.STRING, allowNull: true },
       seoDescription: { type: DataTypes.TEXT, allowNull: true },
       commissionRate: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
+      returnWindowDays: { type: DataTypes.INTEGER, allowNull: true },
+      codEnabled: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+      defaultWarrantyMonths: { type: DataTypes.INTEGER, allowNull: true },
+      defaultWarrantyType: { type: DataTypes.STRING, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

@@ -13,6 +13,7 @@ import {
   ListCouponsQuerySchema,
   StatusSchema,
   EligibleCouponsQuerySchema,
+  PublicEligibleCouponsQuerySchema,
 } from './coupons.dto';
 
 function isVendorActor(req: Request): boolean {
@@ -99,6 +100,15 @@ export const removeCoupon = asyncHandler(async (req: Request, res: Response) => 
 export const eligibleCoupons = asyncHandler(async (req: Request, res: Response) => {
   const query = EligibleCouponsQuerySchema.parse(req.query);
   const result = await couponsService.eligibleCoupons(req.user!.id, {
+    productId: query.productId,
+    limit: query.limit,
+  });
+  res.json(ok(result));
+});
+
+export const eligibleCouponsPublic = asyncHandler(async (req: Request, res: Response) => {
+  const query = PublicEligibleCouponsQuerySchema.parse(req.query);
+  const result = await couponsService.eligibleCoupons(null, {
     productId: query.productId,
     limit: query.limit,
   });

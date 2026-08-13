@@ -54,6 +54,23 @@ export const IMAGE_UPLOAD_SPECS: Record<string, ImageUploadSpec> = {
     mimeTypes: IMAGE_MIME_TYPES,
     cropRequired: true,
   },
+  'products:video': {
+    outputWidth: 0,
+    outputHeight: 0,
+    aspectRatio: 0,
+    maxBytes: MAX_VIDEO_UPLOAD_BYTES,
+    videoMaxBytes: MAX_VIDEO_UPLOAD_BYTES,
+    mimeTypes: VIDEO_MIME_TYPES,
+    cropRequired: false,
+  },
+  'products:size-chart': {
+    outputWidth: 1200,
+    outputHeight: 900,
+    aspectRatio: 4 / 3,
+    maxBytes: MAX_UPLOAD_BYTES,
+    mimeTypes: IMAGE_MIME_TYPES,
+    cropRequired: true,
+  },
   'vendors:logo': {
     outputWidth: 512,
     outputHeight: 512,

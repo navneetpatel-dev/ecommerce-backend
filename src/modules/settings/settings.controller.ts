@@ -14,6 +14,10 @@ export const getPublicSettings = asyncHandler(async (_req: Request, res: Respons
     ticketReopenWindowDays: settings.ticketReopenWindowDays,
     bugVerifyWindowDays: settings.bugVerifyWindowDays,
     bugCloseWindowDays: settings.bugCloseWindowDays,
+    returnShippingFee: settings.returnShippingFee,
+    codEnabled: settings.codEnabled,
+    codMinOrderValue: settings.codMinOrderValue,
+    codMaxOrderValue: settings.codMaxOrderValue,
   }));
 });
 

@@ -31,7 +31,10 @@ import { fromPaise, toPaise } from '@modules/pricing/money';
 import { pricingService } from '@modules/pricing/pricing.service';
 import { nextDocumentNumber } from '@modules/pricing/documentSequence';
 import { notificationsService } from '@modules/notifications/notifications.service';
+import { Product } from '@database/models/product.model';
+import { ProductVariant } from '@database/models/productVariant.model';
 import { settingsService } from '@modules/settings/settings.service';
+import { resolveReturnWindowForCategory } from '@modules/products/pdpPolicy';
 import { walletService } from '@modules/wallet/wallet.service';
 import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
 import { clawbackCashbackForReturn } from '@modules/wallet/cashback.service';
@@ -193,6 +196,11 @@ export class ReturnsService {
             as: 'subOrder',
             include: [{ model: Order, as: 'order' }],
           },
+          {
+            model: ProductVariant,
+            as: 'variant',
+            include: [{ model: Product, as: 'product', attributes: ['id', 'categoryId'] }],
+          },
         ],
         transaction: t,
       });
@@ -201,6 +209,7 @@ export class ReturnsService {
 
       const item = orderItem as OrderItem & {
         subOrder: SubOrder & { order: Order };
+        variant?: ProductVariant & { product?: Product };
       };
 
       if (item.subOrder.order.userId !== userId) {
@@ -210,8 +219,11 @@ export class ReturnsService {
         throw new ForbiddenError(ERROR_MESSAGES.ITEM_MUST_BE_DELIVERED);
       }
 
-      const settings = await settingsService.getPlatformSettings();
-      const windowDays = Number(settings.defaultReturnWindow ?? 7);
+      const returnWindow = await resolveReturnWindowForCategory(item.variant?.product?.categoryId);
+      if (!returnWindow.returnsAllowed || returnWindow.returnWindowDays == null) {
+        throw new ValidationError(ERROR_MESSAGES.RETURN_NOT_ALLOWED);
+      }
+      const windowDays = returnWindow.returnWindowDays;
       const deliveredAt = item.subOrder.updatedAt;
       if (deliveredAt) {
         const expires = new Date(deliveredAt.getTime() + windowDays * 24 * 60 * 60 * 1000);

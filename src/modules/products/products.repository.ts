@@ -28,6 +28,7 @@ type ProductListFilters = {
   maxPrice?: number;
   rating?: number;
   sort?: string;
+  excludeProductId?: string;
   limit: number;
   offset: number;
 };
@@ -68,6 +69,11 @@ function buildListWhere(filters: ProductListFilters) {
   }
   if (filters.vendorId) where.vendorId = filters.vendorId;
   if (filters.status) where.status = filters.status;
+  if (filters.excludeProductId) {
+    where.id = where.id
+      ? { [Op.and]: [where.id, { [Op.ne]: filters.excludeProductId }] }
+      : { [Op.ne]: filters.excludeProductId };
+  }
 
   if (filters.search) {
     where[Op.or] = [

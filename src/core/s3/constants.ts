@@ -36,6 +36,8 @@ export const S3_PURPOSE_VALUES = [
   'photos',
   'export',
   'attachments',
+  'video',
+  'size-chart',
 ] as const;
 
 export type S3Purpose = (typeof S3_PURPOSE_VALUES)[number];
@@ -50,11 +52,13 @@ export const S3_PURPOSES = {
   PHOTOS: 'photos',
   EXPORT: 'export',
   ATTACHMENTS: 'attachments',
+  VIDEO: 'video',
+  SIZE_CHART: 'size-chart',
 } as const satisfies Record<string, S3Purpose>;
 
 /** Allowed purpose values per entity type. */
 export const S3_ENTITY_PURPOSES: Record<S3EntityType, readonly S3Purpose[]> = {
-  [S3_ENTITY_TYPES.PRODUCTS]: [S3_PURPOSES.IMAGES],
+  [S3_ENTITY_TYPES.PRODUCTS]: [S3_PURPOSES.IMAGES, S3_PURPOSES.VIDEO, S3_PURPOSES.SIZE_CHART],
   [S3_ENTITY_TYPES.VENDORS]: [S3_PURPOSES.LOGO, S3_PURPOSES.BANNER, S3_PURPOSES.KYC],
   [S3_ENTITY_TYPES.CATEGORIES]: [S3_PURPOSES.IMAGE],
   [S3_ENTITY_TYPES.USERS]: [S3_PURPOSES.AVATAR],

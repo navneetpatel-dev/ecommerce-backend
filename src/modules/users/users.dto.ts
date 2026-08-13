@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { USER_STATUS_VALUES } from '@core/constants/statuses';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
+import { PINCODE_PATTERN } from '@core/constants/pincode';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 
 export const UpdateUserProfileSchema = z.object({
   name: z.string().min(1).max(120).optional(),
@@ -38,7 +40,7 @@ export const CreateAddressSchema = z.object({
   city: z.string().min(1).max(100),
   state: z.string().min(1).max(100),
   country: z.string().min(1).max(100).default('India'),
-  pincode: z.string().min(4).max(12),
+  pincode: z.string().trim().regex(PINCODE_PATTERN, ERROR_MESSAGES.PINCODE_INVALID),
   isDefault: z.boolean().optional().default(false),
 });
 

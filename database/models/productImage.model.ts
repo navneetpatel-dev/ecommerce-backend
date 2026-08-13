@@ -3,6 +3,7 @@ import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, 
 export class ProductImage extends Model<InferAttributes<ProductImage>, InferCreationAttributes<ProductImage>> {
   declare id: CreationOptional<string>;
   declare productId: string;
+  declare variantId: string | null;
   declare url: string;
   declare isPrimary: CreationOptional<boolean>;
   declare createdBy: string | null;
@@ -14,6 +15,7 @@ export class ProductImage extends Model<InferAttributes<ProductImage>, InferCrea
 
   static associate(models: Record<string, any>) {
     ProductImage.belongsTo(models.Product, { foreignKey: 'productId' });
+    ProductImage.belongsTo(models.ProductVariant, { foreignKey: 'variantId', as: 'variant' });
   }
 }
 
@@ -22,6 +24,7 @@ export const initProductImageModel = (sequelize: Sequelize) => {
     {
       id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
       productId: { type: DataTypes.UUID, allowNull: false },
+      variantId: { type: DataTypes.UUID, allowNull: true },
       url: { type: DataTypes.STRING, allowNull: false },
       isPrimary: { type: DataTypes.BOOLEAN, defaultValue: false },
       createdBy: { type: DataTypes.UUID, allowNull: true },

@@ -112,6 +112,10 @@ function serializeCategory(row: Category | Record<string, unknown>) {
   return {
     ...plain,
     commissionRate: plain.commissionRate != null ? Number(plain.commissionRate) : null,
+    returnWindowDays: plain.returnWindowDays != null ? Number(plain.returnWindowDays) : null,
+    defaultWarrantyMonths:
+      plain.defaultWarrantyMonths != null ? Number(plain.defaultWarrantyMonths) : null,
+    codEnabled: plain.codEnabled !== false,
     children: Array.isArray(plain.children)
       ? plain.children.map((child: Category) => serializeCategory(child))
       : plain.children,
@@ -195,6 +199,10 @@ export class CategoriesService {
           seoTitle: data.seoTitle ?? null,
           seoDescription: data.seoDescription ?? null,
           commissionRate: data.commissionRate ?? null,
+          returnWindowDays: data.returnWindowDays ?? null,
+          codEnabled: data.codEnabled ?? true,
+          defaultWarrantyMonths: data.defaultWarrantyMonths ?? null,
+          defaultWarrantyType: data.defaultWarrantyType ?? null,
           ...(data.status ? { status: data.status } : {}),
         },
         { transaction: t },
@@ -329,6 +337,14 @@ export class CategoriesService {
       if (data.seoTitle !== undefined) updateData.seoTitle = data.seoTitle;
       if (data.seoDescription !== undefined) updateData.seoDescription = data.seoDescription;
       if (data.commissionRate !== undefined) updateData.commissionRate = data.commissionRate;
+      if (data.returnWindowDays !== undefined) updateData.returnWindowDays = data.returnWindowDays;
+      if (data.codEnabled !== undefined) updateData.codEnabled = data.codEnabled;
+      if (data.defaultWarrantyMonths !== undefined) {
+        updateData.defaultWarrantyMonths = data.defaultWarrantyMonths;
+      }
+      if (data.defaultWarrantyType !== undefined) {
+        updateData.defaultWarrantyType = data.defaultWarrantyType;
+      }
 
       await categoriesRepository.update(id, updateData, { transaction: t });
 

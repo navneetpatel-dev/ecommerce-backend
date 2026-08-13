@@ -288,6 +288,16 @@ function buildProductEnrichment(product) {
     tags: [...new Set(tags)],
     deliveryNote: clip(policyNotes.deliveryNote, PRODUCT_FIELD_LIMITS.NOTE_MAX),
     returnNote: clip(policyNotes.returnNote, PRODUCT_FIELD_LIMITS.NOTE_MAX),
+    warrantyMonths: family === 'electronics' ? 12 : family === 'fashion' ? null : 6,
+    warrantyType: family === 'electronics' ? 'MANUFACTURER' : family === 'home' ? 'SELLER' : null,
+    hsnCode: family === 'electronics' ? '8517' : family === 'fashion' ? '6109' : null,
+    seoTitle: clip(`${brand} ${product.name}`, 255),
+    seoDescription: clip(buildDescription({
+      name: product.name,
+      brand,
+      categoryName: product.category_name,
+      family,
+    }), 2000),
     family,
     profile,
   };

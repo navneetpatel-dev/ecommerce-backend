@@ -27,7 +27,7 @@ import {
 export type ValidateCouponInput = {
   code?: string | null;
   coupon?: Coupon | null;
-  userId: string;
+  userId?: string | null;
   lines: CartLineForCoupon[];
   shippingTotal?: number;
   shippingByVendor?: Record<string, number>;
@@ -156,7 +156,7 @@ export async function validateCoupon(input: ValidateCouponInput): Promise<Valida
     return fail(ERROR_MESSAGES.COUPON_USAGE_LIMIT, ERROR_CODES.VALIDATION_ERROR);
   }
 
-  if (coupon.usageLimitPerUser != null) {
+  if (coupon.usageLimitPerUser != null && input.userId) {
     const userUsage = await CouponUsage.count({
       where: { couponId: coupon.id, userId: input.userId },
     });
@@ -182,7 +182,7 @@ export async function validateCoupon(input: ValidateCouponInput): Promise<Valida
 
   const restriction = coupon.userRestriction ?? { type: 'all' };
   const restrictionType = (restriction.type || 'all').toLowerCase();
-  if (restrictionType === 'firstorder') {
+  if (input.userId && restrictionType === 'firstorder') {
     const prior = await Order.count({
       where: {
         userId: input.userId,
@@ -195,7 +195,7 @@ export async function validateCoupon(input: ValidateCouponInput): Promise<Valida
     if (prior > 0) {
       return fail(ERROR_MESSAGES.COUPON_RESTRICTION, ERROR_CODES.COUPON_RESTRICTION);
     }
-  } else if (restrictionType === 'specific') {
+  } else if (input.userId && restrictionType === 'specific') {
     const allowed = Array.isArray(restriction.value)
       ? restriction.value.map(String)
       : restriction.value
@@ -204,7 +204,7 @@ export async function validateCoupon(input: ValidateCouponInput): Promise<Valida
     if (allowed.length > 0 && !allowed.includes(input.userId)) {
       return fail(ERROR_MESSAGES.COUPON_RESTRICTION, ERROR_CODES.COUPON_RESTRICTION);
     }
-  } else if (restrictionType === 'segment') {
+  } else if (input.userId && restrictionType === 'segment') {
     const wanted = Array.isArray(restriction.value)
       ? restriction.value.map((v) => String(v).toLowerCase())
       : restriction.value

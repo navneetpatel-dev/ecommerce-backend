@@ -1,12 +1,30 @@
 import { z } from 'zod';
 import { SHIPPING_METHOD_VALUES } from '@core/constants/statuses';
+import { PINCODE_PATTERN } from '@core/constants/pincode';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 
-export const GetShippingRatesSchema = z.object({
-  pincode: z.string(),
-  state: z.string().optional(),
-  weight: z.coerce.number(),
-  method: z.enum(SHIPPING_METHOD_VALUES).optional(),
-});
+export const GetShippingRatesSchema = z
+  .object({
+    pincode: z.string().trim().regex(PINCODE_PATTERN, ERROR_MESSAGES.PINCODE_INVALID),
+    state: z.string().optional(),
+    weight: z.preprocess(
+      (value) => (value === undefined || value === '' ? undefined : value),
+      z.coerce.number().positive().optional(),
+    ),
+    method: z.enum(SHIPPING_METHOD_VALUES).optional(),
+    productId: z.string().uuid().optional(),
+    variantId: z.string().uuid().optional(),
+    vendorId: z.string().uuid().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (!value.productId && value.weight == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['weight'],
+        message: ERROR_MESSAGES.SHIPPING_WEIGHT_REQUIRED,
+      });
+    }
+  });
 
 export const CreateZoneSchema = z.object({
   name: z.string().min(1),

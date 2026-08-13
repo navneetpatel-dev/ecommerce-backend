@@ -26,6 +26,7 @@ import { findVendorOwnerUserId } from '@modules/notifications/orderNotifications
 import { vendorsService } from '@modules/vendors/vendors.service';
 import { shippingService } from '@modules/shipping/shipping.service';
 import type { Transaction } from 'sequelize';
+import { resolvePdpPolicy } from './pdpPolicy';
 import type {
   CreateProductRequest,
   UpdateProductRequest,
@@ -92,7 +93,30 @@ async function mapDetailResponse(product: Product, reviewCount = 0) {
   const vendorFreeShippingThreshold = vendorId
     ? await shippingService.getVendorFreeShippingThreshold(vendorId)
     : null;
-  return { ...mapped, vendorFreeShippingThreshold };
+  const policy = await resolvePdpPolicy(product);
+  const vendor = mapped.vendor
+    ? {
+        ...mapped.vendor,
+        performanceScore: policy.vendorPerformanceScore,
+      }
+    : mapped.vendor;
+  return {
+    ...mapped,
+    vendor,
+    vendorFreeShippingThreshold,
+    returnsAllowed: policy.returnsAllowed,
+    returnWindowDays: policy.returnWindowDays,
+    returnShippingFee: policy.returnShippingFee,
+    gstPercentage: policy.gstPercentage,
+    displayHsnCode: policy.hsnCode,
+    taxInclusive: policy.taxInclusive,
+    codAvailable: policy.codEnabled,
+    codMinOrderValue: policy.codMinOrderValue,
+    codMaxOrderValue: policy.codMaxOrderValue,
+    displayWarrantyMonths: policy.warrantyMonths,
+    displayWarrantyType: policy.warrantyType,
+    vendorPerformanceScore: policy.vendorPerformanceScore,
+  };
 }
 
 async function syncSecondaryCategories(
@@ -192,6 +216,7 @@ export class ProductsService {
       maxPrice: query.maxPrice,
       rating: query.rating,
       sort: query.sort,
+      excludeProductId: query.excludeProductId,
       limit: query.limit,
       offset,
     };
@@ -513,9 +538,18 @@ export class ProductsService {
         await ProductImage.update({ isPrimary: false }, { where: { productId }, transaction: t });
       }
 
+      if (data.variantId) {
+        const variant = await ProductVariant.findByPk(data.variantId, { transaction: t });
+        if (!variant || variant.productId !== productId) {
+          throw new ValidationError(ERROR_MESSAGES.PRODUCT_VARIANT_INVALID);
+        }
+      }
+
       const image = await ProductImage.create({
         productId,
-        ...data,
+        url: data.url,
+        isPrimary: data.isPrimary,
+        variantId: data.variantId ?? null,
       }, { transaction: t });
 
       return image;

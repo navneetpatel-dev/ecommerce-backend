@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   CATEGORY_ATTRIBUTE_TYPE_VALUES,
   CATEGORY_STATUS_VALUES,
+  WARRANTY_TYPE_VALUES,
 } from '@core/constants/statuses';
 import { pageLimitQuerySchema } from '@core/http/pagination';
 
@@ -30,6 +31,21 @@ const optionalCommissionRate = z.preprocess(
   z.coerce.number().min(0).max(100).nullable().optional(),
 );
 
+const optionalReturnWindowDays = z.preprocess(
+  (value) => (value === '' || value === undefined ? undefined : value),
+  z.coerce.number().int().min(0).max(365).nullable().optional(),
+);
+
+const optionalWarrantyMonths = z.preprocess(
+  (value) => (value === '' || value === undefined ? undefined : value),
+  z.coerce.number().int().min(0).max(120).nullable().optional(),
+);
+
+const optionalWarrantyType = z.preprocess(
+  (value) => (typeof value === 'string' && value.trim() === '' ? null : value),
+  z.enum(WARRANTY_TYPE_VALUES).nullable().optional(),
+);
+
 export const CreateCategorySchema = z.object({
   name: z.string().min(1),
   parentId: optionalParentId,
@@ -39,6 +55,10 @@ export const CreateCategorySchema = z.object({
   seoTitle: optionalSeo,
   seoDescription: optionalSeoDescription,
   commissionRate: optionalCommissionRate,
+  returnWindowDays: optionalReturnWindowDays,
+  codEnabled: z.boolean().optional(),
+  defaultWarrantyMonths: optionalWarrantyMonths,
+  defaultWarrantyType: optionalWarrantyType,
 });
 
 export const UpdateCategorySchema = z.object({
@@ -50,6 +70,10 @@ export const UpdateCategorySchema = z.object({
   seoTitle: optionalSeo,
   seoDescription: optionalSeoDescription,
   commissionRate: optionalCommissionRate,
+  returnWindowDays: optionalReturnWindowDays,
+  codEnabled: z.boolean().optional(),
+  defaultWarrantyMonths: optionalWarrantyMonths,
+  defaultWarrantyType: optionalWarrantyType,
 });
 
 export const ReorderCategoriesSchema = z.object({

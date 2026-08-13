@@ -1,11 +1,14 @@
 import { ShippingRate } from '@database/models/shippingRate.model';
 import { ShippingZone } from '@database/models/shippingZone.model';
 import { Shipment } from '@database/models/shipment.model';
+import { Product } from '@database/models/product.model';
+import { ProductVariant } from '@database/models/productVariant.model';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { Op } from 'sequelize';
-import type { CreateZoneRequest, UpdateZoneRequest, CreateRateRequest } from './shipping.dto';
+import type { CreateZoneRequest, UpdateZoneRequest, CreateRateRequest, GetShippingRatesRequest } from './shipping.dto';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
+import { settingsService } from '@modules/settings/settings.service';
 
 export type ShippingQuoteRate = {
   method: 'STANDARD' | 'EXPRESS';
@@ -52,6 +55,7 @@ export const shippingService = {
     weightGrams: number;
     method?: string;
     state?: string;
+    vendorId?: string | null;
   }): Promise<ShippingQuoteRate[]> {
     const zones = await this.resolveZonesForPincode(params.pincode, params.state);
     if (!zones.length) return [];
@@ -66,8 +70,16 @@ export const shippingService = {
       order: [['price', 'ASC']],
     });
 
+    let scoped = rates;
+    if (params.vendorId) {
+      const vendorRates = rates.filter((rate) => rate.vendorId === params.vendorId);
+      scoped = vendorRates.length
+        ? vendorRates
+        : rates.filter((rate) => rate.vendorId == null);
+    }
+
     const cheapestByMethod = new Map<string, ShippingQuoteRate>();
-    for (const rate of rates) {
+    for (const rate of scoped) {
       if (!cheapestByMethod.has(rate.method)) {
         cheapestByMethod.set(rate.method, {
           method: rate.method,
@@ -80,6 +92,47 @@ export const shippingService = {
       }
     }
     return [...cheapestByMethod.values()];
+  },
+
+  async quotePublicRates(query: GetShippingRatesRequest): Promise<ShippingQuoteRate[]> {
+    let vendorId = query.vendorId ?? null;
+    let weightGrams = query.weight ?? 500;
+    let productPrice: number | null = null;
+
+    if (query.productId) {
+      const product = await Product.scope('customerVisible').findByPk(query.productId, {
+        include: [{ model: ProductVariant, as: 'variants' }],
+      });
+      if (!product) throw new NotFoundError('Product');
+      vendorId = vendorId ?? product.vendorId;
+      const variants = product.variants ?? [];
+      const variant = query.variantId
+        ? variants.find((row) => row.id === query.variantId) ?? null
+        : variants[0] ?? null;
+      if (query.variantId && !variant) throw new NotFoundError('ProductVariant');
+      weightGrams = query.weight ?? Number(variant?.weightGrams ?? 500);
+      productPrice = Number(variant?.price ?? product.basePrice ?? 0);
+    }
+
+    const rates = await this.getRatesForQuote({
+      pincode: query.pincode,
+      weightGrams,
+      method: query.method,
+      state: query.state,
+      vendorId,
+    });
+
+    if (!query.productId || productPrice == null) return rates;
+
+    const settings = await settingsService.getPlatformSettings();
+    return rates.map((rate) => {
+      const threshold =
+        rate.freeShippingThreshold ?? Number(settings.freeShippingThreshold ?? 0);
+      return {
+        ...rate,
+        cost: productPrice >= threshold ? 0 : rate.cost,
+      };
+    });
   },
 
   async listZones(query: { page: number; limit: number }) {
