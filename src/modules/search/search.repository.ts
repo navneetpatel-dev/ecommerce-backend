@@ -1,10 +1,17 @@
 import { sequelize } from '@database/models';
 import { QueryTypes } from 'sequelize';
-import { PRODUCT_STATUS, VENDOR_STATUS } from '@core/constants/statuses';
 import {
+  CATEGORY_STATUS,
+  PRODUCT_STATUS,
+  VENDOR_STATUS,
+} from '@core/constants/statuses';
+import {
+  SEARCH_AUTOCOMPLETE_CATEGORY_LIMIT,
   SEARCH_AUTOCOMPLETE_FUZZY_MIN_LENGTH,
   SEARCH_AUTOCOMPLETE_INFIX_MIN_LENGTH,
-  SEARCH_AUTOCOMPLETE_LIMIT,
+  SEARCH_AUTOCOMPLETE_PRODUCT_LIMIT,
+  SEARCH_AUTOCOMPLETE_VENDOR_LIMIT,
+  SEARCH_SUGGESTION_TYPE,
 } from '@core/constants/search';
 import type { SearchSuggestionDto } from './search.dto';
 import { buildAutocompleteLikePatterns } from './search.utils';
@@ -29,11 +36,27 @@ export interface SearchResultRow {
   imageUrl: string;
 }
 
-interface AutocompleteRow {
+interface ProductAutocompleteRow {
   id: string;
   name: string;
   slug: string;
   basePrice: string;
+  imageUrl: string;
+  sku: string | null;
+}
+
+interface VendorAutocompleteRow {
+  id: string;
+  name: string;
+  slug: string;
+  imageUrl: string;
+}
+
+interface CategoryAutocompleteRow {
+  id: string;
+  name: string;
+  slug: string;
+  path: string;
   imageUrl: string;
 }
 
@@ -55,15 +78,32 @@ const primaryImageLateral = `
   ) img ON true
 `;
 
+const skuMatchExists = `
+  EXISTS (
+    SELECT 1
+    FROM product_variants pv
+    WHERE pv."productId" = p.id
+      AND pv."deletedAt" IS NULL
+      AND (
+        lower(pv.sku) = lower(:term)
+        OR pv.sku ILIKE :prefixPattern ESCAPE '\\'
+      )
+  )
+`;
+
 export class SearchRepository {
   async countSearchProducts(params: Omit<SearchParams, 'limit' | 'offset'>): Promise<number> {
+    const { prefixPattern } = buildAutocompleteLikePatterns(params.term.trim());
     const [row] = await sequelize.query<{ total: number }>(
       `
       SELECT COUNT(*)::int AS total
       FROM products p
       JOIN vendors v ON v.id = p."vendorId" AND v."deletedAt" IS NULL
       , websearch_to_tsquery('english', :term) query
-      WHERE p.search_vector @@ query
+      WHERE (
+          p.search_vector @@ query
+          OR ${skuMatchExists}
+        )
         AND ${liveProductFilters}
         AND (:categoryId::uuid IS NULL OR p."categoryId" = :categoryId::uuid)
         AND (:vendorId::uuid IS NULL OR p."vendorId" = :vendorId::uuid)
@@ -71,7 +111,7 @@ export class SearchRepository {
         AND (:maxPrice::numeric IS NULL OR p."basePrice" <= :maxPrice::numeric)
       `,
       {
-        replacements: this.searchReplacements(params),
+        replacements: this.searchReplacements(params, prefixPattern),
         type: QueryTypes.SELECT,
       },
     );
@@ -80,6 +120,7 @@ export class SearchRepository {
   }
 
   async searchProducts(params: SearchParams): Promise<SearchResultRow[]> {
+    const { prefixPattern } = buildAutocompleteLikePatterns(params.term.trim());
     return sequelize.query<SearchResultRow>(
       `
       SELECT
@@ -89,23 +130,29 @@ export class SearchRepository {
         p.slug,
         p.description,
         COALESCE(img.url, '') AS "imageUrl",
-        ts_rank_cd(p.search_vector, query) AS rank
+        CASE
+          WHEN p.search_vector @@ query THEN ts_rank_cd(p.search_vector, query)
+          ELSE 0.05
+        END AS rank
       FROM products p
       JOIN vendors v ON v.id = p."vendorId" AND v."deletedAt" IS NULL
       ${primaryImageLateral}
       , websearch_to_tsquery('english', :term) query
-      WHERE p.search_vector @@ query
+      WHERE (
+          p.search_vector @@ query
+          OR ${skuMatchExists}
+        )
         AND ${liveProductFilters}
         AND (:categoryId::uuid IS NULL OR p."categoryId" = :categoryId::uuid)
         AND (:vendorId::uuid IS NULL OR p."vendorId" = :vendorId::uuid)
         AND (:minPrice::numeric IS NULL OR p."basePrice" >= :minPrice::numeric)
         AND (:maxPrice::numeric IS NULL OR p."basePrice" <= :maxPrice::numeric)
-      ORDER BY rank DESC
+      ORDER BY rank DESC, p.name ASC
       LIMIT :limit OFFSET :offset
       `,
       {
         replacements: {
-          ...this.searchReplacements(params),
+          ...this.searchReplacements(params, prefixPattern),
           limit: params.limit,
           offset: params.offset,
         },
@@ -114,11 +161,24 @@ export class SearchRepository {
     );
   }
 
-  async autocomplete(term: string, limit = SEARCH_AUTOCOMPLETE_LIMIT): Promise<SearchSuggestionDto[]> {
+  async autocomplete(term: string): Promise<SearchSuggestionDto[]> {
     const normalized = term.trim();
-    const { prefixPattern, infixPattern } = buildAutocompleteLikePatterns(normalized);
+    const patterns = buildAutocompleteLikePatterns(normalized);
 
-    const rows = await sequelize.query<AutocompleteRow>(
+    const [products, vendors, categories] = await Promise.all([
+      this.autocompleteProducts(normalized, patterns),
+      this.autocompleteVendors(normalized, patterns),
+      this.autocompleteCategories(normalized, patterns),
+    ]);
+
+    return [...products, ...categories, ...vendors];
+  }
+
+  private async autocompleteProducts(
+    term: string,
+    patterns: ReturnType<typeof buildAutocompleteLikePatterns>,
+  ): Promise<SearchSuggestionDto[]> {
+    const rows = await sequelize.query<ProductAutocompleteRow>(
       `
       SELECT
         p.id,
@@ -126,8 +186,34 @@ export class SearchRepository {
         p.slug,
         p."basePrice",
         COALESCE(img.url, '') AS "imageUrl",
+        (
+          SELECT pv.sku
+          FROM product_variants pv
+          WHERE pv."productId" = p.id
+            AND pv."deletedAt" IS NULL
+            AND (
+              lower(pv.sku) = lower(:term)
+              OR pv.sku ILIKE :prefixPattern ESCAPE '\\'
+            )
+          ORDER BY
+            CASE WHEN lower(pv.sku) = lower(:term) THEN 0 ELSE 1 END,
+            char_length(pv.sku) ASC
+          LIMIT 1
+        ) AS sku,
         CASE
           WHEN p.name ILIKE :prefixPattern ESCAPE '\\' THEN 0
+          WHEN EXISTS (
+            SELECT 1 FROM product_variants pv
+            WHERE pv."productId" = p.id
+              AND pv."deletedAt" IS NULL
+              AND lower(pv.sku) = lower(:term)
+          ) THEN 0
+          WHEN EXISTS (
+            SELECT 1 FROM product_variants pv
+            WHERE pv."productId" = p.id
+              AND pv."deletedAt" IS NULL
+              AND pv.sku ILIKE :prefixPattern ESCAPE '\\'
+          ) THEN 1
           WHEN char_length(:term) >= :infixMinLen AND p.name ILIKE :infixPattern ESCAPE '\\' THEN 1
           ELSE 2
         END AS match_tier,
@@ -149,18 +235,19 @@ export class SearchRepository {
             char_length(:term) >= :fuzzyMinLen
             AND p.name % :term
           )
+          OR ${skuMatchExists}
         )
       ORDER BY match_tier ASC, score DESC, char_length(p.name) ASC, p.name ASC
       LIMIT :limit
       `,
       {
         replacements: {
-          term: normalized,
-          prefixPattern,
-          infixPattern,
+          term,
+          prefixPattern: patterns.prefixPattern,
+          infixPattern: patterns.infixPattern,
           infixMinLen: SEARCH_AUTOCOMPLETE_INFIX_MIN_LENGTH,
           fuzzyMinLen: SEARCH_AUTOCOMPLETE_FUZZY_MIN_LENGTH,
-          limit,
+          limit: SEARCH_AUTOCOMPLETE_PRODUCT_LIMIT,
           liveStatus: PRODUCT_STATUS.LIVE,
           approvedStatus: VENDOR_STATUS.APPROVED,
         },
@@ -169,17 +256,174 @@ export class SearchRepository {
     );
 
     return rows.map((row) => ({
+      type: SEARCH_SUGGESTION_TYPE.PRODUCT,
       id: row.id,
       name: row.name,
       slug: row.slug,
       basePrice: Number(row.basePrice ?? 0),
       imageUrl: row.imageUrl ?? '',
+      sku: row.sku,
     }));
   }
 
-  private searchReplacements(params: Omit<SearchParams, 'limit' | 'offset'>) {
+  private async autocompleteVendors(
+    term: string,
+    patterns: ReturnType<typeof buildAutocompleteLikePatterns>,
+  ): Promise<SearchSuggestionDto[]> {
+    const rows = await sequelize.query<VendorAutocompleteRow>(
+      `
+      SELECT
+        v.id,
+        v."businessName" AS name,
+        v.slug,
+        COALESCE(v."logoUrl", '') AS "imageUrl",
+        CASE
+          WHEN v."businessName" ILIKE :prefixPattern ESCAPE '\\' THEN 0
+          WHEN char_length(:term) >= :infixMinLen
+            AND v."businessName" ILIKE :infixPattern ESCAPE '\\' THEN 1
+          ELSE 2
+        END AS match_tier,
+        GREATEST(
+          word_similarity(:term, v."businessName"),
+          similarity(v."businessName", :term)
+        ) AS score
+      FROM vendors v
+      WHERE v."deletedAt" IS NULL
+        AND v.status = :approvedStatus
+        AND (
+          v."businessName" ILIKE :prefixPattern ESCAPE '\\'
+          OR (
+            char_length(:term) >= :infixMinLen
+            AND v."businessName" ILIKE :infixPattern ESCAPE '\\'
+          )
+          OR (
+            char_length(:term) >= :fuzzyMinLen
+            AND v."businessName" % :term
+          )
+        )
+      ORDER BY match_tier ASC, score DESC, char_length(v."businessName") ASC, v."businessName" ASC
+      LIMIT :limit
+      `,
+      {
+        replacements: {
+          term,
+          prefixPattern: patterns.prefixPattern,
+          infixPattern: patterns.infixPattern,
+          infixMinLen: SEARCH_AUTOCOMPLETE_INFIX_MIN_LENGTH,
+          fuzzyMinLen: SEARCH_AUTOCOMPLETE_FUZZY_MIN_LENGTH,
+          limit: SEARCH_AUTOCOMPLETE_VENDOR_LIMIT,
+          approvedStatus: VENDOR_STATUS.APPROVED,
+        },
+        type: QueryTypes.SELECT,
+      },
+    );
+
+    return rows.map((row) => ({
+      type: SEARCH_SUGGESTION_TYPE.VENDOR,
+      id: row.id,
+      name: row.name,
+      slug: row.slug,
+      imageUrl: row.imageUrl ?? '',
+    }));
+  }
+
+  private async autocompleteCategories(
+    term: string,
+    patterns: ReturnType<typeof buildAutocompleteLikePatterns>,
+  ): Promise<SearchSuggestionDto[]> {
+    const rows = await sequelize.query<CategoryAutocompleteRow>(
+      `
+      WITH RECURSIVE cat_tree AS (
+        SELECT
+          c.id,
+          c.name,
+          c.slug,
+          c."parentId",
+          c."imageUrl",
+          c.status,
+          c."deletedAt",
+          c.slug::text AS path
+        FROM categories c
+        WHERE c."parentId" IS NULL
+          AND c."deletedAt" IS NULL
+
+        UNION ALL
+
+        SELECT
+          c.id,
+          c.name,
+          c.slug,
+          c."parentId",
+          c."imageUrl",
+          c.status,
+          c."deletedAt",
+          (ct.path || '/' || c.slug)::text AS path
+        FROM categories c
+        JOIN cat_tree ct ON c."parentId" = ct.id
+        WHERE c."deletedAt" IS NULL
+      )
+      SELECT
+        ct.id,
+        ct.name,
+        ct.slug,
+        ct.path,
+        COALESCE(ct."imageUrl", '') AS "imageUrl",
+        CASE
+          WHEN ct.name ILIKE :prefixPattern ESCAPE '\\' THEN 0
+          WHEN char_length(:term) >= :infixMinLen AND ct.name ILIKE :infixPattern ESCAPE '\\' THEN 1
+          ELSE 2
+        END AS match_tier,
+        GREATEST(
+          word_similarity(:term, ct.name),
+          similarity(ct.name, :term)
+        ) AS score
+      FROM cat_tree ct
+      WHERE ct.status = :activeStatus
+        AND (
+          ct.name ILIKE :prefixPattern ESCAPE '\\'
+          OR (
+            char_length(:term) >= :infixMinLen
+            AND ct.name ILIKE :infixPattern ESCAPE '\\'
+          )
+          OR (
+            char_length(:term) >= :fuzzyMinLen
+            AND ct.name % :term
+          )
+        )
+      ORDER BY match_tier ASC, score DESC, char_length(ct.name) ASC, ct.name ASC
+      LIMIT :limit
+      `,
+      {
+        replacements: {
+          term,
+          prefixPattern: patterns.prefixPattern,
+          infixPattern: patterns.infixPattern,
+          infixMinLen: SEARCH_AUTOCOMPLETE_INFIX_MIN_LENGTH,
+          fuzzyMinLen: SEARCH_AUTOCOMPLETE_FUZZY_MIN_LENGTH,
+          limit: SEARCH_AUTOCOMPLETE_CATEGORY_LIMIT,
+          activeStatus: CATEGORY_STATUS.ACTIVE,
+        },
+        type: QueryTypes.SELECT,
+      },
+    );
+
+    return rows.map((row) => ({
+      type: SEARCH_SUGGESTION_TYPE.CATEGORY,
+      id: row.id,
+      name: row.name,
+      slug: row.slug,
+      path: row.path,
+      imageUrl: row.imageUrl ?? '',
+    }));
+  }
+
+  private searchReplacements(
+    params: Omit<SearchParams, 'limit' | 'offset'>,
+    prefixPattern: string,
+  ) {
     return {
       term: params.term,
+      prefixPattern,
       liveStatus: PRODUCT_STATUS.LIVE,
       approvedStatus: VENDOR_STATUS.APPROVED,
       categoryId: params.categoryId ?? null,

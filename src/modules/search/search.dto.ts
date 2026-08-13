@@ -3,6 +3,8 @@ import { pageLimitQuerySchema } from '@core/http/pagination';
 import {
   SEARCH_AUTOCOMPLETE_MAX_QUERY_LENGTH,
   SEARCH_AUTOCOMPLETE_MIN_QUERY_LENGTH,
+  SEARCH_SUGGESTION_TYPE_VALUES,
+  type SearchSuggestionType,
 } from '@core/constants/search';
 
 export const SearchProductsQuerySchema = pageLimitQuerySchema.extend({
@@ -24,9 +26,16 @@ export type SearchProductsQuery = z.infer<typeof SearchProductsQuerySchema>;
 export type AutocompleteQuery = z.infer<typeof AutocompleteQuerySchema>;
 
 export type SearchSuggestionDto = {
+  type: SearchSuggestionType;
   id: string;
   name: string;
   slug: string;
-  basePrice: number;
-  imageUrl: string;
+  /** Slash-separated category slug path for nested URLs. */
+  path?: string | null;
+  basePrice?: number;
+  imageUrl?: string;
+  /** Present when a product match came from a variant SKU. */
+  sku?: string | null;
 };
+
+export const SearchSuggestionTypeSchema = z.enum(SEARCH_SUGGESTION_TYPE_VALUES);

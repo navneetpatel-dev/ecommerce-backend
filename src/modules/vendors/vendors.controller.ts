@@ -44,6 +44,12 @@ export const listApprovedDirectory = asyncHandler(async (req: Request, res: Resp
   res.json(ok(result.vendors, { pagination: result.pagination }));
 });
 
+export const listStorefrontVendors = asyncHandler(async (req: Request, res: Response) => {
+  const query = VendorDirectoryQuerySchema.parse(req.query);
+  const result = await vendorsService.listStorefrontVendors(query);
+  res.json(ok(result.vendors, { pagination: result.pagination }));
+});
+
 export const getVendorById = asyncHandler(async (req: Request, res: Response) => {
   const vendor = await vendorsService.getVendorById(req.params.id!);
   res.json(ok(vendor));

@@ -105,10 +105,12 @@ export class VendorsService {
     businessName: string;
     slug: string;
     logoUrl: string | null;
+    bannerUrl: string | null;
     description: string | null;
   }> {
     const vendor = await vendorsRepository.findOne({
-      where: { slug, status: VENDOR_STATUS.APPROVED },
+      slug,
+      status: VENDOR_STATUS.APPROVED,
     });
     if (!vendor) throw new NotFoundError('Vendor');
     return {
@@ -116,6 +118,7 @@ export class VendorsService {
       businessName: vendor.businessName,
       slug: vendor.slug,
       logoUrl: vendor.logoUrl,
+      bannerUrl: vendor.bannerUrl ?? null,
       description: vendor.description,
     };
   }
@@ -246,6 +249,33 @@ export class VendorsService {
       return {
         id: plain.id as string,
         businessName: plain.businessName as string,
+      };
+    });
+
+    return {
+      vendors,
+      pagination: buildPaginationMeta(count, query.page, query.limit),
+    };
+  }
+
+  /** Public storefront vendor index — APPROVED shops only. */
+  async listStorefrontVendors(query: VendorDirectoryQuery) {
+    const offset = paginationOffset(query.page, query.limit);
+    const { rows, count } = await vendorsRepository.findWithFilters({
+      status: VENDOR_STATUS.APPROVED,
+      search: query.search,
+      limit: query.limit,
+      offset,
+    });
+
+    const vendors = rows.map((row) => {
+      const plain = row.get({ plain: true });
+      return {
+        id: plain.id as string,
+        businessName: plain.businessName as string,
+        slug: plain.slug as string,
+        logoUrl: (plain.logoUrl as string | null) ?? null,
+        description: (plain.description as string | null) ?? null,
       };
     });
 

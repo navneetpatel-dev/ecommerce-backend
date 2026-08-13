@@ -29,6 +29,13 @@ const vendorDashAuth = authorize(
 // Public storefront — APPROVED vendors only (404 otherwise)
 router.get('/slug/:slug', vendorsController.getPublicVendorBySlug);
 
+// Public vendor directory for /vendors index
+router.get(
+  '/storefront',
+  validate(VendorDirectoryQuerySchema, 'query'),
+  vendorsController.listStorefrontVendors,
+);
+
 // Preview required docs before / during onboarding
 router.get(
   '/document-requirements',
