@@ -2,6 +2,10 @@
 
 const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcrypt');
+const {
+  MIN_PRODUCT_GALLERY_IMAGES,
+  buildGalleryUrls,
+} = require('./lib/product-gallery-images');
 
 // Stable image URLs using picsum.photos (reliable, always available)
 const CATEGORY_COVERS = {
@@ -341,13 +345,12 @@ module.exports = {
         });
       }
 
-      // 2–4 images
+      // Gallery images (12 per product for PDP testing)
       const catKey = categoryParentMap[leafCat.id] || 'electronics';
-      const imgs = PRODUCT_IMAGES[catKey] || DEFAULT_IMAGES;
-      const numImages = randomInt(2, Math.min(4, imgs.length));
-      for (let img = 0; img < numImages; img++) {
+      const imgs = buildGalleryUrls(catKey, productId, MIN_PRODUCT_GALLERY_IMAGES);
+      for (let img = 0; img < imgs.length; img++) {
         productImages.push({
-          id: uuidv4(), productId, url: imgs[img % imgs.length],
+          id: uuidv4(), productId, url: imgs[img],
           isPrimary: img === 0, createdAt: now, updatedAt: now,
         });
       }

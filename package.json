@@ -16,7 +16,7 @@
     "db:seed": "sequelize-cli db:seed:all",
     "db:seed:tickets": "sequelize-cli db:seed --seed 20240101000080-seed-support-tickets.js",
     "db:seed:bugs": "sequelize-cli db:seed --seed 20240101000081-seed-bug-reports.js",
-    "db:seed:amit-support": "sequelize-cli db:seed --seed 20240101000082-seed-amit-support.js",
+    "db:seed:gallery": "sequelize-cli db:seed --seed 20240101000095-seed-product-gallery-images.js",
     "test": "tsx --tsconfig tsconfig.json --test 'src/**/__tests__/**/*.test.ts'",
     "docker:dev": "docker-compose up",
     "docker:dev:build": "docker-compose up --build",
