@@ -98,6 +98,7 @@ export const ERROR_MESSAGES = {
   RATE_LIMITED: 'Too many requests, please try again later.',
   NOT_YOUR_ORDER: 'Not your order',
   NO_ACCESS_TO_ORDER: 'You do not have access to this order',
+  NO_ACCESS_TO_RETURN: 'You do not have access to this return',
   RAZORPAY_NOT_CONFIGURED: 'Razorpay is not configured',
   NOT_YOUR_PRODUCT: 'Not your product',
   INVALID_CREDENTIALS: 'Invalid credentials',

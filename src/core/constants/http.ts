@@ -15,6 +15,7 @@ export const BEARER_PREFIX = 'Bearer ';
 export const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const GUEST_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export const PASSWORD_RESET_EXPIRY = '15m';
+export const EMAIL_VERIFY_EXPIRY = '2d';
 
 export const DEFAULT_PAGE_LIMIT = 20;
 export const MAX_PAGE_LIMIT = 100;

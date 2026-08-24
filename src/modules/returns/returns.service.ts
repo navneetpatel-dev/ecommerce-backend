@@ -16,6 +16,8 @@ import {
   type ReturnStatus,
 } from '@core/constants/statuses';
 import { ERROR_MESSAGES } from '@core/constants/errors';
+import { PERMISSIONS } from '@core/permissions/permissionKeys';
+import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { OrderItem } from '@database/models/orderItem.model';
 import { SubOrder } from '@database/models/subOrder.model';
@@ -185,6 +187,25 @@ export class ReturnsService {
       returns: rows.map((row) => serializeReturn(row as ReturnRequest & { orderItem?: OrderItem })),
       pagination: buildPaginationMeta(count, query.page, query.limit),
     };
+  }
+
+  async getById(
+    id: string,
+    requester: { id: string; roleId: string; role: { name: string } },
+  ) {
+    const row = await ReturnRequest.findByPk(id, { include: returnListInclude });
+    if (!row) throw new NotFoundError('ReturnRequest');
+
+    if (row.userId === requester.id) {
+      return serializeReturn(row as ReturnRequest & { orderItem?: OrderItem });
+    }
+
+    const permissions = await resolvePermissionsForUser(requester);
+    if (!permissions.includes(PERMISSIONS.ORDER_REFUND)) {
+      throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_RETURN);
+    }
+
+    return serializeReturn(row as ReturnRequest & { orderItem?: OrderItem });
   }
 
   async create(userId: string, data: CreateReturnInput) {

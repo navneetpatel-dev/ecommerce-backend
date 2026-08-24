@@ -14,6 +14,7 @@ router.post('/logout', authenticate, controller.logout);
 router.post('/forgot-password', validate(ForgotPasswordSchema), authRateLimiter, controller.forgotPassword);
 router.post('/reset-password', validate(ResetPasswordSchema), controller.resetPassword);
 router.post('/verify-email', validate(VerifyEmailSchema), authRateLimiter, controller.verifyEmail);
+router.post('/resend-verification', authenticate, authRateLimiter, controller.resendVerification);
 router.post('/change-password', authenticate, validate(ChangePasswordSchema), controller.changePassword);
 router.get('/me', authenticate, controller.me);
 

@@ -75,6 +75,11 @@ export const verifyEmail = asyncHandler(async (req: Request, res: Response) => {
   res.status(200).json(ok(result));
 });
 
+export const resendVerification = asyncHandler(async (req: Request, res: Response) => {
+  const result = await authService.resendEmailVerification(req.user!.id);
+  res.status(200).json(ok(result));
+});
+
 export const changePassword = asyncHandler(async (req: Request, res: Response) => {
   await authService.changePassword(req.user!.id, req.body.currentPassword, req.body.newPassword);
   res.status(200).json(ok({ message: 'Password changed' }));

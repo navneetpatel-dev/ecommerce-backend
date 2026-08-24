@@ -20,6 +20,15 @@ export const listAdmin = asyncHandler(async (req: Request, res: Response) => {
   res.json(ok(result.returns, { pagination: result.pagination }));
 });
 
+export const getById = asyncHandler(async (req: Request, res: Response) => {
+  const item = await returnsService.getById(req.params.id!, {
+    id: req.user!.id,
+    roleId: req.user!.roleId,
+    role: req.user!.role,
+  });
+  res.json(ok(item));
+});
+
 export const transition = asyncHandler(async (req: Request, res: Response) => {
   const updated = await returnsService.transition(req.params.id!, req.body.status, req.user!.id);
   res.json(ok(updated));

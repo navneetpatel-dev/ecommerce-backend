@@ -11,7 +11,7 @@ import { RegisterRequest, LoginRequest } from './auth.dto';
 import { AppError, NotFoundError, ValidationError, ForbiddenError } from '@core/errors';
 import { logger } from '@core/logger';
 import { clearPermissionCache, resolvePermissionsForUser } from '@middleware/rbac.middleware';
-import { PASSWORD_RESET_EXPIRY, REFRESH_TOKEN_TTL_MS } from '@core/constants/http';
+import { EMAIL_VERIFY_EXPIRY, PASSWORD_RESET_EXPIRY, REFRESH_TOKEN_TTL_MS } from '@core/constants/http';
 import { ROLES, USER_STATUS } from '@core/constants/statuses';
 import { ERROR_MESSAGES, ERROR_CODES } from '@core/constants/errors';
 import { roleNameOf } from '@utils/userRole';
@@ -80,6 +80,15 @@ async function generateTokens(user: User, meta: SessionDeviceMeta = {}): Promise
   return { accessToken, refreshToken };
 }
 
+function emailVerifyActionUrl(userId: string): string {
+  const verifyToken = jwt.sign(
+    { sub: userId, purpose: 'email-verify' },
+    env.JWT_SECRET,
+    { expiresIn: EMAIL_VERIFY_EXPIRY },
+  );
+  return `${env.CLIENT_URL.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verifyToken)}`;
+}
+
 function serializeSession(
   token: {
     family: string;
@@ -137,13 +146,8 @@ export class AuthService {
 
     const tokens = await generateTokens(user, meta);
 
-    const verifyToken = jwt.sign(
-      { sub: user.id, purpose: 'email-verify' },
-      env.JWT_SECRET,
-      { expiresIn: '2d' },
-    );
     void notificationsService.sendEmailVerification(user.id, {
-      actionUrl: `${env.CLIENT_URL.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verifyToken)}`,
+      actionUrl: emailVerifyActionUrl(user.id),
     });
 
     return {
@@ -346,6 +350,20 @@ export class AuthService {
     }
 
     return { verified: true };
+  }
+
+  async resendEmailVerification(userId: string): Promise<{ sent: boolean; alreadyVerified: boolean }> {
+    const user = await repo.findById(userId);
+    if (!user) throw new NotFoundError('User');
+
+    if (user.emailVerified) {
+      return { sent: false, alreadyVerified: true };
+    }
+
+    void notificationsService.sendEmailVerification(user.id, {
+      actionUrl: emailVerifyActionUrl(user.id),
+    });
+    return { sent: true, alreadyVerified: false };
   }
 
   async resetPassword(resetToken: string, newPassword: string) {
