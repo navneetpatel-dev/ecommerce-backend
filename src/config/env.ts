@@ -33,6 +33,8 @@ const envSchema = z.object({
   RAZORPAY_KEY_ID: z.string().optional(),
   RAZORPAY_KEY_SECRET: z.string().optional(),
   RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
+  /** Optional Dashboard checkout configuration (Test/Live each has its own ID). */
+  RAZORPAY_CHECKOUT_CONFIG_ID: z.string().optional(),
 
   /**
    * Mail driver. Add a MailProvider in mail.providers.ts + register it in mail.ts

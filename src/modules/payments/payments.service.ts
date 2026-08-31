@@ -31,6 +31,7 @@ export type RazorpayCheckoutPayload = {
   amount: number;
   currency: string;
   keyId: string;
+  checkoutConfigId?: string;
 };
 
 function safeTimingEqual(a: string, b: string): boolean {
@@ -157,6 +158,10 @@ export class PaymentsService {
       amount: amountInPaise,
       currency: 'INR',
       receipt: order.id,
+      payment_capture: true,
+      ...(env.RAZORPAY_CHECKOUT_CONFIG_ID
+        ? { checkout_config_id: env.RAZORPAY_CHECKOUT_CONFIG_ID }
+        : {}),
     });
 
     await order.update({ razorpayOrderId: rzpOrder.id });
@@ -166,6 +171,9 @@ export class PaymentsService {
       amount: Number(rzpOrder.amount),
       currency: rzpOrder.currency,
       keyId: env.RAZORPAY_KEY_ID,
+      ...(env.RAZORPAY_CHECKOUT_CONFIG_ID
+        ? { checkoutConfigId: env.RAZORPAY_CHECKOUT_CONFIG_ID }
+        : {}),
     };
   }
 

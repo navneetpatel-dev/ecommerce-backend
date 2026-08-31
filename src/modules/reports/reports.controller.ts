@@ -1,5 +1,4 @@
 import type { Request, Response } from 'express';
-import PDFDocument from 'pdfkit';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
@@ -14,12 +13,13 @@ import { Address } from '@database/models/address.model';
 import { Vendor } from '@database/models/vendor.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { Product } from '@database/models/product.model';
+import { User } from '@database/models/user.model';
 import { TaxRule } from '@database/models/taxRule.model';
 import { sequelize } from '@database/models';
 import { DOCUMENT_SEQUENCE_KIND } from '@core/constants/statuses';
 import { nextDocumentNumber } from '@modules/pricing/documentSequence';
 import { reportsService } from './reports.service';
-import { TAX_INVOICE_COPY } from './reports.constants';
+import { renderTaxInvoicePdf, toTaxInvoiceSource } from './taxInvoicePdf';
 import {
   ReportRangeSchema,
   WriteOffReportSchema,
@@ -243,6 +243,7 @@ export const customerOrderInvoice = asyncHandler(async (req: Request, res: Respo
   const orderId = req.params.orderId!;
   const order = await Order.findByPk(orderId, {
     include: [
+      { model: User, as: 'user', attributes: ['id', 'name'] },
       { model: Address, as: 'shippingAddress' },
       {
         model: SubOrder,
@@ -279,7 +280,11 @@ export const customerOrderInvoice = asyncHandler(async (req: Request, res: Respo
   const taxRules = categoryIds.size
     ? await TaxRule.findAll({ where: { categoryId: [...categoryIds] as any } })
     : [];
-  const hsnByCategory = new Map(taxRules.map((r) => [r.categoryId, r.hsnCode ?? '']));
+  const hsnByCategory = new Map<string, string>(
+    taxRules
+      .filter((r) => Boolean(r.categoryId))
+      .map((r) => [r.categoryId as string, r.hsnCode ?? '']),
+  );
 
   let invoiceNo = order.taxInvoiceNumber;
   if (!invoiceNo) {
@@ -299,74 +304,8 @@ export const customerOrderInvoice = asyncHandler(async (req: Request, res: Respo
     });
   }
 
-  const copy = TAX_INVOICE_COPY;
-  const doc = new PDFDocument({ margin: 50 });
-  const chunks: Buffer[] = [];
-  doc.on('data', (c) => chunks.push(c as Buffer));
-  const done = new Promise<Buffer>((resolve) => {
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
-  });
-
-  doc.fontSize(16).text(copy.title, { align: 'left' });
-  doc.moveDown(0.5);
-  doc.fontSize(10).text(`${copy.invoiceNo}: ${invoiceNo}`);
-  doc.text(`${copy.orderId}: ${order.id}`);
-  doc.text(`${copy.invoiceDate}: ${order.createdAt.toISOString().slice(0, 10)}`);
-  doc.text(`${copy.payment}: ${order.paymentMethod ?? ''} / ${order.paymentStatus}`);
-
-  const addr = (order as any).shippingAddress as Address | undefined;
-  if (addr) {
-    doc.moveDown();
-    doc.fontSize(11).text(copy.placeOfSupply);
-    doc.fontSize(10).text(`${addr.line1}${addr.line2 ? `, ${addr.line2}` : ''}`);
-    doc.text(`${addr.city}, ${addr.state} ${addr.pincode}, ${addr.country}`);
-  }
-
-  let grandCgst = 0;
-  let grandSgst = 0;
-  let grandIgst = 0;
-  let grandTaxable = 0;
-
-  for (const sub of (order as any).subOrders ?? []) {
-    const vendor = sub.vendor as Vendor | undefined;
-    doc.moveDown();
-    doc.fontSize(11).text(`${copy.seller}: ${vendor?.businessName ?? copy.platformSeller}`);
-    if (vendor?.gstNumber) doc.fontSize(10).text(`${copy.gstin}: ${vendor.gstNumber}`);
-    if (vendor?.state) doc.fontSize(10).text(`${copy.sellerState}: ${vendor.state}`);
-
-    for (const item of sub.items ?? []) {
-      const tb = (item.taxBreakdown ?? {}) as Record<string, number>;
-      const cgst = Number(tb.cgst ?? 0);
-      const sgst = Number(tb.sgst ?? 0);
-      const igst = Number(tb.igst ?? 0);
-      const taxable = Number(item.taxableAmount ?? 0);
-      const catId = item.variant?.product?.categoryId as string | undefined;
-      const hsn = catId ? hsnByCategory.get(catId) ?? '' : '';
-      grandCgst += cgst;
-      grandSgst += sgst;
-      grandIgst += igst;
-      grandTaxable += taxable;
-      doc.fontSize(9).text(
-        `${item.productName} | ${copy.hsn} ${hsn || copy.emptyValue} | ${copy.qty} ${item.quantity} | ${copy.taxable} ${copy.currencyPrefix}${taxable.toFixed(2)} | ${copy.cgst} ${copy.currencyPrefix}${cgst.toFixed(2)} ${copy.sgst} ${copy.currencyPrefix}${sgst.toFixed(2)} ${copy.igst} ${copy.currencyPrefix}${igst.toFixed(2)}`,
-      );
-    }
-  }
-
-  doc.moveDown();
-  doc.fontSize(10).text(`${copy.taxableTotal}: ${copy.currencyPrefix}${grandTaxable.toFixed(2)}`);
-  doc.text(
-    `${copy.cgst}: ${copy.currencyPrefix}${grandCgst.toFixed(2)}  ${copy.sgst}: ${copy.currencyPrefix}${grandSgst.toFixed(2)}  ${copy.igst}: ${copy.currencyPrefix}${grandIgst.toFixed(2)}`,
-  );
-  doc.fontSize(12).text(
-    `${copy.grandTotal}: ${copy.currencyPrefix}${Number(order.totalAmount).toFixed(2)}`,
-  );
-  if (Number(order.walletAmountUsed ?? 0) > 0) {
-    doc.fontSize(10).text(
-      `${copy.walletApplied}: ${copy.currencyPrefix}${Number(order.walletAmountUsed).toFixed(2)}`,
-    );
-  }
-  doc.end();
-  const pdf = await done;
+  const source = toTaxInvoiceSource(invoiceNo, order, hsnByCategory);
+  const pdf = await renderTaxInvoicePdf(source);
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader(
     'Content-Disposition',
