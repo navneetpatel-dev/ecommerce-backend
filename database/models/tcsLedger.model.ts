@@ -13,6 +13,13 @@ export class TcsLedger extends Model<InferAttributes<TcsLedger>, InferCreationAt
   declare tcsIgstPaise: CreationOptional<number>;
   /** YYYY-MM period for GSTR-8 filing. */
   declare period: CreationOptional<string | null>;
+  /** CGST Act section — marketplace TCS is s.52. */
+  declare section: CreationOptional<string>;
+  /** COLLECTION | RETURN_ADJUSTMENT */
+  declare entryType: CreationOptional<string>;
+  declare vendorGstin: CreationOptional<string | null>;
+  declare placeOfSupplyState: CreationOptional<string | null>;
+  declare returnRequestId: CreationOptional<string | null>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -24,6 +31,7 @@ export class TcsLedger extends Model<InferAttributes<TcsLedger>, InferCreationAt
     TcsLedger.belongsTo(models.Order, { foreignKey: 'orderId' });
     TcsLedger.belongsTo(models.SubOrder, { foreignKey: 'subOrderId' });
     TcsLedger.belongsTo(models.Vendor, { foreignKey: 'vendorId' });
+    TcsLedger.belongsTo(models.ReturnRequest, { foreignKey: 'returnRequestId' });
   }
 }
 
@@ -41,6 +49,15 @@ export const initTcsLedgerModel = (sequelize: Sequelize) => {
       tcsSgstPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       tcsIgstPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       period: { type: DataTypes.STRING(7), allowNull: true },
+      section: { type: DataTypes.STRING(8), allowNull: false, defaultValue: '52' },
+      entryType: {
+        type: DataTypes.STRING(32),
+        allowNull: false,
+        defaultValue: 'COLLECTION',
+      },
+      vendorGstin: { type: DataTypes.STRING(20), allowNull: true },
+      placeOfSupplyState: { type: DataTypes.STRING(64), allowNull: true },
+      returnRequestId: { type: DataTypes.UUID, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

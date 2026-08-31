@@ -12,6 +12,13 @@ router.post('/', authenticate, validate(CreateReturnRequestSchema), returnsContr
 router.get('/', authenticate, returnsController.list);
 router.get('/admin', authenticate, authorize(PERMISSIONS.ORDER_REFUND), returnsController.listAdmin);
 router.get('/:id', authenticate, returnsController.getById);
+router.get('/:id/credit-note', authenticate, returnsController.downloadCreditNote);
+router.get(
+  '/:id/debit-note',
+  authenticate,
+  authorize(PERMISSIONS.ORDER_REFUND, PERMISSIONS.PAYOUT_VIEW, PERMISSIONS.SUBORDER_MANAGE),
+  returnsController.downloadDebitNote,
+);
 router.patch('/:id/transition', authenticate, authorize(PERMISSIONS.ORDER_REFUND), validate(TransitionReturnSchema), returnsController.transition);
 router.delete('/:id', authenticate, authorize(PERMISSIONS.ORDER_REFUND), returnsController.remove);
 

@@ -6,7 +6,10 @@ export class DebitNote extends Model<InferAttributes<DebitNote>, InferCreationAt
   declare returnRequestId: string;
   declare orderId: string;
   declare orderItemId: string;
+  declare subOrderId: CreationOptional<string | null>;
   declare vendorId: string;
+  /** Original vendor tax invoice this debit note relates to. */
+  declare againstInvoiceNumber: CreationOptional<string | null>;
   declare commissionPaise: number;
   declare tcsPaise: number;
   declare netClawbackPaise: number;
@@ -23,7 +26,8 @@ export class DebitNote extends Model<InferAttributes<DebitNote>, InferCreationAt
     DebitNote.belongsTo(models.ReturnRequest, { foreignKey: 'returnRequestId' });
     DebitNote.belongsTo(models.Order, { foreignKey: 'orderId' });
     DebitNote.belongsTo(models.OrderItem, { foreignKey: 'orderItemId' });
-    DebitNote.belongsTo(models.Vendor, { foreignKey: 'vendorId' });
+    DebitNote.belongsTo(models.SubOrder, { foreignKey: 'subOrderId' });
+    DebitNote.belongsTo(models.Vendor, { foreignKey: 'vendorId', as: 'Vendor' });
   }
 }
 
@@ -31,11 +35,13 @@ export const initDebitNoteModel = (sequelize: Sequelize) => {
   DebitNote.init(
     {
       id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
-      number: { type: DataTypes.STRING(32), allowNull: false, unique: true },
+      number: { type: DataTypes.STRING(64), allowNull: false, unique: true },
       returnRequestId: { type: DataTypes.UUID, allowNull: false },
       orderId: { type: DataTypes.UUID, allowNull: false },
       orderItemId: { type: DataTypes.UUID, allowNull: false },
+      subOrderId: { type: DataTypes.UUID, allowNull: true },
       vendorId: { type: DataTypes.UUID, allowNull: false },
+      againstInvoiceNumber: { type: DataTypes.STRING(64), allowNull: true },
       commissionPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       tcsPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       netClawbackPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },

@@ -47,6 +47,10 @@ import {
   initVendorInvoiceSequenceModel,
   VendorInvoiceSequence,
 } from './vendorInvoiceSequence.model';
+import {
+  initCommissionInvoiceModel,
+  CommissionInvoice,
+} from './commissionInvoice.model';
 import { initWalletLedgerModel, WalletLedger } from './walletLedger.model';
 import { initWalletWriteOffModel, WalletWriteOff } from './walletWriteOff.model';
 import { initReportExportLogModel, ReportExportLog } from './reportExportLog.model';
@@ -105,6 +109,7 @@ const models = {
   DebitNote: initDebitNoteModel(sequelize),
   DocumentSequence: initDocumentSequenceModel(sequelize),
   VendorInvoiceSequence: initVendorInvoiceSequenceModel(sequelize),
+  CommissionInvoice: initCommissionInvoiceModel(sequelize),
   WalletLedger: initWalletLedgerModel(sequelize),
   WalletWriteOff: initWalletWriteOffModel(sequelize),
   ReportExportLog: initReportExportLogModel(sequelize),
@@ -135,7 +140,7 @@ export {
   TaxRule, NotificationLog, AuditLog, WebhookEvent,
   PlatformSetting, PromoBanner,
   TcsLedger, TdsLedger, CreditNote, DebitNote, DocumentSequence,
-  VendorInvoiceSequence,
+  VendorInvoiceSequence, CommissionInvoice,
   WalletLedger, WalletWriteOff, ReportExportLog,
   SupportTicket, TicketMessage, TicketAttachment, TicketRead,
   BugReport, BugReportAttachment, BugReportComment,

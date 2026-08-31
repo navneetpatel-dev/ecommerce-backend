@@ -6,6 +6,12 @@ export type PlatformSettingsPayload = {
   tcsRatePercent: number;
   /** TDS u/s 194-O percent on taxable value at payout (0 disables). */
   tdsRatePercent: number;
+  /** GST % on marketplace commission invoices to vendors (SAC 9985). */
+  commissionGstRatePercent: number;
+  /** Ecommerce operator GSTIN for commission invoices / GSTR-8. */
+  platformGstin: string;
+  platformLegalName: string;
+  platformState: string;
   autoApproveProducts: boolean;
   defaultReturnWindow: number;
   payoutCycle: string;
@@ -31,6 +37,10 @@ const DEFAULTS: PlatformSettingsPayload = {
   defaultCommissionRate: 10,
   tcsRatePercent: 1,
   tdsRatePercent: 1,
+  commissionGstRatePercent: 18,
+  platformGstin: '',
+  platformLegalName: '',
+  platformState: '',
   autoApproveProducts: false,
   defaultReturnWindow: 7,
   payoutCycle: 'WEEKLY',

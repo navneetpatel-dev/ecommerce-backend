@@ -6,6 +6,10 @@ export class CreditNote extends Model<InferAttributes<CreditNote>, InferCreation
   declare returnRequestId: string;
   declare orderId: string;
   declare orderItemId: string;
+  declare subOrderId: CreationOptional<string | null>;
+  declare vendorId: CreationOptional<string | null>;
+  /** Original vendor tax invoice this credit note adjusts. */
+  declare againstInvoiceNumber: CreationOptional<string | null>;
   declare userId: string;
   declare merchandisePaise: number;
   declare taxPaise: number;
@@ -21,10 +25,12 @@ export class CreditNote extends Model<InferAttributes<CreditNote>, InferCreation
   declare readonly deletedAt: CreationOptional<Date>;
 
   static associate(models: Record<string, any>) {
-    CreditNote.belongsTo(models.ReturnRequest, { foreignKey: 'returnRequestId' });
+    CreditNote.belongsTo(models.ReturnRequest, { foreignKey: 'returnRequestId', as: 'ReturnRequest' });
     CreditNote.belongsTo(models.Order, { foreignKey: 'orderId' });
     CreditNote.belongsTo(models.OrderItem, { foreignKey: 'orderItemId' });
-    CreditNote.belongsTo(models.User, { foreignKey: 'userId' });
+    CreditNote.belongsTo(models.SubOrder, { foreignKey: 'subOrderId' });
+    CreditNote.belongsTo(models.Vendor, { foreignKey: 'vendorId', as: 'Vendor' });
+    CreditNote.belongsTo(models.User, { foreignKey: 'userId', as: 'User' });
   }
 }
 
@@ -32,10 +38,13 @@ export const initCreditNoteModel = (sequelize: Sequelize) => {
   CreditNote.init(
     {
       id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
-      number: { type: DataTypes.STRING(32), allowNull: false, unique: true },
+      number: { type: DataTypes.STRING(64), allowNull: false, unique: true },
       returnRequestId: { type: DataTypes.UUID, allowNull: false },
       orderId: { type: DataTypes.UUID, allowNull: false },
       orderItemId: { type: DataTypes.UUID, allowNull: false },
+      subOrderId: { type: DataTypes.UUID, allowNull: true },
+      vendorId: { type: DataTypes.UUID, allowNull: true },
+      againstInvoiceNumber: { type: DataTypes.STRING(64), allowNull: true },
       userId: { type: DataTypes.UUID, allowNull: false },
       merchandisePaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       taxPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },

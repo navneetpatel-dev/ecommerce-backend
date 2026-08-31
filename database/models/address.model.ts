@@ -9,6 +9,8 @@ export class Address extends Model<InferAttributes<Address>, InferCreationAttrib
   declare state: string;
   declare country: string;
   declare pincode: string;
+  /** Buyer GSTIN for B2B e-invoice (optional). */
+  declare gstin: CreationOptional<string | null>;
   declare isDefault: CreationOptional<boolean>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
@@ -33,6 +35,7 @@ export const initAddressModel = (sequelize: Sequelize) => {
       state: { type: DataTypes.STRING, allowNull: false },
       country: { type: DataTypes.STRING, allowNull: false },
       pincode: { type: DataTypes.STRING, allowNull: false },
+      gstin: { type: DataTypes.STRING(20), allowNull: true },
       isDefault: { type: DataTypes.BOOLEAN, defaultValue: false },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },

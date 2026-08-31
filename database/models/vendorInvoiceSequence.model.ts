@@ -14,6 +14,8 @@ export class VendorInvoiceSequence extends Model<
   declare id: CreationOptional<string>;
   declare vendorId: string | null;
   declare financialYear: string;
+  /** TAX_INVOICE | CREDIT_NOTE | DEBIT_NOTE | COMMISSION_INVOICE */
+  declare kind: CreationOptional<string>;
   declare nextValue: number | string;
   declare prefix: string;
   declare readonly createdAt: CreationOptional<Date>;
@@ -37,6 +39,11 @@ export const initVendorInvoiceSequenceModel = (sequelize: Sequelize) => {
       },
       vendorId: { type: DataTypes.UUID, allowNull: true },
       financialYear: { type: DataTypes.STRING(9), allowNull: false },
+      kind: {
+        type: DataTypes.STRING(32),
+        allowNull: false,
+        defaultValue: 'TAX_INVOICE',
+      },
       nextValue: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 1 },
       prefix: { type: DataTypes.STRING(16), allowNull: false },
       createdAt: DataTypes.DATE,

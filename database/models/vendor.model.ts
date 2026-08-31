@@ -13,6 +13,10 @@ export class Vendor extends Model<InferAttributes<Vendor>, InferCreationAttribut
   declare slug: string;
   declare gstNumber: string | null;
   declare state: string | null;
+  /** Registered business address for tax / e-invoice SellerDtls. */
+  declare addressLine1: CreationOptional<string | null>;
+  declare city: CreationOptional<string | null>;
+  declare pincode: CreationOptional<string | null>;
   declare entityType: VendorEntityType | null;
   declare bankDetails: Record<string, unknown>;
   declare logoUrl: string | null;
@@ -57,6 +61,9 @@ export const initVendorModel = (sequelize: Sequelize) => {
       slug: { type: DataTypes.STRING, unique: true, allowNull: false },
       gstNumber: { type: DataTypes.STRING, allowNull: true },
       state: { type: DataTypes.STRING, allowNull: true },
+      addressLine1: { type: DataTypes.STRING(255), allowNull: true },
+      city: { type: DataTypes.STRING(100), allowNull: true },
+      pincode: { type: DataTypes.STRING(12), allowNull: true },
       entityType: { type: DataTypes.ENUM(...VENDOR_ENTITY_TYPE_VALUES), allowNull: true },
       bankDetails: { type: DataTypes.JSONB, allowNull: false },
       logoUrl: { type: DataTypes.STRING, allowNull: true },

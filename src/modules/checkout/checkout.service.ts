@@ -454,7 +454,7 @@ export class CheckoutService {
     userId: string,
     data: CreateCheckoutRequest,
   ): Promise<{ orderId: string; razorpayOrderId?: string; amount?: number; currency?: string; keyId?: string }> {
-    const order = await sequelize.transaction(async (t) => {
+    const orderResult = await sequelize.transaction(async (t) => {
       const cart = await loadUserCart(userId, t);
 
       assertCartItemsAvailable(cart);
@@ -823,6 +823,11 @@ export class CheckoutService {
               tcsSgstPaise,
               tcsIgstPaise,
               period,
+              section: '52',
+              entryType: 'COLLECTION',
+              vendorGstin: vendorMap[vendorId]?.gstNumber ?? null,
+              placeOfSupplyState: shippingAddress.state ?? vendorMap[vendorId]?.state ?? null,
+              returnRequestId: null,
               createdBy: userId,
               updatedBy: userId,
               deletedBy: null,
@@ -857,6 +862,8 @@ export class CheckoutService {
       return orderRow;
     });
 
+    const order = orderResult;
+
     if (data.paymentMethod === PAYMENT_METHOD.RAZORPAY) {
       const walletUsed = Number(order.walletAmountUsed ?? 0);
       const remainder = checkoutAmountDue(order.totalAmount, walletUsed);
@@ -879,7 +886,7 @@ export class CheckoutService {
     userId: string,
     data: CancelCheckoutRequest,
   ): Promise<{ restored: boolean; orderId: string }> {
-    return sequelize.transaction(async (t) => {
+    const orderResult = await sequelize.transaction(async (t) => {
       const locked = await Order.findByPk(data.orderId, {
         transaction: t,
         lock: t.LOCK.UPDATE,
@@ -967,6 +974,8 @@ export class CheckoutService {
 
       return { restored: true, orderId: order.id };
     });
+
+    return { restored: orderResult.restored, orderId: orderResult.orderId };
   }
 }
 

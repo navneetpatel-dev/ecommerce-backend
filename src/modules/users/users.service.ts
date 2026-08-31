@@ -50,6 +50,7 @@ function serializeAddress(address: {
   state: string;
   country: string;
   pincode: string;
+  gstin?: string | null;
   isDefault: boolean;
 }) {
   return {
@@ -61,6 +62,7 @@ function serializeAddress(address: {
     state: address.state,
     country: address.country,
     pincode: address.pincode,
+    gstin: address.gstin ?? null,
     isDefault: Boolean(address.isDefault),
   };
 }
@@ -178,6 +180,7 @@ export class UsersService {
           state: data.state,
           country: data.country || 'India',
           pincode: data.pincode,
+          gstin: data.gstin ?? null,
           isDefault: makeDefault,
         } as any,
         { transaction: t },
@@ -208,6 +211,7 @@ export class UsersService {
           ...(data.state !== undefined ? { state: data.state } : {}),
           ...(data.country !== undefined ? { country: data.country } : {}),
           ...(data.pincode !== undefined ? { pincode: data.pincode } : {}),
+          ...(data.gstin !== undefined ? { gstin: data.gstin } : {}),
           ...(data.isDefault !== undefined ? { isDefault: nextIsDefault } : {}),
         } as any,
         { transaction: t },

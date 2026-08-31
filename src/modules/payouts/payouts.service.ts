@@ -16,6 +16,10 @@ import { logger } from '@core/logger';
 import { Op } from 'sequelize';
 import { settingsService } from '@modules/settings/settings.service';
 import { fromPaise, toPaise, roundMoney } from '@modules/pricing/money';
+import {
+  computeCommissionGstPaise,
+  createCommissionInvoiceForPayout,
+} from '@modules/commissions/commissionInvoice.service';
 
 async function notifyPayoutFailed(params: {
   vendorId: string;
@@ -128,6 +132,7 @@ export class PayoutsService {
           }
 
           let amountPaise = 0;
+          let commissionTaxablePaise = 0;
           const tdsRows: Array<{
             orderId: string;
             subOrderId: string;
@@ -147,6 +152,11 @@ export class PayoutsService {
               row.taxableAmountPaise != null && Number(row.taxableAmountPaise) > 0
                 ? Number(row.taxableAmountPaise)
                 : toPaise(Number(row.taxableAmount ?? row.saleAmount));
+            const commissionPaise =
+              row.commissionAmountPaise != null && Number(row.commissionAmountPaise) > 0
+                ? Number(row.commissionAmountPaise)
+                : toPaise(Number(row.commissionAmount ?? 0));
+            commissionTaxablePaise += commissionPaise;
             // Section 194-O: TDS on gross vendor payout (net before TDS).
             const grossPayoutPaise = netPaise;
             const tdsPaise =
@@ -166,6 +176,11 @@ export class PayoutsService {
             }
           }
 
+          // Deduct GST on marketplace commission from vendor settlement.
+          const { gstPaise: commissionGstPaise } =
+            await computeCommissionGstPaise(commissionTaxablePaise);
+          amountPaise = Math.max(0, amountPaise - commissionGstPaise);
+
           const amount = fromPaise(amountPaise);
           const payoutRow = await Payout.create(
             {
@@ -177,6 +192,18 @@ export class PayoutsService {
               createdBy: actorId,
             },
             { transaction },
+          );
+
+          await createCommissionInvoiceForPayout(
+            {
+              vendorId,
+              payoutId: payoutRow.id,
+              periodStart: group.start,
+              periodEnd: group.end,
+              commissionTaxablePaise,
+              actorId,
+            },
+            transaction,
           );
 
           const period = new Date(group.end).toISOString().slice(0, 7);

@@ -354,11 +354,11 @@ function paintTaxInvoice(doc: PDFKit.PDFDocument, source: TaxInvoiceSource) {
     paymentStatusLabel(source.paymentStatus),
   ].join('  ·  ');
 
-  const metaLeft = [
-    { label: COPY.invoiceNo, value: source.invoiceNo, tone: 'ink' as const },
+  const metaLeft: PdfMetaRow[] = [
+    { label: COPY.invoiceNo, value: source.invoiceNo, tone: 'ink' },
     { label: COPY.invoiceDate, value: formatPrintDate(source.invoiceDate) },
-    { label: COPY.orderId, value: source.orderId, tone: 'muted' as const },
-    { label: COPY.payment, value: payment, tone: 'status' as const },
+    { label: COPY.orderId, value: source.orderId, tone: 'muted' },
+    { label: COPY.payment, value: payment, tone: 'status' },
   ];
 
   const addr = source.shippingAddress;
@@ -495,7 +495,7 @@ function paintTaxInvoice(doc: PDFKit.PDFDocument, source: TaxInvoiceSource) {
   layout.y += wordsH + 8;
 }
 
-export function renderTaxInvoicePdf(source: TaxInvoiceSource): Promise<Buffer> {
+export async function renderTaxInvoicePdf(source: TaxInvoiceSource): Promise<Buffer> {
   const doc = createBrandedPdfDocument({
     title: `${COPY.title} ${source.invoiceNo}`,
     subject: `${COPY.title} for order ${source.orderId}`,

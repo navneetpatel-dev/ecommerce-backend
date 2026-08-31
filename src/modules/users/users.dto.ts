@@ -41,6 +41,13 @@ export const CreateAddressSchema = z.object({
   state: z.string().min(1).max(100),
   country: z.string().min(1).max(100).default('India'),
   pincode: z.string().trim().regex(PINCODE_PATTERN, ERROR_MESSAGES.PINCODE_INVALID),
+  gstin: z
+    .string()
+    .trim()
+    .max(20)
+    .optional()
+    .nullable()
+    .transform((v) => (v ? v.toUpperCase() : v)),
   isDefault: z.boolean().optional().default(false),
 });
 

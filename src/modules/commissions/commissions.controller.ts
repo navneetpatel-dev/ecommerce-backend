@@ -15,3 +15,20 @@ export const listByVendor = asyncHandler(async (req: Request, res: Response) => 
   const rows = await commissionsService.listByVendor(vendorId);
   res.json(ok(rows));
 });
+
+export const listInvoices = asyncHandler(async (req: Request, res: Response) => {
+  const query = pageLimitQuerySchema.parse(req.query);
+  const result = await commissionsService.listInvoices(query, req.user!.vendorId);
+  res.json(ok(result.invoices, { pagination: result.pagination }));
+});
+
+export const downloadInvoice = asyncHandler(async (req: Request, res: Response) => {
+  const invoiceId = req.params.invoiceId!;
+  const { buffer, filename } = await commissionsService.getCommissionInvoicePdf(
+    invoiceId,
+    req.user!.vendorId,
+  );
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(buffer);
+});

@@ -33,15 +33,19 @@ async function gstTcsSummary(filters: ReportFilters) {
   assertReportRange(filters);
   const vendorFilter = `AND (:vendorId::uuid IS NULL OR t."vendorId" = :vendorId)`;
   const periodExpr = `COALESCE(t.period, to_char(t."createdAt", 'YYYY-MM'))`;
-  const stateExpr = `COALESCE(v.state, '')`;
+  const stateExpr = `COALESCE(NULLIF(t."placeOfSupplyState", ''), v.state, '')`;
+  const sectionExpr = `COALESCE(NULLIF(t.section, ''), '52')`;
 
   const selectSql = `
     SELECT
       'VENDOR'::text AS "groupType",
       t."vendorId"::text AS "vendorId",
       MAX(v."businessName") AS "vendorName",
+      MAX(COALESCE(NULLIF(t."vendorGstin", ''), v."gstNumber", '')) AS "vendorGstin",
       ${stateExpr} AS state,
       ${periodExpr} AS period,
+      ${sectionExpr} AS section,
+      MAX(COALESCE(t."entryType", 'COLLECTION')) AS "entryType",
       SUM(t."taxableAmountPaise")::bigint AS "taxableValuePaise",
       SUM(t."tcsCgstPaise")::bigint AS "tcsCgstPaise",
       SUM(t."tcsSgstPaise")::bigint AS "tcsSgstPaise",
@@ -54,7 +58,7 @@ async function gstTcsSummary(filters: ReportFilters) {
       AND t."createdAt" BETWEEN :from AND :to
       AND ${REPORTABLE_ORDER_SQL}
       ${vendorFilter}
-    GROUP BY t."vendorId", ${stateExpr}, ${periodExpr}
+    GROUP BY t."vendorId", ${stateExpr}, ${periodExpr}, ${sectionExpr}, COALESCE(t."entryType", 'COLLECTION')
 
     UNION ALL
 
@@ -62,8 +66,11 @@ async function gstTcsSummary(filters: ReportFilters) {
       'STATE'::text AS "groupType",
       ''::text AS "vendorId",
       ''::text AS "vendorName",
+      ''::text AS "vendorGstin",
       ${stateExpr} AS state,
       ${periodExpr} AS period,
+      ${sectionExpr} AS section,
+      MAX(COALESCE(t."entryType", 'COLLECTION')) AS "entryType",
       SUM(t."taxableAmountPaise")::bigint AS "taxableValuePaise",
       SUM(t."tcsCgstPaise")::bigint AS "tcsCgstPaise",
       SUM(t."tcsSgstPaise")::bigint AS "tcsSgstPaise",
@@ -76,7 +83,7 @@ async function gstTcsSummary(filters: ReportFilters) {
       AND t."createdAt" BETWEEN :from AND :to
       AND ${REPORTABLE_ORDER_SQL}
       ${vendorFilter}
-    GROUP BY ${stateExpr}, ${periodExpr}
+    GROUP BY ${stateExpr}, ${periodExpr}, ${sectionExpr}, COALESCE(t."entryType", 'COLLECTION')
   `;
 
   return pagedSqlQuery({
@@ -88,8 +95,11 @@ async function gstTcsSummary(filters: ReportFilters) {
       groupType: String(row.groupType ?? ''),
       vendorId: String(row.vendorId ?? ''),
       vendorName: String(row.vendorName ?? ''),
+      vendorGstin: String(row.vendorGstin ?? ''),
       state: String(row.state ?? ''),
       period: String(row.period ?? ''),
+      section: String(row.section ?? '52'),
+      entryType: String(row.entryType ?? 'COLLECTION'),
       taxableValue: fromPaise(Number(row.taxableValuePaise ?? 0)),
       tcsCgst: fromPaise(Number(row.tcsCgstPaise ?? 0)),
       tcsSgst: fromPaise(Number(row.tcsSgstPaise ?? 0)),
@@ -277,6 +287,9 @@ async function creditDebitNoteRegister(filters: ReportFilters) {
       'CREDIT'::text AS type,
       cn.number AS "noteNumber",
       cn."orderId"::text AS "orderId",
+      COALESCE(cn."subOrderId"::text, '') AS "subOrderId",
+      COALESCE(cn."vendorId"::text, '') AS "vendorId",
+      COALESCE(cn."againstInvoiceNumber", '') AS "againstInvoiceNumber",
       (cn."totalPaise" / 100.0) AS amount,
       (cn."taxPaise" / 100.0) AS "taxAmount",
       COALESCE(cn.reason, '') AS reason,
@@ -284,15 +297,7 @@ async function creditDebitNoteRegister(filters: ReportFilters) {
     FROM credit_notes cn
     WHERE cn."deletedAt" IS NULL
       AND ${noteInRange('cn')}
-      AND (
-        :vendorId::uuid IS NULL
-        OR EXISTS (
-          SELECT 1 FROM sub_orders so
-          WHERE so."orderId" = cn."orderId"
-            AND so."vendorId" = :vendorId
-            AND so."deletedAt" IS NULL
-        )
-      )
+      AND (:vendorId::uuid IS NULL OR cn."vendorId" = :vendorId)
 
     UNION ALL
 
@@ -300,6 +305,9 @@ async function creditDebitNoteRegister(filters: ReportFilters) {
       'DEBIT'::text AS type,
       dn.number AS "noteNumber",
       dn."orderId"::text AS "orderId",
+      COALESCE(dn."subOrderId"::text, '') AS "subOrderId",
+      COALESCE(dn."vendorId"::text, '') AS "vendorId",
+      COALESCE(dn."againstInvoiceNumber", '') AS "againstInvoiceNumber",
       (dn."netClawbackPaise" / 100.0) AS amount,
       0::numeric AS "taxAmount",
       COALESCE(dn.reason, '') AS reason,
@@ -319,6 +327,9 @@ async function creditDebitNoteRegister(filters: ReportFilters) {
       type: String(row.type ?? ''),
       noteNumber: String(row.noteNumber ?? ''),
       orderId: String(row.orderId ?? ''),
+      subOrderId: String(row.subOrderId ?? ''),
+      vendorId: String(row.vendorId ?? ''),
+      againstInvoiceNumber: String(row.againstInvoiceNumber ?? ''),
       amount: Math.round(Number(row.amount ?? 0) * 100) / 100,
       taxAmount: Math.round(Number(row.taxAmount ?? 0) * 100) / 100,
       reason: String(row.reason ?? ''),
@@ -600,8 +611,11 @@ export const adminFinanceReports: ReportDefinition[] = [
       { key: 'groupType', labelKey: 'groupType' },
       { key: 'vendorId', labelKey: 'vendorId' },
       { key: 'vendorName', labelKey: 'vendorName' },
+      { key: 'vendorGstin', labelKey: 'vendorGstin' },
       { key: 'state', labelKey: 'state' },
       { key: 'period', labelKey: 'period' },
+      { key: 'section', labelKey: 'section' },
+      { key: 'entryType', labelKey: 'entryType' },
       { key: 'taxableValue', labelKey: 'taxableValue', format: 'currency' },
       { key: 'tcsCgst', labelKey: 'tcsCgst', format: 'currency' },
       { key: 'tcsSgst', labelKey: 'tcsSgst', format: 'currency' },
@@ -690,6 +704,9 @@ export const adminFinanceReports: ReportDefinition[] = [
       { key: 'type', labelKey: 'type' },
       { key: 'noteNumber', labelKey: 'noteNumber' },
       { key: 'orderId', labelKey: 'orderId' },
+      { key: 'subOrderId', labelKey: 'subOrderId' },
+      { key: 'vendorId', labelKey: 'vendorId' },
+      { key: 'againstInvoiceNumber', labelKey: 'againstInvoiceNumber' },
       { key: 'amount', labelKey: 'amount', format: 'currency' },
       { key: 'taxAmount', labelKey: 'taxAmount', format: 'currency' },
       { key: 'reason', labelKey: 'reason' },

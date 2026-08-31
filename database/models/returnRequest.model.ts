@@ -48,6 +48,8 @@ export class ReturnRequest extends Model<InferAttributes<ReturnRequest>, InferCr
     ReturnRequest.belongsTo(models.SubOrder, { foreignKey: 'subOrderId', as: 'subOrder' });
     ReturnRequest.belongsTo(models.OrderItem, { foreignKey: 'orderItemId', as: 'orderItem' });
     ReturnRequest.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
+    ReturnRequest.hasOne(models.CreditNote, { foreignKey: 'returnRequestId', as: 'creditNote' });
+    ReturnRequest.hasOne(models.DebitNote, { foreignKey: 'returnRequestId', as: 'debitNote' });
   }
 }
 

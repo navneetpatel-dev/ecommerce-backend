@@ -5,7 +5,6 @@ import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ValidationError } from '@core/errors/ValidationError';
 import {
   COMMISSION_STATUS,
-  DOCUMENT_SEQUENCE_KIND,
   ORDER_STATUS,
   PAYMENT_METHOD,
   REFUND_METHOD,
@@ -26,6 +25,7 @@ import { User } from '@database/models/user.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { CreditNote } from '@database/models/creditNote.model';
 import { DebitNote } from '@database/models/debitNote.model';
+import { TcsLedger } from '@database/models/tcsLedger.model';
 import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
@@ -39,7 +39,10 @@ import {
   scaleTaxBreakdown,
 } from '@modules/pricing/displayMoney';
 import { pricingService } from '@modules/pricing/pricing.service';
-import { nextDocumentNumber } from '@modules/pricing/documentSequence';
+import {
+  nextVendorDocumentNumber,
+  VENDOR_DOCUMENT_KIND,
+} from '@modules/pricing/vendorInvoiceSequence';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { Product } from '@database/models/product.model';
 import { ProductVariant } from '@database/models/productVariant.model';
@@ -57,6 +60,18 @@ import {
 const returnListInclude = [
   { model: OrderItem, as: 'orderItem', required: false, attributes: ['id', 'productName'] },
   { model: User, as: 'user', required: false, attributes: ['id', 'name'] },
+  {
+    model: CreditNote,
+    as: 'creditNote',
+    required: false,
+    attributes: ['id', 'number', 'againstInvoiceNumber'],
+  },
+  {
+    model: DebitNote,
+    as: 'debitNote',
+    required: false,
+    attributes: ['id', 'number', 'againstInvoiceNumber'],
+  },
 ];
 
 type CreateReturnInput = {
@@ -125,9 +140,12 @@ async function findReturnForUpdate(id: string, t: Transaction): Promise<ReturnRe
 
 function serializeReturn(row: ReturnRequest | (ReturnRequest & { orderItem?: OrderItem })) {
   const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
+  const creditNote = plain.CreditNote ?? plain.creditNote ?? null;
+  const debitNote = plain.DebitNote ?? plain.debitNote ?? null;
   return {
     id: plain.id,
     orderItemId: plain.orderItemId,
+    subOrderId: plain.subOrderId ?? null,
     reason: plain.reason,
     reasonCode: plain.reasonCode,
     returnQuantity: plain.returnQuantity != null ? Number(plain.returnQuantity) : null,
@@ -151,6 +169,12 @@ function serializeReturn(row: ReturnRequest | (ReturnRequest & { orderItem?: Ord
     createdAt: plain.createdAt,
     productName: plain.orderItem?.productName ?? null,
     customerName: plain.user?.name ?? null,
+    creditNoteNumber: creditNote?.number ?? null,
+    creditNoteId: creditNote?.id ?? null,
+    debitNoteNumber: debitNote?.number ?? null,
+    debitNoteId: debitNote?.id ?? null,
+    againstInvoiceNumber:
+      creditNote?.againstInvoiceNumber ?? debitNote?.againstInvoiceNumber ?? null,
   };
 }
 
@@ -392,25 +416,87 @@ export class ReturnsService {
         transaction: t,
       });
       if (!existingDebit) {
-        const dnNumber = await nextDocumentNumber(DOCUMENT_SEQUENCE_KIND.DEBIT_NOTE, t);
+        const issuedAt = new Date();
+        const { number: dnNumber } = await nextVendorDocumentNumber(
+          vendorId,
+          VENDOR_DOCUMENT_KIND.DEBIT_NOTE,
+          issuedAt,
+          t,
+        );
         await DebitNote.create(
           {
             number: dnNumber,
             returnRequestId: row.id,
             orderId: orderItem.subOrder.orderId,
             orderItemId: orderItem.id,
+            subOrderId: orderItem.subOrderId,
             vendorId,
+            againstInvoiceNumber: orderItem.subOrder.taxInvoiceNumber ?? null,
             commissionPaise: reversal.refundCommissionPaise,
             tcsPaise: reversal.refundTcsPaise,
             netClawbackPaise: reversal.refundNetClawbackPaise,
             reason: row.reason ?? row.reasonCode ?? null,
-            issuedAt: new Date(),
+            issuedAt,
             createdBy: actorId,
             updatedBy: actorId,
             deletedBy: null,
           },
           { transaction: t },
         );
+
+        // GSTR-8 return adjustment (negative TCS) against original collection.
+        if (reversal.refundTcsPaise > 0) {
+          const vendor = await Vendor.findByPk(vendorId, {
+            attributes: ['gstNumber', 'state'],
+            transaction: t,
+          });
+          const originalTcs = await TcsLedger.findOne({
+            where: {
+              subOrderId: orderItem.subOrderId,
+              vendorId,
+              entryType: 'COLLECTION',
+            },
+            transaction: t,
+            order: [['createdAt', 'ASC']],
+          });
+          const tcsTotal = reversal.refundTcsPaise;
+          const useIgst =
+            Number((orderItem.taxBreakdown as any)?.igst ?? 0) > 0 ||
+            Number((orderItem.subOrder.taxBreakdown as any)?.igst ?? 0) > 0;
+          const tcsCgstPaise = useIgst ? 0 : Math.floor(tcsTotal / 2);
+          const tcsSgstPaise = useIgst ? 0 : tcsTotal - tcsCgstPaise;
+          const tcsIgstPaise = useIgst ? tcsTotal : 0;
+          const placeOfSupplyState =
+            originalTcs?.placeOfSupplyState ??
+            vendor?.state ??
+            null;
+          const settings = await settingsService.getPlatformSettings();
+          await TcsLedger.create(
+            {
+              orderId: orderItem.subOrder.orderId,
+              subOrderId: orderItem.subOrderId,
+              vendorId,
+              taxableAmountPaise: -Math.abs(reversal.refundMerchandisePaise),
+              ratePercent: Number(
+                originalTcs?.ratePercent ?? settings.tcsRatePercent ?? 0,
+              ),
+              tcsAmountPaise: -tcsTotal,
+              tcsCgstPaise: -tcsCgstPaise,
+              tcsSgstPaise: -tcsSgstPaise,
+              tcsIgstPaise: -tcsIgstPaise,
+              period: issuedAt.toISOString().slice(0, 7),
+              section: '52',
+              entryType: 'RETURN_ADJUSTMENT',
+              vendorGstin: originalTcs?.vendorGstin ?? vendor?.gstNumber ?? null,
+              placeOfSupplyState,
+              returnRequestId: row.id,
+              createdBy: actorId,
+              updatedBy: actorId,
+              deletedBy: null,
+            },
+            { transaction: t },
+          );
+        }
       }
     }
 
@@ -793,20 +879,45 @@ export class ReturnsService {
         );
         const taxPaise = toPaise(Number(row.refundTaxAmount ?? 0));
         const totalPaise = toPaise(Number(row.refundAmount));
-        const cnNumber = await nextDocumentNumber(DOCUMENT_SEQUENCE_KIND.CREDIT_NOTE, t);
+        const issuedAt = new Date();
+        const vendorId = orderItem.subOrder.vendorId;
+        if (!vendorId) {
+          throw new ValidationError('Credit note requires a vendor-owned sub-order');
+        }
+        const { number: cnNumber } = await nextVendorDocumentNumber(
+          vendorId,
+          VENDOR_DOCUMENT_KIND.CREDIT_NOTE,
+          issuedAt,
+          t,
+        );
+        const tb = (orderItem.taxBreakdown as Record<string, unknown> | null) ?? null;
+        const originalTaxPaise = Number(orderItem.taxAmountPaise ?? 0);
+        const scale =
+          originalTaxPaise > 0 && taxPaise > 0 ? taxPaise / originalTaxPaise : 0;
+        const cgstPaise = Math.round(Number(tb?.cgst ?? 0) * scale);
+        const sgstPaise = Math.round(Number(tb?.sgst ?? 0) * scale);
+        const igstPaise = Math.round(Number(tb?.igst ?? 0) * scale);
         await CreditNote.create(
           {
             number: cnNumber,
             returnRequestId: row.id,
             orderId: order.id,
             orderItemId: orderItem.id,
+            subOrderId: orderItem.subOrderId,
+            vendorId,
+            againstInvoiceNumber: orderItem.subOrder.taxInvoiceNumber ?? null,
             userId: row.userId,
             merchandisePaise,
             taxPaise,
             totalPaise,
-            taxBreakdown: { refundTaxPaise: taxPaise },
+            taxBreakdown: {
+              refundTaxPaise: taxPaise,
+              cgst: cgstPaise,
+              sgst: sgstPaise,
+              igst: igstPaise,
+            },
             reason: row.reason ?? row.reasonCode ?? null,
-            issuedAt: new Date(),
+            issuedAt,
             createdBy: auditActorId,
             updatedBy: auditActorId,
             deletedBy: null,
