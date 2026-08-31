@@ -10,6 +10,8 @@ export const reportExportConfig = {
   inlineDev: env.REPORT_EXPORT_INLINE_DEV,
   chunkSize: env.REPORT_EXPORT_CHUNK_SIZE,
   staleProcessingMin: env.REPORT_EXPORT_STALE_PROCESSING_MIN,
+  pendingStaleMin: env.REPORT_EXPORT_PENDING_STALE_MIN,
+  failedRetentionDays: env.REPORT_EXPORT_FAILED_RETENTION_DAYS,
   statusCacheTtlSec: 5,
   presignedExpiresSec: 15 * 60,
   userExportPriority: 1,

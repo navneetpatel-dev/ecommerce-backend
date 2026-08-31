@@ -6,10 +6,6 @@ import {
   REPORT_EXPORT_CLEANUP_JOB,
   runReportExportCleanup,
 } from './reportExportCleanup.processor';
-import {
-  SCHEDULED_REPORTS_JOB,
-  runScheduledWeeklyReports,
-} from './scheduledReports.processor';
 
 const REPEAT_JOB_ID = 's3-orphan-cleanup-daily';
 const EXPORT_CLEANUP_JOB_ID = 'report-export-cleanup-daily';
@@ -26,9 +22,6 @@ export function startS3OrphanCleanupWorker(): Worker {
       if (job.name === REPORT_EXPORT_CLEANUP_JOB) {
         await runReportExportCleanup();
         return;
-      }
-      if (job.name === SCHEDULED_REPORTS_JOB) {
-        await runScheduledWeeklyReports();
       }
     },
     { connection: getQueueConnection(), concurrency: 1 },

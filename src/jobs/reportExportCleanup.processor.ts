@@ -10,10 +10,42 @@ export const REPORT_EXPORT_CLEANUP_JOB = 'report-export-cleanup';
 
 const LOCAL_EXPORT_DIR = path.join(process.cwd(), 'storage', 'report-exports');
 
-export async function runReportExportCleanup(): Promise<{ deletedLogs: number; deletedKeys: number }> {
+export async function runReportExportCleanup(): Promise<{
+  deletedLogs: number;
+  deletedKeys: number;
+  failedPending: number;
+}> {
   const cutoff = new Date(Date.now() - reportExportConfig.artifactTtlDays * 24 * 60 * 60 * 1000);
+  const pendingStaleCutoff = new Date(
+    Date.now() - reportExportConfig.pendingStaleMin * 60 * 1000,
+  );
+  const failedCutoff = new Date(
+    Date.now() - reportExportConfig.failedRetentionDays * 24 * 60 * 60 * 1000,
+  );
   let deletedLogs = 0;
   let deletedKeys = 0;
+  let failedPending = 0;
+
+  const [stalePending] = await ReportExportLog.update(
+    {
+      status: 'FAILED',
+      errorMessage: 'Export enqueue timed out',
+    },
+    {
+      where: {
+        status: 'PENDING',
+        createdAt: { [Op.lt]: pendingStaleCutoff },
+      },
+    },
+  );
+  failedPending += stalePending;
+
+  await ReportExportLog.destroy({
+    where: {
+      status: 'FAILED',
+      updatedAt: { [Op.lt]: failedCutoff },
+    },
+  });
 
   while (true) {
     const expired = await ReportExportLog.findAll({
@@ -46,7 +78,6 @@ export async function runReportExportCleanup(): Promise<{ deletedLogs: number; d
     if (expired.length < 500) break;
   }
 
-  // Purge orphaned local files older than TTL
   try {
     const entries = await fs.readdir(LOCAL_EXPORT_DIR);
     for (const name of entries) {
@@ -58,6 +89,6 @@ export async function runReportExportCleanup(): Promise<{ deletedLogs: number; d
     /* dir may not exist */
   }
 
-  logger.info('Report export cleanup finished', { deletedLogs, deletedKeys });
-  return { deletedLogs, deletedKeys };
+  logger.info('Report export cleanup finished', { deletedLogs, deletedKeys, failedPending });
+  return { deletedLogs, deletedKeys, failedPending };
 }

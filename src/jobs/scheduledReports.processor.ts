@@ -57,7 +57,7 @@ export async function runScheduledWeeklyReports(): Promise<number> {
 
 export async function scheduleWeeklyReportsJob(): Promise<void> {
   if (!areQueuesReady()) return;
-  await queues.s3OrphanCleanup.add(
+  await queues.reportExport.add(
     SCHEDULED_REPORTS_JOB,
     {},
     {

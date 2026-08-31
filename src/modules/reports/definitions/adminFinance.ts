@@ -33,11 +33,20 @@ function sqlReplacements(filters: ReportFilters): Record<string, unknown> {
 async function gstTcsSummary(filters: ReportFilters) {
   assertReportRange(filters);
   const vendorFilter = `AND (:vendorId::uuid IS NULL OR t."vendorId" = :vendorId)`;
+  return pagedSqlQuery({
+    selectSql: gstTcsSelectSql(vendorFilter),
+    orderBySql: `"groupType" ASC, period DESC, state ASC, "vendorId" ASC`,
+    replacements: sqlReplacements(filters),
+    filters,
+    mapRow: mapGstTcsRow,
+  });
+}
+
+function gstTcsSelectSql(vendorFilter: string): string {
   const periodExpr = `COALESCE(t.period, to_char(t."createdAt", 'YYYY-MM'))`;
   const stateExpr = `COALESCE(NULLIF(t."placeOfSupplyState", ''), v.state, '')`;
   const sectionExpr = `COALESCE(NULLIF(t.section, ''), '52')`;
-
-  const selectSql = `
+  return `
     SELECT
       'VENDOR'::text AS "groupType",
       t."vendorId"::text AS "vendorId",
@@ -86,28 +95,49 @@ async function gstTcsSummary(filters: ReportFilters) {
       ${vendorFilter}
     GROUP BY ${stateExpr}, ${periodExpr}, ${sectionExpr}, COALESCE(t."entryType", 'COLLECTION')
   `;
+}
 
-  return pagedSqlQuery({
-    selectSql,
-    orderBySql: `"groupType" ASC, period DESC, state ASC, "vendorId" ASC`,
+function mapGstTcsRow(row: Record<string, unknown>) {
+  return {
+    groupType: String(row.groupType ?? ''),
+    vendorId: String(row.vendorId ?? ''),
+    vendorName: String(row.vendorName ?? ''),
+    vendorGstin: String(row.vendorGstin ?? ''),
+    state: String(row.state ?? ''),
+    period: String(row.period ?? ''),
+    section: String(row.section ?? '52'),
+    entryType: String(row.entryType ?? 'COLLECTION'),
+    taxableValue: fromPaise(Number(row.taxableValuePaise ?? 0)),
+    tcsCgst: fromPaise(Number(row.tcsCgstPaise ?? 0)),
+    tcsSgst: fromPaise(Number(row.tcsSgstPaise ?? 0)),
+    tcsIgst: fromPaise(Number(row.tcsIgstPaise ?? 0)),
+    tcsTotal: fromPaise(Number(row.tcsTotalPaise ?? 0)),
+  };
+}
+
+const GST_TCS_KEYSET: KeysetOrderCol[] = [
+  { column: 'groupType', direction: 'ASC' },
+  { column: 'period', direction: 'DESC' },
+  { column: 'state', direction: 'ASC' },
+  { column: 'vendorId', direction: 'ASC' },
+];
+
+async function gstTcsExport(
+  filters: ReportFilters,
+  cursor: { values: unknown[] } | null,
+  limit: number,
+) {
+  assertReportRange(filters);
+  const vendorFilter = `AND (:vendorId::uuid IS NULL OR t."vendorId" = :vendorId)`;
+  const page = await keysetSqlQuery({
+    selectSql: gstTcsSelectSql(vendorFilter),
+    order: GST_TCS_KEYSET,
     replacements: sqlReplacements(filters),
-    filters,
-    mapRow: (row) => ({
-      groupType: String(row.groupType ?? ''),
-      vendorId: String(row.vendorId ?? ''),
-      vendorName: String(row.vendorName ?? ''),
-      vendorGstin: String(row.vendorGstin ?? ''),
-      state: String(row.state ?? ''),
-      period: String(row.period ?? ''),
-      section: String(row.section ?? '52'),
-      entryType: String(row.entryType ?? 'COLLECTION'),
-      taxableValue: fromPaise(Number(row.taxableValuePaise ?? 0)),
-      tcsCgst: fromPaise(Number(row.tcsCgstPaise ?? 0)),
-      tcsSgst: fromPaise(Number(row.tcsSgstPaise ?? 0)),
-      tcsIgst: fromPaise(Number(row.tcsIgstPaise ?? 0)),
-      tcsTotal: fromPaise(Number(row.tcsTotalPaise ?? 0)),
-    }),
+    limit,
+    cursor,
+    mapRow: mapGstTcsRow,
   });
+  return { rows: page.rows, nextCursor: page.nextCursor };
 }
 
 async function tds194oSummary(filters: ReportFilters) {
@@ -228,6 +258,166 @@ async function stateTaxCollection(filters: ReportFilters) {
       taxTotal: fromPaise(Number(row.taxTotalPaise ?? 0)),
     }),
   });
+}
+
+function tds194oSelectSql(): string {
+  const periodExpr = `COALESCE(t.period, to_char(t."createdAt", 'YYYY-MM'))`;
+  const sectionExpr = `COALESCE(NULLIF(t.section, ''), '194O')`;
+  return `
+    SELECT
+      t."vendorId"::text AS "vendorId",
+      MAX(v."businessName") AS "vendorName",
+      ${periodExpr} AS period,
+      ${sectionExpr} AS section,
+      SUM(t."taxableAmountPaise")::bigint AS "grossTaxablePaise",
+      SUM(t."tdsAmountPaise")::bigint AS "tdsAmountPaise"
+    FROM tds_ledgers t
+    INNER JOIN vendors v ON v.id = t."vendorId" AND v."deletedAt" IS NULL
+    WHERE t."deletedAt" IS NULL
+      AND t."createdAt" BETWEEN :from AND :to
+      AND (:vendorId::uuid IS NULL OR t."vendorId" = :vendorId)
+    GROUP BY t."vendorId", ${periodExpr}, ${sectionExpr}
+  `;
+}
+
+function mapTds194oRow(row: Record<string, unknown>) {
+  return {
+    vendorId: String(row.vendorId ?? ''),
+    vendorName: String(row.vendorName ?? ''),
+    period: String(row.period ?? ''),
+    section: String(row.section ?? '194O'),
+    grossTaxable: fromPaise(Number(row.grossTaxablePaise ?? 0)),
+    tdsAmount: fromPaise(Number(row.tdsAmountPaise ?? 0)),
+  };
+}
+
+const TDS_194O_KEYSET: KeysetOrderCol[] = [
+  { column: 'period', direction: 'DESC' },
+  { column: 'vendorId', direction: 'ASC' },
+  { column: 'section', direction: 'ASC' },
+];
+
+async function tds194oExport(
+  filters: ReportFilters,
+  cursor: { values: unknown[] } | null,
+  limit: number,
+) {
+  const page = await keysetSqlQuery({
+    selectSql: tds194oSelectSql(),
+    order: TDS_194O_KEYSET,
+    replacements: sqlReplacements(filters),
+    limit,
+    cursor,
+    mapRow: mapTds194oRow,
+  });
+  return { rows: page.rows, nextCursor: page.nextCursor };
+}
+
+function hsnSalesSelectSql(): string {
+  const taxableExpr = sqlFrozenPaise('oi', 'taxableAmountPaise', 'taxableAmount');
+  const taxExpr = sqlFrozenPaise('oi', 'taxAmountPaise', 'taxAmount');
+  return `
+    SELECT
+      COALESCE(hsn."hsnCode", 'UNKNOWN') AS "hsnCode",
+      SUM(oi.quantity)::int AS qty,
+      SUM(${taxableExpr})::bigint AS "taxablePaise",
+      SUM(${taxExpr})::bigint AS "taxPaise"
+    FROM order_items oi
+    INNER JOIN sub_orders s ON s.id = oi."subOrderId" AND s."deletedAt" IS NULL
+    INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
+    INNER JOIN product_variants pv ON pv.id = oi."variantId" AND pv."deletedAt" IS NULL
+    INNER JOIN products p ON p.id = pv."productId" AND p."deletedAt" IS NULL
+    LEFT JOIN (
+      SELECT DISTINCT ON (tr."categoryId")
+        tr."categoryId",
+        tr."hsnCode"
+      FROM tax_rules tr
+      WHERE tr."deletedAt" IS NULL
+        AND tr."hsnCode" IS NOT NULL
+      ORDER BY tr."categoryId", tr."updatedAt" DESC NULLS LAST
+    ) hsn ON hsn."categoryId" = p."categoryId"
+    WHERE oi."deletedAt" IS NULL
+      AND o."createdAt" BETWEEN :from AND :to
+      AND ${REPORTABLE_ORDER_SQL}
+      AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
+      AND (:categoryId::uuid IS NULL OR p."categoryId" = :categoryId)
+    GROUP BY COALESCE(hsn."hsnCode", 'UNKNOWN')
+  `;
+}
+
+function mapHsnSalesRow(row: Record<string, unknown>) {
+  return {
+    hsnCode: String(row.hsnCode ?? 'UNKNOWN'),
+    qty: Number(row.qty ?? 0),
+    taxable: fromPaise(Number(row.taxablePaise ?? 0)),
+    tax: fromPaise(Number(row.taxPaise ?? 0)),
+  };
+}
+
+const HSN_SALES_KEYSET: KeysetOrderCol[] = [{ column: 'hsnCode', direction: 'ASC' }];
+
+async function hsnSalesExport(
+  filters: ReportFilters,
+  cursor: { values: unknown[] } | null,
+  limit: number,
+) {
+  const page = await keysetSqlQuery({
+    selectSql: hsnSalesSelectSql(),
+    order: HSN_SALES_KEYSET,
+    replacements: sqlReplacements(filters),
+    limit,
+    cursor,
+    mapRow: mapHsnSalesRow,
+  });
+  return { rows: page.rows, nextCursor: page.nextCursor };
+}
+
+function stateTaxSelectSql(): string {
+  const taxTotalExpr = sqlFrozenPaise('s', 'taxAmountPaise', 'taxAmount');
+  return `
+    SELECT
+      COALESCE(NULLIF(a.state, ''), 'UNKNOWN') AS state,
+      SUM(COALESCE((s."taxBreakdown"->>'cgst')::numeric, 0)) AS cgst,
+      SUM(COALESCE((s."taxBreakdown"->>'sgst')::numeric, 0)) AS sgst,
+      SUM(COALESCE((s."taxBreakdown"->>'igst')::numeric, 0)) AS igst,
+      SUM(${taxTotalExpr})::bigint AS "taxTotalPaise"
+    FROM sub_orders s
+    INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
+    LEFT JOIN addresses a ON a.id = o."shippingAddressId" AND a."deletedAt" IS NULL
+    WHERE s."deletedAt" IS NULL
+      AND o."createdAt" BETWEEN :from AND :to
+      AND ${REPORTABLE_ORDER_SQL}
+      AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
+    GROUP BY COALESCE(NULLIF(a.state, ''), 'UNKNOWN')
+  `;
+}
+
+function mapStateTaxRow(row: Record<string, unknown>) {
+  return {
+    state: String(row.state ?? 'UNKNOWN'),
+    cgst: Math.round(Number(row.cgst ?? 0) * 100) / 100,
+    sgst: Math.round(Number(row.sgst ?? 0) * 100) / 100,
+    igst: Math.round(Number(row.igst ?? 0) * 100) / 100,
+    taxTotal: fromPaise(Number(row.taxTotalPaise ?? 0)),
+  };
+}
+
+const STATE_TAX_KEYSET: KeysetOrderCol[] = [{ column: 'state', direction: 'ASC' }];
+
+async function stateTaxExport(
+  filters: ReportFilters,
+  cursor: { values: unknown[] } | null,
+  limit: number,
+) {
+  const page = await keysetSqlQuery({
+    selectSql: stateTaxSelectSql(),
+    order: STATE_TAX_KEYSET,
+    replacements: sqlReplacements(filters),
+    limit,
+    cursor,
+    mapRow: mapStateTaxRow,
+  });
+  return { rows: page.rows, nextCursor: page.nextCursor };
 }
 
 async function reconciliation(filters: ReportFilters) {
@@ -554,13 +744,22 @@ async function commissionRevenueExport(
 
 async function couponDiscountCost(filters: ReportFilters) {
   assertReportRange(filters);
+  return pagedSqlQuery({
+    selectSql: couponDiscountSelectSql(),
+    orderBySql: `"vendorName" ASC, "discountBearer" ASC`,
+    replacements: sqlReplacements(filters),
+    filters,
+    mapRow: mapCouponDiscountRow,
+  });
+}
+
+function couponDiscountSelectSql(): string {
   const discountExpr = sqlFrozenPaise('cl', 'discountAmountPaise', 'discountAmount');
   const bearerExpr = `CASE
     WHEN cl."discountBearer" = '${DISCOUNT_BEARER.VENDOR}' THEN '${DISCOUNT_BEARER.VENDOR}'
     ELSE '${DISCOUNT_BEARER.PLATFORM}'
   END`;
-
-  const selectSql = `
+  return `
     SELECT
       cl."vendorId"::text AS "vendorId",
       MAX(v."businessName") AS "vendorName",
@@ -575,19 +774,38 @@ async function couponDiscountCost(filters: ReportFilters) {
       AND (${discountExpr}) > 0
     GROUP BY cl."vendorId", ${bearerExpr}
   `;
+}
 
-  return pagedSqlQuery({
-    selectSql,
-    orderBySql: `"vendorName" ASC, "discountBearer" ASC`,
+function mapCouponDiscountRow(row: Record<string, unknown>) {
+  return {
+    vendorId: String(row.vendorId ?? ''),
+    vendorName: String(row.vendorName ?? ''),
+    discountBearer: String(row.discountBearer ?? DISCOUNT_BEARER.PLATFORM),
+    discountAmount: fromPaise(Number(row.discountPaise ?? 0)),
+  };
+}
+
+const COUPON_DISCOUNT_KEYSET: KeysetOrderCol[] = [
+  { column: 'vendorName', direction: 'ASC' },
+  { column: 'discountBearer', direction: 'ASC' },
+  { column: 'vendorId', direction: 'ASC' },
+];
+
+async function couponDiscountCostExport(
+  filters: ReportFilters,
+  cursor: { values: unknown[] } | null,
+  limit: number,
+) {
+  assertReportRange(filters);
+  const page = await keysetSqlQuery({
+    selectSql: couponDiscountSelectSql(),
+    order: COUPON_DISCOUNT_KEYSET,
     replacements: sqlReplacements(filters),
-    filters,
-    mapRow: (row) => ({
-      vendorId: String(row.vendorId ?? ''),
-      vendorName: String(row.vendorName ?? ''),
-      discountBearer: String(row.discountBearer ?? DISCOUNT_BEARER.PLATFORM),
-      discountAmount: fromPaise(Number(row.discountPaise ?? 0)),
-    }),
+    limit,
+    cursor,
+    mapRow: mapCouponDiscountRow,
   });
+  return { rows: page.rows, nextCursor: page.nextCursor };
 }
 
 async function gmvSales(filters: ReportFilters) {
@@ -857,6 +1075,7 @@ export const adminFinanceReports: ReportDefinition[] = [
       { key: 'tcsTotal', labelKey: 'tcsTotal', format: 'currency' },
     ],
     query: gstTcsSummary,
+    exportQuery: gstTcsExport,
   },
   {
     type: 'tds-194o-summary',
@@ -874,6 +1093,7 @@ export const adminFinanceReports: ReportDefinition[] = [
       { key: 'tdsAmount', labelKey: 'tdsAmount', format: 'currency' },
     ],
     query: tds194oSummary,
+    exportQuery: tds194oExport,
   },
   {
     type: 'hsn-sales-summary',
@@ -889,6 +1109,7 @@ export const adminFinanceReports: ReportDefinition[] = [
       { key: 'tax', labelKey: 'tax', format: 'currency' },
     ],
     query: hsnSalesSummary,
+    exportQuery: hsnSalesExport,
   },
   {
     type: 'state-tax-collection',
@@ -905,6 +1126,7 @@ export const adminFinanceReports: ReportDefinition[] = [
       { key: 'taxTotal', labelKey: 'taxTotal', format: 'currency' },
     ],
     query: stateTaxCollection,
+    exportQuery: stateTaxExport,
   },
   {
     type: 'reconciliation',
@@ -1000,6 +1222,7 @@ export const adminFinanceReports: ReportDefinition[] = [
       { key: 'discountAmount', labelKey: 'discountAmount', format: 'currency' },
     ],
     query: couponDiscountCost,
+    exportQuery: couponDiscountCostExport,
   },
   {
     type: 'gmv-sales',

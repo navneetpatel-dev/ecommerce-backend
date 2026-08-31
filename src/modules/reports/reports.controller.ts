@@ -46,12 +46,17 @@ async function actorFromReq(req: Request): Promise<ReportActor> {
   };
 }
 
+function panelExportFormat(format: string): ReportExportFormat {
+  if (format === 'csv' || format === 'pdf' || format === 'xlsx') return format;
+  return 'pdf';
+}
+
 async function enqueuePanelExport(
   res: Response,
   actor: ReportActor,
   reportType: string,
   filters: ReportFilters,
-  format: 'csv' | 'pdf',
+  format: ReportExportFormat,
   options?: { bornBy?: string | null },
 ) {
   const exported = await reportEngine.runExport(
@@ -83,7 +88,7 @@ export const adminSummary = asyncHandler(async (req: Request, res: Response) => 
       actor,
       'admin-dashboard-summary',
       { from: query.from, to: query.to },
-      query.format === 'csv' ? 'csv' : 'pdf',
+      panelExportFormat(query.format),
     );
     return;
   }
@@ -98,7 +103,7 @@ export const adminVendors = asyncHandler(async (req: Request, res: Response) => 
     await enqueuePanelExport(res, actor, 'vendor-settlement', {
       from: query.from,
       to: query.to,
-    }, query.format === 'csv' ? 'csv' : 'pdf');
+    }, panelExportFormat(query.format));
     return;
   }
   const data = await reportsService.adminVendorSettlements(query);
@@ -112,7 +117,7 @@ export const adminReconciliation = asyncHandler(async (req: Request, res: Respon
     await enqueuePanelExport(res, actor, 'reconciliation', {
       from: query.from,
       to: query.to,
-    }, query.format === 'csv' ? 'csv' : 'pdf');
+    }, panelExportFormat(query.format));
     return;
   }
   const data = await reportsService.adminReconciliation(query);
@@ -124,11 +129,11 @@ export const vendorSummary = asyncHandler(async (req: Request, res: Response) =>
   const vendorId = req.params.vendorId!;
   if (query.format !== 'json') {
     const actor = await actorFromReq(req);
-    await enqueuePanelExport(res, actor, 'vendor-payout-statement', {
+    await enqueuePanelExport(res, actor, 'vendor-summary', {
       from: query.from,
       to: query.to,
       vendorId,
-    }, query.format === 'csv' ? 'csv' : 'pdf');
+    }, panelExportFormat(query.format));
     return;
   }
   const data = await reportsService.vendorSummary(vendorId, query, req.user?.vendorId ?? null);
@@ -142,7 +147,7 @@ export const walletLiability = asyncHandler(async (req: Request, res: Response) 
     await enqueuePanelExport(res, actor, 'wallet-liability', {
       from: query.from,
       to: query.to,
-    }, query.format === 'csv' ? 'csv' : 'pdf');
+    }, panelExportFormat(query.format));
     return;
   }
   const data = await reportsService.walletLiabilityReport({
@@ -166,7 +171,7 @@ export const cashbackWriteOff = asyncHandler(async (req: Request, res: Response)
         to: query.to,
         bornBy: query.bornBy ?? null,
       },
-      query.format === 'csv' ? 'csv' : 'pdf',
+      panelExportFormat(query.format),
       { bornBy: query.bornBy ?? null },
     );
     return;
@@ -270,6 +275,12 @@ export const listAdminExports = asyncHandler(async (req: Request, res: Response)
 });
 
 export const retryAdminExport = asyncHandler(async (req: Request, res: Response) => {
+  const actor = await actorFromReq(req);
+  const exported = await reportEngine.retryExport(actor, req.params.id!, { asOriginalUser: true });
+  res.json(ok({ ...exported, async: true }));
+});
+
+export const retryExport = asyncHandler(async (req: Request, res: Response) => {
   const actor = await actorFromReq(req);
   const exported = await reportEngine.retryExport(actor, req.params.id!);
   res.json(ok({ ...exported, async: true }));

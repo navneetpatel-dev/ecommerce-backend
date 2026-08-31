@@ -20,6 +20,7 @@ import {
   dateBetween,
   paidOrderInclude,
   reportableOrderJoin,
+  REPORTABLE_ORDER_SQL,
   pagedFindAndCount,
   DISCOUNT_BEARER,
   COMMISSION_STATUS,
@@ -63,19 +64,99 @@ async function vendorSales(filters: ReportFilters) {
   );
 
   return {
-    rows: rows.map((sub) => ({
-      subOrderId: sub.id,
-      orderId: sub.orderId,
-      status: sub.status,
-      subtotal: fromPaise(frozenPaise(sub.subtotalPaise, sub.subtotal)),
-      taxAmount: fromPaise(frozenPaise(sub.taxAmountPaise, sub.taxAmount)),
-      discountAmount: fromPaise(frozenPaise(sub.discountAmountPaise, sub.discountAmount)),
-      netPayout: fromPaise(frozenPaise(sub.netPayoutAmountPaise, sub.netPayoutAmount)),
-      createdAt:
-        (sub as SubOrder & { order?: { createdAt?: Date } }).order?.createdAt ?? sub.createdAt,
-    })),
+    rows: rows.map((sub) => mapVendorSalesRow(sub)),
     total,
   };
+}
+
+function mapVendorSalesRow(sub: SubOrder | Record<string, unknown>) {
+  const raw = sub as Record<string, unknown>;
+  if (raw.subtotalPaise != null || raw.subtotal != null) {
+    const subtotalPaise =
+      raw.subtotalPaise != null
+        ? Number(raw.subtotalPaise)
+        : Math.round(Number(raw.subtotal ?? 0) * 100);
+    const taxPaise =
+      raw.taxAmountPaise != null
+        ? Number(raw.taxAmountPaise)
+        : Math.round(Number(raw.taxAmount ?? 0) * 100);
+    const discountPaise =
+      raw.discountAmountPaise != null
+        ? Number(raw.discountAmountPaise)
+        : Math.round(Number(raw.discountAmount ?? 0) * 100);
+    const netPaise =
+      raw.netPayoutAmountPaise != null
+        ? Number(raw.netPayoutAmountPaise)
+        : Math.round(Number(raw.netPayoutAmount ?? 0) * 100);
+    return {
+      subOrderId: String(raw.subOrderId ?? raw.id ?? ''),
+      orderId: String(raw.orderId ?? ''),
+      status: String(raw.status ?? ''),
+      subtotal: fromPaise(subtotalPaise),
+      taxAmount: fromPaise(taxPaise),
+      discountAmount: fromPaise(discountPaise),
+      netPayout: fromPaise(netPaise),
+      createdAt: raw.createdAt as Date,
+    };
+  }
+  const row = sub as SubOrder & { order?: { createdAt?: Date } };
+  return {
+    subOrderId: row.id,
+    orderId: row.orderId,
+    status: row.status,
+    subtotal: fromPaise(frozenPaise(row.subtotalPaise, row.subtotal)),
+    taxAmount: fromPaise(frozenPaise(row.taxAmountPaise, row.taxAmount)),
+    discountAmount: fromPaise(frozenPaise(row.discountAmountPaise, row.discountAmount)),
+    netPayout: fromPaise(frozenPaise(row.netPayoutAmountPaise, row.netPayoutAmount)),
+    createdAt: row.order?.createdAt ?? row.createdAt,
+  };
+}
+
+const VENDOR_SALES_KEYSET: KeysetOrderCol[] = [
+  { column: 'createdAt', direction: 'DESC' },
+  { column: 'subOrderId', direction: 'DESC' },
+];
+
+function vendorSalesSelectSql(): string {
+  return `
+    SELECT
+      s.id AS "subOrderId",
+      s."orderId" AS "orderId",
+      s.status AS status,
+      s."subtotalPaise" AS "subtotalPaise",
+      s.subtotal AS subtotal,
+      s."taxAmountPaise" AS "taxAmountPaise",
+      s."taxAmount" AS "taxAmount",
+      s."discountAmountPaise" AS "discountAmountPaise",
+      s."discountAmount" AS "discountAmount",
+      s."netPayoutAmountPaise" AS "netPayoutAmountPaise",
+      s."netPayoutAmount" AS "netPayoutAmount",
+      o."createdAt" AS "createdAt"
+    FROM sub_orders s
+    INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
+    WHERE s."deletedAt" IS NULL
+      AND o."createdAt" BETWEEN :from AND :to
+      AND ${REPORTABLE_ORDER_SQL}
+      AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
+  `;
+}
+
+async function vendorSalesExport(
+  filters: ReportFilters,
+  cursor: { values: unknown[] } | null,
+  limit: number,
+) {
+  assertReportRange(filters);
+  const vendorId = filters.scopedVendorId ?? filters.vendorId ?? null;
+  const page = await keysetSqlQuery({
+    selectSql: vendorSalesSelectSql(),
+    order: VENDOR_SALES_KEYSET,
+    replacements: { from: filters.from, to: filters.to, vendorId },
+    limit,
+    cursor,
+    mapRow: (row) => mapVendorSalesRow(row),
+  });
+  return { rows: page.rows, nextCursor: page.nextCursor };
 }
 
 async function vendorGstSales(filters: ReportFilters) {
@@ -592,6 +673,7 @@ export const vendorOwnerReports: ReportDefinition[] = [
       { key: 'createdAt', labelKey: 'createdAt', format: 'date' },
     ],
     query: vendorSales,
+    exportQuery: vendorSalesExport,
   },
   {
     type: 'vendor-gst-sales',

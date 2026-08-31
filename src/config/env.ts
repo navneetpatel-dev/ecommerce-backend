@@ -95,10 +95,13 @@ const envSchema = z.object({
   REPORT_EXPORT_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(2),
   REPORT_EXPORT_RATE_LIMIT_PER_MIN: z.coerce.number().int().positive().default(5),
   REPORT_EXPORT_MAX_PENDING_PER_USER: z.coerce.number().int().positive().default(2),
-  REPORT_EXPORT_CACHE_TTL_MIN: z.coerce.number().int().positive().default(60),
+  /** Dedup window — defaults to artifact TTL (7 days). */
+  REPORT_EXPORT_CACHE_TTL_MIN: z.coerce.number().int().positive().default(10_080),
   REPORT_EXPORT_ARTIFACT_TTL_DAYS: z.coerce.number().int().positive().default(7),
   REPORT_EXPORT_CHUNK_SIZE: z.coerce.number().int().positive().default(2000),
   REPORT_EXPORT_STALE_PROCESSING_MIN: z.coerce.number().int().positive().default(30),
+  REPORT_EXPORT_PENDING_STALE_MIN: z.coerce.number().int().positive().default(15),
+  REPORT_EXPORT_FAILED_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
   REPORT_EXPORT_INLINE_DEV: z
     .union([z.boolean(), z.string()])
     .optional()

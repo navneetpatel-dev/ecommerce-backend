@@ -14,6 +14,9 @@ import {
   emptyPage,
   computeReconciliationSummary,
   fromPaise,
+  sqlFrozenPaise,
+  COMMISSION_STATUS,
+  DISCOUNT_BEARER,
 } from '../engine/queryHelpers';
 import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
 
@@ -191,6 +194,67 @@ async function cashbackWriteOffQuery(filters: ReportFilters) {
   };
 }
 
+const CASHBACK_WRITE_OFF_KEYSET: KeysetOrderCol[] = [
+  { column: 'createdAt', direction: 'DESC' },
+  { column: 'id', direction: 'DESC' },
+];
+
+function cashbackWriteOffSelectSql(): string {
+  return `
+    SELECT
+      w.id AS id,
+      w."userId" AS "userId",
+      w."originalClawbackAmount" AS "originalClawbackAmount",
+      w."recoveredAmount" AS "recoveredAmount",
+      w."writtenOffAmount" AS "writtenOffAmount",
+      w."bornBy" AS "bornBy",
+      w."referenceType" AS "referenceType",
+      w."referenceId" AS "referenceId",
+      w."createdAt" AS "createdAt"
+    FROM wallet_write_offs w
+    WHERE w."deletedAt" IS NULL
+      AND w."createdAt" BETWEEN :from AND :to
+      AND (:bornBy::text IS NULL OR w."bornBy" = :bornBy)
+  `;
+}
+
+function mapCashbackWriteOffRow(row: Record<string, unknown>) {
+  return {
+    id: String(row.id ?? ''),
+    userId: String(row.userId ?? ''),
+    originalClawbackAmount: Number(row.originalClawbackAmount ?? 0),
+    recoveredAmount: Number(row.recoveredAmount ?? 0),
+    writtenOffAmount: Number(row.writtenOffAmount ?? 0),
+    bornBy: String(row.bornBy ?? ''),
+    referenceType: String(row.referenceType ?? ''),
+    referenceId: String(row.referenceId ?? ''),
+    createdAt: row.createdAt as Date,
+  };
+}
+
+async function cashbackWriteOffExport(
+  filters: ReportFilters,
+  cursor: { values: unknown[] } | null,
+  limit: number,
+) {
+  assertReportRange(filters);
+  const from = filters.from;
+  const to = inclusiveReportTo(filters.to);
+  const page = await keysetSqlQuery({
+    selectSql: cashbackWriteOffSelectSql(),
+    order: CASHBACK_WRITE_OFF_KEYSET,
+    replacements: {
+      from,
+      to,
+      bornBy: filters.bornBy ?? null,
+    },
+    limit,
+    cursor,
+    mapRow: mapCashbackWriteOffRow,
+  });
+  return { rows: page.rows, nextCursor: page.nextCursor };
+}
+
 async function platformAnalyticsQuery(filters: ReportFilters) {
   assertReportRange(filters);
   const data = await adminService.getPlatformAnalytics();
@@ -265,6 +329,65 @@ async function adminDashboardSummaryQuery(filters: ReportFilters) {
   return { rows: [row], total: 1 };
 }
 
+async function vendorSummaryQuery(filters: ReportFilters) {
+  assertReportRange(filters);
+  const vendorId = filters.scopedVendorId ?? filters.vendorId;
+  if (!vendorId) return emptyPage(filters);
+
+  const commissionExpr = sqlFrozenPaise('cl', 'commissionAmountPaise', 'commissionAmount');
+  const netExpr = `CASE
+    WHEN COALESCE(cl."netPayoutAmountPaise", 0) <> 0 THEN cl."netPayoutAmountPaise"
+    ELSE ROUND(
+      (
+        CASE
+          WHEN cl."netPayoutAmount" IS NOT NULL THEN cl."netPayoutAmount"::numeric
+          ELSE COALESCE(cl."saleAmount", 0)::numeric - COALESCE(cl."commissionAmount", 0)::numeric
+        END
+      ) * 100
+    )::bigint
+  END`;
+  const taxableExpr = sqlFrozenPaise('cl', 'taxableAmountPaise', 'taxableAmount');
+  const tcsExpr = sqlFrozenPaise('cl', 'tcsAmountPaise', 'tcsAmount');
+  const discountExpr = sqlFrozenPaise('cl', 'discountAmountPaise', 'discountAmount');
+
+  const [rows] = await sequelize.query(
+    `
+    SELECT
+      COALESCE(SUM(${taxableExpr}), 0)::bigint AS "salesPaise",
+      COALESCE(SUM(${commissionExpr}), 0)::bigint AS "commissionPaise",
+      COALESCE(SUM(${tcsExpr}), 0)::bigint AS "tcsPaise",
+      COALESCE(SUM(${netExpr}), 0)::bigint AS "netPaise",
+      COALESCE(SUM(CASE WHEN cl.status = '${COMMISSION_STATUS.PENDING}' THEN ${netExpr} ELSE 0 END), 0)::bigint AS "pendingPaise",
+      COALESCE(SUM(CASE WHEN cl.status = '${COMMISSION_STATUS.SETTLED}' THEN ${netExpr} ELSE 0 END), 0)::bigint AS "settledPaise",
+      COALESCE(SUM(CASE WHEN cl."discountBearer" = '${DISCOUNT_BEARER.VENDOR}' THEN ${discountExpr} ELSE 0 END), 0)::bigint AS "vendorDiscountPaise",
+      COALESCE(SUM(CASE WHEN cl."discountBearer" IS DISTINCT FROM '${DISCOUNT_BEARER.VENDOR}' THEN ${discountExpr} ELSE 0 END), 0)::bigint AS "platformDiscountPaise"
+    FROM commission_ledgers cl
+    WHERE cl."deletedAt" IS NULL
+      AND cl."vendorId" = :vendorId
+      AND cl."createdAt" BETWEEN :from AND :to
+      AND cl.status <> '${COMMISSION_STATUS.CLAWED_BACK}'
+    `,
+    { replacements: { vendorId, from: filters.from, to: filters.to } },
+  );
+  const row = (rows as Array<Record<string, unknown>>)[0] ?? {};
+  return {
+    rows: [
+      {
+        vendorId,
+        sales: fromPaise(Number(row.salesPaise ?? 0)),
+        commissionDeducted: fromPaise(Number(row.commissionPaise ?? 0)),
+        tcsDeducted: fromPaise(Number(row.tcsPaise ?? 0)),
+        discountOwnCoupons: fromPaise(Number(row.vendorDiscountPaise ?? 0)),
+        discountPlatformCoupons: fromPaise(Number(row.platformDiscountPaise ?? 0)),
+        netPayout: fromPaise(Number(row.netPaise ?? 0)),
+        upcomingPayout: fromPaise(Number(row.pendingPaise ?? 0)),
+        historicalPayout: fromPaise(Number(row.settledPaise ?? 0)),
+      },
+    ],
+    total: 1,
+  };
+}
+
 export const legacyPanelReports: ReportDefinition[] = [
   {
     type: 'wallet-liability',
@@ -300,6 +423,7 @@ export const legacyPanelReports: ReportDefinition[] = [
       { key: 'createdAt', labelKey: 'createdAt', format: 'date' },
     ],
     query: cashbackWriteOffQuery,
+    exportQuery: cashbackWriteOffExport,
   },
   {
     type: 'platform-analytics',
@@ -334,5 +458,25 @@ export const legacyPanelReports: ReportDefinition[] = [
       { key: 'vendorNetPayouts', labelKey: 'vendorNetPayouts', format: 'currency' },
     ],
     query: adminDashboardSummaryQuery,
+  },
+  {
+    type: 'vendor-summary',
+    labelKey: 'reportVendorSummary',
+    audience: 'vendor_owner',
+    permissions: [PERMISSIONS.PAYOUT_VIEW, PERMISSIONS.COMMISSION_VIEW],
+    vendorScoped: true,
+    financial: true,
+    columns: [
+      { key: 'vendorId', labelKey: 'vendorId' },
+      { key: 'sales', labelKey: 'sales', format: 'currency' },
+      { key: 'commissionDeducted', labelKey: 'commissionDeducted', format: 'currency' },
+      { key: 'tcsDeducted', labelKey: 'tcsDeducted', format: 'currency' },
+      { key: 'discountOwnCoupons', labelKey: 'discountOwnCoupons', format: 'currency' },
+      { key: 'discountPlatformCoupons', labelKey: 'discountPlatformCoupons', format: 'currency' },
+      { key: 'netPayout', labelKey: 'netPayout', format: 'currency' },
+      { key: 'upcomingPayout', labelKey: 'upcomingPayout', format: 'currency' },
+      { key: 'historicalPayout', labelKey: 'historicalPayout', format: 'currency' },
+    ],
+    query: vendorSummaryQuery,
   },
 ];

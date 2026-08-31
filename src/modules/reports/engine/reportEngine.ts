@@ -61,6 +61,11 @@ export type RunExportOptions = {
   bornBy?: string | null;
 };
 
+export const REPORT_EXPORT_JOB_OPTIONS = {
+  ...DEFAULT_TRANSACTIONAL_JOB_OPTIONS,
+  attempts: 1,
+} as const;
+
 export type AsyncExportResult = {
   async: true;
   exportId: string;
@@ -205,10 +210,14 @@ async function findCachedExport(exportKey: string): Promise<ReportExportLog | nu
 }
 
 async function findPendingExport(exportKey: string): Promise<ReportExportLog | null> {
+  const pendingStaleCutoff = new Date(
+    Date.now() - reportExportConfig.pendingStaleMin * 60 * 1000,
+  );
   return ReportExportLog.findOne({
     where: {
       exportKey,
       status: { [Op.in]: ['PENDING', 'PROCESSING'] },
+      createdAt: { [Op.gt]: pendingStaleCutoff },
     },
     order: [['createdAt', 'DESC']],
   });
@@ -402,11 +411,16 @@ export class ReportEngine {
     const priority = options.priority ?? reportExportConfig.userExportPriority;
 
     if (areQueuesReady()) {
-      await queues.reportExport.add(
-        REPORT_EXPORT_JOB,
-        { exportLogId: log.id },
-        { ...DEFAULT_TRANSACTIONAL_JOB_OPTIONS, jobId: log.id, priority },
-      );
+      try {
+        await queues.reportExport.add(
+          REPORT_EXPORT_JOB,
+          { exportLogId: log.id },
+          { ...REPORT_EXPORT_JOB_OPTIONS, jobId: log.id, priority },
+        );
+      } catch (err) {
+        await log.destroy({ force: true });
+        throw err;
+      }
     } else if (reportExportConfig.inlineDev && !reportExportConfig.isProduction) {
       void this.processExportJob(log.id).catch((err) =>
         logger.error('Inline report export failed', {
@@ -587,8 +601,21 @@ export class ReportEngine {
       throw new ForbiddenError(ERROR_MESSAGES.REPORT_FORBIDDEN);
     }
 
+    const etag = statusEtag(log);
+    if (
+      ifNoneMatch &&
+      ifNoneMatch === etag &&
+      (log.status === 'PENDING' || log.status === 'PROCESSING')
+    ) {
+      return { notModified: true, etag };
+    }
+
     const cached = await readCachedExportStatus(exportId);
     if (cached && (cached.status === 'PENDING' || cached.status === 'PROCESSING')) {
+      const cachedEtag = typeof cached.etag === 'string' ? cached.etag : etag;
+      if (ifNoneMatch && ifNoneMatch === cachedEtag) {
+        return { notModified: true, etag: cachedEtag };
+      }
       return cached as Awaited<ReturnType<ReportEngine['getExportStatus']>>;
     }
 
@@ -603,15 +630,6 @@ export class ReportEngine {
     }
 
     const filtersUsed = log.filtersUsed as Record<string, unknown>;
-    const etag = statusEtag(log);
-    if (
-      ifNoneMatch &&
-      ifNoneMatch === etag &&
-      (log.status === 'PENDING' || log.status === 'PROCESSING')
-    ) {
-      return { notModified: true, etag };
-    }
-
     const payload = {
       id: log.id,
       reportType: log.reportType,
@@ -619,7 +637,7 @@ export class ReportEngine {
       status: log.status,
       rowCount: log.rowCount,
       rowCountKnown: log.status === 'READY' || log.status === 'SYNC' || log.rowCount > 0,
-      fileUrl: log.fileUrl,
+      fileUrl: isS3Configured() ? null : log.fileUrl,
       downloadUrl,
       expiresIn,
       errorMessage: log.errorMessage,
@@ -667,15 +685,26 @@ export class ReportEngine {
     return { mode: 'buffer' as const, buffer, log };
   }
 
-  async retryExport(actor: ReportActor, exportId: string): Promise<AsyncExportResult> {
+  async retryExport(
+    actor: ReportActor,
+    exportId: string,
+    options?: { asOriginalUser?: boolean },
+  ): Promise<AsyncExportResult> {
     const log = await ReportExportLog.findByPk(exportId);
     if (!log) throw new NotFoundError('ReportExportLog');
     if (log.status !== 'FAILED') {
       throw new ValidationError('Only failed exports can be retried');
     }
+    if (log.userId !== actor.id && actor.roleName !== ROLES.SUPER_ADMIN) {
+      throw new ForbiddenError(ERROR_MESSAGES.REPORT_FORBIDDEN);
+    }
     const f = log.filtersUsed as Record<string, unknown>;
+    const exportActor: ReportActor =
+      options?.asOriginalUser && actor.roleName === ROLES.SUPER_ADMIN
+        ? { ...actor, id: log.userId }
+        : actor;
     return this.runExport(
-      actor,
+      exportActor,
       log.reportType,
       {
         from: new Date(String(f.from)),
@@ -684,6 +713,7 @@ export class ReportEngine {
         categoryId: (f.categoryId as string) ?? null,
         status: (f.status as string) ?? null,
         bornBy: (f.bornBy as string) ?? null,
+        scopedVendorId: (f.scopedVendorId as string) ?? null,
       },
       (log.format as ReportExportFormat) || 'xlsx',
     );

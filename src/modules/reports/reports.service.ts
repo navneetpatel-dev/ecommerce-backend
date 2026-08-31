@@ -171,7 +171,7 @@ export class ReportsService {
   }
 
   /**
-   * Outstanding customer wallet balances — DISTINCT ON latest ledger per user, SQL-paged.
+   * Outstanding customer wallet balances as of :to for users with ledger activity in range.
    */
   async walletLiabilityReport(
     query: ReportRangeQuery & { page?: number; limit?: number },
@@ -181,43 +181,62 @@ export class ReportsService {
     rows: Array<{ userId: string; balance: number; asOf: Date }>;
     pagination: ReturnType<typeof buildPaginationMeta>;
   }> {
+    assertRange(query);
+    const range = engineRange(query);
     const page = Math.max(1, query.page ?? 1);
     const limit = Math.max(1, query.limit ?? DEFAULT_PAGE_LIMIT);
     const offset = paginationOffset(page, limit);
+    const replacements = { from: range.from, to: range.to, limit, offset };
 
     const [[totals]] = (await sequelize.query(
-      `WITH latest AS (
-         SELECT DISTINCT ON ("userId")
-           "userId",
-           "balanceAfter",
-           "createdAt"
+      `WITH active_users AS (
+         SELECT DISTINCT "userId"
          FROM wallet_ledgers
          WHERE "deletedAt" IS NULL
-         ORDER BY "userId", "createdAt" DESC
+           AND "createdAt" BETWEEN :from AND :to
+       ),
+       latest AS (
+         SELECT DISTINCT ON (wl."userId")
+           wl."userId",
+           wl."balanceAfter"
+         FROM wallet_ledgers wl
+         INNER JOIN active_users au ON au."userId" = wl."userId"
+         WHERE wl."deletedAt" IS NULL
+           AND wl."createdAt" <= :to
+         ORDER BY wl."userId", wl."createdAt" DESC
        )
        SELECT
          COUNT(*)::int AS "customerCount",
          COALESCE(SUM("balanceAfter"), 0)::float AS "totalLiability"
        FROM latest
        WHERE "balanceAfter" > 0`,
+      { replacements: { from: range.from, to: range.to } },
     )) as [Array<{ customerCount: number; totalLiability: number }>, unknown];
 
     const [rows] = (await sequelize.query(
-      `WITH latest AS (
-         SELECT DISTINCT ON ("userId")
-           "userId" AS "userId",
-           "balanceAfter" AS balance,
-           "createdAt" AS "asOf"
+      `WITH active_users AS (
+         SELECT DISTINCT "userId"
          FROM wallet_ledgers
          WHERE "deletedAt" IS NULL
-         ORDER BY "userId", "createdAt" DESC
+           AND "createdAt" BETWEEN :from AND :to
+       ),
+       latest AS (
+         SELECT DISTINCT ON (wl."userId")
+           wl."userId" AS "userId",
+           wl."balanceAfter" AS balance,
+           wl."createdAt" AS "asOf"
+         FROM wallet_ledgers wl
+         INNER JOIN active_users au ON au."userId" = wl."userId"
+         WHERE wl."deletedAt" IS NULL
+           AND wl."createdAt" <= :to
+         ORDER BY wl."userId", wl."createdAt" DESC
        )
        SELECT "userId", balance, "asOf"
        FROM latest
        WHERE balance > 0
        ORDER BY balance DESC
        LIMIT :limit OFFSET :offset`,
-      { replacements: { limit, offset } },
+      { replacements },
     )) as [Array<{ userId: string; balance: number; asOf: Date }>, unknown];
 
     const customerCount = Number(totals?.customerCount ?? 0);

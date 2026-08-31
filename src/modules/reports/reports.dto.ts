@@ -5,7 +5,7 @@ import { inclusiveReportTo } from './engine/queryHelpers';
 export const ReportRangeSchema = z.object({
   from: z.coerce.date(),
   to: z.coerce.date().transform(inclusiveReportTo),
-  format: z.enum(['json', 'csv', 'pdf']).default('json'),
+  format: z.enum(['json', 'xlsx', 'csv', 'pdf']).default('json'),
   page: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().positive().max(100).optional(),
 });

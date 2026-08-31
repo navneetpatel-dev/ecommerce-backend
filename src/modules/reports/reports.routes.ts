@@ -33,6 +33,11 @@ router.get(
   reportsController.listAdminExports,
 );
 router.post(
+  '/exports/:id/retry',
+  authenticate,
+  reportsController.retryExport,
+);
+router.post(
   '/admin/exports/:id/retry',
   authenticate,
   authorize(PERMISSIONS.COMMISSION_VIEW),

@@ -1,13 +1,24 @@
 import { Worker } from 'bullmq';
 import { getQueueConnection } from '@config/queue';
 import { logger } from '@core/logger';
-import { reportEngine, REPORT_EXPORT_JOB } from '@modules/reports/engine/reportEngine';
+import {
+  reportEngine,
+  REPORT_EXPORT_JOB,
+} from '@modules/reports/engine/reportEngine';
 import { reportExportConfig } from '@modules/reports/reportExportConfig';
+import {
+  SCHEDULED_REPORTS_JOB,
+  runScheduledWeeklyReports,
+} from './scheduledReports.processor';
 
 export function startReportExportWorker(): Worker {
   const worker = new Worker(
     'report-export',
     async (job) => {
+      if (job.name === SCHEDULED_REPORTS_JOB) {
+        await runScheduledWeeklyReports();
+        return;
+      }
       if (job.name !== REPORT_EXPORT_JOB) return;
       const exportLogId = String((job.data as { exportLogId?: string }).exportLogId ?? '');
       if (!exportLogId) return;

@@ -4,21 +4,27 @@ Operational guide for async report exports (xlsx/csv/pdf).
 
 ## Architecture
 
-- **Enqueue**: `POST/GET` export endpoints return `{ async: true, exportId, status: PENDING, rowCountKnown: false }` in ~200ms. Row count is **not** computed at enqueue.
+- **Enqueue**: Export endpoints return `{ async: true, exportId, status: PENDING, rowCountKnown: false }` in ~200ms. Row count is **not** computed at enqueue.
 - **Worker**: BullMQ `report-export` queue runs `ReportEngine.processExportJob`, streams rows via `createReportRowIterator`, uploads to S3 (or local `storage/report-exports`), marks log `READY`.
-- **Dedup**: `exportKey` (SHA-256 of user + report + filters + format). READY logs within `REPORT_EXPORT_CACHE_TTL_MIN` with a valid artifact are reused (`cached: true`, metric `cache_hit`).
+- **Dedup**: `exportKey` (SHA-256 of user + report + filters + format). READY logs within `REPORT_EXPORT_CACHE_TTL_MIN` (default **10_080** = 7 days) with a valid artifact are reused (`cached: true`, metric `cache_hit`).
 - **Artifact probe**: Redis cache (`report-export:artifact:{id}`, 5 min TTL) backs S3/local existence checks during dedup.
+- **Scheduled reports**: Weekly cron job runs on the **`report-export`** queue (`SCHEDULED_REPORTS_JOB`), not `s3-orphan-cleanup`.
 
 ## Status polling
 
 - `GET /api/reports/exports/:id` — auth required before cache read.
 - Send `If-None-Match: <etag>` while `PENDING`/`PROCESSING` for **304** when unchanged.
 - `rowCountKnown: false` until status is `READY` (or worker wrote a non-zero count on reclaim).
+- When S3 is configured, `fileUrl` is omitted from status JSON; clients use `downloadUrl` (presigned) or `/download`.
+
+## User retry
+
+- `POST /api/reports/exports/:id/retry` — re-enqueues a **FAILED** export owned by the caller.
 
 ## Admin ops
 
 - `GET /api/reports/admin/exports?status=&reportType=` — recent logs + `{ queue: { waiting, active, failed } }`.
-- `POST /api/reports/admin/exports/:id/retry` — re-enqueues a **FAILED** export (new log row; dedup may still apply).
+- `POST /api/reports/admin/exports/:id/retry` — re-enqueues as the **original export user** (`asOriginalUser: true`).
 
 ## Failure modes
 
@@ -28,6 +34,7 @@ Operational guide for async report exports (xlsx/csv/pdf).
 | 503 queue unavailable | Redis/BullMQ down in prod | Restore queue; exports fail-closed |
 | READY but download 404 | S3 object deleted | Stale dedup marks FAILED on next request; user re-exports |
 | PROCESSING stuck | Worker crash | Reclaimed after `REPORT_EXPORT_STALE_PROCESSING_MIN`; or manual FAILED + retry |
+| PENDING stuck | `queue.add` failed or worker never picked up | Auto-FAILED after `REPORT_EXPORT_PENDING_STALE_MIN` (default 15 min) |
 | FAILED artifact missing | Prior stale READY | Automatic on dedup probe; ops retry |
 
 ## Metrics (structured logs)
@@ -37,8 +44,8 @@ Operational guide for async report exports (xlsx/csv/pdf).
 
 ## Cron jobs
 
-- **Weekly reports**: Monday 06:00 UTC — `scheduled-weekly-reports` on `s3-orphan-cleanup` queue.
-- **Export cleanup**: Daily 03:15 — expires old artifacts and logs.
+- **Weekly reports**: Monday 06:00 UTC — `scheduled-weekly-reports` on **`report-export`** queue.
+- **Export cleanup**: Daily 03:15 — expires old READY artifacts; fails stale PENDING; deletes old FAILED logs.
 - **S3 orphan cleanup**: Daily 03:00.
 
 ## Migrations
@@ -59,4 +66,13 @@ cd backend && npm run db:migrate
 
 ## Key env vars
 
-See `backend/src/modules/reports/reportExportConfig.ts` — cache TTL, artifact TTL, chunk size, presigned URL expiry, pending cap, stale processing window.
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `REPORT_EXPORT_CACHE_TTL_MIN` | 10080 (7d) | Dedup window; align with artifact TTL |
+| `REPORT_EXPORT_ARTIFACT_TTL_DAYS` | 7 | S3/local artifact retention |
+| `REPORT_EXPORT_PENDING_STALE_MIN` | 15 | PENDING → FAILED in engine filter + cleanup |
+| `REPORT_EXPORT_FAILED_RETENTION_DAYS` | 30 | Delete old FAILED log rows |
+| `REPORT_EXPORT_STALE_PROCESSING_MIN` | 60 | Reclaim stuck PROCESSING |
+| `REPORT_EXPORT_MAX_PENDING_PER_USER` | 3 | Inflight cap per user |
+
+See `backend/src/modules/reports/reportExportConfig.ts` for chunk size, presigned URL expiry, worker concurrency, and rate limits.
