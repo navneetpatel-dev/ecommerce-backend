@@ -4,6 +4,7 @@ import { PRODUCT_STATUS } from '@core/constants/statuses';
 import { Product } from '@database/models/product.model';
 import { Category } from '@database/models/category.model';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
+import { createOffsetExportQuery, createSingleShotExportQuery } from '../engine/export/createOffsetExportQuery';
 import {
   assertReportRange,
   fromPaise,
@@ -250,6 +251,7 @@ export const adminCatalogReports: ReportDefinition[] = [
       { key: 'revenue', labelKey: 'revenue', format: 'currency' },
     ],
     query: productPerformance,
+    exportQuery: createOffsetExportQuery(productPerformance),
   },
   {
     type: 'category-performance',
@@ -265,6 +267,7 @@ export const adminCatalogReports: ReportDefinition[] = [
       { key: 'revenue', labelKey: 'revenue', format: 'currency' },
     ],
     query: categoryPerformance,
+    exportQuery: createOffsetExportQuery(categoryPerformance),
   },
   {
     type: 'product-approval-tat',
@@ -284,6 +287,7 @@ export const adminCatalogReports: ReportDefinition[] = [
       { key: 'turnaroundHours', labelKey: 'turnaroundHours', format: 'number' },
     ],
     query: productApprovalTat,
+    exportQuery: createOffsetExportQuery(productApprovalTat),
   },
   {
     type: 'review-rating-summary',
@@ -302,5 +306,6 @@ export const adminCatalogReports: ReportDefinition[] = [
       { key: 'rejectedCount', labelKey: 'rejectedCount', format: 'number' },
     ],
     query: reviewRatingSummary,
+    exportQuery: createOffsetExportQuery(reviewRatingSummary),
   },
 ];

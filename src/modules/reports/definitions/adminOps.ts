@@ -6,6 +6,7 @@ import { Order } from '@database/models/order.model';
 import { Vendor } from '@database/models/vendor.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
+import { createOffsetExportQuery, createSingleShotExportQuery } from '../engine/export/createOffsetExportQuery';
 import {
   assertReportRange,
   pagedFindAndCount,
@@ -241,6 +242,7 @@ export const adminOpsReports: ReportDefinition[] = [
       { key: 'hoursToDeliver', labelKey: 'hoursToDeliver', format: 'number' },
     ],
     query: orderSla,
+    exportQuery: createOffsetExportQuery(orderSla),
   },
   {
     type: 'cancellations',
@@ -260,6 +262,7 @@ export const adminOpsReports: ReportDefinition[] = [
       { key: 'cancelledAt', labelKey: 'cancelledAt', format: 'date' },
     ],
     query: cancellations,
+    exportQuery: createOffsetExportQuery(cancellations),
   },
   {
     type: 'refund-return',
@@ -281,5 +284,6 @@ export const adminOpsReports: ReportDefinition[] = [
       { key: 'resolvedAt', labelKey: 'resolvedAt', format: 'date' },
     ],
     query: refundReturn,
+    exportQuery: createOffsetExportQuery(refundReturn),
   },
 ];

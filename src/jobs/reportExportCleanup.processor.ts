@@ -3,12 +3,29 @@ import path from 'node:path';
 import { Op } from 'sequelize';
 import { logger } from '@core/logger';
 import { ReportExportLog } from '@database/models/reportExportLog.model';
-import { deleteObject, extractS3KeyFromUrl } from '@config/s3';
+import { deleteObject, extractS3KeyFromUrl, isS3Configured } from '@config/s3';
 import { reportExportConfig } from '@modules/reports/reportExportConfig';
+import { purgeExportRedisCaches } from '@modules/reports/engine/export/purgeExportRedisCaches';
 
 export const REPORT_EXPORT_CLEANUP_JOB = 'report-export-cleanup';
 
 const LOCAL_EXPORT_DIR = path.join(process.cwd(), 'storage', 'report-exports');
+
+async function failStaleExports(
+  where: Record<string, unknown>,
+  errorMessage: string,
+): Promise<number> {
+  const stale = await ReportExportLog.findAll({ where, attributes: ['id'] });
+  if (stale.length === 0) return 0;
+  for (const log of stale) {
+    await purgeExportRedisCaches(log.id);
+  }
+  const [count] = await ReportExportLog.update(
+    { status: 'FAILED', errorMessage },
+    { where },
+  );
+  return count;
+}
 
 export async function runReportExportCleanup(): Promise<{
   deletedLogs: number;
@@ -26,43 +43,48 @@ export async function runReportExportCleanup(): Promise<{
   let deletedKeys = 0;
   let failedPending = 0;
 
-  const [stalePending] = await ReportExportLog.update(
+  failedPending += await failStaleExports(
     {
-      status: 'FAILED',
-      errorMessage: 'Export enqueue timed out',
+      status: 'PENDING',
+      createdAt: { [Op.lt]: pendingStaleCutoff },
     },
-    {
-      where: {
-        status: 'PENDING',
-        createdAt: { [Op.lt]: pendingStaleCutoff },
-      },
-    },
+    'Export enqueue timed out',
   );
-  failedPending += stalePending;
 
   const processingStaleCutoff = new Date(
     Date.now() - reportExportConfig.staleProcessingMin * 60 * 1000,
   );
-  const [staleProcessing] = await ReportExportLog.update(
+  failedPending += await failStaleExports(
     {
-      status: 'FAILED',
-      errorMessage: 'Export processing timed out',
+      status: 'PROCESSING',
+      updatedAt: { [Op.lt]: processingStaleCutoff },
     },
-    {
-      where: {
-        status: 'PROCESSING',
-        updatedAt: { [Op.lt]: processingStaleCutoff },
-      },
-    },
+    'Export processing timed out',
   );
-  failedPending += staleProcessing;
 
-  await ReportExportLog.destroy({
-    where: {
-      status: 'FAILED',
-      updatedAt: { [Op.lt]: failedCutoff },
-    },
-  });
+  while (true) {
+    const failedLogs = await ReportExportLog.findAll({
+      where: {
+        status: 'FAILED',
+        updatedAt: { [Op.lt]: failedCutoff },
+      },
+      limit: 500,
+    });
+    if (failedLogs.length === 0) break;
+    for (const log of failedLogs) {
+      if (log.fileKey || log.fileUrl) {
+        const { deleteExportArtifact } = await import(
+          '@modules/reports/engine/export/deleteExportArtifact'
+        );
+        await deleteExportArtifact(log);
+        deletedKeys += 1;
+      }
+      await purgeExportRedisCaches(log.id);
+      await log.destroy();
+      deletedLogs += 1;
+    }
+    if (failedLogs.length < 500) break;
+  }
 
   while (true) {
     const expired = await ReportExportLog.findAll({
@@ -85,9 +107,15 @@ export async function runReportExportCleanup(): Promise<{
           deletedKeys += 1;
         }
       } else if (log.fileKey) {
-        await fs.unlink(path.join(LOCAL_EXPORT_DIR, log.fileKey)).catch(() => undefined);
-        deletedKeys += 1;
+        if (isS3Configured()) {
+          await deleteObject(log.fileKey).catch(() => undefined);
+          deletedKeys += 1;
+        } else {
+          await fs.unlink(path.join(LOCAL_EXPORT_DIR, log.fileKey)).catch(() => undefined);
+          deletedKeys += 1;
+        }
       }
+      await purgeExportRedisCaches(log.id);
       await log.destroy();
       deletedLogs += 1;
     }

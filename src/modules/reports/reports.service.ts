@@ -1,23 +1,17 @@
-import { Op } from 'sequelize';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
-import { sequelize } from '@database/models';
-import { WalletWriteOff } from '@database/models/walletWriteOff.model';
 import { fromPaise } from '@modules/pricing/money';
-import { paginationOffset, buildPaginationMeta } from '@core/http/pagination';
+import { buildPaginationMeta } from '@core/http/pagination';
 import { DEFAULT_PAGE_LIMIT } from '@core/constants/http';
-import type { ReportRangeQuery, WriteOffReportQuery } from './reports.dto';
+import type { ReportRangeQuery } from './reports.dto';
 import { getReportDefinition } from './engine/reportRegistry';
 import { walletLiabilityTotals } from './definitions/legacyPanelReports';
 import {
   inclusiveReportTo,
-  frozenPaise,
   computeReconciliationSummary,
   assertReportRange,
 } from './engine/queryHelpers';
-import { renderReportTablePdf } from '@core/pdf';
-import { resolveReportColumnLabel } from './reports.constants';
 
 function assertRange(query: ReportRangeQuery) {
   assertReportRange({ from: query.from, to: query.to });
@@ -174,120 +168,6 @@ export class ReportsService {
       })),
       pagination: buildPaginationMeta(result.total, page, limit),
     };
-  }
-
-  /** Cashback write-offs with SQL pagination; totals from a separate aggregate query. */
-  async cashbackWriteOffReport(
-    query: WriteOffReportQuery & { page?: number; limit?: number },
-  ): Promise<{
-    from: Date;
-    to: Date;
-    bornBy: string | null;
-    recoveredTotal: number;
-    writtenOffTotal: number;
-    rows: Array<{
-      id: string;
-      userId: string;
-      originalClawbackAmount: number;
-      recoveredAmount: number;
-      writtenOffAmount: number;
-      bornBy: string;
-      referenceType: string;
-      referenceId: string;
-      createdAt: Date;
-    }>;
-    pagination: ReturnType<typeof buildPaginationMeta>;
-  }> {
-    assertRange(query);
-    const from = query.from;
-    const to = inclusiveReportTo(query.to);
-    const page = Math.max(1, query.page ?? 1);
-    const limit = Math.max(1, query.limit ?? DEFAULT_PAGE_LIMIT);
-    const offset = paginationOffset(page, limit);
-
-    const where: Record<string, unknown> = {
-      createdAt: { [Op.between]: [from, to] },
-    };
-    if (query.bornBy) where.bornBy = query.bornBy;
-
-    const [totalsRaw, pageResult] = await Promise.all([
-      WalletWriteOff.findAll({
-        where,
-        attributes: [
-          [
-            sequelize.fn('COALESCE', sequelize.fn('SUM', sequelize.col('recoveredAmount')), 0),
-            'recoveredTotal',
-          ],
-          [
-            sequelize.fn('COALESCE', sequelize.fn('SUM', sequelize.col('writtenOffAmount')), 0),
-            'writtenOffTotal',
-          ],
-        ],
-        raw: true,
-      }),
-      WalletWriteOff.findAndCountAll({
-        where,
-        order: [['createdAt', 'DESC']],
-        limit,
-        offset,
-      }),
-    ]);
-
-    const aggregate = (totalsRaw[0] ?? {
-      recoveredTotal: 0,
-      writtenOffTotal: 0,
-    }) as { recoveredTotal: string | number; writtenOffTotal: string | number };
-
-    return {
-      from,
-      to,
-      bornBy: query.bornBy ?? null,
-      recoveredTotal: Math.round(Number(aggregate.recoveredTotal) * 100) / 100,
-      writtenOffTotal: Math.round(Number(aggregate.writtenOffTotal) * 100) / 100,
-      rows: pageResult.rows.map((row) => ({
-        id: row.id,
-        userId: row.userId,
-        originalClawbackAmount: Number(row.originalClawbackAmount),
-        recoveredAmount: Number(row.recoveredAmount),
-        writtenOffAmount: Number(row.writtenOffAmount),
-        bornBy: row.bornBy,
-        referenceType: row.referenceType,
-        referenceId: row.referenceId,
-        createdAt: row.createdAt as Date,
-      })),
-      pagination: buildPaginationMeta(pageResult.count, page, limit),
-    };
-  }
-
-  toCsv(rows: Record<string, unknown>[]): string {
-    if (rows.length === 0) return '';
-    const headers = Object.keys(rows[0]!);
-    const escape = (value: unknown) => {
-      const raw = value == null ? '' : String(value);
-      if (/[",\n]/.test(raw)) return `"${raw.replace(/"/g, '""')}"`;
-      return raw;
-    };
-    return [
-      headers.join(','),
-      ...rows.map((row) => headers.map((h) => escape(row[h])).join(',')),
-    ].join('\n');
-  }
-
-  async toPdf(title: string, rows: Record<string, unknown>[]): Promise<Buffer> {
-    const columns =
-      rows.length > 0
-        ? Object.keys(rows[0]!).map((key) => ({
-            key,
-            label: resolveReportColumnLabel(key),
-          }))
-        : [];
-
-    return renderReportTablePdf({
-      title,
-      columns,
-      rows,
-      emptyMessage: 'No rows',
-    });
   }
 }
 

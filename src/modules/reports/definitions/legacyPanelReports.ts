@@ -2,10 +2,10 @@ import { Op, QueryTypes } from 'sequelize';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { sequelize } from '@database/models';
 import { WalletWriteOff } from '@database/models/walletWriteOff.model';
-import { adminService } from '@modules/admin/admin.service';
 import { paginationOffset } from '@core/http/pagination';
 import { DEFAULT_PAGE_LIMIT } from '@core/constants/http';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
+import { createOffsetExportQuery, createSingleShotExportQuery } from '../engine/export/createOffsetExportQuery';
 import {
   assertReportRange,
   inclusiveReportTo,
@@ -207,10 +207,34 @@ async function cashbackWriteOffQuery(filters: ReportFilters) {
         createdAt: row.createdAt as Date,
       })),
       total: filters._exportKnownTotal,
+      meta: {
+        recoveredTotal: null,
+        writtenOffTotal: null,
+        bornBy: filters.bornBy ?? null,
+      },
     };
   }
 
   const pageResult = await WalletWriteOff.findAndCountAll(findOpts);
+  const totalsRaw = await WalletWriteOff.findAll({
+    where,
+    attributes: [
+      [
+        sequelize.fn('COALESCE', sequelize.fn('SUM', sequelize.col('recoveredAmount')), 0),
+        'recoveredTotal',
+      ],
+      [
+        sequelize.fn('COALESCE', sequelize.fn('SUM', sequelize.col('writtenOffAmount')), 0),
+        'writtenOffTotal',
+      ],
+    ],
+    raw: true,
+  });
+  const aggregate = (totalsRaw[0] ?? {
+    recoveredTotal: 0,
+    writtenOffTotal: 0,
+  }) as { recoveredTotal: string | number; writtenOffTotal: string | number };
+
   return {
     rows: pageResult.rows.map((row) => ({
       id: row.id,
@@ -224,6 +248,11 @@ async function cashbackWriteOffQuery(filters: ReportFilters) {
       createdAt: row.createdAt as Date,
     })),
     total: pageResult.count,
+    meta: {
+      recoveredTotal: Math.round(Number(aggregate.recoveredTotal) * 100) / 100,
+      writtenOffTotal: Math.round(Number(aggregate.writtenOffTotal) * 100) / 100,
+      bornBy: filters.bornBy ?? null,
+    },
   };
 }
 
@@ -290,7 +319,48 @@ async function cashbackWriteOffExport(
 
 async function platformAnalyticsQuery(filters: ReportFilters) {
   assertReportRange(filters);
-  const data = await adminService.getPlatformAnalytics();
+  const [rangeStats] = await sequelize.query<{
+    gmv: string;
+    paidGmv: string;
+    orderCount: string;
+    customerCount: string;
+    cancelledCount: string;
+    returnCount: string;
+  }>(
+    `
+    SELECT
+      COALESCE(SUM(o."totalAmount"), 0)::numeric AS gmv,
+      COALESCE(SUM(o."totalAmount") FILTER (WHERE o."paymentStatus" = 'PAID'), 0)::numeric AS "paidGmv",
+      COUNT(*)::int AS "orderCount",
+      COUNT(DISTINCT o."userId")::int AS "customerCount",
+      COUNT(*) FILTER (WHERE o.status = 'CANCELLED')::int AS "cancelledCount",
+      0::int AS "returnCount"
+    FROM orders o
+    WHERE o."createdAt" BETWEEN :from AND :to
+      AND o."deletedAt" IS NULL
+    `,
+    {
+      replacements: { from: filters.from, to: filters.to },
+      type: QueryTypes.SELECT,
+    },
+  );
+  const stats = rangeStats ?? {
+    gmv: '0',
+    paidGmv: '0',
+    orderCount: '0',
+    customerCount: '0',
+    cancelledCount: '0',
+    returnCount: '0',
+  };
+  const orderCount = Number(stats.orderCount ?? 0);
+  const gmv = Number(stats.gmv ?? 0);
+  const paidGmv = Number(stats.paidGmv ?? 0);
+  const aov = orderCount > 0 ? Math.round((gmv / orderCount) * 100) / 100 : 0;
+  const cancelRate =
+    orderCount > 0
+      ? Math.round((Number(stats.cancelledCount ?? 0) / orderCount) * 10_000) / 100
+      : 0;
+
   const orderVolumeRows = await sequelize.query<{ date: string; count: string; revenue: string }>(
     `SELECT to_char(date_trunc('day', "createdAt"), 'YYYY-MM-DD') AS date,
             COUNT(*)::int AS count,
@@ -308,19 +378,12 @@ async function platformAnalyticsQuery(filters: ReportFilters) {
   );
 
   const rows: Record<string, unknown>[] = [
-    { metric: 'GMV (all time)', value: data.gmv, extra: null },
-    { metric: 'Paid GMV (all time)', value: data.paidGmv, extra: null },
-    { metric: 'AOV', value: data.aov, extra: null },
-    { metric: 'Total orders', value: data.totalOrders, extra: null },
-    { metric: 'Total customers', value: data.totalCustomers, extra: null },
-    { metric: 'Total vendors', value: data.totalVendors, extra: null },
-    { metric: 'Cancellation rate %', value: data.cancellationRate, extra: null },
-    { metric: 'Return rate %', value: data.returnRate, extra: null },
-    ...data.topVendors.map((row, i) => ({
-      metric: `Top vendor #${i + 1}`,
-      value: row.businessName ?? '',
-      extra: row.revenue,
-    })),
+    { metric: 'GMV (in range)', value: gmv, extra: null },
+    { metric: 'Paid GMV (in range)', value: paidGmv, extra: null },
+    { metric: 'AOV (in range)', value: aov, extra: null },
+    { metric: 'Orders (in range)', value: orderCount, extra: null },
+    { metric: 'Customers (in range)', value: Number(stats.customerCount ?? 0), extra: null },
+    { metric: 'Cancellation rate % (in range)', value: cancelRate, extra: null },
     ...orderVolumeRows.map((row) => ({
       metric: `Volume ${row.date}`,
       value: Number(row.count),
@@ -459,6 +522,7 @@ export const legacyPanelReports: ReportDefinition[] = [
       { key: 'extra', labelKey: 'revenue', format: 'currency' },
     ],
     query: platformAnalyticsQuery,
+    exportQuery: createSingleShotExportQuery(platformAnalyticsQuery),
   },
   {
     type: 'admin-dashboard-summary',
@@ -479,6 +543,7 @@ export const legacyPanelReports: ReportDefinition[] = [
       { key: 'vendorNetPayouts', labelKey: 'vendorNetPayouts', format: 'currency' },
     ],
     query: adminDashboardSummaryQuery,
+    exportQuery: createSingleShotExportQuery(adminDashboardSummaryQuery),
   },
   {
     type: 'vendor-summary',
@@ -499,5 +564,6 @@ export const legacyPanelReports: ReportDefinition[] = [
       { key: 'historicalPayout', labelKey: 'historicalPayout', format: 'currency' },
     ],
     query: vendorSummaryQuery,
+    exportQuery: createSingleShotExportQuery(vendorSummaryQuery),
   },
 ];

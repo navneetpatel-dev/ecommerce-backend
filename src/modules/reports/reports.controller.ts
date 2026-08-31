@@ -76,6 +76,7 @@ async function enqueuePanelExport(
       rowCount: exported.rowCount,
       rowCountKnown: exported.rowCountKnown,
       cached: exported.cached ?? false,
+      deduped: exported.deduped ?? false,
     }),
   );
 }
@@ -161,8 +162,8 @@ export const walletLiability = asyncHandler(async (req: Request, res: Response) 
 
 export const cashbackWriteOff = asyncHandler(async (req: Request, res: Response) => {
   const query = WriteOffReportSchema.parse(req.query);
+  const actor = await actorFromReq(req);
   if (query.format !== 'json') {
-    const actor = await actorFromReq(req);
     await enqueuePanelExport(
       res,
       actor,
@@ -177,12 +178,25 @@ export const cashbackWriteOff = asyncHandler(async (req: Request, res: Response)
     );
     return;
   }
-  const data = await reportsService.cashbackWriteOffReport({
-    ...query,
+  const data = await reportEngine.runJson(actor, 'cashback-write-offs', {
+    from: query.from,
+    to: query.to,
+    bornBy: query.bornBy ?? null,
     page: query.page ?? 1,
     limit: query.limit ?? 50,
   });
-  res.json(ok(data));
+  const meta = (data.meta ?? {}) as Record<string, unknown>;
+  res.json(
+    ok({
+      from: query.from,
+      to: query.to,
+      bornBy: query.bornBy ?? null,
+      recoveredTotal: Number(meta.recoveredTotal ?? 0),
+      writtenOffTotal: Number(meta.writtenOffTotal ?? 0),
+      rows: data.rows,
+      pagination: data.pagination,
+    }),
+  );
 });
 
 export const catalog = asyncHandler(async (req: Request, res: Response) => {
@@ -224,6 +238,7 @@ export const runReport = asyncHandler(async (req: Request, res: Response) => {
         rowCount: exported.rowCount,
         rowCountKnown: exported.rowCountKnown,
         cached: exported.cached ?? false,
+        deduped: exported.deduped ?? false,
       }),
     );
     return;
@@ -269,7 +284,11 @@ export const listAdminExports = asyncHandler(async (req: Request, res: Response)
   await actorFromReq(req);
   const status = typeof req.query.status === 'string' ? req.query.status : undefined;
   const reportType = typeof req.query.reportType === 'string' ? req.query.reportType : undefined;
-  const rows = await reportEngine.listRecentExports(100, { status, reportType });
+  const offset =
+    typeof req.query.offset === 'string' ? Math.max(0, Number(req.query.offset) || 0) : 0;
+  const limit =
+    typeof req.query.limit === 'string' ? Math.min(500, Math.max(1, Number(req.query.limit) || 100)) : 100;
+  const rows = await reportEngine.listRecentExports(limit, { status, reportType, offset });
   const { readReportExportQueueDepth } = await import('./reportExportMetrics');
   const queue = await readReportExportQueueDepth();
   res.json(ok({ rows, queue }));

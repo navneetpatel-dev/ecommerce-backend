@@ -5,6 +5,7 @@ import { Order } from '@database/models/order.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { Product } from '@database/models/product.model';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
+import { createOffsetExportQuery } from '../engine/export/createOffsetExportQuery';
 import {
   assertReportRange,
   pagedFindAndCount,
@@ -103,6 +104,7 @@ async function staffInventory(filters: ReportFilters) {
   const { rows, total } = await pagedFindAndCount(
     ProductVariant,
     {
+      where: { updatedAt: dateBetween(filters.from, filters.to) },
       include: [
         {
           model: Product,
@@ -155,6 +157,7 @@ export const vendorStaffReports: ReportDefinition[] = [
       { key: 'createdAt', labelKey: 'createdAt', format: 'date' },
     ],
     query: staffOrders,
+    exportQuery: createOffsetExportQuery(staffOrders),
   },
   {
     type: 'staff-inventory',
@@ -171,5 +174,6 @@ export const vendorStaffReports: ReportDefinition[] = [
       { key: 'isLowStock', labelKey: 'isLowStock' },
     ],
     query: staffInventory,
+    exportQuery: createOffsetExportQuery(staffInventory),
   },
 ];

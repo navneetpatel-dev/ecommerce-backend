@@ -8,6 +8,7 @@ import { ProductVariant } from '@database/models/productVariant.model';
 import { Product } from '@database/models/product.model';
 import { NewsletterSubscriber } from '@database/models/newsletterSubscriber.model';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
+import { createOffsetExportQuery, createSingleShotExportQuery } from '../engine/export/createOffsetExportQuery';
 import {
   assertReportRange,
   fromPaise,
@@ -552,6 +553,7 @@ async function platformInventory(filters: ReportFilters) {
   const { rows, total } = await pagedFindAndCount(
     ProductVariant,
     {
+      where: { updatedAt: dateBetween(filters.from, filters.to) },
       include: [
         {
           model: Product,
@@ -696,7 +698,7 @@ async function vendorKycCompliance(filters: ReportFilters) {
     FROM vendors v
     LEFT JOIN vendor_documents vd ON vd."vendorId" = v.id AND vd."deletedAt" IS NULL
     WHERE v."deletedAt" IS NULL
-      AND v."createdAt" <= :to
+      AND v."createdAt" BETWEEN :from AND :to
       ${filters.vendorId ? 'AND v.id = :vendorId' : ''}
     GROUP BY v.id, v."businessName", v.status, v."gstNumber"
   `;
@@ -939,6 +941,7 @@ export const adminFinanceGapReports: ReportDefinition[] = [
       { key: 'tax', labelKey: 'taxAmount', format: 'currency' },
     ],
     query: gstr1Filing,
+    exportQuery: createOffsetExportQuery(gstr1Filing),
   },
   {
     type: 'gstr-3b-summary',
@@ -952,6 +955,7 @@ export const adminFinanceGapReports: ReportDefinition[] = [
       { key: 'amount', labelKey: 'amount', format: 'currency' },
     ],
     query: gstr3bSummary,
+    exportQuery: createSingleShotExportQuery(gstr3bSummary),
   },
   {
     type: 'payment-gateway-reconciliation',
@@ -973,6 +977,7 @@ export const adminFinanceGapReports: ReportDefinition[] = [
       { key: 'reconStatus', labelKey: 'reconStatus' },
     ],
     query: paymentGatewayReconciliation,
+    exportQuery: createOffsetExportQuery(paymentGatewayReconciliation),
   },
   {
     type: 'cod-remittance',
@@ -991,6 +996,7 @@ export const adminFinanceGapReports: ReportDefinition[] = [
       { key: 'codStatus', labelKey: 'codStatus' },
     ],
     query: codRemittance,
+    exportQuery: createOffsetExportQuery(codRemittance),
   },
   {
     type: 'customer-analytics',
@@ -1010,6 +1016,7 @@ export const adminFinanceGapReports: ReportDefinition[] = [
       { key: 'segment', labelKey: 'segment' },
     ],
     query: customerAnalytics,
+    exportQuery: createOffsetExportQuery(customerAnalytics),
   },
   {
     type: 'vendor-payout-reconciliation',
@@ -1032,6 +1039,7 @@ export const adminFinanceGapReports: ReportDefinition[] = [
       { key: 'reconStatus', labelKey: 'reconStatus' },
     ],
     query: vendorPayoutReconciliation,
+    exportQuery: createOffsetExportQuery(vendorPayoutReconciliation),
   },
 ];
 
@@ -1055,6 +1063,7 @@ export const adminOpsGapReports: ReportDefinition[] = [
       { key: 'deliveredAt', labelKey: 'deliveredAt', format: 'date' },
     ],
     query: shippingLogistics,
+    exportQuery: createOffsetExportQuery(shippingLogistics),
   },
   {
     type: 'abandoned-cart',
@@ -1073,6 +1082,7 @@ export const adminOpsGapReports: ReportDefinition[] = [
       { key: 'cartValue', labelKey: 'cartValue', format: 'currency' },
     ],
     query: abandonedCartReport,
+    exportQuery: createOffsetExportQuery(abandonedCartReport),
   },
   {
     type: 'support-ticket-sla',
@@ -1093,6 +1103,7 @@ export const adminOpsGapReports: ReportDefinition[] = [
       { key: 'resolutionHours', labelKey: 'resolutionHours', format: 'number' },
     ],
     query: supportTicketSla,
+    exportQuery: createOffsetExportQuery(supportTicketSla),
   },
   {
     type: 'vendor-kyc-compliance',
@@ -1112,6 +1123,7 @@ export const adminOpsGapReports: ReportDefinition[] = [
       { key: 'complianceStatus', labelKey: 'complianceStatus' },
     ],
     query: vendorKycCompliance,
+    exportQuery: createOffsetExportQuery(vendorKycCompliance),
   },
   {
     type: 'newsletter-subscribers',
@@ -1125,6 +1137,7 @@ export const adminOpsGapReports: ReportDefinition[] = [
       { key: 'subscribedAt', labelKey: 'subscribedAt', format: 'date' },
     ],
     query: newsletterSubscribers,
+    exportQuery: createOffsetExportQuery(newsletterSubscribers),
   },
 ];
 
@@ -1147,6 +1160,7 @@ export const adminCatalogGapReports: ReportDefinition[] = [
       { key: 'valuation', labelKey: 'valuation', format: 'currency' },
     ],
     query: platformInventory,
+    exportQuery: createOffsetExportQuery(platformInventory),
   },
 ];
 

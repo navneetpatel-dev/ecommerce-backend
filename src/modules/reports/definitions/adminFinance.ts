@@ -14,6 +14,7 @@ import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQ
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { AuditLog } from '@database/models/auditLog.model';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
+import { createOffsetExportQuery, createSingleShotExportQuery } from '../engine/export/createOffsetExportQuery';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 
 function resolveVendorId(filters: ReportFilters): string | null {
@@ -1148,6 +1149,7 @@ export const adminFinanceReports: ReportDefinition[] = [
       { key: 'status', labelKey: 'status' },
     ],
     query: reconciliation,
+    exportQuery: createSingleShotExportQuery(reconciliation),
   },
   {
     type: 'credit-debit-note-register',

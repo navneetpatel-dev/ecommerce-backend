@@ -4,6 +4,7 @@
 module.exports = {
   async up(queryInterface) {
     const pendingStaleCutoff = new Date(Date.now() - 15 * 60 * 1000);
+    const processingStaleCutoff = new Date(Date.now() - 30 * 60 * 1000);
     await queryInterface.sequelize.query(
       `
       UPDATE report_export_logs
@@ -13,10 +14,15 @@ module.exports = {
         AND "deletedAt" IS NULL
         AND (
           (status = 'PENDING' AND "createdAt" < :pendingCutoff)
-          OR (status = 'PROCESSING' AND "updatedAt" < :pendingCutoff)
+          OR (status = 'PROCESSING' AND "updatedAt" < :processingCutoff)
         )
       `,
-      { replacements: { pendingCutoff: pendingStaleCutoff.toISOString() } },
+      {
+        replacements: {
+          pendingCutoff: pendingStaleCutoff.toISOString(),
+          processingCutoff: processingStaleCutoff.toISOString(),
+        },
+      },
     );
 
     await queryInterface.sequelize.query(`

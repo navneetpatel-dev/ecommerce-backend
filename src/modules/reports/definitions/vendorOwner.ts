@@ -13,6 +13,7 @@ import { Product } from '@database/models/product.model';
 import { TaxRule } from '@database/models/taxRule.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
+import { createOffsetExportQuery, createSingleShotExportQuery } from '../engine/export/createOffsetExportQuery';
 import {
   assertReportRange,
   frozenPaise,
@@ -750,6 +751,7 @@ async function vendorInventory(filters: ReportFilters) {
   const { rows, total } = await pagedFindAndCount(
     ProductVariant,
     {
+      where: { updatedAt: dateBetween(filters.from, filters.to) },
       include: [
         {
           model: Product,
@@ -864,6 +866,7 @@ export const vendorOwnerReports: ReportDefinition[] = [
       { key: 'tax', labelKey: 'tax', format: 'currency' },
     ],
     query: vendorGstSales,
+    exportQuery: createOffsetExportQuery(vendorGstSales),
   },
   {
     type: 'vendor-tcs-credit',
@@ -887,6 +890,7 @@ export const vendorOwnerReports: ReportDefinition[] = [
       { key: 'createdAt', labelKey: 'createdAt', format: 'date' },
     ],
     query: vendorTcsCredit,
+    exportQuery: createOffsetExportQuery(vendorTcsCredit),
   },
   {
     type: 'vendor-tds-certificate',
@@ -905,6 +909,7 @@ export const vendorOwnerReports: ReportDefinition[] = [
       { key: 'createdAt', labelKey: 'createdAt', format: 'date' },
     ],
     query: vendorTdsCertificate,
+    exportQuery: createOffsetExportQuery(vendorTdsCertificate),
   },
   {
     type: 'vendor-payout-statement',
@@ -958,6 +963,7 @@ export const vendorOwnerReports: ReportDefinition[] = [
       { key: 'createdAt', labelKey: 'createdAt', format: 'date' },
     ],
     query: vendorDiscountCost,
+    exportQuery: createOffsetExportQuery(vendorDiscountCost),
   },
   {
     type: 'vendor-return-refund',
@@ -996,6 +1002,7 @@ export const vendorOwnerReports: ReportDefinition[] = [
       { key: 'valuation', labelKey: 'valuation', format: 'currency' },
     ],
     query: vendorInventory,
+    exportQuery: createOffsetExportQuery(vendorInventory),
   },
   {
     type: 'vendor-fulfillment-sla',

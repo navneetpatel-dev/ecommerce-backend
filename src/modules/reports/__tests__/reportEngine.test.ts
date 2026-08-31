@@ -296,4 +296,11 @@ describe('report engine', () => {
     assert.equal(end.getUTCHours(), 23);
     assert.equal(end.getUTCMinutes(), 59);
   });
+
+  it('every registered report defines exportQuery for streaming exports', async () => {
+    const { ALL_REPORT_DEFINITIONS } = await import('../definitions/index');
+    for (const def of ALL_REPORT_DEFINITIONS) {
+      assert.ok(typeof def.exportQuery === 'function', `missing exportQuery for ${def.type}`);
+    }
+  });
 });
