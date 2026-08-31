@@ -128,4 +128,37 @@ describe('toTaxInvoiceSource', () => {
     assert.equal(source.buyerName, 'Ada Lovelace');
     assert.equal(source.sellers[0]?.items[0]?.hsn, 'HSN00001234');
   });
+
+  it('preserves order totalAmount when Sequelize returns DECIMAL strings', () => {
+    const source = toTaxInvoiceSource(
+      'INV-2026-000002',
+      {
+        id: '16aa306c-3cf5-4685-a5ad-d810563c9cb5',
+        createdAt: new Date('2026-08-31T00:00:00.000Z'),
+        paymentMethod: 'RAZORPAY',
+        paymentStatus: 'PENDING',
+        totalAmount: '2364.16' as unknown as number,
+        walletAmountUsed: '0.00' as unknown as number,
+        subOrders: [
+          {
+            vendor: { businessName: 'DecorDen' },
+            items: [
+              {
+                productName: 'Furniture Pro 286',
+                quantity: 1,
+                unitPrice: '1847.00' as unknown as number,
+                taxableAmount: '1847.00' as unknown as number,
+                taxBreakdown: { cgst: '0.00', sgst: '0.00', igst: '517.16' },
+              },
+            ],
+          },
+        ],
+      },
+      new Map(),
+    );
+
+    assert.equal(source.totalAmount, 2364.16);
+    assert.equal(source.sellers[0]?.items[0]?.unitPrice, 1847);
+    assert.equal(source.sellers[0]?.items[0]?.igst, 517.16);
+  });
 });

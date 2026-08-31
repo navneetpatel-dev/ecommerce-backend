@@ -15,7 +15,7 @@ import {
 import { logger } from '@core/logger';
 import { Op } from 'sequelize';
 import { settingsService } from '@modules/settings/settings.service';
-import { fromPaise, toPaise } from '@modules/pricing/money';
+import { fromPaise, toPaise, roundMoney } from '@modules/pricing/money';
 
 async function notifyPayoutFailed(params: {
   vendorId: string;
@@ -45,7 +45,7 @@ function serializePayout(row: Payout) {
   const { Vendor: vendorAssoc, ...rest } = plain;
   return {
     ...rest,
-    amount: Number(plain.amount),
+    amount: roundMoney(plain.amount),
     vendorName: vendorAssoc?.businessName ?? null,
   };
 }

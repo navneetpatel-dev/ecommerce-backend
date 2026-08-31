@@ -23,6 +23,7 @@ import {
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { resolveItemAvailability, isProductCustomerVisible } from '@core/catalog/customerVisibility';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
+import { coerceRupees, roundMoney } from '@modules/pricing/money';
 import { logAudit } from '@modules/audit/audit.service';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import {
@@ -195,12 +196,39 @@ function resolveCreateDefaults(
   };
 }
 
+function mapCouponResponse(coupon: Coupon) {
+  const plain = typeof coupon.get === 'function' ? coupon.get({ plain: true }) : coupon;
+  return {
+    ...plain,
+    value: plain.value != null ? roundMoney(plain.value) : null,
+    maxDiscountCap: plain.maxDiscountCap != null ? roundMoney(plain.maxDiscountCap) : null,
+    minOrderValue: plain.minOrderValue != null ? roundMoney(plain.minOrderValue) : null,
+    minQuantity: plain.minQuantity != null ? Math.trunc(coerceRupees(plain.minQuantity)) : null,
+    usageLimitTotal:
+      plain.usageLimitTotal != null ? Math.trunc(coerceRupees(plain.usageLimitTotal)) : null,
+    usageLimitPerUser: Math.trunc(coerceRupees(plain.usageLimitPerUser ?? 1)),
+    usedCount: Math.trunc(coerceRupees(plain.usedCount ?? 0)),
+    priority: Math.trunc(coerceRupees(plain.priority ?? 0)),
+  };
+}
+
+type CouponResponse = ReturnType<typeof mapCouponResponse>;
+
+async function findCouponOrThrow(id: string, opts: { forceVendorId?: string | null } = {}) {
+  const coupon = await Coupon.findByPk(id);
+  if (!coupon) throw new NotFoundError('Coupon');
+  if (opts.forceVendorId && coupon.vendorId !== opts.forceVendorId) {
+    throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_PRODUCT);
+  }
+  return coupon;
+}
+
 export class CouponsService {
   async createCoupon(
     dto: CreateCouponRequest,
     actorId: string,
     opts: { forceVendorId?: string | null } = {},
-  ): Promise<Coupon> {
+  ): Promise<CouponResponse> {
     if (opts.forceVendorId) {
       const vendor = await Vendor.findByPk(opts.forceVendorId);
       if (!vendor || vendor.status !== VENDOR_STATUS.APPROVED) {
@@ -250,7 +278,7 @@ export class CouponsService {
       metadata: { code: coupon.code, vendorId: coupon.vendorId },
     });
 
-    return coupon;
+    return mapCouponResponse(coupon);
   }
 
   async updateCoupon(
@@ -258,7 +286,7 @@ export class CouponsService {
     dto: UpdateCouponRequest,
     actorId: string,
     opts: { forceVendorId?: string | null } = {},
-  ): Promise<Coupon> {
+  ): Promise<CouponResponse> {
     const coupon = await Coupon.findByPk(id);
     if (!coupon) throw new NotFoundError('Coupon');
     if (opts.forceVendorId && coupon.vendorId !== opts.forceVendorId) {
@@ -310,7 +338,7 @@ export class CouponsService {
       entityId: coupon.id,
       metadata: { code: coupon.code },
     });
-    return coupon;
+    return mapCouponResponse(coupon);
   }
 
   async listCoupons(query: ListCouponsQuery, opts: { forceVendorId?: string | null } = {}) {
@@ -336,18 +364,14 @@ export class CouponsService {
       offset,
     });
     return {
-      coupons: rows,
+      coupons: rows.map(mapCouponResponse),
       pagination: buildPaginationMeta(count, page, limit),
     };
   }
 
-  async getById(id: string, opts: { forceVendorId?: string | null } = {}): Promise<Coupon> {
-    const coupon = await Coupon.findByPk(id);
-    if (!coupon) throw new NotFoundError('Coupon');
-    if (opts.forceVendorId && coupon.vendorId !== opts.forceVendorId) {
-      throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_PRODUCT);
-    }
-    return coupon;
+  async getById(id: string, opts: { forceVendorId?: string | null } = {}) {
+    const coupon = await findCouponOrThrow(id, opts);
+    return mapCouponResponse(coupon);
   }
 
   async analytics(
@@ -443,11 +467,11 @@ export class CouponsService {
     dto: CouponStatusRequest,
     actorId: string,
     opts: { forceVendorId?: string | null } = {},
-  ): Promise<Coupon> {
+  ): Promise<CouponResponse> {
     if (dto.status === COUPON_STATUS.REJECTED && opts.forceVendorId) {
       throw new ForbiddenError(ERROR_MESSAGES.AUTH_REQUIRED);
     }
-    const coupon = await this.getById(id, opts);
+    const coupon = await findCouponOrThrow(id, opts);
     if (dto.status === COUPON_STATUS.REJECTED && !coupon.vendorId) {
       throw new ValidationError(ERROR_MESSAGES.COUPON_NOT_APPLICABLE);
     }
@@ -459,7 +483,7 @@ export class CouponsService {
       entityId: coupon.id,
       metadata: { code: coupon.code, status: dto.status },
     });
-    return coupon;
+    return mapCouponResponse(coupon);
   }
 
   async bulkGenerate(

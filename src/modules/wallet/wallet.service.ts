@@ -10,13 +10,9 @@ import {
   WALLET_LEDGER_TYPE,
   type DiscountBearer,
 } from '@core/constants/statuses';
-import { fromPaise, toPaise } from '@modules/pricing/money';
+import { fromPaise, toPaise, roundMoney } from '@modules/pricing/money';
 
 export type WalletRef = { type: string; id: string };
-
-function roundRupees(n: number): number {
-  return fromPaise(toPaise(n));
-}
 
 /**
  * Serialize all wallet mutations per user — including when the ledger is empty
@@ -40,7 +36,7 @@ async function lockedBalance(userId: string, transaction: Transaction): Promise<
     transaction,
     lock: transaction.LOCK.UPDATE,
   });
-  return roundRupees(Number(last?.balanceAfter ?? 0));
+  return roundMoney(Number(last?.balanceAfter ?? 0));
 }
 
 /**
@@ -54,7 +50,7 @@ export class WalletService {
       order: [['createdAt', 'DESC']],
       transaction,
     });
-    return roundRupees(Number(last?.balanceAfter ?? 0));
+    return roundMoney(Number(last?.balanceAfter ?? 0));
   }
 
   async listTransactions(
@@ -76,14 +72,14 @@ export class WalletService {
     description: string,
     outerTransaction?: Transaction,
   ): Promise<WalletLedger> {
-    const value = roundRupees(amount);
+    const value = roundMoney(amount);
     if (value <= 0) {
       throw new ValidationError(ERROR_MESSAGES.WALLET_INVALID_AMOUNT);
     }
 
     const run = async (transaction: Transaction) => {
       const balance = await lockedBalance(userId, transaction);
-      const balanceAfter = roundRupees(balance + value);
+      const balanceAfter = roundMoney(balance + value);
       return WalletLedger.create(
         {
           userId,
@@ -112,7 +108,7 @@ export class WalletService {
     description: string,
     outerTransaction?: Transaction,
   ): Promise<WalletLedger> {
-    const value = roundRupees(amount);
+    const value = roundMoney(amount);
     if (value <= 0) {
       throw new ValidationError(ERROR_MESSAGES.WALLET_INVALID_AMOUNT);
     }
@@ -122,7 +118,7 @@ export class WalletService {
       if (value > balance) {
         throw new ValidationError(ERROR_MESSAGES.WALLET_INSUFFICIENT_BALANCE);
       }
-      const balanceAfter = roundRupees(balance - value);
+      const balanceAfter = roundMoney(balance - value);
       return WalletLedger.create(
         {
           userId,
@@ -156,19 +152,19 @@ export class WalletService {
     bornBy: DiscountBearer = DISCOUNT_BEARER.PLATFORM,
     outerTransaction?: Transaction,
   ): Promise<{ recoveredAmount: number; writtenOffAmount: number; ledger: WalletLedger | null }> {
-    const value = roundRupees(amount);
+    const value = roundMoney(amount);
     if (value <= 0) {
       throw new ValidationError(ERROR_MESSAGES.WALLET_INVALID_AMOUNT);
     }
 
     const run = async (transaction: Transaction) => {
       const balance = await lockedBalance(userId, transaction);
-      const recoveredAmount = roundRupees(Math.min(balance, value));
-      const writtenOffAmount = roundRupees(value - recoveredAmount);
+      const recoveredAmount = roundMoney(Math.min(balance, value));
+      const writtenOffAmount = roundMoney(value - recoveredAmount);
 
       let ledger: WalletLedger | null = null;
       if (recoveredAmount > 0) {
-        const balanceAfter = roundRupees(balance - recoveredAmount);
+        const balanceAfter = roundMoney(balance - recoveredAmount);
         ledger = await WalletLedger.create(
           {
             userId,

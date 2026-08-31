@@ -4,7 +4,6 @@ import {
   formatInrAmount,
   formatPdfMoney,
   formatPrintDate,
-  roundMoney,
   rupeesInWords,
   buildMeasuredColumns,
   drawContinuationLabel,
@@ -20,6 +19,7 @@ import {
   type PdfMetaRow,
   type PdfTotalsLine,
 } from '@core/pdf';
+import { coerceRupees, roundMoney } from '@modules/pricing/money';
 import { TAX_INVOICE_COPY as COPY } from './reports.constants';
 
 export type TaxInvoiceAddress = {
@@ -118,7 +118,7 @@ function statusColor(status: string): string {
 }
 
 function taxBreakdownAmount(value: unknown): number {
-  return roundMoney(typeof value === 'number' ? value : Number(value) || 0);
+  return roundMoney(value);
 }
 
 export function toTaxInvoiceSource(
@@ -138,9 +138,9 @@ export function toTaxInvoiceSource(
         productName: item.productName,
         sku: item.variant?.sku ?? null,
         hsn: hsn || COPY.emptyValue,
-        quantity: Number(item.quantity) || 0,
+        quantity: Math.trunc(coerceRupees(item.quantity)) || 0,
         unitPrice: roundMoney(item.unitPrice),
-        taxable: roundMoney(Number(item.taxableAmount) || 0),
+        taxable: roundMoney(item.taxableAmount),
         cgst: taxBreakdownAmount(tb.cgst),
         sgst: taxBreakdownAmount(tb.sgst),
         igst: taxBreakdownAmount(tb.igst),
@@ -160,7 +160,7 @@ export function toTaxInvoiceSource(
     paymentMethod: order.paymentMethod ?? null,
     paymentStatus: order.paymentStatus,
     totalAmount: roundMoney(order.totalAmount),
-    walletAmountUsed: roundMoney(Number(order.walletAmountUsed) || 0),
+    walletAmountUsed: roundMoney(order.walletAmountUsed),
     buyerName: order.user?.name ?? null,
     shippingAddress: order.shippingAddress ?? null,
     sellers,

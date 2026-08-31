@@ -1,5 +1,5 @@
 import type { Coupon, CouponConfig } from '@database/models/coupon.model';
-import { allocateProportionally, fromPaise, toPaise } from '@modules/pricing/money';
+import { allocateProportionally, fromPaise, toPaise, roundMoney } from '@modules/pricing/money';
 
 export type CartLineForCoupon = {
   productId: string;
@@ -11,9 +11,7 @@ export type CartLineForCoupon = {
   isCustomerVisible?: boolean;
 };
 
-export function roundMoney(n: number): number {
-  return fromPaise(toPaise(n));
-}
+export { roundMoney };
 
 /** Distribute totalDiscount across vendors in paise; remainder on largest share. */
 export function prorateDiscount(

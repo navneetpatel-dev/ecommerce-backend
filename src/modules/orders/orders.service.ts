@@ -7,6 +7,7 @@ import { sequelize } from '@database/models';
 import { OrderItem } from '@database/models/orderItem.model';
 import { Vendor } from '@database/models/vendor.model';
 import { Shipment } from '@database/models/shipment.model';
+import { coerceRupees, roundMoney } from '@modules/pricing/money';
 import type { CreateOrderRequest, GetOrdersQuery } from './orders.dto';
 
 const orderDetailInclude = [
@@ -21,37 +22,57 @@ const orderDetailInclude = [
   { association: 'shippingAddress' },
 ];
 
+function mapOrderItem(item: any) {
+  return {
+    ...item,
+    quantity: Math.trunc(coerceRupees(item.quantity)) || 0,
+    unitPrice: roundMoney(item.unitPrice),
+    discountAmount: roundMoney(item.discountAmount),
+    taxableAmount: roundMoney(item.taxableAmount),
+    taxAmount: roundMoney(item.taxAmount),
+    commissionAmount: roundMoney(item.commissionAmount),
+    tcsAmount: roundMoney(item.tcsAmount),
+    netPayoutAmount: roundMoney(item.netPayoutAmount),
+  };
+}
+
+function mapSubOrder(sub: any) {
+  return {
+    ...sub,
+    subtotal: roundMoney(sub.subtotal),
+    shippingCost: roundMoney(sub.shippingCost),
+    shippingDiscountAmount: roundMoney(sub.shippingDiscountAmount),
+    taxAmount: roundMoney(sub.taxAmount),
+    taxableAmount: roundMoney(sub.taxableAmount),
+    discountAmount: roundMoney(sub.discountAmount),
+    commissionAmount: roundMoney(sub.commissionAmount),
+    tcsAmount: roundMoney(sub.tcsAmount),
+    netPayoutAmount: roundMoney(sub.netPayoutAmount),
+    items: (sub.items ?? []).map(mapOrderItem),
+  };
+}
+
 function mapOrderResponse(order: any) {
   const plain = typeof order.get === 'function' ? order.get({ plain: true }) : order;
-  const totalAmount = Number(plain.totalAmount ?? 0);
-  const walletAmountUsed = Number(plain.walletAmountUsed ?? 0);
-  const originalTotalAmount = Number(plain.originalTotalAmount ?? totalAmount);
-  const razorpayAmountPaid = Number(
+  const totalAmount = roundMoney(plain.totalAmount);
+  const walletAmountUsed = roundMoney(plain.walletAmountUsed);
+  const originalTotalAmount = roundMoney(plain.originalTotalAmount ?? totalAmount);
+  const razorpayAmountPaid = roundMoney(
     plain.razorpayAmountPaid ?? Math.max(0, originalTotalAmount - walletAmountUsed),
   );
   return {
     ...plain,
     totalAmount,
-    discountTotal: Number(plain.discountTotal ?? 0),
+    discountTotal: roundMoney(plain.discountTotal),
     walletAmountUsed,
     originalTotalAmount,
     razorpayAmountPaid,
-    pendingCashbackAmount: Number(plain.pendingCashbackAmount ?? 0),
+    pendingCashbackAmount: roundMoney(plain.pendingCashbackAmount),
     cashbackCreditedAt: plain.cashbackCreditedAt ?? null,
     cashbackDiscountBearer: plain.cashbackDiscountBearer ?? null,
     paymentMethod: plain.paymentMethod ?? null,
     customerName: plain.user?.name ?? null,
-    subOrders: (plain.subOrders ?? []).map((sub: any) => ({
-      ...sub,
-      subtotal: Number(sub.subtotal ?? 0),
-      shippingCost: Number(sub.shippingCost ?? 0),
-      taxAmount: Number(sub.taxAmount ?? 0),
-      items: (sub.items ?? []).map((item: any) => ({
-        ...item,
-        unitPrice: Number(item.unitPrice ?? 0),
-        quantity: Number(item.quantity ?? 0),
-      })),
-    })),
+    subOrders: (plain.subOrders ?? []).map(mapSubOrder),
   };
 }
 

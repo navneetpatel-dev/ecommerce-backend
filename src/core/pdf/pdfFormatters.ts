@@ -1,3 +1,7 @@
+import { coerceRupees, roundMoney as roundMoneyValue } from '@modules/pricing/money';
+
+export { roundMoneyValue as roundMoney };
+
 const MONTHS = [
   'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
@@ -13,8 +17,8 @@ const TENS = [
 ];
 
 /** Indian grouping: 291769.74 -> 2,91,769.74 */
-export function formatInrAmount(amount: number): string {
-  const n = Number.isFinite(amount) ? amount : 0;
+export function formatInrAmount(amount: unknown): string {
+  const n = roundMoneyValue(amount);
   const [wholeRaw, frac = '00'] = n.toFixed(2).split('.');
   const whole = wholeRaw ?? '0';
   const sign = whole.startsWith('-') ? '-' : '';
@@ -25,7 +29,7 @@ export function formatInrAmount(amount: number): string {
   return `${sign}${head},${last3}.${frac}`;
 }
 
-export function formatPdfMoney(amount: number, prefix = 'Rs '): string {
+export function formatPdfMoney(amount: unknown, prefix = 'Rs '): string {
   return `${prefix}${formatInrAmount(amount)}`;
 }
 
@@ -52,8 +56,8 @@ function underThousandWithHundred(n: number): string {
 }
 
 /** Indian-system amount in words for printed invoices. */
-export function rupeesInWords(amount: number): string {
-  const paiseTotal = Math.round((Number.isFinite(amount) ? amount : 0) * 100);
+export function rupeesInWords(amount: unknown): string {
+  const paiseTotal = Math.round(roundMoneyValue(amount) * 100);
   const abs = Math.abs(paiseTotal);
   const rupees = Math.floor(abs / 100);
   const paise = abs % 100;
@@ -75,16 +79,16 @@ export function rupeesInWords(amount: number): string {
   return `${phrase} Only`;
 }
 
-export function roundMoney(amount: number): number {
-  return Math.round((Number.isFinite(amount) ? amount : 0) * 100) / 100;
-}
-
 /** Safe cell string for tabular PDF exports. */
 export function formatPdfCellValue(value: unknown, empty = '--'): string {
   if (value == null) return empty;
   if (value instanceof Date) return formatPrintDate(value);
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return Number.isInteger(value) ? String(value) : formatInrAmount(value);
+  if (typeof value === 'number' || typeof value === 'string') {
+    const trimmed = typeof value === 'string' ? value.trim() : value;
+    if (trimmed !== '' && Number.isFinite(Number(trimmed))) {
+      const n = coerceRupees(trimmed);
+      return Number.isInteger(n) ? String(n) : formatInrAmount(n);
+    }
   }
   if (typeof value === 'object') return JSON.stringify(value);
   const raw = String(value).replace(/\s+/g, ' ').trim();

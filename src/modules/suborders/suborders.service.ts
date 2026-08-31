@@ -6,7 +6,47 @@ import { OrderItem } from '@database/models/orderItem.model';
 import { Shipment } from '@database/models/shipment.model';
 import { sequelize } from '@database/models';
 import { ORDER_STATUS } from '@core/constants/statuses';
+import { coerceRupees, roundMoney } from '@modules/pricing/money';
 import { notificationsService } from '@modules/notifications/notifications.service';
+
+function mapOrderItem(item: any) {
+  const plain = typeof item.get === 'function' ? item.get({ plain: true }) : item;
+  return {
+    ...plain,
+    quantity: Math.trunc(coerceRupees(plain.quantity)) || 0,
+    unitPrice: roundMoney(plain.unitPrice),
+    discountAmount: roundMoney(plain.discountAmount),
+    taxableAmount: roundMoney(plain.taxableAmount),
+    taxAmount: roundMoney(plain.taxAmount),
+    commissionAmount: roundMoney(plain.commissionAmount),
+    tcsAmount: roundMoney(plain.tcsAmount),
+    netPayoutAmount: roundMoney(plain.netPayoutAmount),
+  };
+}
+
+function mapSubOrder(row: any) {
+  const plain = typeof row.get === 'function' ? row.get({ plain: true }) : row;
+  return {
+    ...plain,
+    subtotal: roundMoney(plain.subtotal),
+    shippingCost: roundMoney(plain.shippingCost),
+    shippingDiscountAmount: roundMoney(plain.shippingDiscountAmount),
+    taxAmount: roundMoney(plain.taxAmount),
+    taxableAmount: roundMoney(plain.taxableAmount),
+    discountAmount: roundMoney(plain.discountAmount),
+    commissionAmount: roundMoney(plain.commissionAmount),
+    tcsAmount: roundMoney(plain.tcsAmount),
+    netPayoutAmount: roundMoney(plain.netPayoutAmount),
+    items: (plain.items ?? []).map(mapOrderItem),
+    order: plain.order
+      ? {
+          ...plain.order,
+          totalAmount: roundMoney(plain.order.totalAmount),
+          walletAmountUsed: roundMoney(plain.order.walletAmountUsed),
+        }
+      : plain.order,
+  };
+}
 
 export class SubordersService {
   async list(vendorId?: string | null) {
@@ -19,7 +59,7 @@ export class SubordersService {
       ],
       order: [['createdAt', 'DESC']],
     });
-    return rows.map((row: any) => ({ ...row.get({ plain: true }), subtotal: Number(row.subtotal), commissionAmount: Number(row.commissionAmount ?? 0) }));
+    return rows.map(mapSubOrder);
   }
 
   async updateStatus(id: string, status: SubOrder['status'], trackingId: string | undefined, updatedBy: string) {
@@ -35,7 +75,10 @@ export class SubordersService {
         });
       }
       return row.reload({
-        include: [{ model: Order, as: 'order' }],
+        include: [
+          { model: Order, as: 'order' },
+          { model: OrderItem, as: 'items' },
+        ],
         transaction,
       });
     });
@@ -59,7 +102,7 @@ export class SubordersService {
       }
     }
 
-    return suborder;
+    return mapSubOrder(suborder);
   }
 }
 

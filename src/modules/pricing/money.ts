@@ -10,6 +10,20 @@ export function fromPaise(paise: Paise): number {
   return Math.round(Number(paise || 0)) / 100;
 }
 
+/**
+ * Coerce Sequelize DECIMAL / API values to finite rupees without changing stored scale.
+ * DECIMAL columns arrive as strings in Node; always use this at read boundaries.
+ */
+export function coerceRupees(value: unknown): number {
+  const n = Number(value ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** Round to 2 decimal places (rupees), preserving stored DECIMAL values. */
+export function roundMoney(value: unknown): number {
+  return fromPaise(toPaise(coerceRupees(value)));
+}
+
 /** Distribute `total` across weights; remainder goes to the largest weight index. */
 export function allocateProportionally(total: Paise, weights: number[]): Paise[] {
   const n = weights.length;
