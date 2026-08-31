@@ -57,18 +57,37 @@ export const shippingService = {
     state?: string;
     vendorId?: string | null;
   }): Promise<ShippingQuoteRate[]> {
-    const zones = await this.resolveZonesForPincode(params.pincode, params.state);
+    const zones = await shippingService.resolveZonesForPincode(
+      params.pincode,
+      params.state,
+    );
     if (!zones.length) return [];
 
-    const rates = await ShippingRate.findAll({
+    const zoneIds = zones.map((zone) => zone.id);
+    const methodFilter = params.method
+      ? { method: params.method.toUpperCase() }
+      : {};
+    const weightFloorWhere = {
+      zoneId: { [Op.in]: zoneIds },
+      minWeightGrams: { [Op.lte]: params.weightGrams },
+      ...methodFilter,
+    } as any;
+
+    let rates = await ShippingRate.findAll({
       where: {
-        zoneId: { [Op.in]: zones.map((zone) => zone.id) },
-        minWeightGrams: { [Op.lte]: params.weightGrams },
+        ...weightFloorWhere,
         maxWeightGrams: { [Op.gte]: params.weightGrams },
-        ...(params.method ? { method: params.method.toUpperCase() } : {}),
       } as any,
       order: [['price', 'ASC']],
     });
+
+    // Heavy carts may exceed the highest configured slab — use the top tier instead.
+    if (!rates.length) {
+      rates = await ShippingRate.findAll({
+        where: weightFloorWhere,
+        order: [['maxWeightGrams', 'DESC'], ['price', 'ASC']],
+      });
+    }
 
     let scoped = rates;
     if (params.vendorId) {
@@ -114,7 +133,7 @@ export const shippingService = {
       productPrice = Number(variant?.price ?? product.basePrice ?? 0);
     }
 
-    const rates = await this.getRatesForQuote({
+    const rates = await shippingService.getRatesForQuote({
       pincode: query.pincode,
       weightGrams,
       method: query.method,
@@ -231,4 +250,8 @@ export const shippingService = {
   },
 };
 
-export const { resolveZonesForPincode, getRatesForQuote } = shippingService;
+/** Bound exports — do not destructure methods from `shippingService` (breaks `this`). */
+export const resolveZonesForPincode = shippingService.resolveZonesForPincode.bind(
+  shippingService,
+);
+export const getRatesForQuote = shippingService.getRatesForQuote.bind(shippingService);
