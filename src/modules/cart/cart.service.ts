@@ -207,7 +207,7 @@ export class CartService {
     merchandiseDiscountTotal: number;
   }): Promise<NonNullable<CartView['pricingPreview']>> {
     const merchandiseSubtotal = input.items.reduce(
-      (sum, item) => sum + item.product.price * item.quantity,
+      (sum, item) => sum + item.lineSubtotal,
       0,
     );
     if (input.items.length === 0) {

@@ -161,4 +161,40 @@ describe('toTaxInvoiceSource', () => {
     assert.equal(source.sellers[0]?.items[0]?.unitPrice, 1847);
     assert.equal(source.sellers[0]?.items[0]?.igst, 517.16);
   });
+
+  it('ignores stale tax breakdown on returned lines', () => {
+    const source = toTaxInvoiceSource(
+      'INV-2026-000003',
+      {
+        id: 'returned-order',
+        createdAt: new Date('2026-08-31T00:00:00.000Z'),
+        paymentMethod: 'RAZORPAY',
+        paymentStatus: 'PAID',
+        totalAmount: 0,
+        walletAmountUsed: 0,
+        subOrders: [
+          {
+            vendor: { businessName: 'DecorDen' },
+            items: [
+              {
+                productName: 'Returned item',
+                quantity: 1,
+                unitPrice: 1847,
+                taxableAmount: 0,
+                taxAmount: 0,
+                taxBreakdown: { cgst: 0, sgst: 0, igst: 517.16 },
+              },
+            ],
+          },
+        ],
+      },
+      new Map(),
+    );
+
+    const line = source.sellers[0]?.items[0];
+    assert.equal(line?.taxable, 0);
+    assert.equal(line?.cgst, 0);
+    assert.equal(line?.sgst, 0);
+    assert.equal(line?.igst, 0);
+  });
 });

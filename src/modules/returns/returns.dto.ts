@@ -5,6 +5,8 @@ export const CreateReturnRequestSchema = z.object({
   orderItemId: z.string().uuid(),
   reasonCode: z.enum(RETURN_REASON_VALUES),
   reason: z.string().min(1),
+  /** Units to return; omit for full line quantity. */
+  returnQuantity: z.number().int().min(1).optional(),
   /** Phase 2 attach — URLs from POST /api/uploads or /bulk (returns/photos). */
   photoUrls: z.array(z.string().url()).max(10).optional().default([]),
 });

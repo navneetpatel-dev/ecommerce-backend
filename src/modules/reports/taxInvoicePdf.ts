@@ -19,6 +19,7 @@ import {
   type PdfMetaRow,
   type PdfTotalsLine,
 } from '@core/pdf';
+import { invoiceLineTaxBreakdown } from '@modules/pricing/displayMoney';
 import { coerceRupees, roundMoney } from '@modules/pricing/money';
 import { TAX_INVOICE_COPY as COPY } from './reports.constants';
 
@@ -83,6 +84,7 @@ export type TaxInvoiceOrderInput = {
       quantity: number;
       unitPrice: number;
       taxableAmount?: number | null;
+      taxAmount?: number | null;
       taxBreakdown?: Record<string, unknown> | null;
       variant?: {
         sku?: string | null;
@@ -117,8 +119,16 @@ function statusColor(status: string): string {
   return '#9C5A12';
 }
 
-function taxBreakdownAmount(value: unknown): number {
-  return roundMoney(value);
+function mapInvoiceLineTax(item: {
+  taxableAmount?: number | null;
+  taxAmount?: number | null;
+  taxBreakdown?: Record<string, unknown> | null;
+}) {
+  return invoiceLineTaxBreakdown({
+    taxableAmount: item.taxableAmount,
+    taxAmount: item.taxAmount,
+    taxBreakdown: item.taxBreakdown,
+  });
 }
 
 export function toTaxInvoiceSource(
@@ -131,7 +141,7 @@ export function toTaxInvoiceSource(
     const vendor = sub.vendor;
     const items: TaxInvoiceLine[] = [];
     for (const item of sub.items ?? []) {
-      const tb = (item.taxBreakdown ?? {}) as Record<string, unknown>;
+      const tb = mapInvoiceLineTax(item);
       const catId = item.variant?.product?.categoryId ?? undefined;
       const hsn = catId ? (hsnByCategory.get(catId) ?? '') : '';
       items.push({
@@ -141,9 +151,9 @@ export function toTaxInvoiceSource(
         quantity: Math.trunc(coerceRupees(item.quantity)) || 0,
         unitPrice: roundMoney(item.unitPrice),
         taxable: roundMoney(item.taxableAmount),
-        cgst: taxBreakdownAmount(tb.cgst),
-        sgst: taxBreakdownAmount(tb.sgst),
-        igst: taxBreakdownAmount(tb.igst),
+        cgst: tb.cgst,
+        sgst: tb.sgst,
+        igst: tb.igst,
       });
     }
     sellers.push({

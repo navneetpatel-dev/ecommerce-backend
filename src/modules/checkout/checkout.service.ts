@@ -28,6 +28,7 @@ import {
 } from '@modules/coupons/couponEngine';
 import { pricingService } from '@modules/pricing/pricing.service';
 import { fromPaise, roundMoney } from '@modules/pricing/money';
+import { lineSubtotal, lineTotal } from '@modules/pricing/displayMoney';
 import { resolveItemAvailability } from '@core/catalog/customerVisibility';
 import type {
   CancelCheckoutRequest,
@@ -285,7 +286,7 @@ export class CheckoutService {
 
     for (const [vendorId, items] of Object.entries(itemsByVendor)) {
       const subtotal = items.reduce(
-        (sum, item) => sum + Number(item.variant.price) * item.quantity,
+        (sum, item) => sum + lineSubtotal(item.variant.price, item.quantity),
         0,
       );
       const vendor = vendorMap[vendorId];
@@ -399,9 +400,7 @@ export class CheckoutService {
             quantity: item.quantity,
             unitPrice: Number(item.variant.price),
             lineSubtotal: line?.lineSubtotal ?? 0,
-            lineTotal: line
-              ? roundMoney(line.taxableAmount + line.tax.total)
-              : 0,
+            lineTotal: line ? lineTotal(line.taxableAmount, line.tax.total) : 0,
           };
         }),
         subtotal: r.subtotal,
@@ -487,7 +486,7 @@ export class CheckoutService {
       for (const [vendorId, items] of Object.entries(itemsByVendor)) {
         const method = requestedMethod(data.shippingMethodByVendor[vendorId]);
         const vendorSubtotal = items.reduce(
-          (sum, item) => sum + Number(item.variant.price) * item.quantity,
+          (sum, item) => sum + lineSubtotal(item.variant.price, item.quantity),
           0,
         );
         const rates = await getRatesForQuote({
@@ -746,7 +745,7 @@ export class CheckoutService {
             quantity: item.quantity,
             unitPrice: Number(item.variant.price),
             lineSubtotal: lineRupees.lineSubtotal,
-            lineTotal: roundMoney(lineRupees.taxableAmount + lineRupees.tax.total),
+            lineTotal: lineTotal(lineRupees.taxableAmount, lineRupees.tax.total),
             discountAmount: lineRupees.discountAmount,
             taxableAmount: lineRupees.taxableAmount,
             taxAmount: lineRupees.tax.total,

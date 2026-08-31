@@ -30,6 +30,13 @@ import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { fromPaise, toPaise } from '@modules/pricing/money';
+import {
+  lineSubtotal,
+  lineTotal,
+  recomputeOrderDisplayFields,
+  recomputeSubOrderDisplayFields,
+  scaleTaxBreakdown,
+} from '@modules/pricing/displayMoney';
 import { pricingService } from '@modules/pricing/pricing.service';
 import { nextDocumentNumber } from '@modules/pricing/documentSequence';
 import { notificationsService } from '@modules/notifications/notifications.service';
@@ -55,6 +62,7 @@ type CreateReturnInput = {
   orderItemId: string;
   reasonCode: ReturnReason;
   reason: string;
+  returnQuantity?: number;
   photoUrls?: string[];
 };
 
@@ -121,6 +129,7 @@ function serializeReturn(row: ReturnRequest | (ReturnRequest & { orderItem?: Ord
     orderItemId: plain.orderItemId,
     reason: plain.reason,
     reasonCode: plain.reasonCode,
+    returnQuantity: plain.returnQuantity != null ? Number(plain.returnQuantity) : null,
     status: plain.status,
     photoUrls: Array.isArray(plain.photoUrls) ? plain.photoUrls : [],
     refundMethod: plain.refundMethod ?? null,
@@ -261,6 +270,22 @@ export class ReturnsService {
         throw new ValidationError(ERROR_MESSAGES.RETURN_ALREADY_EXISTS);
       }
 
+      const lineQty = Math.trunc(Number(orderItem.quantity)) || 0;
+      if (lineQty <= 0) {
+        throw new ValidationError(ERROR_MESSAGES.RETURN_NOT_ALLOWED);
+      }
+      if (
+        Number(orderItem.taxableAmount ?? 0) === 0 &&
+        Number(orderItem.taxAmount ?? 0) === 0
+      ) {
+        throw new ValidationError(ERROR_MESSAGES.RETURN_NOT_ALLOWED);
+      }
+
+      const returnQuantity = data.returnQuantity ?? lineQty;
+      if (returnQuantity < 1 || returnQuantity > lineQty) {
+        throw new ValidationError('Return quantity must be between 1 and the ordered quantity');
+      }
+
       const created = await ReturnRequest.create(
         {
           subOrderId: item.subOrderId,
@@ -268,6 +293,7 @@ export class ReturnsService {
           userId,
           reason: data.reason,
           reasonCode: data.reasonCode,
+          returnQuantity,
           photoUrls: data.photoUrls ?? [],
           status: RETURN_STATUS.REQUESTED,
           refundStatus: REFUND_STATUS.NONE,
@@ -324,6 +350,13 @@ export class ReturnsService {
     );
     const returnShippingFeePaise = await resolveReturnShippingFeePaise(orderItem.subOrder.vendorId);
 
+    const lineQty = Math.trunc(Number(orderItem.quantity)) || 0;
+    const returnQty = Math.min(
+      Math.max(1, Math.floor(Number(row.returnQuantity ?? lineQty))),
+      lineQty,
+    );
+    const isFullReturn = returnQty >= lineQty;
+
     const frozen = pricingService.frozenLineFromOrderItem({
       id: orderItem.id,
       quantity: Number(orderItem.quantity),
@@ -344,7 +377,7 @@ export class ReturnsService {
       netPayoutAmountPaise: Number(orderItem.netPayoutAmountPaise ?? 0),
     });
 
-    const reversal = pricingService.reverseLineFromFrozen(frozen, Number(orderItem.quantity), {
+    const reversal = pricingService.reverseLineFromFrozen(frozen, returnQty, {
       reasonCode: row.reasonCode,
       shippingChargedPaise,
       returnShippingFeePaise,
@@ -400,6 +433,12 @@ export class ReturnsService {
       0,
       Number(sub.netPayoutAmountPaise ?? 0) - reversal.refundNetClawbackPaise,
     );
+    const subDisplay = recomputeSubOrderDisplayFields({
+      taxableAmount: fromPaise(nextTaxablePaise),
+      taxAmount: fromPaise(nextTaxPaise),
+      shippingCost: sub.shippingCost,
+      shippingDiscountAmount: sub.shippingDiscountAmount,
+    });
     await sub.update(
       {
         subtotal: fromPaise(nextSubtotalPaise),
@@ -409,6 +448,8 @@ export class ReturnsService {
         commissionAmount: fromPaise(nextCommissionPaise),
         tcsAmount: fromPaise(nextTcsPaise),
         netPayoutAmount: fromPaise(nextNetPaise),
+        shippingCharged: subDisplay.shippingCharged,
+        customerTotal: subDisplay.customerTotal,
         subtotalPaise: nextSubtotalPaise,
         discountAmountPaise: nextDiscountPaise,
         taxableAmountPaise: nextTaxablePaise,
@@ -439,19 +480,99 @@ export class ReturnsService {
     );
 
     await orderItem.update(
+      isFullReturn
+        ? {
+            discountAmount: 0,
+            taxableAmount: 0,
+            taxAmount: 0,
+            commissionAmount: 0,
+            tcsAmount: 0,
+            netPayoutAmount: 0,
+            lineSubtotal: 0,
+            lineTotal: 0,
+            taxBreakdown: null,
+            discountAmountPaise: 0,
+            taxableAmountPaise: 0,
+            taxAmountPaise: 0,
+            commissionAmountPaise: 0,
+            tcsAmountPaise: 0,
+            netPayoutAmountPaise: 0,
+            updatedBy: actorId,
+          }
+        : (() => {
+            const remainingQty = lineQty - returnQty;
+            const origTaxPaise = Math.max(0, Number(orderItem.taxAmountPaise ?? 0));
+            const nextItemDiscountPaise = Math.max(
+              0,
+              Number(orderItem.discountAmountPaise ?? 0) - reversal.refundDiscountPaise,
+            );
+            const nextItemTaxablePaise = Math.max(
+              0,
+              Number(orderItem.taxableAmountPaise ?? 0) - reversal.refundMerchandisePaise,
+            );
+            const nextItemTaxPaise = Math.max(
+              0,
+              Number(orderItem.taxAmountPaise ?? 0) - reversal.refundTaxPaise,
+            );
+            const nextItemCommissionPaise = Math.max(
+              0,
+              Number(orderItem.commissionAmountPaise ?? 0) - reversal.refundCommissionPaise,
+            );
+            const nextItemTcsPaise = Math.max(
+              0,
+              Number(orderItem.tcsAmountPaise ?? 0) - reversal.refundTcsPaise,
+            );
+            const nextItemNetPaise = Math.max(
+              0,
+              Number(orderItem.netPayoutAmountPaise ?? 0) - reversal.refundNetClawbackPaise,
+            );
+            const nextTaxable = fromPaise(nextItemTaxablePaise);
+            const nextTax = fromPaise(nextItemTaxPaise);
+            const taxRatio = origTaxPaise > 0 ? nextItemTaxPaise / origTaxPaise : 0;
+            const scaledBreakdown = scaleTaxBreakdown(
+              orderItem.taxBreakdown as Record<string, unknown> | null,
+              taxRatio,
+            );
+            return {
+              quantity: remainingQty,
+              discountAmount: fromPaise(nextItemDiscountPaise),
+              taxableAmount: nextTaxable,
+              taxAmount: nextTax,
+              commissionAmount: fromPaise(nextItemCommissionPaise),
+              tcsAmount: fromPaise(nextItemTcsPaise),
+              netPayoutAmount: fromPaise(nextItemNetPaise),
+              lineSubtotal: lineSubtotal(orderItem.unitPrice, remainingQty),
+              lineTotal: lineTotal(nextTaxable, nextTax),
+              taxBreakdown: scaledBreakdown,
+              discountAmountPaise: nextItemDiscountPaise,
+              taxableAmountPaise: nextItemTaxablePaise,
+              taxAmountPaise: nextItemTaxPaise,
+              commissionAmountPaise: nextItemCommissionPaise,
+              tcsAmountPaise: nextItemTcsPaise,
+              netPayoutAmountPaise: nextItemNetPaise,
+              updatedBy: actorId,
+            };
+          })(),
+      { transaction: t },
+    );
+
+    const allSubs = await SubOrder.findAll({
+      where: { orderId: order.id },
+      transaction: t,
+    });
+    const orderDisplay = recomputeOrderDisplayFields({
+      subOrders: allSubs,
+      paymentMethod: order.paymentMethod,
+      totalAmount: fromPaise(nextOrderTotalPaise),
+      walletAmountUsed: order.walletAmountUsed,
+      razorpayAmountPaid: order.razorpayAmountPaid,
+    });
+    await order.update(
       {
-        discountAmount: 0,
-        taxableAmount: 0,
-        taxAmount: 0,
-        commissionAmount: 0,
-        tcsAmount: 0,
-        netPayoutAmount: 0,
-        discountAmountPaise: 0,
-        taxableAmountPaise: 0,
-        taxAmountPaise: 0,
-        commissionAmountPaise: 0,
-        tcsAmountPaise: 0,
-        netPayoutAmountPaise: 0,
+        merchandiseSubtotal: orderDisplay.merchandiseSubtotal,
+        taxTotal: orderDisplay.taxTotal,
+        shippingTotal: orderDisplay.shippingTotal,
+        amountDue: orderDisplay.amountDue,
         updatedBy: actorId,
       },
       { transaction: t },

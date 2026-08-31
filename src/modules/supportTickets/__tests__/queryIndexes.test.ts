@@ -38,6 +38,7 @@ describe('help/bug query index contract', () => {
       '20240101000076-create-support-tickets.js',
       '20240101000077-create-bug-reports.js',
       '20240101000079-help-bug-gap-fixes.js',
+      '20240101000083-help-bug-closure-fixes.js',
       '20240101000084-help-bug-ticket-closure.js',
       '20240101000085-help-bug-gap-closure.js',
       '20240101000086-help-bug-final-fixes.js',
