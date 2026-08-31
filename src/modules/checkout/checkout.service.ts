@@ -29,6 +29,7 @@ import {
 import { pricingService } from '@modules/pricing/pricing.service';
 import { fromPaise, roundMoney } from '@modules/pricing/money';
 import { checkoutAmountDue, lineSubtotal, lineTotal } from '@modules/pricing/displayMoney';
+import { nextVendorTaxInvoiceNumber } from '@modules/pricing/vendorInvoiceSequence';
 import { resolveItemAvailability } from '@core/catalog/customerVisibility';
 import type {
   CancelCheckoutRequest,
@@ -697,10 +698,17 @@ export class CheckoutService {
         const r = priced.rupees;
         const p = priced.paise;
         const bearer = bearerByVendor[vendorId] ?? DISCOUNT_BEARER.PLATFORM;
+        const resolvedVendorId = vendorId === 'platform' ? null : vendorId;
+        const issuedAt = new Date();
+        const invoice = await nextVendorTaxInvoiceNumber(
+          resolvedVendorId,
+          issuedAt,
+          t,
+        );
 
         const subOrder = await SubOrder.create({
           orderId: orderRow.id,
-          vendorId: vendorId === 'platform' ? null : vendorId,
+          vendorId: resolvedVendorId,
           status: ORDER_STATUS.PENDING,
           subtotal: r.subtotal,
           shippingCost: r.shippingCost,
@@ -724,6 +732,8 @@ export class CheckoutService {
           tcsAmountPaise: p.tcsPaise,
           netPayoutAmountPaise: p.netPayoutPaise,
           roundingAdjustmentPaise: p.roundingAdjustmentPaise,
+          taxInvoiceNumber: invoice.number,
+          taxInvoiceIssuedAt: invoice.issuedAt,
           trackingId: null,
         }, { transaction: t });
 

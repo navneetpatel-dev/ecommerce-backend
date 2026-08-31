@@ -29,6 +29,9 @@ export class SubOrder extends Model<InferAttributes<SubOrder>, InferCreationAttr
   declare tcsAmountPaise: CreationOptional<number>;
   declare netPayoutAmountPaise: CreationOptional<number>;
   declare roundingAdjustmentPaise: CreationOptional<number>;
+  /** Vendor-scoped GST tax invoice number allocated at order placement. */
+  declare taxInvoiceNumber: CreationOptional<string | null>;
+  declare taxInvoiceIssuedAt: CreationOptional<Date | null>;
   declare trackingId: string | null;
   declare createdBy: string | null;
   declare updatedBy: string | null;
@@ -78,6 +81,8 @@ export const initSubOrderModel = (sequelize: Sequelize) => {
       tcsAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       netPayoutAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       roundingAdjustmentPaise: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+      taxInvoiceNumber: { type: DataTypes.STRING(64), allowNull: true, unique: true },
+      taxInvoiceIssuedAt: { type: DataTypes.DATE, allowNull: true },
       trackingId: { type: DataTypes.STRING, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },

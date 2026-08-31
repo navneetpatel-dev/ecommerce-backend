@@ -43,10 +43,16 @@ export function buildDatedExportFilename(
   return `${key}${suffixPart}_${range}_${stamp}.${ext}`;
 }
 
-/** GST tax invoice PDF: `gst-tax-invoice_{invoiceNumber}.pdf` */
-export function buildTaxInvoicePdfFilename(invoiceNumber: string): string {
+/** GST tax invoice PDF: `gst-tax-invoice_{vendor}_{invoiceNumber}.pdf` */
+export function buildTaxInvoicePdfFilename(
+  invoiceNumber: string,
+  vendorSlug?: string | null,
+): string {
   const invoice = sanitizeFilenameSegment(invoiceNumber.replace(/\//g, '-'));
-  return `gst-tax-invoice_${invoice}.pdf`;
+  const vendor = vendorSlug
+    ? `_${sanitizeFilenameSegment(vendorSlug, 24)}`
+    : '';
+  return `gst-tax-invoice${vendor}_${invoice}.pdf`;
 }
 
 /** Report engine spreadsheet export filename. */

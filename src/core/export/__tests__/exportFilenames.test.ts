@@ -38,5 +38,9 @@ describe('exportFilenames', () => {
       buildTaxInvoicePdfFilename('INV/2024/00042'),
       'gst-tax-invoice_inv-2024-00042.pdf',
     );
+    assert.equal(
+      buildTaxInvoicePdfFilename('TW/2526/00000001', 'tech-world'),
+      'gst-tax-invoice_tech-world_tw-2526-00000001.pdf',
+    );
   });
 });

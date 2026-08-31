@@ -62,6 +62,8 @@ export function mapSubOrder(sub: Record<string, unknown>) {
       shippingCost,
       shippingDiscountAmount,
     }),
+    taxInvoiceNumber: (sub.taxInvoiceNumber as string | null | undefined) ?? null,
+    taxInvoiceIssuedAt: sub.taxInvoiceIssuedAt ?? null,
     items,
   };
 }

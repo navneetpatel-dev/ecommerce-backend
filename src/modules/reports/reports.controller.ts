@@ -1,30 +1,18 @@
 import type { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
-import { ForbiddenError } from '@core/errors/ForbiddenError';
-import { NotFoundError } from '@core/errors/NotFoundError';
-import { ERROR_MESSAGES } from '@core/constants/errors';
 import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { roleNameOf } from '@utils/userRole';
-import { Order } from '@database/models/order.model';
-import { SubOrder } from '@database/models/subOrder.model';
-import { OrderItem } from '@database/models/orderItem.model';
-import { Address } from '@database/models/address.model';
-import { Vendor } from '@database/models/vendor.model';
-import { ProductVariant } from '@database/models/productVariant.model';
-import { Product } from '@database/models/product.model';
-import { User } from '@database/models/user.model';
-import { TaxRule } from '@database/models/taxRule.model';
-import { sequelize } from '@database/models';
-import { DOCUMENT_SEQUENCE_KIND } from '@core/constants/statuses';
-import { nextDocumentNumber } from '@modules/pricing/documentSequence';
 import {
   buildDatedExportFilename,
-  buildTaxInvoicePdfFilename,
   documentKeyToPdfTitle,
 } from '@core/export/exportFilenames';
 import { reportsService } from './reports.service';
-import { renderTaxInvoicePdf, toTaxInvoiceSource } from './taxInvoicePdf';
+import {
+  getCustomerOrderInvoices,
+  getCustomerSubOrderInvoice,
+  getVendorSubOrderInvoice,
+} from './taxInvoice.service';
 import {
   ReportRangeSchema,
   WriteOffReportSchema,
@@ -35,6 +23,8 @@ import {
 import { buildReportFilename } from './engine/excelExporter';
 import { reportEngine, type ReportActor } from './engine/reportEngine';
 import type { PermissionKey } from '@core/permissions/permissionKeys';
+import { ForbiddenError } from '@core/errors/ForbiddenError';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 
 function rangeFromQuery(req: Request) {
   return ReportRangeSchema.parse(req.query);
@@ -268,75 +258,40 @@ export const customerOrderHistory = asyncHandler(async (req: Request, res: Respo
 });
 
 export const customerOrderInvoice = asyncHandler(async (req: Request, res: Response) => {
-  const userId = req.user!.id;
-  const orderId = req.params.orderId!;
-  const order = await Order.findByPk(orderId, {
-    include: [
-      { model: User, as: 'user', attributes: ['id', 'name'] },
-      { model: Address, as: 'shippingAddress' },
-      {
-        model: SubOrder,
-        as: 'subOrders',
-        include: [
-          { model: Vendor, as: 'vendor' },
-          {
-            model: OrderItem,
-            as: 'items',
-            include: [
-              {
-                model: ProductVariant,
-                as: 'variant',
-                include: [{ model: Product, as: 'product', attributes: ['id', 'categoryId', 'name'] }],
-              },
-            ],
-          },
-        ],
-      },
-    ],
+  const result = await getCustomerOrderInvoices({
+    userId: req.user!.id,
+    orderId: req.params.orderId!,
   });
-  if (!order) throw new NotFoundError('Order');
-  if (order.userId !== userId) {
-    throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_ORDER);
+  if (result.mode === 'zip') {
+    res.setHeader('Content-Type', 'application/zip');
+  } else {
+    res.setHeader('Content-Type', 'application/pdf');
   }
+  res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+  res.send(result.buffer);
+});
 
-  const categoryIds = new Set<string>();
-  for (const sub of (order as any).subOrders ?? []) {
-    for (const item of sub.items ?? []) {
-      const catId = item.variant?.product?.categoryId;
-      if (catId) categoryIds.add(catId);
-    }
-  }
-  const taxRules = categoryIds.size
-    ? await TaxRule.findAll({ where: { categoryId: [...categoryIds] as any } })
-    : [];
-  const hsnByCategory = new Map<string, string>(
-    taxRules
-      .filter((r) => Boolean(r.categoryId))
-      .map((r) => [r.categoryId as string, r.hsnCode ?? '']),
-  );
-
-  let invoiceNo = order.taxInvoiceNumber;
-  if (!invoiceNo) {
-    invoiceNo = await sequelize.transaction(async (t) => {
-      const locked = await Order.findByPk(order.id, {
-        transaction: t,
-        lock: t.LOCK.UPDATE,
-      });
-      if (!locked) throw new NotFoundError('Order');
-      if (locked.taxInvoiceNumber) return locked.taxInvoiceNumber;
-      const number = await nextDocumentNumber(DOCUMENT_SEQUENCE_KIND.TAX_INVOICE, t);
-      await locked.update(
-        { taxInvoiceNumber: number, updatedBy: userId },
-        { transaction: t },
-      );
-      return number;
-    });
-  }
-
-  const source = toTaxInvoiceSource(invoiceNo, order, hsnByCategory);
-  const pdf = await renderTaxInvoicePdf(source);
-  const filename = buildTaxInvoicePdfFilename(invoiceNo);
+export const customerOrderSubInvoice = asyncHandler(async (req: Request, res: Response) => {
+  const result = await getCustomerSubOrderInvoice({
+    userId: req.user!.id,
+    orderId: req.params.orderId!,
+    subOrderId: req.params.subOrderId!,
+  });
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  res.send(pdf);
+  res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+  res.send(result.pdf);
+});
+
+export const vendorSubOrderInvoice = asyncHandler(async (req: Request, res: Response) => {
+  const vendorId = req.user!.vendorId;
+  if (!vendorId) {
+    throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_VENDOR_REPORT);
+  }
+  const result = await getVendorSubOrderInvoice({
+    vendorId,
+    subOrderId: req.params.subOrderId!,
+  });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+  res.send(result.pdf);
 });

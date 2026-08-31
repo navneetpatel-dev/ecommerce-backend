@@ -26,6 +26,8 @@ export class Vendor extends Model<InferAttributes<Vendor>, InferCreationAttribut
   /** Optional override for platform returnShippingFee (rupees). */
   declare returnShippingFee: CreationOptional<number | null>;
   declare codEnabled: CreationOptional<boolean>;
+  /** Optional override for tax invoice number prefix (e.g. TW). */
+  declare invoicePrefix: CreationOptional<string | null>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -70,6 +72,7 @@ export const initVendorModel = (sequelize: Sequelize) => {
       performanceScore: { type: DataTypes.DECIMAL(5, 2), defaultValue: 0 },
       returnShippingFee: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       codEnabled: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+      invoicePrefix: { type: DataTypes.STRING(16), allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

@@ -51,17 +51,46 @@ export type TaxInvoiceSeller = {
   items: TaxInvoiceLine[];
 };
 
+/** Single-vendor GST tax invoice (one sub-order). */
 export type TaxInvoiceSource = {
   invoiceNo: string;
   orderId: string;
+  subOrderId?: string;
   invoiceDate: Date;
   paymentMethod: string | null;
   paymentStatus: string;
+  /** Vendor slice grand total (customerTotal). */
   totalAmount: number;
-  walletAmountUsed: number;
   buyerName?: string | null;
   shippingAddress?: TaxInvoiceAddress | null;
-  sellers: TaxInvoiceSeller[];
+  seller: TaxInvoiceSeller;
+};
+
+export type TaxInvoiceSubOrderInput = {
+  id: string;
+  taxInvoiceNumber?: string | null;
+  taxInvoiceIssuedAt?: Date | null;
+  customerTotal?: number | null;
+  taxableAmount?: number | null;
+  taxAmount?: number | null;
+  vendor?: {
+    businessName?: string | null;
+    gstNumber?: string | null;
+    state?: string | null;
+    slug?: string | null;
+  } | null;
+  items?: Array<{
+    productName: string;
+    quantity: number;
+    unitPrice: number;
+    taxableAmount?: number | null;
+    taxAmount?: number | null;
+    taxBreakdown?: Record<string, unknown> | null;
+    variant?: {
+      sku?: string | null;
+      product?: { categoryId?: string | null } | null;
+    } | null;
+  }>;
 };
 
 export type TaxInvoiceOrderInput = {
@@ -69,29 +98,8 @@ export type TaxInvoiceOrderInput = {
   createdAt: Date;
   paymentMethod?: string | null;
   paymentStatus: string;
-  totalAmount: number;
-  walletAmountUsed?: number | null;
   user?: { name?: string | null } | null;
   shippingAddress?: TaxInvoiceAddress | null;
-  subOrders?: Array<{
-    vendor?: {
-      businessName?: string | null;
-      gstNumber?: string | null;
-      state?: string | null;
-    } | null;
-    items?: Array<{
-      productName: string;
-      quantity: number;
-      unitPrice: number;
-      taxableAmount?: number | null;
-      taxAmount?: number | null;
-      taxBreakdown?: Record<string, unknown> | null;
-      variant?: {
-        sku?: string | null;
-        product?: { categoryId?: string | null } | null;
-      } | null;
-    }>;
-  }>;
 };
 
 /** Re-export formatters used by invoice tests and API consumers. */
@@ -131,50 +139,103 @@ function mapInvoiceLineTax(item: {
   });
 }
 
-export function toTaxInvoiceSource(
-  invoiceNo: string,
+function mapSubOrderItems(
+  sub: TaxInvoiceSubOrderInput,
+  hsnByCategory: Map<string, string>,
+): TaxInvoiceLine[] {
+  const items: TaxInvoiceLine[] = [];
+  for (const item of sub.items ?? []) {
+    const tb = mapInvoiceLineTax(item);
+    const catId = item.variant?.product?.categoryId ?? undefined;
+    const hsn = catId ? (hsnByCategory.get(catId) ?? '') : '';
+    items.push({
+      productName: item.productName,
+      sku: item.variant?.sku ?? null,
+      hsn: hsn || COPY.emptyValue,
+      quantity: Math.trunc(coerceRupees(item.quantity)) || 0,
+      unitPrice: roundMoney(item.unitPrice),
+      taxable: roundMoney(item.taxableAmount),
+      cgst: tb.cgst,
+      sgst: tb.sgst,
+      igst: tb.igst,
+    });
+  }
+  return items;
+}
+
+/** Map one sub-order into a single-vendor tax invoice source. */
+export function toTaxInvoiceSourceFromSubOrder(
   order: TaxInvoiceOrderInput,
+  subOrder: TaxInvoiceSubOrderInput,
   hsnByCategory: Map<string, string>,
 ): TaxInvoiceSource {
-  const sellers: TaxInvoiceSeller[] = [];
-  for (const sub of order.subOrders ?? []) {
-    const vendor = sub.vendor;
-    const items: TaxInvoiceLine[] = [];
-    for (const item of sub.items ?? []) {
-      const tb = mapInvoiceLineTax(item);
-      const catId = item.variant?.product?.categoryId ?? undefined;
-      const hsn = catId ? (hsnByCategory.get(catId) ?? '') : '';
-      items.push({
-        productName: item.productName,
-        sku: item.variant?.sku ?? null,
-        hsn: hsn || COPY.emptyValue,
-        quantity: Math.trunc(coerceRupees(item.quantity)) || 0,
-        unitPrice: roundMoney(item.unitPrice),
-        taxable: roundMoney(item.taxableAmount),
-        cgst: tb.cgst,
-        sgst: tb.sgst,
-        igst: tb.igst,
-      });
-    }
-    sellers.push({
+  const invoiceNo = subOrder.taxInvoiceNumber;
+  if (!invoiceNo) {
+    throw new Error('Sub-order is missing taxInvoiceNumber');
+  }
+  const items = mapSubOrderItems(subOrder, hsnByCategory);
+  const vendor = subOrder.vendor;
+  const lineTotal = items.reduce((sum, item) => sum + lineAmount(item), 0);
+  const totalAmount = roundMoney(
+    subOrder.customerTotal != null ? subOrder.customerTotal : lineTotal,
+  );
+
+  return {
+    invoiceNo,
+    orderId: order.id,
+    subOrderId: subOrder.id,
+    invoiceDate: subOrder.taxInvoiceIssuedAt ?? order.createdAt,
+    paymentMethod: order.paymentMethod ?? null,
+    paymentStatus: order.paymentStatus,
+    totalAmount,
+    buyerName: order.user?.name ?? null,
+    shippingAddress: order.shippingAddress ?? null,
+    seller: {
       businessName: vendor?.businessName || COPY.platformSeller,
       gstNumber: vendor?.gstNumber ?? null,
       state: vendor?.state ?? null,
       items,
-    });
-  }
-  return {
-    invoiceNo,
-    orderId: order.id,
-    invoiceDate: order.createdAt,
-    paymentMethod: order.paymentMethod ?? null,
-    paymentStatus: order.paymentStatus,
-    totalAmount: roundMoney(order.totalAmount),
-    walletAmountUsed: roundMoney(order.walletAmountUsed),
-    buyerName: order.user?.name ?? null,
-    shippingAddress: order.shippingAddress ?? null,
-    sellers,
+    },
   };
+}
+
+/** @deprecated Prefer toTaxInvoiceSourceFromSubOrder for new code. */
+export function toTaxInvoiceSource(
+  invoiceNo: string,
+  order: TaxInvoiceOrderInput & {
+    totalAmount?: number;
+    walletAmountUsed?: number | null;
+    subOrders?: TaxInvoiceSubOrderInput[];
+  },
+  hsnByCategory: Map<string, string>,
+): TaxInvoiceSource {
+  const first = order.subOrders?.[0];
+  if (!first) {
+    return {
+      invoiceNo,
+      orderId: order.id,
+      invoiceDate: order.createdAt,
+      paymentMethod: order.paymentMethod ?? null,
+      paymentStatus: order.paymentStatus,
+      totalAmount: roundMoney(order.totalAmount),
+      buyerName: order.user?.name ?? null,
+      shippingAddress: order.shippingAddress ?? null,
+      seller: {
+        businessName: COPY.platformSeller,
+        items: [],
+      },
+    };
+  }
+  return toTaxInvoiceSourceFromSubOrder(
+    order,
+    {
+      ...first,
+      taxInvoiceNumber: first.taxInvoiceNumber ?? invoiceNo,
+      taxInvoiceIssuedAt: first.taxInvoiceIssuedAt ?? order.createdAt,
+      customerTotal: first.customerTotal ?? order.totalAmount,
+    },
+    hsnByCategory,
+  );
 }
 
 function itemSubtitle(item: TaxInvoiceLine): string | undefined {
@@ -189,11 +250,8 @@ function itemSubtitle(item: TaxInvoiceLine): string | undefined {
 function buildInvoiceColumns(
   doc: PDFKit.PDFDocument,
   contentWidth: number,
-  source: TaxInvoiceSource,
+  rows: TaxInvoiceLine[],
 ) {
-  const rows: TaxInvoiceLine[] = [];
-  for (const seller of source.sellers) rows.push(...seller.items);
-
   const specs: PdfColumnSpec[] = [
     {
       key: 'name',
@@ -264,18 +322,16 @@ function buildInvoiceColumns(
   return buildMeasuredColumns(doc, contentWidth, specs, 'name', 108);
 }
 
-function aggregateTotals(source: TaxInvoiceSource) {
+function aggregateTotals(seller: TaxInvoiceSeller) {
   let taxable = 0;
   let cgst = 0;
   let sgst = 0;
   let igst = 0;
-  for (const seller of source.sellers) {
-    for (const item of seller.items) {
-      taxable += item.taxable;
-      cgst += item.cgst;
-      sgst += item.sgst;
-      igst += item.igst;
-    }
+  for (const item of seller.items) {
+    taxable += item.taxable;
+    cgst += item.cgst;
+    sgst += item.sgst;
+    igst += item.igst;
   }
   return {
     taxable: roundMoney(taxable),
@@ -335,77 +391,75 @@ function paintTaxInvoice(doc: PDFKit.PDFDocument, source: TaxInvoiceSource) {
   );
   layout.y += metaH + 14;
 
-  const cols = buildInvoiceColumns(doc, layout.contentWidth, source);
+  const seller = source.seller;
+  const cols = buildInvoiceColumns(doc, layout.contentWidth, seller.items);
   const tableHeaderH = 16;
+  const bandH = 24;
+  layout.ensure(bandH + tableHeaderH + 24);
+  const gst = `${COPY.gstin}: ${seller.gstNumber || COPY.emptyValue}`;
+  const state = seller.state ? `  ·  ${COPY.sellerState}: ${seller.state}` : '';
+  drawSectionBand(
+    doc,
+    layout.margin,
+    layout.y,
+    layout.contentWidth,
+    bandH,
+    COPY.seller,
+    seller.businessName,
+    `${gst}${state}`,
+  );
+  layout.y += bandH;
+  drawTableHeader(doc, layout.margin, layout.y, layout.contentWidth, cols);
+  layout.y += tableHeaderH;
 
-  for (const seller of source.sellers) {
-    const bandH = 24;
-    layout.ensure(bandH + tableHeaderH + 24);
-    const gst = `${COPY.gstin}: ${seller.gstNumber || COPY.emptyValue}`;
-    const state = seller.state ? `  ·  ${COPY.sellerState}: ${seller.state}` : '';
-    drawSectionBand(
-      doc,
-      layout.margin,
-      layout.y,
-      layout.contentWidth,
-      bandH,
-      COPY.seller,
-      seller.businessName,
-      `${gst}${state}`,
-    );
-    layout.y += bandH;
-    drawTableHeader(doc, layout.margin, layout.y, layout.contentWidth, cols);
-    layout.y += tableHeaderH;
+  for (let index = 0; index < seller.items.length; index += 1) {
+    const item = seller.items[index]!;
+    const primary = {
+      title: item.productName,
+      subtitle: itemSubtitle(item),
+    };
+    const rowH = measureTableRowHeight(doc, cols, primary);
 
-    for (let index = 0; index < seller.items.length; index += 1) {
-      const item = seller.items[index]!;
-      const primary = {
-        title: item.productName,
-        subtitle: itemSubtitle(item),
-      };
-      const rowH = measureTableRowHeight(doc, cols, primary);
-
-      if (layout.y + rowH > layout.pageBottomY) {
-        layout.addPage();
-        layout.y += drawContinuationLabel(
-          doc,
-          layout.margin,
-          layout.y,
-          layout.contentWidth,
-          `${COPY.seller}: ${seller.businessName}  ·  ${COPY.continuation}`,
-        );
-        drawTableHeader(doc, layout.margin, layout.y, layout.contentWidth, cols);
-        layout.y += tableHeaderH;
-      }
-
-      const values: Record<string, string> = {
-        name: item.productName,
-        hsn: item.hsn,
-        qty: String(item.quantity),
-        taxable: formatInrAmount(item.taxable),
-        cgst: formatInrAmount(item.cgst),
-        sgst: formatInrAmount(item.sgst),
-        igst: formatInrAmount(item.igst),
-        amount: formatInrAmount(lineAmount(item)),
-      };
-
-      drawTableRow(
+    if (layout.y + rowH > layout.pageBottomY) {
+      layout.addPage();
+      layout.y += drawContinuationLabel(
         doc,
         layout.margin,
         layout.y,
         layout.contentWidth,
-        rowH,
-        cols,
-        values,
-        index,
-        primary,
+        `${COPY.seller}: ${seller.businessName}  ·  ${COPY.continuation}`,
       );
-      layout.y += rowH;
+      drawTableHeader(doc, layout.margin, layout.y, layout.contentWidth, cols);
+      layout.y += tableHeaderH;
     }
-    layout.y += 8;
-  }
 
-  const totals = aggregateTotals(source);
+    const values: Record<string, string> = {
+      name: item.productName,
+      hsn: item.hsn,
+      qty: String(item.quantity),
+      taxable: formatInrAmount(item.taxable),
+      cgst: formatInrAmount(item.cgst),
+      sgst: formatInrAmount(item.sgst),
+      igst: formatInrAmount(item.igst),
+      amount: formatInrAmount(lineAmount(item)),
+    };
+
+    drawTableRow(
+      doc,
+      layout.margin,
+      layout.y,
+      layout.contentWidth,
+      rowH,
+      cols,
+      values,
+      index,
+      primary,
+    );
+    layout.y += rowH;
+  }
+  layout.y += 8;
+
+  const totals = aggregateTotals(seller);
   const tax = roundMoney(totals.cgst + totals.sgst + totals.igst);
   const totalLines: PdfTotalsLine[] = [
     { label: COPY.taxableTotal, value: formatInvoiceMoney(totals.taxable) },
@@ -414,12 +468,6 @@ function paintTaxInvoice(doc: PDFKit.PDFDocument, source: TaxInvoiceSource) {
     { label: COPY.igst, value: formatInvoiceMoney(totals.igst) },
     { label: COPY.taxTotal, value: formatInvoiceMoney(tax) },
   ];
-  if (source.walletAmountUsed > 0) {
-    totalLines.push({
-      label: COPY.walletApplied,
-      value: formatInvoiceMoney(source.walletAmountUsed),
-    });
-  }
 
   const totalsBoxH = 10 + totalLines.length * 16 + 10 + 4 + 36;
   layout.ensure(totalsBoxH + 44);

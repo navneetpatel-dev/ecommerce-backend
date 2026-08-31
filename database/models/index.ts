@@ -43,6 +43,10 @@ import { initTdsLedgerModel, TdsLedger } from './tdsLedger.model';
 import { initCreditNoteModel, CreditNote } from './creditNote.model';
 import { initDebitNoteModel, DebitNote } from './debitNote.model';
 import { initDocumentSequenceModel, DocumentSequence } from './documentSequence.model';
+import {
+  initVendorInvoiceSequenceModel,
+  VendorInvoiceSequence,
+} from './vendorInvoiceSequence.model';
 import { initWalletLedgerModel, WalletLedger } from './walletLedger.model';
 import { initWalletWriteOffModel, WalletWriteOff } from './walletWriteOff.model';
 import { initReportExportLogModel, ReportExportLog } from './reportExportLog.model';
@@ -100,6 +104,7 @@ const models = {
   CreditNote: initCreditNoteModel(sequelize),
   DebitNote: initDebitNoteModel(sequelize),
   DocumentSequence: initDocumentSequenceModel(sequelize),
+  VendorInvoiceSequence: initVendorInvoiceSequenceModel(sequelize),
   WalletLedger: initWalletLedgerModel(sequelize),
   WalletWriteOff: initWalletWriteOffModel(sequelize),
   ReportExportLog: initReportExportLogModel(sequelize),
@@ -130,6 +135,7 @@ export {
   TaxRule, NotificationLog, AuditLog, WebhookEvent,
   PlatformSetting, PromoBanner,
   TcsLedger, TdsLedger, CreditNote, DebitNote, DocumentSequence,
+  VendorInvoiceSequence,
   WalletLedger, WalletWriteOff, ReportExportLog,
   SupportTicket, TicketMessage, TicketAttachment, TicketRead,
   BugReport, BugReportAttachment, BugReportComment,

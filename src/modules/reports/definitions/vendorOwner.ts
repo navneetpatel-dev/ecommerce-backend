@@ -148,7 +148,8 @@ async function vendorGstSales(filters: ReportFilters) {
       return {
         orderId: sub?.orderId ?? null,
         subOrderId: item.subOrderId,
-        invoiceId: sub?.orderId ?? null,
+        invoiceId: (sub as { taxInvoiceNumber?: string | null } | undefined)
+          ?.taxInvoiceNumber ?? null,
         productName: item.productName,
         hsnCode: hsnByCategory.get(categoryId) ?? 'UNKNOWN',
         qty: Number(item.quantity ?? 0),

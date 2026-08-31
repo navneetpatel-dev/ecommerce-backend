@@ -32,9 +32,20 @@ router.get(
   reportsController.customerOrderHistory,
 );
 router.get(
+  '/customer/order-invoice/:orderId/:subOrderId',
+  authenticate,
+  reportsController.customerOrderSubInvoice,
+);
+router.get(
   '/customer/order-invoice/:orderId',
   authenticate,
   reportsController.customerOrderInvoice,
+);
+router.get(
+  '/vendor/sub-orders/:subOrderId/invoice',
+  authenticate,
+  authorize(PERMISSIONS.SUBORDER_MANAGE, PERMISSIONS.PAYOUT_VIEW),
+  reportsController.vendorSubOrderInvoice,
 );
 router.get(
   '/run/:type',
