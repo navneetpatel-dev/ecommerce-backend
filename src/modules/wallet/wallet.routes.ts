@@ -4,8 +4,12 @@ import { authenticate } from '@middleware/auth.middleware';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { validate } from '@middleware/validate.middleware';
+import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
+import { roleNameOf } from '@utils/userRole';
+import { reportExportGuard } from '@modules/reports/reportExportGuard';
 import { walletService } from './wallet.service';
 import { exportWalletStatement, WalletStatementSchema } from './walletStatement.service';
+import type { PermissionKey } from '@core/permissions/permissionKeys';
 
 const ListTransactionsSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional().default(50),
@@ -51,17 +55,27 @@ router.get(
   '/statement',
   authenticate,
   validate(WalletStatementSchema, 'query'),
+  reportExportGuard,
   asyncHandler(async (req, res) => {
     const query = WalletStatementSchema.parse(req.query);
-    const { buffer, filename, contentType } = await exportWalletStatement({
-      userId: req.user!.id,
+    const user = req.user!;
+    const roleName = user.role?.name ?? roleNameOf(user as any);
+    const permissions = (await resolvePermissionsForUser({
+      roleId: user.roleId,
+      role: { name: roleName },
+    })) as PermissionKey[];
+    const exported = await exportWalletStatement({
+      actor: {
+        id: user.id,
+        vendorId: user.vendorId ?? null,
+        roleName,
+        permissions,
+      },
       from: query.from,
       to: query.to,
       format: query.format,
     });
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(buffer);
+    res.json(ok({ ...exported, async: true }));
   }),
 );
 

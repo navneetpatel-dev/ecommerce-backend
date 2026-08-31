@@ -1,17 +1,27 @@
-import fs from 'node:fs/promises';
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { Op, UniqueConstraintError } from 'sequelize';
+import { AppError } from '@core/errors/AppError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
-import { ERROR_MESSAGES } from '@core/constants/errors';
+import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { PERMISSIONS, type PermissionKey } from '@core/permissions/permissionKeys';
 import { ROLES } from '@core/constants/statuses';
 import { ReportExportLog } from '@database/models/reportExportLog.model';
 import { buildPaginationMeta } from '@core/http/pagination';
 import { areQueuesReady, queues, DEFAULT_TRANSACTIONAL_JOB_OPTIONS } from '@config/queue';
-import { isS3Configured, uploadObject } from '@config/s3';
+import {
+  isS3Configured,
+  signedGetObjectUrl,
+  uploadObjectStream,
+  extractS3KeyFromUrl,
+} from '@config/s3';
 import { buildS3Key, S3_ENTITY_TYPES, S3_PURPOSES } from '@core/s3';
 import { logger } from '@core/logger';
+import { redisClient } from '@config/redis';
 import { env } from '@config/env';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { getReportDefinition, listReportDefinitionsForPermissions } from './reportRegistry';
@@ -21,23 +31,45 @@ import {
   extensionForFormat,
   type ReportExportFormat,
 } from './csvExporter';
-import { buildExportBuffer } from './reportEngineExport';
-import {
-  REPORT_ASYNC_ROW_THRESHOLD,
-  REPORT_EXPORT_PAGE_SIZE,
-  type ReportFilters,
-} from './types';
 import { assertReportRange, normalizeReportFilters } from './queryHelpers';
+import type { ReportFilters } from './types';
+import { buildExportKey } from './export/exportKey';
+import { createReportRowIterator } from './export/ReportRowIterator';
+import { createStreamingWriter } from './export/StreamingExportWriter';
+import {
+  exportArtifactExists,
+  invalidateArtifactCache,
+  markArtifactPresent,
+} from './export/exportArtifactCache';
+import { reportExportConfig } from '../reportExportConfig';
+import { emitReportExportMetric } from '../reportExportMetrics';
 
 export const REPORT_EXPORT_JOB = 'report-export';
 
 const LOCAL_EXPORT_DIR = path.join(process.cwd(), 'storage', 'report-exports');
+const STATUS_CACHE_PREFIX = 'report-export:status:';
 
 export type ReportActor = {
   id: string;
   vendorId?: string | null;
   roleName: string;
   permissions: PermissionKey[];
+};
+
+export type RunExportOptions = {
+  priority?: number;
+  bornBy?: string | null;
+};
+
+export type AsyncExportResult = {
+  async: true;
+  exportId: string;
+  status: 'PENDING' | 'READY';
+  format: ReportExportFormat;
+  rowCount: number;
+  /** False until worker finishes streaming (row count unknown at enqueue). */
+  rowCountKnown: boolean;
+  cached?: boolean;
 };
 
 function actorCanAccess(
@@ -66,6 +98,11 @@ function reportsHubPath(actor: ReportActor): string {
   return '/admin/reports';
 }
 
+function statusEtag(log: ReportExportLog): string {
+  const base = `${log.id}:${log.status}:${log.updatedAt.toISOString()}:${log.rowCount}`;
+  return createHash('sha256').update(base).digest('hex').slice(0, 16);
+}
+
 export function resolveFiltersForActor(
   actor: ReportActor,
   raw: ReportFilters,
@@ -73,7 +110,6 @@ export function resolveFiltersForActor(
 ): ReportFilters {
   const filters = normalizeReportFilters({ ...raw });
   if (vendorScoped) {
-    // Platform admins may run vendor-scoped report types across vendors (optional vendorId).
     if (actor.roleName === ROLES.SUPER_ADMIN) {
       filters.scopedVendorId = filters.vendorId ?? null;
       return filters;
@@ -81,7 +117,6 @@ export function resolveFiltersForActor(
     if (!actor.vendorId) {
       throw new ForbiddenError(ERROR_MESSAGES.VENDOR_NOT_LINKED);
     }
-    // Reject cross-vendor probing instead of silently rewriting.
     if (raw.vendorId && raw.vendorId !== actor.vendorId) {
       throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_VENDOR_REPORT);
     }
@@ -96,44 +131,118 @@ export function resolveFiltersForActor(
   return filters;
 }
 
-async function fetchAllRows(
-  query: (filters: ReportFilters) => Promise<{ rows: Record<string, unknown>[]; total: number; meta?: Record<string, unknown> }>,
-  filters: ReportFilters,
-): Promise<{ rows: Record<string, unknown>[]; total: number; meta?: Record<string, unknown> }> {
-  const first = await query({ ...filters, page: 1, limit: REPORT_EXPORT_PAGE_SIZE });
-  if (first.total <= first.rows.length) return first;
-  const rows = [...first.rows];
-  const pages = Math.ceil(first.total / REPORT_EXPORT_PAGE_SIZE);
-  for (let page = 2; page <= pages; page += 1) {
-    const chunk = await query({ ...filters, page, limit: REPORT_EXPORT_PAGE_SIZE });
-    rows.push(...chunk.rows);
+async function cacheExportStatus(exportId: string, payload: Record<string, unknown>): Promise<void> {
+  try {
+    if (redisClient.status === 'wait' || redisClient.status === 'end') await redisClient.connect();
+    await redisClient.setex(
+      `${STATUS_CACHE_PREFIX}${exportId}`,
+      reportExportConfig.statusCacheTtlSec,
+      JSON.stringify(payload),
+    );
+  } catch {
+    /* optional cache */
   }
-  return { rows, total: first.total, meta: first.meta };
 }
 
-async function persistExportFile(
-  key: string,
-  buffer: Buffer,
-  format: ReportExportFormat,
-): Promise<{ fileKey: string; fileUrl: string | null }> {
-  if (isS3Configured()) {
-    const fileUrl = await uploadObject({
-      key,
-      body: buffer,
-      contentType: contentTypeForFormat(format),
-    });
-    return { fileKey: key, fileUrl };
+async function readCachedExportStatus(exportId: string): Promise<Record<string, unknown> | null> {
+  try {
+    if (redisClient.status === 'wait' || redisClient.status === 'end') await redisClient.connect();
+    const raw = await redisClient.get(`${STATUS_CACHE_PREFIX}${exportId}`);
+    return raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+  } catch {
+    return null;
   }
-  await fs.mkdir(LOCAL_EXPORT_DIR, { recursive: true });
+}
+
+async function invalidateExportStatusCache(exportId: string): Promise<void> {
+  try {
+    if (redisClient.status === 'wait' || redisClient.status === 'end') await redisClient.connect();
+    await redisClient.del(`${STATUS_CACHE_PREFIX}${exportId}`);
+  } catch {
+    /* optional */
+  }
+}
+
+function buildFiltersUsed(
+  filters: ReportFilters,
+  actor: ReportActor,
+  extra?: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    from: filters.from.toISOString(),
+    to: filters.to.toISOString(),
+    vendorId: filters.vendorId ?? null,
+    scopedVendorId: filters.scopedVendorId ?? filters.vendorId ?? null,
+    categoryId: filters.categoryId ?? null,
+    status: filters.status ?? null,
+    bornBy: filters.bornBy ?? null,
+    reportsPath: reportsHubPath(actor),
+    ...extra,
+  };
+}
+
+async function findCachedExport(exportKey: string): Promise<ReportExportLog | null> {
+  const cacheCutoff = new Date(Date.now() - reportExportConfig.cacheTtlMin * 60 * 1000);
+  const cached = await ReportExportLog.findOne({
+    where: {
+      exportKey,
+      status: 'READY',
+      fileKey: { [Op.ne]: null },
+      exportedAt: { [Op.gt]: cacheCutoff },
+    },
+    order: [['exportedAt', 'DESC']],
+  });
+  if (!cached) return null;
+  if (await exportArtifactExists(cached)) return cached;
+  await cached.update({
+    status: 'FAILED',
+    errorMessage: 'Export artifact missing or expired',
+    fileKey: null,
+    fileUrl: null,
+  });
+  await invalidateArtifactCache(cached.id);
+  return null;
+}
+
+async function findPendingExport(exportKey: string): Promise<ReportExportLog | null> {
+  return ReportExportLog.findOne({
+    where: {
+      exportKey,
+      status: { [Op.in]: ['PENDING', 'PROCESSING'] },
+    },
+    order: [['createdAt', 'DESC']],
+  });
+}
+
+async function persistExportStream(
+  key: string,
+  tempPath: string,
+  format: ReportExportFormat,
+  downloadFilename: string,
+): Promise<{ fileKey: string; fileUrl: string | null; byteSize: number }> {
+  const stat = await fsp.stat(tempPath);
+  const safeName = downloadFilename.replace(/["\r\n]/g, '_');
+  if (isS3Configured()) {
+    const stream = fs.createReadStream(tempPath);
+    const fileUrl = await uploadObjectStream({
+      key,
+      stream,
+      contentType: contentTypeForFormat(format),
+      privateObject: true,
+      contentDisposition: `attachment; filename="${safeName}"`,
+    });
+    return { fileKey: key, fileUrl, byteSize: stat.size };
+  }
+  await fsp.mkdir(LOCAL_EXPORT_DIR, { recursive: true });
   const fileName = key.replace(/\//g, '_');
   const full = path.join(LOCAL_EXPORT_DIR, fileName);
-  await fs.writeFile(full, buffer);
-  return { fileKey: fileName, fileUrl: null };
+  await fsp.copyFile(tempPath, full);
+  return { fileKey: fileName, fileUrl: null, byteSize: stat.size };
 }
 
 export async function readLocalExport(fileKey: string): Promise<Buffer> {
   const full = path.join(LOCAL_EXPORT_DIR, fileKey);
-  return fs.readFile(full);
+  return fsp.readFile(full);
 }
 
 export class ReportEngine {
@@ -171,26 +280,14 @@ export class ReportEngine {
     };
   }
 
+  /** All file exports (xlsx/csv/pdf) are always async — returns in ~200ms. */
   async runExport(
     actor: ReportActor,
     reportType: string,
     rawFilters: ReportFilters,
     exportFormat: ReportExportFormat = 'xlsx',
-  ): Promise<
-    | {
-        async: true;
-        exportId: string;
-        status: 'PENDING';
-        rowCount: number;
-      }
-    | {
-        async: false;
-        exportId: string;
-        filename: string;
-        buffer: Buffer;
-        fileUrl: string | null;
-      }
-  > {
+    options: RunExportOptions = {},
+  ): Promise<AsyncExportResult> {
     const def = getReportDefinition(reportType);
     if (!def) throw new NotFoundError(ERROR_MESSAGES.REPORT_NOT_FOUND);
     if (!actorCanAccess(actor.permissions, actor.roleName, def.permissions)) {
@@ -202,94 +299,176 @@ export class ReportEngine {
     assertReportRange(rawFilters);
     const filters = resolveFiltersForActor(actor, rawFilters, def.vendorScoped);
     if (def.audience === 'customer') filters.userId = actor.id;
+    if (options.bornBy) filters.bornBy = options.bornBy;
 
-    const countProbe = await def.query({ ...filters, page: 1, limit: 1 });
-    const filtersUsed = {
-      from: filters.from.toISOString(),
-      to: filters.to.toISOString(),
-      vendorId: filters.vendorId ?? null,
-      scopedVendorId: filters.scopedVendorId ?? filters.vendorId ?? null,
-      categoryId: filters.categoryId ?? null,
-      status: filters.status ?? null,
-      reportsPath: reportsHubPath(actor),
-    };
+    const rowCount = 0;
+    const filtersUsed = buildFiltersUsed(filters, actor);
+    const exportKey = buildExportKey({
+      userId: actor.id,
+      reportType: def.type,
+      filtersUsed,
+      format: exportFormat,
+    });
 
-    if (countProbe.total > REPORT_ASYNC_ROW_THRESHOLD) {
-      const log = await ReportExportLog.create({
+    const cached = await findCachedExport(exportKey);
+    if (cached) {
+      emitReportExportMetric({
+        outcome: 'cache_hit',
+        reportType: def.type,
+        format: exportFormat,
+        rowCount: cached.rowCount,
+      });
+      return {
+        async: true,
+        exportId: cached.id,
+        status: 'READY',
+        format: (cached.format as ReportExportFormat) || exportFormat,
+        rowCount: cached.rowCount,
+        rowCountKnown: true,
+        cached: true,
+      };
+    }
+
+    const pending = await findPendingExport(exportKey);
+    if (pending) {
+      return {
+        async: true,
+        exportId: pending.id,
+        status: 'PENDING',
+        format: (pending.format as ReportExportFormat) || exportFormat,
+        rowCount: pending.rowCount,
+        rowCountKnown: pending.rowCount > 0,
+        cached: true,
+      };
+    }
+
+    const inflightOther = await ReportExportLog.count({
+      where: {
+        userId: actor.id,
+        status: { [Op.in]: ['PENDING', 'PROCESSING'] },
+        [Op.or]: [{ exportKey: { [Op.ne]: exportKey } }, { exportKey: null }],
+      },
+    });
+    if (inflightOther >= reportExportConfig.maxPendingPerUser) {
+      throw new AppError(
+        ERROR_MESSAGES.REPORT_EXPORT_TOO_MANY_PENDING,
+        429,
+        ERROR_CODES.RATE_LIMITED,
+        { retryAfterSec: 30 },
+      );
+    }
+
+    const artifactExpiresAt = new Date(
+      Date.now() + reportExportConfig.artifactTtlDays * 24 * 60 * 60 * 1000,
+    );
+    let log: ReportExportLog;
+    try {
+      log = await ReportExportLog.create({
         userId: actor.id,
         reportType: def.type,
         filtersUsed,
         format: exportFormat,
         status: 'PENDING',
-        rowCount: countProbe.total,
+        rowCount,
+        exportKey,
+        expiresAt: artifactExpiresAt,
         fileKey: null,
         fileUrl: null,
         errorMessage: null,
+        byteSize: null,
         exportedAt: new Date(),
         createdBy: actor.id,
         updatedBy: actor.id,
         deletedBy: null,
       });
-      if (areQueuesReady()) {
-        await queues.reportExport.add(
-          REPORT_EXPORT_JOB,
-          { exportLogId: log.id },
-          DEFAULT_TRANSACTIONAL_JOB_OPTIONS,
-        );
-      } else {
-        // Process inline when Redis is down so exports still complete in dev.
-        void this.processExportJob(log.id).catch((err) =>
-          logger.error('Inline report export failed', {
-            error: err instanceof Error ? err.message : err,
-          }),
-        );
+    } catch (err) {
+      if (err instanceof UniqueConstraintError) {
+        const existing = await findPendingExport(exportKey);
+        if (existing) {
+          return {
+            async: true,
+            exportId: existing.id,
+            status: 'PENDING',
+            format: (existing.format as ReportExportFormat) || exportFormat,
+            rowCount: existing.rowCount,
+            rowCountKnown: existing.rowCount > 0,
+            cached: true,
+          };
+        }
       }
-      return {
-        async: true as const,
-        exportId: log.id,
-        status: 'PENDING' as const,
-        rowCount: countProbe.total,
-      };
+      throw err;
     }
 
-    const full = await fetchAllRows(def.query, filters);
-    const buffer = await buildExportBuffer(exportFormat, def.columns, full.rows, def.type);
-    const ext = extensionForFormat(exportFormat);
-    const filename = buildReportFilename(def.type, filters.from, filters.to, ext);
-    const key = buildS3Key(S3_ENTITY_TYPES.REPORTS, actor.id, S3_PURPOSES.EXPORT, filename);
-    const stored = await persistExportFile(key, buffer, exportFormat);
-    const log = await ReportExportLog.create({
-      userId: actor.id,
+    const priority = options.priority ?? reportExportConfig.userExportPriority;
+
+    if (areQueuesReady()) {
+      await queues.reportExport.add(
+        REPORT_EXPORT_JOB,
+        { exportLogId: log.id },
+        { ...DEFAULT_TRANSACTIONAL_JOB_OPTIONS, jobId: log.id, priority },
+      );
+    } else if (reportExportConfig.inlineDev && !reportExportConfig.isProduction) {
+      void this.processExportJob(log.id).catch((err) =>
+        logger.error('Inline report export failed', {
+          error: err instanceof Error ? err.message : err,
+        }),
+      );
+    } else {
+      await log.destroy({ force: true });
+      throw new AppError(
+        ERROR_MESSAGES.REPORT_EXPORT_QUEUE_UNAVAILABLE,
+        503,
+        ERROR_CODES.REPORT_EXPORT_QUEUE_UNAVAILABLE,
+      );
+    }
+
+    emitReportExportMetric({
+      outcome: 'enqueued',
       reportType: def.type,
-      filtersUsed,
       format: exportFormat,
-      status: 'SYNC',
-      rowCount: full.total,
-      fileKey: stored.fileKey,
-      fileUrl: stored.fileUrl,
-      errorMessage: null,
-      exportedAt: new Date(),
-      createdBy: actor.id,
-      updatedBy: actor.id,
-      deletedBy: null,
+      rowCount,
     });
+
     return {
-      async: false as const,
+      async: true,
       exportId: log.id,
-      filename,
-      buffer,
-      fileUrl: stored.fileUrl,
+      status: 'PENDING',
+      format: exportFormat,
+      rowCount,
+      rowCountKnown: false,
     };
   }
 
   async processExportJob(exportLogId: string) {
     const log = await ReportExportLog.findByPk(exportLogId);
     if (!log || log.status === 'READY') return;
+
+    const staleCutoff = new Date(
+      Date.now() - reportExportConfig.staleProcessingMin * 60 * 1000,
+    );
+    const [claimed] = await ReportExportLog.update(
+      { status: 'PROCESSING', updatedBy: log.userId },
+      {
+        where: {
+          id: exportLogId,
+          [Op.or]: [
+            { status: 'PENDING' },
+            { status: 'PROCESSING', updatedAt: { [Op.lt]: staleCutoff } },
+          ],
+        },
+      },
+    );
+    if (claimed === 0) return;
+
     const def = getReportDefinition(log.reportType);
     if (!def) {
       await log.update({ status: 'FAILED', errorMessage: ERROR_MESSAGES.REPORT_NOT_FOUND });
       return;
     }
+
+    const startedAt = Date.now();
+    let writer: ReturnType<typeof createStreamingWriter> | null = null;
+
     try {
       const f = log.filtersUsed as Record<string, unknown>;
       const filters: ReportFilters = normalizeReportFilters({
@@ -298,30 +477,57 @@ export class ReportEngine {
         vendorId: (f.vendorId as string) ?? null,
         categoryId: (f.categoryId as string) ?? null,
         status: (f.status as string) ?? null,
+        bornBy: (f.bornBy as string) ?? null,
         scopedVendorId:
           (f.scopedVendorId as string) ??
           (def.vendorScoped ? ((f.vendorId as string) ?? null) : null),
         userId: log.userId,
       });
-      const full = await fetchAllRows(def.query, filters);
+
       const exportFormat = (log.format as ReportExportFormat) || 'xlsx';
-      const buffer = await buildExportBuffer(
-        exportFormat,
-        def.columns,
-        full.rows,
-        def.type,
-      );
+      writer = createStreamingWriter(exportFormat, def.columns, def.type);
+      await writer.writeHeader();
+
+      const knownTotal = log.rowCount > 0 ? log.rowCount : undefined;
+      let actualRowCount = 0;
+      for await (const chunk of createReportRowIterator(def, filters, knownTotal)) {
+        actualRowCount += chunk.length;
+        await writer.writeRows(chunk);
+      }
+
+      const artifact = await writer.finalize();
       const ext = extensionForFormat(exportFormat);
       const filename = buildReportFilename(def.type, filters.from, filters.to, ext);
       const key = buildS3Key(S3_ENTITY_TYPES.REPORTS, log.userId, S3_PURPOSES.EXPORT, filename);
-      const stored = await persistExportFile(key, buffer, exportFormat);
+      const stored = await persistExportStream(key, artifact.tempPath, exportFormat, filename);
+
+      const artifactExpiresAt = new Date(
+        Date.now() + reportExportConfig.artifactTtlDays * 24 * 60 * 60 * 1000,
+      );
+
       await log.update({
         status: 'READY',
-        rowCount: full.total,
+        rowCount: actualRowCount,
         fileKey: stored.fileKey,
         fileUrl: stored.fileUrl,
+        byteSize: stored.byteSize,
+        expiresAt: artifactExpiresAt,
         errorMessage: null,
         updatedBy: log.userId,
+        exportedAt: new Date(),
+      });
+
+      await invalidateExportStatusCache(log.id);
+      await invalidateArtifactCache(log.id);
+      await markArtifactPresent(log.id);
+
+      emitReportExportMetric({
+        outcome: 'completed',
+        reportType: log.reportType,
+        format: exportFormat,
+        rowCount: actualRowCount,
+        durationMs: Date.now() - startedAt,
+        byteSize: Number(stored.byteSize),
       });
 
       const clientBase = env.CLIENT_URL.replace(/\/$/, '');
@@ -331,44 +537,103 @@ export class ReportEngine {
           : '/admin/reports';
       void notificationsService.sendReportExportReady(log.userId, log.id, {
         reportType: log.reportType,
-        rowCount: full.total,
+        rowCount: actualRowCount,
         actionUrl: `${clientBase}${reportsPath}?exportId=${log.id}`,
       });
     } catch (err) {
+      emitReportExportMetric({
+        outcome: 'failed',
+        reportType: log.reportType,
+        format: (log.format as ReportExportFormat) || 'xlsx',
+        durationMs: Date.now() - startedAt,
+      });
       await log.update({
         status: 'FAILED',
         errorMessage: err instanceof Error ? err.message : 'Export failed',
       });
+      await invalidateExportStatusCache(log.id);
       throw err;
+    } finally {
+      if (writer) await writer.dispose().catch(() => undefined);
     }
   }
 
   async getExportStatus(
     actor: ReportActor,
     exportId: string,
-  ): Promise<{
-    id: string;
-    reportType: string;
-    status: string;
-    rowCount: number;
-    fileUrl: string | null;
-    errorMessage: string | null;
-    exportedAt: Date;
-  }> {
+    ifNoneMatch?: string | null,
+  ): Promise<
+    | { notModified: true; etag: string }
+    | {
+        id: string;
+        reportType: string;
+        format: string;
+        status: string;
+        rowCount: number;
+        rowCountKnown: boolean;
+        fileUrl: string | null;
+        downloadUrl: string | null;
+        expiresIn: number | null;
+        errorMessage: string | null;
+        exportedAt: Date;
+        filterFrom: string | null;
+        filterTo: string | null;
+        etag: string;
+      }
+  > {
     const log = await ReportExportLog.findByPk(exportId);
     if (!log) throw new NotFoundError('ReportExportLog');
     if (log.userId !== actor.id && actor.roleName !== ROLES.SUPER_ADMIN) {
       throw new ForbiddenError(ERROR_MESSAGES.REPORT_FORBIDDEN);
     }
-    return {
+
+    const cached = await readCachedExportStatus(exportId);
+    if (cached && (cached.status === 'PENDING' || cached.status === 'PROCESSING')) {
+      return cached as Awaited<ReturnType<ReportEngine['getExportStatus']>>;
+    }
+
+    let downloadUrl: string | null = null;
+    let expiresIn: number | null = null;
+    if (log.status === 'READY' && log.fileKey && isS3Configured()) {
+      const s3Key = log.fileUrl ? extractS3KeyFromUrl(log.fileUrl) ?? log.fileKey : log.fileKey;
+      if (s3Key) {
+        expiresIn = reportExportConfig.presignedExpiresSec;
+        downloadUrl = await signedGetObjectUrl(s3Key, expiresIn);
+      }
+    }
+
+    const filtersUsed = log.filtersUsed as Record<string, unknown>;
+    const etag = statusEtag(log);
+    if (
+      ifNoneMatch &&
+      ifNoneMatch === etag &&
+      (log.status === 'PENDING' || log.status === 'PROCESSING')
+    ) {
+      return { notModified: true, etag };
+    }
+
+    const payload = {
       id: log.id,
       reportType: log.reportType,
+      format: log.format || 'xlsx',
       status: log.status,
       rowCount: log.rowCount,
+      rowCountKnown: log.status === 'READY' || log.status === 'SYNC' || log.rowCount > 0,
       fileUrl: log.fileUrl,
+      downloadUrl,
+      expiresIn,
       errorMessage: log.errorMessage,
       exportedAt: log.exportedAt,
+      filterFrom: typeof filtersUsed.from === 'string' ? filtersUsed.from : null,
+      filterTo: typeof filtersUsed.to === 'string' ? filtersUsed.to : null,
+      etag,
     };
+
+    if (log.status === 'PENDING' || log.status === 'PROCESSING') {
+      void cacheExportStatus(exportId, payload);
+    }
+
+    return payload;
   }
 
   async getExportForDownload(actor: ReportActor, exportId: string) {
@@ -380,6 +645,18 @@ export class ReportEngine {
     if (log.status !== 'READY' && log.status !== 'SYNC') {
       throw new ValidationError(ERROR_MESSAGES.REPORT_EXPORT_NOT_READY);
     }
+
+    if (isS3Configured() && log.fileKey) {
+      const s3Key = log.fileUrl ? extractS3KeyFromUrl(log.fileUrl) ?? log.fileKey : log.fileKey;
+      const url = await signedGetObjectUrl(s3Key!, reportExportConfig.presignedExpiresSec);
+      return {
+        mode: 'presigned' as const,
+        url,
+        expiresIn: reportExportConfig.presignedExpiresSec,
+        log,
+      };
+    }
+
     if (log.fileUrl) {
       return { mode: 'redirect' as const, url: log.fileUrl, log };
     }
@@ -388,6 +665,54 @@ export class ReportEngine {
     }
     const buffer = await readLocalExport(log.fileKey);
     return { mode: 'buffer' as const, buffer, log };
+  }
+
+  async retryExport(actor: ReportActor, exportId: string): Promise<AsyncExportResult> {
+    const log = await ReportExportLog.findByPk(exportId);
+    if (!log) throw new NotFoundError('ReportExportLog');
+    if (log.status !== 'FAILED') {
+      throw new ValidationError('Only failed exports can be retried');
+    }
+    const f = log.filtersUsed as Record<string, unknown>;
+    return this.runExport(
+      actor,
+      log.reportType,
+      {
+        from: new Date(String(f.from)),
+        to: new Date(String(f.to)),
+        vendorId: (f.vendorId as string) ?? null,
+        categoryId: (f.categoryId as string) ?? null,
+        status: (f.status as string) ?? null,
+        bornBy: (f.bornBy as string) ?? null,
+      },
+      (log.format as ReportExportFormat) || 'xlsx',
+    );
+  }
+
+  async listRecentExports(limit = 50, filters?: { status?: string; reportType?: string }) {
+    const where: Record<string, unknown> = {};
+    if (filters?.status) where.status = filters.status;
+    if (filters?.reportType) where.reportType = filters.reportType;
+
+    return ReportExportLog.findAll({
+      where,
+      order: [['createdAt', 'DESC']],
+      limit,
+      attributes: [
+        'id',
+        'userId',
+        'reportType',
+        'format',
+        'status',
+        'rowCount',
+        'byteSize',
+        'errorMessage',
+        'exportedAt',
+        'filtersUsed',
+        'createdAt',
+        'updatedAt',
+      ],
+    });
   }
 }
 

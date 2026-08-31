@@ -2,11 +2,14 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   DeleteObjectCommand,
   DeleteObjectsCommand,
   ListObjectsV2Command,
   CopyObjectCommand,
 } from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
+import type { Readable } from 'node:stream';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env } from '@config/env';
 import { AppError } from '@core/errors';
@@ -50,6 +53,17 @@ export function publicObjectUrl(key: string): string {
     return `${base}/${key}`;
   }
   return `https://${S3_BUCKET}.s3.${env.AWS_REGION}.amazonaws.com/${key}`;
+}
+
+/** Returns true when the object exists in the configured bucket. */
+export async function objectExists(key: string): Promise<boolean> {
+  if (!s3Client) return false;
+  try {
+    await s3Client.send(new HeadObjectCommand({ Bucket: S3_BUCKET, Key: key }));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Short-lived signed GET URL for viewing objects (falls back to public URL if S3 unset). */
@@ -193,6 +207,40 @@ export async function uploadObject(params: {
     }),
   ).catch(rethrowS3Error);
 
+  return publicObjectUrl(params.key);
+}
+
+/** Multipart upload from a readable stream (report exports). */
+export async function uploadObjectStream(params: {
+  key: string;
+  stream: Readable;
+  contentType: string;
+  privateObject?: boolean;
+  contentDisposition?: string;
+}): Promise<string> {
+  if (!s3Client) {
+    throw new Error(
+      'S3 is not configured. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, and S3_BUCKET.',
+    );
+  }
+
+  const upload = new Upload({
+    client: s3Client,
+    params: {
+      Bucket: S3_BUCKET,
+      Key: params.key,
+      Body: params.stream,
+      ContentType: params.contentType,
+      ...(params.contentDisposition
+        ? { ContentDisposition: params.contentDisposition }
+        : {}),
+      ...(params.privateObject
+        ? {}
+        : { CacheControl: 'public, max-age=31536000, immutable' }),
+    },
+  });
+
+  await upload.done().catch(rethrowS3Error);
   return publicObjectUrl(params.key);
 }
 

@@ -44,6 +44,7 @@ export const ERROR_CODES = {
   REPORT_NOT_FOUND: 'REPORT_NOT_FOUND',
   REPORT_FORBIDDEN: 'REPORT_FORBIDDEN',
   REPORT_EXPORT_NOT_READY: 'REPORT_EXPORT_NOT_READY',
+  REPORT_EXPORT_QUEUE_UNAVAILABLE: 'REPORT_EXPORT_QUEUE_UNAVAILABLE',
   S3_NOT_CONFIGURED: 'S3_NOT_CONFIGURED',
   S3_ACCESS_DENIED: 'S3_ACCESS_DENIED',
   UPLOAD_FAILED: 'UPLOAD_FAILED',
@@ -162,6 +163,10 @@ export const ERROR_MESSAGES = {
   REPORT_NOT_FOUND: 'Report type not found',
   REPORT_FORBIDDEN: 'You do not have access to this report',
   REPORT_EXPORT_NOT_READY: 'Report export is not ready yet',
+  REPORT_EXPORT_QUEUE_UNAVAILABLE: 'Report export service is temporarily unavailable',
+  REPORT_EXPORT_RATE_LIMITED: 'Too many export requests — please wait and try again',
+  REPORT_EXPORT_TOO_MANY_PENDING: 'You already have exports in progress — wait for them to finish',
+  REPORT_RANGE_TOO_WIDE: 'Report date range exceeds the maximum allowed window',
   S3_NOT_CONFIGURED:
     'File upload is not available right now. Please try again later.',
   S3_ACCESS_DENIED:

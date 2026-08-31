@@ -9,6 +9,7 @@ import {
   EngineReportQuerySchema,
   CustomerOrderHistorySchema,
 } from './reports.dto';
+import { reportExportGuard } from './reportExportGuard';
 import * as reportsController from './reports.controller';
 
 const router = Router();
@@ -26,9 +27,22 @@ router.get(
   reportsController.exportStatus,
 );
 router.get(
+  '/admin/exports',
+  authenticate,
+  authorize(PERMISSIONS.COMMISSION_VIEW),
+  reportsController.listAdminExports,
+);
+router.post(
+  '/admin/exports/:id/retry',
+  authenticate,
+  authorize(PERMISSIONS.COMMISSION_VIEW),
+  reportsController.retryAdminExport,
+);
+router.get(
   '/customer/order-history',
   authenticate,
   validate(CustomerOrderHistorySchema, 'query'),
+  reportExportGuard,
   reportsController.customerOrderHistory,
 );
 router.get(
@@ -51,6 +65,7 @@ router.get(
   '/run/:type',
   authenticate,
   validate(EngineReportQuerySchema, 'query'),
+  reportExportGuard,
   reportsController.runReport,
 );
 
@@ -60,6 +75,7 @@ router.get(
   authenticate,
   authorize(PERMISSIONS.COMMISSION_VIEW),
   validate(ReportRangeSchema, 'query'),
+  reportExportGuard,
   reportsController.adminSummary,
 );
 
@@ -68,6 +84,7 @@ router.get(
   authenticate,
   authorize(PERMISSIONS.COMMISSION_VIEW),
   validate(ReportRangeSchema, 'query'),
+  reportExportGuard,
   reportsController.adminVendors,
 );
 
@@ -76,6 +93,7 @@ router.get(
   authenticate,
   authorize(PERMISSIONS.COMMISSION_VIEW),
   validate(ReportRangeSchema, 'query'),
+  reportExportGuard,
   reportsController.adminReconciliation,
 );
 
@@ -84,6 +102,7 @@ router.get(
   authenticate,
   authorize(PERMISSIONS.PAYOUT_VIEW, PERMISSIONS.COMMISSION_VIEW),
   validate(ReportRangeSchema, 'query'),
+  reportExportGuard,
   reportsController.vendorSummary,
 );
 
@@ -92,6 +111,7 @@ router.get(
   authenticate,
   authorize(PERMISSIONS.ANALYTICS_VIEW, PERMISSIONS.COMMISSION_VIEW),
   validate(ReportRangeSchema, 'query'),
+  reportExportGuard,
   reportsController.walletLiability,
 );
 
@@ -100,6 +120,7 @@ router.get(
   authenticate,
   authorize(PERMISSIONS.ANALYTICS_VIEW, PERMISSIONS.COMMISSION_VIEW),
   validate(WriteOffReportSchema, 'query'),
+  reportExportGuard,
   reportsController.cashbackWriteOff,
 );
 

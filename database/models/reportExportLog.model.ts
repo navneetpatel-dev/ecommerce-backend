@@ -1,6 +1,6 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
 
-export type ReportExportStatus = 'SYNC' | 'PENDING' | 'READY' | 'FAILED';
+export type ReportExportStatus = 'SYNC' | 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED';
 
 export class ReportExportLog extends Model<
   InferAttributes<ReportExportLog>,
@@ -16,6 +16,9 @@ export class ReportExportLog extends Model<
   declare fileKey: string | null;
   declare fileUrl: string | null;
   declare errorMessage: string | null;
+  declare exportKey: string | null;
+  declare expiresAt: Date | null;
+  declare byteSize: number | null;
   declare exportedAt: CreationOptional<Date>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
@@ -38,7 +41,7 @@ export const initReportExportLogModel = (sequelize: Sequelize) => {
       filtersUsed: { type: DataTypes.JSONB, allowNull: false, defaultValue: {} },
       format: { type: DataTypes.STRING(16), allowNull: false, defaultValue: 'xlsx' },
       status: {
-        type: DataTypes.ENUM('SYNC', 'PENDING', 'READY', 'FAILED'),
+        type: DataTypes.ENUM('SYNC', 'PENDING', 'PROCESSING', 'READY', 'FAILED'),
         allowNull: false,
         defaultValue: 'SYNC',
       },
@@ -46,6 +49,9 @@ export const initReportExportLogModel = (sequelize: Sequelize) => {
       fileKey: { type: DataTypes.STRING(512), allowNull: true },
       fileUrl: { type: DataTypes.STRING(1024), allowNull: true },
       errorMessage: { type: DataTypes.TEXT, allowNull: true },
+      exportKey: { type: DataTypes.STRING(64), allowNull: true },
+      expiresAt: { type: DataTypes.DATE, allowNull: true },
+      byteSize: { type: DataTypes.BIGINT, allowNull: true },
       exportedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },

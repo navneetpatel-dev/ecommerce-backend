@@ -1,12 +1,6 @@
 import type { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
-import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
-import { roleNameOf } from '@utils/userRole';
-import {
-  buildDatedExportFilename,
-  documentKeyToPdfTitle,
-} from '@core/export/exportFilenames';
 import { reportsService } from './reports.service';
 import {
   getCustomerOrderInvoices,
@@ -18,7 +12,6 @@ import {
   WriteOffReportSchema,
   EngineReportQuerySchema,
   CustomerOrderHistorySchema,
-  type ReportRangeQuery,
 } from './reports.dto';
 import { buildReportFilename } from './engine/excelExporter';
 import {
@@ -27,9 +20,12 @@ import {
   type ReportExportFormat,
 } from './engine/csvExporter';
 import { reportEngine, type ReportActor } from './engine/reportEngine';
+import type { ReportFilters } from './engine/types';
 import type { PermissionKey } from '@core/permissions/permissionKeys';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
+import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
+import { roleNameOf } from '@utils/userRole';
 
 function rangeFromQuery(req: Request) {
   return ReportRangeSchema.parse(req.query);
@@ -50,107 +46,137 @@ async function actorFromReq(req: Request): Promise<ReportActor> {
   };
 }
 
-async function sendExport(
+async function enqueuePanelExport(
   res: Response,
-  query: ReportRangeQuery,
-  documentKey: string,
-  payload: unknown,
-  rows: Record<string, unknown>[],
-  suffix?: string | null,
+  actor: ReportActor,
+  reportType: string,
+  filters: ReportFilters,
+  format: 'csv' | 'pdf',
+  options?: { bornBy?: string | null },
 ) {
-  if (query.format === 'csv') {
-    const filename = buildDatedExportFilename(documentKey, query.from, query.to, 'csv', suffix);
-    const csv = reportsService.toCsv(rows);
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(csv);
-    return;
-  }
-  if (query.format === 'pdf') {
-    const filename = buildDatedExportFilename(documentKey, query.from, query.to, 'pdf', suffix);
-    const pdf = await reportsService.toPdf(documentKeyToPdfTitle(documentKey), rows);
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(pdf);
-    return;
-  }
-  res.json(ok(payload));
-}
-
-function flattenRecord(value: unknown): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  const walk = (prefix: string, node: unknown) => {
-    if (node && typeof node === 'object' && !Array.isArray(node) && !(node instanceof Date)) {
-      for (const [key, child] of Object.entries(node as Record<string, unknown>)) {
-        walk(prefix ? `${prefix}.${key}` : key, child);
-      }
-      return;
-    }
-    out[prefix] = node instanceof Date ? node.toISOString() : node;
-  };
-  walk('', value);
-  return out;
+  const exported = await reportEngine.runExport(
+    actor,
+    reportType,
+    filters,
+    format,
+    options?.bornBy ? { bornBy: options.bornBy } : {},
+  );
+  res.json(
+    ok({
+      async: true,
+      exportId: exported.exportId,
+      status: exported.status,
+      format: exported.format,
+      rowCount: exported.rowCount,
+      rowCountKnown: exported.rowCountKnown,
+      cached: exported.cached ?? false,
+    }),
+  );
 }
 
 export const adminSummary = asyncHandler(async (req: Request, res: Response) => {
   const query = rangeFromQuery(req);
+  if (query.format !== 'json') {
+    const actor = await actorFromReq(req);
+    await enqueuePanelExport(
+      res,
+      actor,
+      'admin-dashboard-summary',
+      { from: query.from, to: query.to },
+      query.format === 'csv' ? 'csv' : 'pdf',
+    );
+    return;
+  }
   const data = await reportsService.adminSummary(query);
-  sendExport(res, query, 'admin-dashboard-summary', data, [flattenRecord(data)]);
+  res.json(ok(data));
 });
 
 export const adminVendors = asyncHandler(async (req: Request, res: Response) => {
   const query = rangeFromQuery(req);
+  if (query.format !== 'json') {
+    const actor = await actorFromReq(req);
+    await enqueuePanelExport(res, actor, 'vendor-settlement', {
+      from: query.from,
+      to: query.to,
+    }, query.format === 'csv' ? 'csv' : 'pdf');
+    return;
+  }
   const data = await reportsService.adminVendorSettlements(query);
-  sendExport(res, query, 'admin-vendor-settlements', data, data.vendors as unknown as Record<string, unknown>[]);
+  res.json(ok(data));
 });
 
 export const adminReconciliation = asyncHandler(async (req: Request, res: Response) => {
   const query = rangeFromQuery(req);
+  if (query.format !== 'json') {
+    const actor = await actorFromReq(req);
+    await enqueuePanelExport(res, actor, 'reconciliation', {
+      from: query.from,
+      to: query.to,
+    }, query.format === 'csv' ? 'csv' : 'pdf');
+    return;
+  }
   const data = await reportsService.adminReconciliation(query);
-  sendExport(res, query, 'admin-reconciliation', data, [flattenRecord(data)]);
+  res.json(ok(data));
 });
 
 export const vendorSummary = asyncHandler(async (req: Request, res: Response) => {
   const query = rangeFromQuery(req);
   const vendorId = req.params.vendorId!;
+  if (query.format !== 'json') {
+    const actor = await actorFromReq(req);
+    await enqueuePanelExport(res, actor, 'vendor-payout-statement', {
+      from: query.from,
+      to: query.to,
+      vendorId,
+    }, query.format === 'csv' ? 'csv' : 'pdf');
+    return;
+  }
   const data = await reportsService.vendorSummary(vendorId, query, req.user?.vendorId ?? null);
-  sendExport(
-    res,
-    query,
-    'vendor-settlement-summary',
-    data,
-    [flattenRecord(data)],
-    vendorId.slice(0, 8),
-  );
+  res.json(ok(data));
 });
 
 export const walletLiability = asyncHandler(async (req: Request, res: Response) => {
   const query = rangeFromQuery(req);
-  const exportAll = query.format !== 'json';
+  if (query.format !== 'json') {
+    const actor = await actorFromReq(req);
+    await enqueuePanelExport(res, actor, 'wallet-liability', {
+      from: query.from,
+      to: query.to,
+    }, query.format === 'csv' ? 'csv' : 'pdf');
+    return;
+  }
   const data = await reportsService.walletLiabilityReport({
     ...query,
-    page: exportAll ? 1 : (query.page ?? 1),
-    limit: exportAll ? 100_000 : (query.limit ?? 50),
+    page: query.page ?? 1,
+    limit: query.limit ?? 50,
   });
-  sendExport(res, query, 'admin-wallet-liability', data, data.rows as unknown as Record<string, unknown>[]);
+  res.json(ok(data));
 });
 
 export const cashbackWriteOff = asyncHandler(async (req: Request, res: Response) => {
   const query = WriteOffReportSchema.parse(req.query);
-  const exportAll = query.format !== 'json';
+  if (query.format !== 'json') {
+    const actor = await actorFromReq(req);
+    await enqueuePanelExport(
+      res,
+      actor,
+      'cashback-write-offs',
+      {
+        from: query.from,
+        to: query.to,
+        bornBy: query.bornBy ?? null,
+      },
+      query.format === 'csv' ? 'csv' : 'pdf',
+      { bornBy: query.bornBy ?? null },
+    );
+    return;
+  }
   const data = await reportsService.cashbackWriteOffReport({
     ...query,
-    page: exportAll ? 1 : (query.page ?? 1),
-    limit: exportAll ? 100_000 : (query.limit ?? 50),
+    page: query.page ?? 1,
+    limit: query.limit ?? 50,
   });
-  sendExport(
-    res,
-    query,
-    'admin-cashback-write-offs',
-    data,
-    data.rows as unknown as Record<string, unknown>[],
-    query.bornBy?.toLowerCase() ?? null,
-  );
+  res.json(ok(data));
 });
 
 export const catalog = asyncHandler(async (req: Request, res: Response) => {
@@ -183,26 +209,17 @@ export const runReport = asyncHandler(async (req: Request, res: Response) => {
 
   if (query.format === 'xlsx' || query.format === 'csv' || query.format === 'pdf') {
     const exported = await reportEngine.runExport(actor, reportType, filters, query.format);
-    if (exported.async) {
-      res.json(
-        ok({
-          async: true,
-          exportId: exported.exportId,
-          status: exported.status,
-          rowCount: exported.rowCount,
-        }),
-      );
-      return;
-    }
-    const contentType =
-      query.format === 'csv'
-        ? 'text/csv; charset=utf-8'
-        : query.format === 'pdf'
-          ? 'application/pdf'
-          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${exported.filename}"`);
-    res.send(exported.buffer);
+    res.json(
+      ok({
+        async: true,
+        exportId: exported.exportId,
+        status: exported.status,
+        format: exported.format,
+        rowCount: exported.rowCount,
+        rowCountKnown: exported.rowCountKnown,
+        cached: exported.cached ?? false,
+      }),
+    );
     return;
   }
 
@@ -213,7 +230,7 @@ export const runReport = asyncHandler(async (req: Request, res: Response) => {
 export const downloadExport = asyncHandler(async (req: Request, res: Response) => {
   const actor = await actorFromReq(req);
   const result = await reportEngine.getExportForDownload(actor, req.params.id!);
-  if (result.mode === 'redirect') {
+  if (result.mode === 'presigned' || result.mode === 'redirect') {
     res.redirect(result.url);
     return;
   }
@@ -232,8 +249,30 @@ export const downloadExport = asyncHandler(async (req: Request, res: Response) =
 
 export const exportStatus = asyncHandler(async (req: Request, res: Response) => {
   const actor = await actorFromReq(req);
-  const data = await reportEngine.getExportStatus(actor, req.params.id!);
+  const ifNoneMatch = req.header('if-none-match') ?? null;
+  const data = await reportEngine.getExportStatus(actor, req.params.id!, ifNoneMatch);
+  if ('notModified' in data) {
+    res.status(304).end();
+    return;
+  }
+  res.setHeader('ETag', data.etag);
   res.json(ok(data));
+});
+
+export const listAdminExports = asyncHandler(async (req: Request, res: Response) => {
+  await actorFromReq(req);
+  const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+  const reportType = typeof req.query.reportType === 'string' ? req.query.reportType : undefined;
+  const rows = await reportEngine.listRecentExports(100, { status, reportType });
+  const { readReportExportQueueDepth } = await import('./reportExportMetrics');
+  const queue = await readReportExportQueueDepth();
+  res.json(ok({ rows, queue }));
+});
+
+export const retryAdminExport = asyncHandler(async (req: Request, res: Response) => {
+  const actor = await actorFromReq(req);
+  const exported = await reportEngine.retryExport(actor, req.params.id!);
+  res.json(ok({ ...exported, async: true }));
 });
 
 export const customerOrderHistory = asyncHandler(async (req: Request, res: Response) => {
@@ -253,19 +292,7 @@ export const customerOrderHistory = asyncHandler(async (req: Request, res: Respo
       filters,
       query.format,
     );
-    if (exported.async) {
-      res.json(ok(exported));
-      return;
-    }
-    const contentType =
-      query.format === 'csv'
-        ? 'text/csv; charset=utf-8'
-        : query.format === 'pdf'
-          ? 'application/pdf'
-          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${exported.filename}"`);
-    res.send(exported.buffer);
+    res.json(ok({ ...exported, async: true }));
     return;
   }
   const data = await reportEngine.runJson(actor, 'customer-order-history', filters);

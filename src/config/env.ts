@@ -89,6 +89,24 @@ const envSchema = z.object({
 
   ADMIN_EMAIL: z.string().default('admin@ecommerce.com'),
   ADMIN_PASSWORD: z.string().default('Admin@123'),
+
+  /** Max report date window in days (not a row cap). */
+  REPORT_MAX_RANGE_DAYS: z.coerce.number().int().positive().default(366),
+  REPORT_EXPORT_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(2),
+  REPORT_EXPORT_RATE_LIMIT_PER_MIN: z.coerce.number().int().positive().default(5),
+  REPORT_EXPORT_MAX_PENDING_PER_USER: z.coerce.number().int().positive().default(2),
+  REPORT_EXPORT_CACHE_TTL_MIN: z.coerce.number().int().positive().default(60),
+  REPORT_EXPORT_ARTIFACT_TTL_DAYS: z.coerce.number().int().positive().default(7),
+  REPORT_EXPORT_CHUNK_SIZE: z.coerce.number().int().positive().default(2000),
+  REPORT_EXPORT_STALE_PROCESSING_MIN: z.coerce.number().int().positive().default(30),
+  REPORT_EXPORT_INLINE_DEV: z
+    .union([z.boolean(), z.string()])
+    .optional()
+    .transform((v) => {
+      if (v === undefined) return false;
+      if (typeof v === 'boolean') return v;
+      return v === 'true' || v === '1';
+    }),
 }).superRefine((data, ctx) => {
   if (data.MAIL_DRIVER === 'smtp') {
     if (!data.SMTP_HOST) {

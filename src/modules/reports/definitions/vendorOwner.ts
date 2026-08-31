@@ -24,6 +24,7 @@ import {
   DISCOUNT_BEARER,
   COMMISSION_STATUS,
 } from '../engine/queryHelpers';
+import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
 
 function vendorScopeWhere(filters: ReportFilters): Record<string, unknown> {
   const vendorId = filters.scopedVendorId ?? filters.vendorId ?? null;
@@ -261,6 +262,64 @@ async function vendorPayoutStatement(filters: ReportFilters) {
     })),
     total,
   };
+}
+
+const VENDOR_PAYOUT_KEYSET: KeysetOrderCol[] = [
+  { column: 'createdAt', direction: 'DESC' },
+  { column: 'payoutId', direction: 'DESC' },
+];
+
+function mapVendorPayoutRow(row: Record<string, unknown>) {
+  return {
+    payoutId: String(row.payoutId ?? ''),
+    amount: Number(row.amount ?? 0),
+    status: String(row.status ?? ''),
+    periodStart: row.periodStart,
+    periodEnd: row.periodEnd,
+    paidAt: row.paidAt,
+    createdAt: row.createdAt,
+  };
+}
+
+function vendorPayoutSelectSql(): string {
+  return `
+    SELECT
+      p.id AS "payoutId",
+      p.amount AS amount,
+      p.status AS status,
+      p."periodStart" AS "periodStart",
+      p."periodEnd" AS "periodEnd",
+      p."paidAt" AS "paidAt",
+      p."createdAt" AS "createdAt"
+    FROM payouts p
+    WHERE p."deletedAt" IS NULL
+      AND p."createdAt" BETWEEN :from AND :to
+      AND (:vendorId::uuid IS NULL OR p."vendorId" = :vendorId)
+      AND (:status::text IS NULL OR p.status::text = :status)
+  `;
+}
+
+async function vendorPayoutStatementExport(
+  filters: ReportFilters,
+  cursor: { values: unknown[] } | null,
+  limit: number,
+) {
+  assertReportRange(filters);
+  const vendorId = filters.scopedVendorId ?? filters.vendorId ?? null;
+  const page = await keysetSqlQuery({
+    selectSql: vendorPayoutSelectSql(),
+    order: VENDOR_PAYOUT_KEYSET,
+    replacements: {
+      from: filters.from,
+      to: filters.to,
+      vendorId,
+      status: filters.status ?? null,
+    },
+    limit,
+    cursor,
+    mapRow: (row) => mapVendorPayoutRow(row),
+  });
+  return { rows: page.rows, nextCursor: page.nextCursor };
 }
 
 async function vendorCommissionDeducted(filters: ReportFilters) {
@@ -611,6 +670,7 @@ export const vendorOwnerReports: ReportDefinition[] = [
       { key: 'paidAt', labelKey: 'paidAt', format: 'date' },
     ],
     query: vendorPayoutStatement,
+    exportQuery: vendorPayoutStatementExport,
   },
   {
     type: 'vendor-commission-deducted',

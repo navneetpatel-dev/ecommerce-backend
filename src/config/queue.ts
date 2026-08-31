@@ -180,7 +180,7 @@ export function areQueuesReady(): boolean {
 export async function checkQueuesHealth(): Promise<{
   status: string;
   message: string;
-  queues: Record<string, string>;
+  queues: Record<string, string | { status: string; waiting: number; active: number; failed: number; delayed: number }>;
 }> {
   if (!queuesReady) {
     return {
@@ -191,14 +191,28 @@ export async function checkQueuesHealth(): Promise<{
   }
 
   try {
-    const queueStatuses: Record<string, string> = {};
+    const queueStatuses: Record<
+      string,
+      string | { status: string; waiting: number; active: number; failed: number; delayed: number }
+    > = {};
 
     await Promise.race([
       (async () => {
         for (const name of QUEUE_NAMES) {
           try {
-            await ensureQueue(name).getJobCounts();
-            queueStatuses[name] = 'up';
+            const counts = await ensureQueue(name).getJobCounts(
+              'waiting',
+              'active',
+              'failed',
+              'delayed',
+            );
+            queueStatuses[name] = {
+              status: 'up',
+              waiting: counts.waiting ?? 0,
+              active: counts.active ?? 0,
+              failed: counts.failed ?? 0,
+              delayed: counts.delayed ?? 0,
+            };
           } catch {
             queueStatuses[name] = 'down';
           }
@@ -209,7 +223,9 @@ export async function checkQueuesHealth(): Promise<{
       ),
     ]);
 
-    const allUp = Object.values(queueStatuses).every((status) => status === 'up');
+    const allUp = Object.values(queueStatuses).every(
+      (status) => typeof status === 'object' && status.status === 'up',
+    );
 
     return {
       status: allUp ? 'up' : 'degraded',

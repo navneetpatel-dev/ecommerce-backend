@@ -4,7 +4,6 @@ import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { DISCOUNT_BEARER, COMMISSION_STATUS } from '@core/constants/statuses';
 import { sequelize } from '@database/models';
-import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { WalletWriteOff } from '@database/models/walletWriteOff.model';
 import { fromPaise } from '@modules/pricing/money';
 import { paginationOffset, buildPaginationMeta } from '@core/http/pagination';
@@ -15,15 +14,14 @@ import {
   inclusiveReportTo,
   frozenPaise,
   computeReconciliationSummary,
+  assertReportRange,
+  sqlFrozenPaise,
 } from './engine/queryHelpers';
 import { renderReportTablePdf } from '@core/pdf';
 import { resolveReportColumnLabel } from './reports.constants';
-import { REPORT_EXPORT_PAGE_SIZE } from './engine/types';
 
 function assertRange(query: ReportRangeQuery) {
-  if (query.from > query.to) {
-    throw new ValidationError(ERROR_MESSAGES.REPORT_INVALID_RANGE);
-  }
+  assertReportRange({ from: query.from, to: query.to });
 }
 
 function engineRange(query: ReportRangeQuery) {
@@ -31,26 +29,6 @@ function engineRange(query: ReportRangeQuery) {
     from: query.from,
     to: inclusiveReportTo(query.to),
   };
-}
-
-/** Fetch every page of an engine report (legacy panels expect full arrays). */
-async function fetchAllEngineRows(reportType: string, filters: {
-  from: Date;
-  to: Date;
-  vendorId?: string | null;
-}) {
-  const def = getReportDefinition(reportType);
-  if (!def) throw new ValidationError(ERROR_MESSAGES.REPORT_NOT_FOUND);
-  const pageSize = REPORT_EXPORT_PAGE_SIZE;
-  const first = await def.query({ ...filters, page: 1, limit: pageSize });
-  if (first.total <= first.rows.length) return first;
-  const rows = [...first.rows];
-  const pages = Math.ceil(first.total / pageSize);
-  for (let page = 2; page <= pages; page += 1) {
-    const chunk = await def.query({ ...filters, page, limit: pageSize });
-    rows.push(...chunk.rows);
-  }
-  return { rows, total: first.total, meta: first.meta };
 }
 
 export class ReportsService {
@@ -79,11 +57,15 @@ export class ReportsService {
     };
   }
 
-  /** Delegates to engine `vendor-settlement` so panels cannot drift from hub reports. */
+  /** Paginated vendor settlement rows for the finance panel (full export via async engine). */
   async adminVendorSettlements(query: ReportRangeQuery) {
     assertRange(query);
     const range = engineRange(query);
-    const result = await fetchAllEngineRows('vendor-settlement', range);
+    const def = getReportDefinition('vendor-settlement');
+    if (!def) throw new ValidationError(ERROR_MESSAGES.REPORT_NOT_FOUND);
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 50;
+    const result = await def.query({ ...range, page, limit });
     return {
       from: range.from,
       to: range.to,
@@ -97,6 +79,7 @@ export class ReportsService {
         payoutPaid: Number(row.payoutPaid ?? 0),
         payoutStatus: String(row.payoutStatus ?? ''),
       })),
+      pagination: buildPaginationMeta(result.total, page, limit),
     };
   }
 
@@ -133,80 +116,57 @@ export class ReportsService {
     assertRange(query);
     const range = engineRange(query);
 
-    const ledgers = await CommissionLedger.findAll({
-      where: {
-        vendorId,
-        createdAt: { [Op.between]: [range.from, range.to] },
-        status: { [Op.ne]: COMMISSION_STATUS.CLAWED_BACK },
-      },
-      attributes: [
-        'taxableAmountPaise',
-        'taxableAmount',
-        'saleAmount',
-        'netPayoutAmountPaise',
-        'netPayoutAmount',
-        'commissionAmountPaise',
-        'commissionAmount',
-        'tcsAmountPaise',
-        'tcsAmount',
-        'discountAmountPaise',
-        'discountAmount',
-        'discountBearer',
-        'status',
-      ],
-    });
+    const commissionExpr = sqlFrozenPaise('cl', 'commissionAmountPaise', 'commissionAmount');
+    const netExpr = `CASE
+      WHEN COALESCE(cl."netPayoutAmountPaise", 0) <> 0 THEN cl."netPayoutAmountPaise"
+      ELSE ROUND(
+        (
+          CASE
+            WHEN cl."netPayoutAmount" IS NOT NULL THEN cl."netPayoutAmount"::numeric
+            ELSE COALESCE(cl."saleAmount", 0)::numeric - COALESCE(cl."commissionAmount", 0)::numeric
+          END
+        ) * 100
+      )::bigint
+    END`;
+    const taxableExpr = sqlFrozenPaise('cl', 'taxableAmountPaise', 'taxableAmount');
+    const tcsExpr = sqlFrozenPaise('cl', 'tcsAmountPaise', 'tcsAmount');
+    const discountExpr = sqlFrozenPaise('cl', 'discountAmountPaise', 'discountAmount');
 
-    let salesPaise = 0;
-    let commissionPaise = 0;
-    let tcsPaise = 0;
-    let netPaise = 0;
-    let pendingPaise = 0;
-    let settledPaise = 0;
-    let vendorCouponDiscountPaise = 0;
-    let platformCouponDiscountPaise = 0;
-
-    for (const ledger of ledgers) {
-      const taxable = frozenPaise(ledger.taxableAmountPaise, ledger.taxableAmount ?? ledger.saleAmount);
-      const netRow = frozenPaise(
-        ledger.netPayoutAmountPaise,
-        ledger.netPayoutAmount != null
-          ? ledger.netPayoutAmount
-          : Number(ledger.saleAmount) - Number(ledger.commissionAmount),
-      );
-      const commission = frozenPaise(ledger.commissionAmountPaise, ledger.commissionAmount);
-      const tcs = frozenPaise(ledger.tcsAmountPaise, ledger.tcsAmount);
-      const discount = frozenPaise(ledger.discountAmountPaise, ledger.discountAmount);
-
-      salesPaise += taxable;
-      commissionPaise += commission;
-      tcsPaise += tcs;
-      netPaise += netRow;
-      if (ledger.status === COMMISSION_STATUS.PENDING) pendingPaise += netRow;
-      if (ledger.status === COMMISSION_STATUS.SETTLED) settledPaise += netRow;
-
-      if (discount > 0) {
-        if (ledger.discountBearer === DISCOUNT_BEARER.VENDOR) {
-          vendorCouponDiscountPaise += discount;
-        } else {
-          platformCouponDiscountPaise += discount;
-        }
-      }
-    }
+    const [rows] = await sequelize.query(
+      `
+      SELECT
+        COALESCE(SUM(${taxableExpr}), 0)::bigint AS "salesPaise",
+        COALESCE(SUM(${commissionExpr}), 0)::bigint AS "commissionPaise",
+        COALESCE(SUM(${tcsExpr}), 0)::bigint AS "tcsPaise",
+        COALESCE(SUM(${netExpr}), 0)::bigint AS "netPaise",
+        COALESCE(SUM(CASE WHEN cl.status = '${COMMISSION_STATUS.PENDING}' THEN ${netExpr} ELSE 0 END), 0)::bigint AS "pendingPaise",
+        COALESCE(SUM(CASE WHEN cl.status = '${COMMISSION_STATUS.SETTLED}' THEN ${netExpr} ELSE 0 END), 0)::bigint AS "settledPaise",
+        COALESCE(SUM(CASE WHEN cl."discountBearer" = '${DISCOUNT_BEARER.VENDOR}' THEN ${discountExpr} ELSE 0 END), 0)::bigint AS "vendorDiscountPaise",
+        COALESCE(SUM(CASE WHEN cl."discountBearer" IS DISTINCT FROM '${DISCOUNT_BEARER.VENDOR}' THEN ${discountExpr} ELSE 0 END), 0)::bigint AS "platformDiscountPaise"
+      FROM commission_ledgers cl
+      WHERE cl."deletedAt" IS NULL
+        AND cl."vendorId" = :vendorId
+        AND cl."createdAt" BETWEEN :from AND :to
+        AND cl.status <> '${COMMISSION_STATUS.CLAWED_BACK}'
+      `,
+      { replacements: { vendorId, from: range.from, to: range.to } },
+    );
+    const row = (rows as Array<Record<string, unknown>>)[0] ?? {};
 
     return {
       from: range.from,
       to: range.to,
       vendorId,
-      sales: fromPaise(salesPaise),
-      commissionDeducted: fromPaise(commissionPaise),
-      tcsDeducted: fromPaise(tcsPaise),
+      sales: fromPaise(Number(row.salesPaise ?? 0)),
+      commissionDeducted: fromPaise(Number(row.commissionPaise ?? 0)),
+      tcsDeducted: fromPaise(Number(row.tcsPaise ?? 0)),
       discountAbsorbed: {
-        ownCoupons: fromPaise(vendorCouponDiscountPaise),
-        platformCouponsOnMyItems: fromPaise(platformCouponDiscountPaise),
+        ownCoupons: fromPaise(Number(row.vendorDiscountPaise ?? 0)),
+        platformCouponsOnMyItems: fromPaise(Number(row.platformDiscountPaise ?? 0)),
       },
-      netPayout: fromPaise(netPaise),
-      upcomingPayout: fromPaise(pendingPaise),
-      historicalPayout: fromPaise(settledPaise),
+      netPayout: fromPaise(Number(row.netPaise ?? 0)),
+      upcomingPayout: fromPaise(Number(row.pendingPaise ?? 0)),
+      historicalPayout: fromPaise(Number(row.settledPaise ?? 0)),
     };
   }
 

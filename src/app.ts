@@ -8,6 +8,7 @@ import { env } from '@config/env';
 import { sequelize } from '@config/db';
 import { redisClient } from '@config/redis';
 import { checkQueuesHealth } from '@config/queue';
+import { readReportExportQueueDepth } from '@modules/reports/reportExportMetrics';
 import { requestIdMiddleware } from '@middleware/requestId.middleware';
 import { globalRateLimiter } from '@middleware/rateLimiter.middleware';
 import { errorHandlerMiddleware } from '@middleware/errorHandler.middleware';
@@ -59,6 +60,7 @@ app.get(HEALTH_PATH, async (req, res) => {
       database: { status: 'down', message: '' },
       redis: { status: 'down', message: '' },
       queues: { status: 'down', message: '', queues: {} },
+      reportExport: { waiting: 0, active: 0, failed: 0 },
     },
   };
 
@@ -93,12 +95,14 @@ app.get(HEALTH_PATH, async (req, res) => {
   try {
     const queuesHealth = await checkQueuesHealth();
     health.services.queues = queuesHealth;
+    health.services.reportExport = await readReportExportQueueDepth();
   } catch (error) {
     health.services.queues = {
       status: 'down',
       message: error instanceof Error ? error.message : 'Connection failed',
       queues: {},
     };
+    health.services.reportExport = { waiting: 0, active: 0, failed: 0 };
   }
 
   const statusCode = health.status === 'ok' ? 200 : 503;

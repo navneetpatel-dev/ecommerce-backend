@@ -137,8 +137,8 @@ describe('report engine', () => {
     await assert.rejects(
       () =>
         reportEngine.runJson(actor, 'vendor-sales', {
-          from: new Date('2024-01-01'),
-          to: new Date('2026-12-31'),
+          from: new Date('2025-01-01'),
+          to: new Date('2025-12-31'),
           vendorId: randomUUID(),
           page: 1,
           limit: 50,
@@ -157,8 +157,8 @@ describe('report engine', () => {
     await assert.rejects(
       () =>
         reportEngine.runJson(staff, 'vendor-sales', {
-          from: new Date('2024-01-01'),
-          to: new Date('2026-12-31'),
+          from: new Date('2025-01-01'),
+          to: new Date('2025-12-31'),
           page: 1,
           limit: 10,
         }),
@@ -169,8 +169,8 @@ describe('report engine', () => {
   it('TCS summary totals match ledger rows (frozen)', async (t) => {
     if (!dbReady) return t.skip('database unavailable');
     const def = getReportDefinition('gst-tcs-summary')!;
-    const from = new Date('2000-01-01');
-    const to = new Date('2099-01-01');
+    const from = new Date('2025-01-01');
+    const to = new Date('2025-12-31');
     const filters = normalizeReportFilters({ from, to, page: 1, limit: 10000 });
     const result = await def.query(filters);
     const vendorRows = result.rows.filter((r) => r.groupType === 'VENDOR');
@@ -203,8 +203,8 @@ describe('report engine', () => {
       permissions: [...Object.values(PERM_KEYS)],
     };
     const filters = {
-      from: new Date('2020-01-01'),
-      to: new Date('2030-01-01'),
+      from: new Date('2025-01-01'),
+      to: new Date('2025-12-31'),
       page: 1,
       limit: 50,
     };
@@ -242,8 +242,8 @@ describe('report engine', () => {
       permissions: [...Object.values(PERM_KEYS)],
     };
     const data = await reportEngine.runJson(admin, 'reconciliation', {
-      from: new Date('2020-01-01'),
-      to: new Date('2030-01-01'),
+      from: new Date('2025-01-01'),
+      to: new Date('2025-12-31'),
       page: 1,
       limit: 10,
     });
@@ -281,8 +281,8 @@ describe('report engine', () => {
       permissions: [],
     };
     const result = await reportEngine.runJson(actor, 'vendor-sales', {
-      from: new Date('2024-01-01'),
-      to: new Date('2026-12-31'),
+      from: new Date('2025-01-01'),
+      to: new Date('2025-12-31'),
       page: 1,
       limit: 5,
     });

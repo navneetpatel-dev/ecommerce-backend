@@ -30,12 +30,20 @@ export type ReportFilters = {
   scopedVendorId?: string | null;
   /** Authenticated user id (customer reports). */
   userId?: string | null;
+  /** @internal — skip COUNT during export pagination when total is known. */
+  _exportSkipCount?: boolean;
+  _exportKnownTotal?: number;
 };
 
 export type ReportQueryResult = {
   rows: Record<string, unknown>[];
   total: number;
   meta?: Record<string, unknown>;
+};
+
+export type ReportExportPage = {
+  rows: Record<string, unknown>[];
+  nextCursor: { values: unknown[] } | null;
 };
 
 export type ReportDefinition = {
@@ -50,7 +58,12 @@ export type ReportDefinition = {
   financial: boolean;
   columns: ReportColumn[];
   query: (filters: ReportFilters) => Promise<ReportQueryResult>;
+  /** Optional keyset/stream page for large exports (avoids deep OFFSET). */
+  exportQuery?: (
+    filters: ReportFilters,
+    cursor: { values: unknown[] } | null,
+    limit: number,
+  ) => Promise<ReportExportPage>;
 };
 
-export const REPORT_ASYNC_ROW_THRESHOLD = 10_000;
 export const REPORT_EXPORT_PAGE_SIZE = 2_000;

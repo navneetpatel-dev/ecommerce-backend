@@ -2,6 +2,7 @@ import { Worker } from 'bullmq';
 import { getQueueConnection } from '@config/queue';
 import { logger } from '@core/logger';
 import { reportEngine, REPORT_EXPORT_JOB } from '@modules/reports/engine/reportEngine';
+import { reportExportConfig } from '@modules/reports/reportExportConfig';
 
 export function startReportExportWorker(): Worker {
   const worker = new Worker(
@@ -12,8 +13,14 @@ export function startReportExportWorker(): Worker {
       if (!exportLogId) return;
       await reportEngine.processExportJob(exportLogId);
     },
-    { connection: getQueueConnection(), concurrency: 2 },
+    { connection: getQueueConnection(), concurrency: reportExportConfig.workerConcurrency },
   );
+
+  worker.on('completed', () => {
+    void import('@modules/reports/reportExportMetrics').then(({ emitReportExportQueueDepthMetric }) =>
+      emitReportExportQueueDepthMetric(),
+    );
+  });
 
   worker.on('failed', (job, err) => {
     logger.error('Report export job failed', {

@@ -7,7 +7,7 @@ export {
   roundMoney,
   formatPdfCellValue,
 } from './pdfFormatters';
-export { createBrandedPdfDocument, finalizePdfDocument } from './pdfDocument';
+export { createBrandedPdfDocument, finalizePdfDocument, pipePdfDocument } from './pdfDocument';
 export type { PdfColumn, PdfColumnSpec } from './pdfText';
 export {
   measureColWidth,

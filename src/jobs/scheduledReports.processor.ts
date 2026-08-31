@@ -2,9 +2,13 @@ import { logger } from '@core/logger';
 import { ROLES } from '@core/constants/statuses';
 import { User } from '@database/models/user.model';
 import { Role } from '@database/models/role.model';
+import { areQueuesReady, queues } from '@config/queue';
 import { reportEngine, type ReportActor } from '@modules/reports/engine/reportEngine';
-import { notificationsService } from '@modules/notifications/notifications.service';
+import { reportExportConfig } from '@modules/reports/reportExportConfig';
 import { env } from '@config/env';
+
+export const SCHEDULED_REPORTS_JOB = 'scheduled-weekly-reports';
+const SCHEDULED_REPORTS_JOB_ID = 'scheduled-weekly-reports-monday';
 
 const WEEKLY_REPORT_TYPES = ['reconciliation', 'gmv-sales'] as const;
 
@@ -31,15 +35,14 @@ export async function runScheduledWeeklyReports(): Promise<number> {
     };
     for (const reportType of WEEKLY_REPORT_TYPES) {
       try {
-        const exported = await reportEngine.runExport(actor, reportType, { from, to }, 'xlsx');
-        if (exported.async) {
-          void notificationsService.sendReportExportReady(admin.id, exported.exportId, {
-            reportType,
-            rowCount: exported.rowCount,
-            actionUrl: `${env.CLIENT_URL.replace(/\/$/, '')}/admin/reports?exportId=${exported.exportId}`,
-          });
-          queued += 1;
-        }
+        const exported = await reportEngine.runExport(
+          actor,
+          reportType,
+          { from, to },
+          'xlsx',
+          { priority: reportExportConfig.scheduledExportPriority },
+        );
+        if (exported.async) queued += 1;
       } catch (err) {
         logger.warn('Scheduled report export skipped', {
           reportType,
@@ -52,29 +55,17 @@ export async function runScheduledWeeklyReports(): Promise<number> {
   return queued;
 }
 
-let timer: NodeJS.Timeout | null = null;
-
-/** Weekly Monday 06:00 UTC — queue reconciliation + GMV exports for super admins. */
-export function startScheduledReportsScheduler(): void {
-  if (timer) return;
-  const dayMs = 24 * 60 * 60 * 1000;
-  const tick = () => {
-    const now = new Date();
-    if (now.getUTCDay() === 1 && now.getUTCHours() === 6) {
-      void runScheduledWeeklyReports().catch((err) =>
-        logger.error('Scheduled reports failed', {
-          error: err instanceof Error ? err.message : err,
-        }),
-      );
-    }
-  };
-  timer = setInterval(tick, dayMs);
-  logger.info('Scheduled reports scheduler started');
-}
-
-export function stopScheduledReportsScheduler(): void {
-  if (timer) {
-    clearInterval(timer);
-    timer = null;
-  }
+export async function scheduleWeeklyReportsJob(): Promise<void> {
+  if (!areQueuesReady()) return;
+  await queues.s3OrphanCleanup.add(
+    SCHEDULED_REPORTS_JOB,
+    {},
+    {
+      jobId: SCHEDULED_REPORTS_JOB_ID,
+      repeat: { pattern: '0 6 * * 1' },
+      removeOnComplete: 50,
+      removeOnFail: 100,
+    },
+  );
+  logger.info('Scheduled weekly reports job registered', { cron: '0 6 * * 1' });
 }

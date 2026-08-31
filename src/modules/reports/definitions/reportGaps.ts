@@ -18,6 +18,7 @@ import {
   sqlFrozenPaise,
   REPORTABLE_ORDER_SQL,
 } from '../engine/queryHelpers';
+import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
 
 function resolveVendorId(filters: ReportFilters): string | null {
   return filters.scopedVendorId ?? filters.vendorId ?? null;
@@ -68,30 +69,86 @@ async function taxInvoiceRegister(filters: ReportFilters) {
     orderBySql: `"taxInvoiceIssuedAt" DESC, "taxInvoiceNumber" ASC`,
     replacements: sqlReplacements(filters),
     filters,
-    mapRow: (row) => ({
-      subOrderId: row.subOrderId,
-      orderId: row.orderId,
-      vendorId: row.vendorId,
-      vendorName: row.vendorName,
-      vendorGstin: row.vendorGstin,
-      taxInvoiceNumber: row.taxInvoiceNumber,
-      taxInvoiceIssuedAt: row.taxInvoiceIssuedAt,
-      taxable: Number(row.taxable ?? 0),
-      tax: Number(row.tax ?? 0),
-      total: Number(row.total ?? 0),
-      paymentMethod: row.paymentMethod,
-      paymentStatus: row.paymentStatus,
-      buyerGstin: row.buyerGstin,
-      placeOfSupplyState: row.placeOfSupplyState,
-    }),
+    mapRow: mapTaxInvoiceRow,
   });
 }
 
-async function b2bGstinSalesRegister(filters: ReportFilters) {
+const TAX_INVOICE_KEYSET: KeysetOrderCol[] = [
+  { column: 'taxInvoiceIssuedAt', direction: 'DESC' },
+  { column: 'subOrderId', direction: 'DESC' },
+];
+
+function mapTaxInvoiceRow(row: Record<string, unknown>) {
+  return {
+    subOrderId: row.subOrderId,
+    orderId: row.orderId,
+    vendorId: row.vendorId,
+    vendorName: row.vendorName,
+    vendorGstin: row.vendorGstin,
+    taxInvoiceNumber: row.taxInvoiceNumber,
+    taxInvoiceIssuedAt: row.taxInvoiceIssuedAt,
+    taxable: Number(row.taxable ?? 0),
+    tax: Number(row.tax ?? 0),
+    total: Number(row.total ?? 0),
+    paymentMethod: row.paymentMethod,
+    paymentStatus: row.paymentStatus,
+    buyerGstin: row.buyerGstin,
+    placeOfSupplyState: row.placeOfSupplyState,
+  };
+}
+
+async function taxInvoiceRegisterExport(
+  filters: ReportFilters,
+  cursor: { values: unknown[] } | null,
+  limit: number,
+) {
   assertReportRange(filters);
   const vendorFilter = `AND (:vendorId::uuid IS NULL OR so."vendorId" = :vendorId)`;
   const selectSql = `
     SELECT
+      so.id AS "subOrderId",
+      so."orderId" AS "orderId",
+      so."vendorId" AS "vendorId",
+      v."businessName" AS "vendorName",
+      COALESCE(v."gstNumber", '') AS "vendorGstin",
+      so."taxInvoiceNumber" AS "taxInvoiceNumber",
+      so."taxInvoiceIssuedAt" AS "taxInvoiceIssuedAt",
+      COALESCE(so."taxableAmount", 0)::float AS taxable,
+      COALESCE(so."taxAmount", 0)::float AS tax,
+      COALESCE(so."customerTotal", 0)::float AS total,
+      o."paymentMethod"::text AS "paymentMethod",
+      o."paymentStatus"::text AS "paymentStatus",
+      COALESCE(NULLIF(TRIM(a.gstin), ''), '') AS "buyerGstin",
+      COALESCE(a.state, '') AS "placeOfSupplyState"
+    FROM sub_orders so
+    INNER JOIN orders o ON o.id = so."orderId" AND o."deletedAt" IS NULL
+    INNER JOIN vendors v ON v.id = so."vendorId" AND v."deletedAt" IS NULL
+    LEFT JOIN addresses a ON a.id = o."shippingAddressId"
+    WHERE so."deletedAt" IS NULL
+      AND so."taxInvoiceNumber" IS NOT NULL
+      AND so."taxInvoiceIssuedAt" BETWEEN :from AND :to
+      ${vendorFilter}
+  `;
+  const page = await keysetSqlQuery({
+    selectSql,
+    order: TAX_INVOICE_KEYSET,
+    replacements: sqlReplacements(filters),
+    limit,
+    cursor,
+    mapRow: mapTaxInvoiceRow,
+  });
+  return { rows: page.rows, nextCursor: page.nextCursor };
+}
+
+const B2B_GSTIN_KEYSET: KeysetOrderCol[] = [
+  { column: 'taxInvoiceIssuedAt', direction: 'DESC' },
+  { column: 'subOrderId', direction: 'DESC' },
+];
+
+function b2bGstinSalesRegisterSelectSql(vendorFilter: string): string {
+  return `
+    SELECT
+      so.id AS "subOrderId",
       so."taxInvoiceNumber" AS "taxInvoiceNumber",
       so."taxInvoiceIssuedAt" AS "taxInvoiceIssuedAt",
       so."orderId" AS "orderId",
@@ -115,26 +172,53 @@ async function b2bGstinSalesRegister(filters: ReportFilters) {
       AND so."taxInvoiceIssuedAt" BETWEEN :from AND :to
       ${vendorFilter}
   `;
+}
+
+function mapB2bGstinRow(row: Record<string, unknown>) {
+  return {
+    taxInvoiceNumber: row.taxInvoiceNumber,
+    taxInvoiceIssuedAt: row.taxInvoiceIssuedAt,
+    orderId: row.orderId,
+    vendorId: row.vendorId,
+    vendorName: row.vendorName,
+    vendorGstin: row.vendorGstin,
+    buyerGstin: row.buyerGstin,
+    buyerName: row.buyerName ?? '',
+    placeOfSupplyState: row.placeOfSupplyState,
+    taxable: Number(row.taxable ?? 0),
+    tax: Number(row.tax ?? 0),
+    total: Number(row.total ?? 0),
+  };
+}
+
+async function b2bGstinSalesRegister(filters: ReportFilters) {
+  assertReportRange(filters);
+  const vendorFilter = `AND (:vendorId::uuid IS NULL OR so."vendorId" = :vendorId)`;
   return pagedSqlQuery({
-    selectSql,
-    orderBySql: `"taxInvoiceIssuedAt" DESC`,
+    selectSql: b2bGstinSalesRegisterSelectSql(vendorFilter),
+    orderBySql: `"taxInvoiceIssuedAt" DESC, "subOrderId" DESC`,
     replacements: sqlReplacements(filters),
     filters,
-    mapRow: (row) => ({
-      taxInvoiceNumber: row.taxInvoiceNumber,
-      taxInvoiceIssuedAt: row.taxInvoiceIssuedAt,
-      orderId: row.orderId,
-      vendorId: row.vendorId,
-      vendorName: row.vendorName,
-      vendorGstin: row.vendorGstin,
-      buyerGstin: row.buyerGstin,
-      buyerName: row.buyerName ?? '',
-      placeOfSupplyState: row.placeOfSupplyState,
-      taxable: Number(row.taxable ?? 0),
-      tax: Number(row.tax ?? 0),
-      total: Number(row.total ?? 0),
-    }),
+    mapRow: mapB2bGstinRow,
   });
+}
+
+async function b2bGstinSalesRegisterExport(
+  filters: ReportFilters,
+  cursor: { values: unknown[] } | null,
+  limit: number,
+) {
+  assertReportRange(filters);
+  const vendorFilter = `AND (:vendorId::uuid IS NULL OR so."vendorId" = :vendorId)`;
+  const page = await keysetSqlQuery({
+    selectSql: b2bGstinSalesRegisterSelectSql(vendorFilter),
+    order: B2B_GSTIN_KEYSET,
+    replacements: sqlReplacements(filters),
+    limit,
+    cursor,
+    mapRow: mapB2bGstinRow,
+  });
+  return { rows: page.rows, nextCursor: page.nextCursor };
 }
 
 async function gstr1Filing(filters: ReportFilters) {
@@ -762,6 +846,7 @@ export const adminFinanceGapReports: ReportDefinition[] = [
     financial: true,
     columns: taxInvoiceRegisterColumns,
     query: taxInvoiceRegister,
+    exportQuery: taxInvoiceRegisterExport,
   },
   {
     type: 'b2b-gstin-sales-register',
@@ -784,6 +869,7 @@ export const adminFinanceGapReports: ReportDefinition[] = [
       { key: 'total', labelKey: 'totalAmount', format: 'currency' },
     ],
     query: b2bGstinSalesRegister,
+    exportQuery: b2bGstinSalesRegisterExport,
   },
   {
     type: 'gstr-1-filing',
@@ -1025,6 +1111,7 @@ export const vendorOwnerGapReports: ReportDefinition[] = [
     financial: true,
     columns: taxInvoiceRegisterColumns,
     query: taxInvoiceRegister,
+    exportQuery: taxInvoiceRegisterExport,
   },
 ];
 

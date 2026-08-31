@@ -6,6 +6,7 @@ import { vendorOwnerReports } from './vendorOwner';
 import { vendorStaffReports } from './vendorStaff';
 import { customerReports } from './customer';
 import { reportGapDefinitions } from './reportGaps';
+import { legacyPanelReports } from './legacyPanelReports';
 
 export {
   adminFinanceReports,
@@ -25,4 +26,5 @@ export const ALL_REPORT_DEFINITIONS: ReportDefinition[] = [
   ...vendorStaffReports,
   ...customerReports,
   ...reportGapDefinitions,
+  ...legacyPanelReports,
 ];

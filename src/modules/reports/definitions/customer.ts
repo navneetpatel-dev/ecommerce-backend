@@ -1,3 +1,4 @@
+import { Op } from 'sequelize';
 import { Order } from '@database/models/order.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
@@ -7,6 +8,19 @@ import {
   emptyPage,
   dateBetween,
 } from '../engine/queryHelpers';
+
+function mapOrderHistoryRow(order: Order) {
+  const subs = (order as Order & { subOrders?: SubOrder[] }).subOrders ?? [];
+  return {
+    orderId: order.id,
+    status: order.status,
+    paymentStatus: order.paymentStatus,
+    totalAmount: Number(order.totalAmount ?? 0),
+    discountTotal: Number(order.discountTotal ?? 0),
+    subOrderCount: subs.length,
+    createdAt: order.createdAt,
+  };
+}
 
 async function customerOrderHistory(filters: ReportFilters) {
   assertReportRange(filters);
@@ -37,19 +51,57 @@ async function customerOrderHistory(filters: ReportFilters) {
   );
 
   return {
-    rows: rows.map((order) => {
-      const subs = (order as Order & { subOrders?: SubOrder[] }).subOrders ?? [];
-      return {
-        orderId: order.id,
-        status: order.status,
-        paymentStatus: order.paymentStatus,
-        totalAmount: Number(order.totalAmount ?? 0),
-        discountTotal: Number(order.discountTotal ?? 0),
-        subOrderCount: subs.length,
-        createdAt: order.createdAt,
-      };
-    }),
+    rows: rows.map(mapOrderHistoryRow),
     total,
+  };
+}
+
+async function customerOrderHistoryExport(
+  filters: ReportFilters,
+  cursor: { values: unknown[] } | null,
+  limit: number,
+) {
+  assertReportRange(filters);
+  if (!filters.userId) return { rows: [], nextCursor: null };
+
+  const where: Record<string | symbol, unknown> = {
+    userId: filters.userId,
+    createdAt: dateBetween(filters.from, filters.to),
+  };
+  if (filters.status) where.status = filters.status;
+  if (cursor && cursor.values.length >= 2) {
+    const createdAt = cursor.values[0];
+    const id = cursor.values[1];
+    where[Op.or] = [
+      { createdAt: { [Op.lt]: createdAt } },
+      { createdAt, id: { [Op.lt]: id } },
+    ];
+  }
+
+  const rows = await Order.findAll({
+    where: where as never,
+    include: [
+      {
+        model: SubOrder,
+        as: 'subOrders',
+        attributes: ['id'],
+      },
+    ],
+    order: [
+      ['createdAt', 'DESC'],
+      ['id', 'DESC'],
+    ],
+    limit,
+  });
+
+  return {
+    rows: rows.map(mapOrderHistoryRow),
+    nextCursor:
+      rows.length < limit || !rows[rows.length - 1]
+        ? null
+        : {
+            values: [rows[rows.length - 1]!.createdAt, rows[rows.length - 1]!.id],
+          },
   };
 }
 
@@ -71,5 +123,6 @@ export const customerReports: ReportDefinition[] = [
       { key: 'createdAt', labelKey: 'createdAt', format: 'date' },
     ],
     query: customerOrderHistory,
+    exportQuery: customerOrderHistoryExport,
   },
 ];

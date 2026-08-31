@@ -10,6 +10,7 @@ import {
   DISCOUNT_BEARER,
   COMMISSION_STATUS,
 } from '../engine/queryHelpers';
+import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { AuditLog } from '@database/models/auditLog.model';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
@@ -277,12 +278,26 @@ async function reconciliation(filters: ReportFilters) {
 
 async function creditDebitNoteRegister(filters: ReportFilters) {
   assertReportRange(filters);
+  return pagedSqlQuery({
+    selectSql: creditDebitNoteSelectSql(),
+    orderBySql: `"issuedAt" DESC, "noteNumber" DESC`,
+    replacements: sqlReplacements(filters),
+    filters,
+    mapRow: mapCreditDebitNoteRow,
+  });
+}
+
+const CREDIT_DEBIT_KEYSET: KeysetOrderCol[] = [
+  { column: 'issuedAt', direction: 'DESC' },
+  { column: 'noteNumber', direction: 'DESC' },
+];
+
+function creditDebitNoteSelectSql(): string {
   const noteInRange = (alias: string) => `(
     (${alias}."issuedAt" IS NOT NULL AND ${alias}."issuedAt" BETWEEN :from AND :to)
     OR (${alias}."issuedAt" IS NULL AND ${alias}."createdAt" BETWEEN :from AND :to)
   )`;
-
-  const selectSql = `
+  return `
     SELECT
       'CREDIT'::text AS type,
       cn.number AS "noteNumber",
@@ -317,29 +332,51 @@ async function creditDebitNoteRegister(filters: ReportFilters) {
       AND ${noteInRange('dn')}
       AND (:vendorId::uuid IS NULL OR dn."vendorId" = :vendorId)
   `;
-
-  return pagedSqlQuery({
-    selectSql,
-    orderBySql: `"issuedAt" DESC`,
-    replacements: sqlReplacements(filters),
-    filters,
-    mapRow: (row) => ({
-      type: String(row.type ?? ''),
-      noteNumber: String(row.noteNumber ?? ''),
-      orderId: String(row.orderId ?? ''),
-      subOrderId: String(row.subOrderId ?? ''),
-      vendorId: String(row.vendorId ?? ''),
-      againstInvoiceNumber: String(row.againstInvoiceNumber ?? ''),
-      amount: Math.round(Number(row.amount ?? 0) * 100) / 100,
-      taxAmount: Math.round(Number(row.taxAmount ?? 0) * 100) / 100,
-      reason: String(row.reason ?? ''),
-      issuedAt: row.issuedAt,
-    }),
-  });
 }
 
-async function vendorSettlement(filters: ReportFilters) {
+function mapCreditDebitNoteRow(row: Record<string, unknown>) {
+  return {
+    type: String(row.type ?? ''),
+    noteNumber: String(row.noteNumber ?? ''),
+    orderId: String(row.orderId ?? ''),
+    subOrderId: String(row.subOrderId ?? ''),
+    vendorId: String(row.vendorId ?? ''),
+    againstInvoiceNumber: String(row.againstInvoiceNumber ?? ''),
+    amount: Math.round(Number(row.amount ?? 0) * 100) / 100,
+    taxAmount: Math.round(Number(row.taxAmount ?? 0) * 100) / 100,
+    reason: String(row.reason ?? ''),
+    issuedAt: row.issuedAt,
+  };
+}
+
+async function creditDebitNoteRegisterExport(
+  filters: ReportFilters,
+  cursor: { values: unknown[] } | null,
+  limit: number,
+) {
   assertReportRange(filters);
+  const page = await keysetSqlQuery({
+    selectSql: creditDebitNoteSelectSql(),
+    order: CREDIT_DEBIT_KEYSET,
+    replacements: sqlReplacements(filters),
+    limit,
+    cursor,
+    mapRow: mapCreditDebitNoteRow,
+  });
+  return { rows: page.rows, nextCursor: page.nextCursor };
+}
+
+const VENDOR_SETTLEMENT_KEYSET: KeysetOrderCol[] = [
+  { column: 'vendorName', direction: 'ASC' },
+  { column: 'vendorId', direction: 'ASC' },
+];
+
+const AUDIT_LOG_KEYSET: KeysetOrderCol[] = [
+  { column: 'createdAt', direction: 'DESC' },
+  { column: 'id', direction: 'DESC' },
+];
+
+function vendorSettlementSelectSql(): string {
   const netPaiseExpr = `CASE
     WHEN COALESCE(cl."netPayoutAmountPaise", 0) <> 0 THEN cl."netPayoutAmountPaise"
     ELSE ROUND(
@@ -352,7 +389,7 @@ async function vendorSettlement(filters: ReportFilters) {
     )::bigint
   END`;
 
-  const selectSql = `
+  return `
     WITH ledger_agg AS (
       SELECT
         cl."vendorId" AS "vendorId",
@@ -395,35 +432,76 @@ async function vendorSettlement(filters: ReportFilters) {
     FROM ledger_agg l
     FULL OUTER JOIN payout_agg p ON l."vendorId" = p."vendorId"
   `;
+}
 
+function mapVendorSettlementRow(row: Record<string, unknown>) {
+  return {
+    vendorId: String(row.vendorId ?? ''),
+    vendorName: String(row.vendorName ?? ''),
+    pendingNet: fromPaise(Number(row.pendingNetPaise ?? 0)),
+    settledNet: fromPaise(Number(row.settledNetPaise ?? 0)),
+    payoutAmount: Math.round(Number(row.payoutAmount ?? 0) * 100) / 100,
+    payoutPending: Math.round(Number(row.payoutPending ?? 0) * 100) / 100,
+    payoutPaid: Math.round(Number(row.payoutPaid ?? 0) * 100) / 100,
+    payoutStatus: String(row.payoutStatus || 'NONE'),
+  };
+}
+
+async function vendorSettlement(filters: ReportFilters) {
+  assertReportRange(filters);
   return pagedSqlQuery({
-    selectSql,
+    selectSql: vendorSettlementSelectSql(),
     orderBySql: `"vendorName" ASC, "vendorId" ASC`,
     replacements: sqlReplacements(filters),
     filters,
-    mapRow: (row) => ({
-      vendorId: String(row.vendorId ?? ''),
-      vendorName: String(row.vendorName ?? ''),
-      pendingNet: fromPaise(Number(row.pendingNetPaise ?? 0)),
-      settledNet: fromPaise(Number(row.settledNetPaise ?? 0)),
-      payoutAmount: Math.round(Number(row.payoutAmount ?? 0) * 100) / 100,
-      payoutPending: Math.round(Number(row.payoutPending ?? 0) * 100) / 100,
-      payoutPaid: Math.round(Number(row.payoutPaid ?? 0) * 100) / 100,
-      payoutStatus: String(row.payoutStatus || 'NONE'),
-    }),
+    mapRow: mapVendorSettlementRow,
   });
+}
+
+async function vendorSettlementExport(
+  filters: ReportFilters,
+  cursor: { values: unknown[] } | null,
+  limit: number,
+) {
+  assertReportRange(filters);
+  const page = await keysetSqlQuery({
+    selectSql: vendorSettlementSelectSql(),
+    order: VENDOR_SETTLEMENT_KEYSET,
+    replacements: sqlReplacements(filters),
+    limit,
+    cursor,
+    mapRow: mapVendorSettlementRow,
+  });
+  return { rows: page.rows, nextCursor: page.nextCursor };
 }
 
 async function commissionRevenue(filters: ReportFilters) {
   assertReportRange(filters);
+  return pagedSqlQuery({
+    selectSql: commissionRevenueSelectSql(),
+    orderBySql: `"vendorName" ASC, period ASC, "categorySort" ASC NULLS LAST`,
+    replacements: sqlReplacements(filters),
+    filters,
+    mapRow: mapCommissionRevenueRow,
+  });
+}
+
+const COMMISSION_REVENUE_KEYSET: KeysetOrderCol[] = [
+  { column: 'vendorName', direction: 'ASC' },
+  { column: 'period', direction: 'ASC' },
+  { column: 'categorySort', direction: 'ASC' },
+  { column: 'vendorId', direction: 'ASC' },
+];
+
+function commissionRevenueSelectSql(): string {
   const commissionExpr = sqlFrozenPaise('cl', 'commissionAmountPaise', 'commissionAmount');
   const periodExpr = `to_char(cl."createdAt" AT TIME ZONE 'UTC', 'YYYY-MM')`;
-
-  const selectSql = `
+  return `
     SELECT
       cl."vendorId"::text AS "vendorId",
       MAX(v."businessName") AS "vendorName",
       cat."categoryId"::text AS "categoryId",
+      COALESCE(cat."categoryId"::text, '') AS "categorySort",
       ${periodExpr} AS period,
       SUM(${commissionExpr})::bigint AS "commissionPaise"
     FROM commission_ledgers cl
@@ -445,20 +523,33 @@ async function commissionRevenue(filters: ReportFilters) {
       AND (:categoryId::uuid IS NULL OR cat."categoryId" = :categoryId)
     GROUP BY cl."vendorId", cat."categoryId", ${periodExpr}
   `;
+}
 
-  return pagedSqlQuery({
-    selectSql,
-    orderBySql: `"vendorName" ASC, period ASC, "categoryId" ASC NULLS LAST`,
+function mapCommissionRevenueRow(row: Record<string, unknown>) {
+  return {
+    vendorId: String(row.vendorId ?? ''),
+    vendorName: String(row.vendorName ?? ''),
+    categoryId: row.categoryId == null ? null : String(row.categoryId),
+    period: String(row.period ?? ''),
+    commission: fromPaise(Number(row.commissionPaise ?? 0)),
+  };
+}
+
+async function commissionRevenueExport(
+  filters: ReportFilters,
+  cursor: { values: unknown[] } | null,
+  limit: number,
+) {
+  assertReportRange(filters);
+  const page = await keysetSqlQuery({
+    selectSql: commissionRevenueSelectSql(),
+    order: COMMISSION_REVENUE_KEYSET,
     replacements: sqlReplacements(filters),
-    filters,
-    mapRow: (row) => ({
-      vendorId: String(row.vendorId ?? ''),
-      vendorName: String(row.vendorName ?? ''),
-      categoryId: row.categoryId == null ? null : String(row.categoryId),
-      period: String(row.period ?? ''),
-      commission: fromPaise(Number(row.commissionPaise ?? 0)),
-    }),
+    limit,
+    cursor,
+    mapRow: mapCommissionRevenueRow,
   });
+  return { rows: page.rows, nextCursor: page.nextCursor };
 }
 
 async function couponDiscountCost(filters: ReportFilters) {
@@ -570,6 +661,93 @@ async function gmvSales(filters: ReportFilters) {
   });
 }
 
+const GMV_KEYSET: KeysetOrderCol[] = [
+  { column: 'gmvPaise', direction: 'DESC' },
+  { column: 'vendorId', direction: 'ASC' },
+];
+
+const GMV_CATEGORY_KEYSET: KeysetOrderCol[] = [
+  { column: 'gmvPaise', direction: 'DESC' },
+  { column: 'vendorId', direction: 'ASC' },
+  { column: 'categoryId', direction: 'ASC' },
+];
+
+async function gmvSalesExport(
+  filters: ReportFilters,
+  cursor: { values: unknown[] } | null,
+  limit: number,
+) {
+  assertReportRange(filters);
+  const replacements = sqlReplacements(filters);
+  if (filters.categoryId) {
+    const taxableExpr = sqlFrozenPaise('oi', 'taxableAmountPaise', 'taxableAmount');
+    const selectSql = `
+      SELECT
+        s."vendorId"::text AS "vendorId",
+        MAX(v."businessName") AS "vendorName",
+        p."categoryId"::text AS "categoryId",
+        SUM(${taxableExpr})::bigint AS "gmvPaise"
+      FROM order_items oi
+      INNER JOIN sub_orders s ON s.id = oi."subOrderId" AND s."deletedAt" IS NULL
+      INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
+      INNER JOIN product_variants pv ON pv.id = oi."variantId" AND pv."deletedAt" IS NULL
+      INNER JOIN products p ON p.id = pv."productId" AND p."deletedAt" IS NULL
+      LEFT JOIN vendors v ON v.id = s."vendorId" AND v."deletedAt" IS NULL
+      WHERE oi."deletedAt" IS NULL
+        AND o."createdAt" BETWEEN :from AND :to
+        AND ${REPORTABLE_ORDER_SQL}
+        AND p."categoryId" = :categoryId
+        AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
+      GROUP BY s."vendorId", p."categoryId"
+    `;
+    const page = await keysetSqlQuery({
+      selectSql,
+      order: GMV_CATEGORY_KEYSET,
+      replacements,
+      limit,
+      cursor,
+      mapRow: (row) => ({
+        vendorId: String(row.vendorId ?? 'UNKNOWN'),
+        vendorName: String(row.vendorName ?? row.vendorId ?? 'UNKNOWN'),
+        categoryId: String(row.categoryId ?? filters.categoryId),
+        gmv: fromPaise(Number(row.gmvPaise ?? 0)),
+      }),
+    });
+    return { rows: page.rows, nextCursor: page.nextCursor };
+  }
+
+  const subtotalExpr = sqlFrozenPaise('s', 'subtotalPaise', 'subtotal');
+  const selectSql = `
+    SELECT
+      s."vendorId"::text AS "vendorId",
+      MAX(v."businessName") AS "vendorName",
+      NULL::text AS "categoryId",
+      SUM(${subtotalExpr})::bigint AS "gmvPaise"
+    FROM sub_orders s
+    INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
+    LEFT JOIN vendors v ON v.id = s."vendorId" AND v."deletedAt" IS NULL
+    WHERE s."deletedAt" IS NULL
+      AND o."createdAt" BETWEEN :from AND :to
+      AND ${REPORTABLE_ORDER_SQL}
+      AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
+    GROUP BY s."vendorId"
+  `;
+  const page = await keysetSqlQuery({
+    selectSql,
+    order: GMV_KEYSET,
+    replacements,
+    limit,
+    cursor,
+    mapRow: (row) => ({
+      vendorId: String(row.vendorId ?? 'UNKNOWN'),
+      vendorName: String(row.vendorName ?? row.vendorId ?? 'UNKNOWN'),
+      categoryId: null,
+      gmv: fromPaise(Number(row.gmvPaise ?? 0)),
+    }),
+  });
+  return { rows: page.rows, nextCursor: page.nextCursor };
+}
+
 async function auditLogReport(filters: ReportFilters) {
   assertReportRange(filters);
   const where: Record<string, unknown> = {
@@ -587,16 +765,72 @@ async function auditLogReport(filters: ReportFilters) {
   );
 
   return {
-    rows: rows.map((log) => ({
-      createdAt: log.createdAt,
-      actorId: log.actorId,
-      action: log.action,
-      entityType: log.entityType,
-      entityId: log.entityId,
-      metadata: log.metadata ?? {},
-    })),
+    rows: rows.map(mapAuditLogRow),
     total,
   };
+}
+
+function mapAuditLogRow(log: {
+  createdAt: Date;
+  actorId: string | null;
+  action: string;
+  entityType: string;
+  entityId: string | null;
+  metadata: Record<string, unknown> | null;
+}) {
+  return {
+    createdAt: log.createdAt,
+    actorId: log.actorId,
+    action: log.action,
+    entityType: log.entityType,
+    entityId: log.entityId,
+    metadata: log.metadata ?? {},
+  };
+}
+
+async function auditLogExport(
+  filters: ReportFilters,
+  cursor: { values: unknown[] } | null,
+  limit: number,
+) {
+  assertReportRange(filters);
+  const actionFilter = filters.status ? `AND al.action = :status` : '';
+  const selectSql = `
+    SELECT
+      al.id AS id,
+      al."createdAt" AS "createdAt",
+      al."actorId" AS "actorId",
+      al.action AS action,
+      al."entityType" AS "entityType",
+      al."entityId" AS "entityId",
+      al.metadata AS metadata
+    FROM audit_logs al
+    WHERE al."deletedAt" IS NULL
+      AND al."createdAt" BETWEEN :from AND :to
+      ${actionFilter}
+  `;
+  const replacements: Record<string, unknown> = {
+    from: filters.from,
+    to: filters.to,
+  };
+  if (filters.status) replacements.status = filters.status;
+
+  const page = await keysetSqlQuery({
+    selectSql,
+    order: AUDIT_LOG_KEYSET,
+    replacements,
+    limit,
+    cursor,
+    mapRow: (row) => ({
+      createdAt: row.createdAt as Date,
+      actorId: row.actorId as string | null,
+      action: String(row.action ?? ''),
+      entityType: String(row.entityType ?? ''),
+      entityId: row.entityId as string | null,
+      metadata: (row.metadata as Record<string, unknown>) ?? {},
+    }),
+  });
+  return { rows: page.rows, nextCursor: page.nextCursor };
 }
 
 export const adminFinanceReports: ReportDefinition[] = [
@@ -713,6 +947,7 @@ export const adminFinanceReports: ReportDefinition[] = [
       { key: 'issuedAt', labelKey: 'issuedAt', format: 'date' },
     ],
     query: creditDebitNoteRegister,
+    exportQuery: creditDebitNoteRegisterExport,
   },
   {
     type: 'vendor-settlement',
@@ -732,6 +967,7 @@ export const adminFinanceReports: ReportDefinition[] = [
       { key: 'payoutStatus', labelKey: 'payoutStatus' },
     ],
     query: vendorSettlement,
+    exportQuery: vendorSettlementExport,
   },
   {
     type: 'commission-revenue',
@@ -748,6 +984,7 @@ export const adminFinanceReports: ReportDefinition[] = [
       { key: 'commission', labelKey: 'commission', format: 'currency' },
     ],
     query: commissionRevenue,
+    exportQuery: commissionRevenueExport,
   },
   {
     type: 'coupon-discount-cost',
@@ -778,6 +1015,7 @@ export const adminFinanceReports: ReportDefinition[] = [
       { key: 'gmv', labelKey: 'gmv', format: 'currency' },
     ],
     query: gmvSales,
+    exportQuery: gmvSalesExport,
   },
   {
     type: 'audit-log',
@@ -795,5 +1033,6 @@ export const adminFinanceReports: ReportDefinition[] = [
       { key: 'metadata', labelKey: 'metadata' },
     ],
     query: auditLogReport,
+    exportQuery: auditLogExport,
   },
 ];

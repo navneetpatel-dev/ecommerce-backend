@@ -2,6 +2,7 @@ import { Op, type FindAndCountOptions, type Model, type ModelStatic } from 'sequ
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { paginationOffset } from '@core/http/pagination';
+import { reportExportConfig } from '../reportExportConfig';
 import { fromPaise, toPaise } from '@modules/pricing/money';
 import {
   COMMISSION_STATUS,
@@ -37,6 +38,12 @@ export function normalizeReportFilters(filters: ReportFilters): ReportFilters {
 export function assertReportRange(filters: ReportFilters) {
   if (filters.from > filters.to) {
     throw new ValidationError(ERROR_MESSAGES.REPORT_INVALID_RANGE);
+  }
+  const maxDays = reportExportConfig.maxRangeDays;
+  const spanMs = filters.to.getTime() - filters.from.getTime();
+  const maxMs = maxDays * 24 * 60 * 60 * 1000;
+  if (spanMs > maxMs) {
+    throw new ValidationError(ERROR_MESSAGES.REPORT_RANGE_TOO_WIDE);
   }
 }
 
@@ -292,6 +299,14 @@ export async function pagedFindAndCount<M extends Model>(
   filters: ReportFilters,
 ): Promise<{ rows: M[]; total: number }> {
   const { limit, offset } = reportPageParams(filters);
+  if (filters._exportSkipCount && filters._exportKnownTotal != null) {
+    const rows = await model.findAll({
+      ...options,
+      limit,
+      offset,
+    });
+    return { rows, total: filters._exportKnownTotal };
+  }
   const { rows, count } = await model.findAndCountAll({
     ...options,
     limit,
@@ -317,11 +332,16 @@ export async function pagedSqlQuery<T extends Record<string, unknown>>(opts: {
   mapRow: (row: Record<string, unknown>) => T;
 }): Promise<ReportQueryResult> {
   const { limit, offset } = reportPageParams(opts.filters);
-  const [countRows] = await sequelize.query(
-    `SELECT COUNT(*)::int AS total FROM (${opts.selectSql}) AS _report_agg`,
-    { replacements: opts.replacements },
-  );
-  const total = Number((countRows as Array<{ total: number }>)[0]?.total ?? 0);
+  let total: number;
+  if (opts.filters._exportSkipCount && opts.filters._exportKnownTotal != null) {
+    total = opts.filters._exportKnownTotal;
+  } else {
+    const [countRows] = await sequelize.query(
+      `SELECT COUNT(*)::int AS total FROM (${opts.selectSql}) AS _report_agg`,
+      { replacements: opts.replacements },
+    );
+    total = Number((countRows as Array<{ total: number }>)[0]?.total ?? 0);
+  }
   if (total === 0) return { rows: [], total: 0 };
 
   const [rows] = await sequelize.query(

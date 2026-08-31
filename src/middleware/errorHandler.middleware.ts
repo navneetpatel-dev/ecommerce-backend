@@ -22,6 +22,13 @@ export const errorHandlerMiddleware: ErrorRequestHandler = (
       method: req.method,
     });
 
+    if (err.details && typeof err.details === 'object' && err.details !== null) {
+      const retryAfter = (err.details as { retryAfterSec?: unknown }).retryAfterSec;
+      if (typeof retryAfter === 'number' && retryAfter > 0) {
+        res.setHeader('Retry-After', String(Math.ceil(retryAfter)));
+      }
+    }
+
     res.status(err.statusCode).json({
       success: false,
       error: toPublicErrorBody(err),

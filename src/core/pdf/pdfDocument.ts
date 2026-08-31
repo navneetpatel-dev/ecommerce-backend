@@ -18,6 +18,18 @@ export function createBrandedPdfDocument(meta: BrandedPdfMeta): PDFKit.PDFDocume
   });
 }
 
+export function pipePdfDocument(
+  doc: PDFKit.PDFDocument,
+  dest: NodeJS.WritableStream,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    dest.on('finish', () => resolve());
+    dest.on('error', reject);
+    doc.on('error', reject);
+    doc.end();
+  });
+}
+
 export function finalizePdfDocument(doc: PDFKit.PDFDocument): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
