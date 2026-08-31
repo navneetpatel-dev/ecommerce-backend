@@ -16,7 +16,9 @@ import {
   frozenPaise,
   computeReconciliationSummary,
 } from './engine/queryHelpers';
-import { REPORT_EXPORT_PAGE_SIZE as ENGINE_EXPORT_PAGE } from './engine/types';
+import { renderReportTablePdf } from '@core/pdf';
+import { resolveReportColumnLabel } from './reports.constants';
+import { REPORT_EXPORT_PAGE_SIZE } from './engine/types';
 
 function assertRange(query: ReportRangeQuery) {
   if (query.from > query.to) {
@@ -39,7 +41,7 @@ async function fetchAllEngineRows(reportType: string, filters: {
 }) {
   const def = getReportDefinition(reportType);
   if (!def) throw new ValidationError(ERROR_MESSAGES.REPORT_NOT_FOUND);
-  const pageSize = ENGINE_EXPORT_PAGE;
+  const pageSize = REPORT_EXPORT_PAGE_SIZE;
   const first = await def.query({ ...filters, page: 1, limit: pageSize });
   if (first.total <= first.rows.length) return first;
   const rows = [...first.rows];
@@ -370,40 +372,19 @@ export class ReportsService {
   }
 
   async toPdf(title: string, rows: Record<string, unknown>[]): Promise<Buffer> {
-    const PDFDocument = (await import('pdfkit')).default;
-    return new Promise((resolve, reject) => {
-      const doc = new PDFDocument({ margin: 40, size: 'A4' });
-      const chunks: Buffer[] = [];
-      doc.on('data', (chunk: Buffer) => chunks.push(chunk));
-      doc.on('end', () => resolve(Buffer.concat(chunks)));
-      doc.on('error', reject);
+    const columns =
+      rows.length > 0
+        ? Object.keys(rows[0]!).map((key) => ({
+            key,
+            label: resolveReportColumnLabel(key),
+          }))
+        : [];
 
-      doc.fontSize(16).text(title, { underline: true });
-      doc.moveDown();
-
-      if (rows.length === 0) {
-        doc.fontSize(11).text('No rows');
-        doc.end();
-        return;
-      }
-
-      const headers = Object.keys(rows[0]!);
-      doc.fontSize(9);
-      for (const row of rows) {
-        for (const header of headers) {
-          const value = row[header];
-          const display =
-            value instanceof Date
-              ? value.toISOString()
-              : value == null
-                ? ''
-                : String(value);
-          doc.text(`${header}: ${display}`);
-        }
-        doc.moveDown(0.5);
-        if (doc.y > 750) doc.addPage();
-      }
-      doc.end();
+    return renderReportTablePdf({
+      title,
+      columns,
+      rows,
+      emptyMessage: 'No rows',
     });
   }
 }
