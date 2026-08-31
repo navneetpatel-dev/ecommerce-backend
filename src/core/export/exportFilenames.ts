@@ -55,13 +55,14 @@ export function buildTaxInvoicePdfFilename(
   return `gst-tax-invoice${vendor}_${invoice}.pdf`;
 }
 
-/** Report engine spreadsheet export filename. */
+/** Report engine export filename. */
 export function buildReportEngineExportFilename(
   reportType: string,
   from: Date | string,
   to: Date | string,
+  extension = 'xlsx',
 ): string {
-  return buildDatedExportFilename(reportType, from, to, 'xlsx');
+  return buildDatedExportFilename(reportType, from, to, extension);
 }
 
 export function documentKeyToPdfTitle(documentKey: string): string {

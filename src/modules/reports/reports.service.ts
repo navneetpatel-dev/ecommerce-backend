@@ -90,13 +90,12 @@ export class ReportsService {
       vendors: result.rows.map((row) => ({
         vendorId: String(row.vendorId ?? ''),
         vendorName: String(row.vendorName ?? ''),
-        grossSales: 0,
-        discountsAbsorbed: 0,
-        commissionCharged: 0,
-        tcsCharged: 0,
-        netPaidOut: Number(row.payoutPaid ?? 0),
         pendingNet: Number(row.pendingNet ?? 0),
         settledNet: Number(row.settledNet ?? 0),
+        payoutAmount: Number(row.payoutAmount ?? 0),
+        payoutPending: Number(row.payoutPending ?? 0),
+        payoutPaid: Number(row.payoutPaid ?? 0),
+        payoutStatus: String(row.payoutStatus ?? ''),
       })),
     };
   }

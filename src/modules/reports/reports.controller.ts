@@ -21,6 +21,11 @@ import {
   type ReportRangeQuery,
 } from './reports.dto';
 import { buildReportFilename } from './engine/excelExporter';
+import {
+  contentTypeForFormat,
+  extensionForFormat,
+  type ReportExportFormat,
+} from './engine/csvExporter';
 import { reportEngine, type ReportActor } from './engine/reportEngine';
 import type { PermissionKey } from '@core/permissions/permissionKeys';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
@@ -176,8 +181,8 @@ export const runReport = asyncHandler(async (req: Request, res: Response) => {
     limit: query.limit,
   };
 
-  if (query.format === 'xlsx') {
-    const exported = await reportEngine.runExport(actor, reportType, filters);
+  if (query.format === 'xlsx' || query.format === 'csv' || query.format === 'pdf') {
+    const exported = await reportEngine.runExport(actor, reportType, filters, query.format);
     if (exported.async) {
       res.json(
         ok({
@@ -189,10 +194,13 @@ export const runReport = asyncHandler(async (req: Request, res: Response) => {
       );
       return;
     }
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    );
+    const contentType =
+      query.format === 'csv'
+        ? 'text/csv; charset=utf-8'
+        : query.format === 'pdf'
+          ? 'application/pdf'
+          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${exported.filename}"`);
     res.send(exported.buffer);
     return;
@@ -210,15 +218,14 @@ export const downloadExport = asyncHandler(async (req: Request, res: Response) =
     return;
   }
   const filters = result.log.filtersUsed as Record<string, unknown>;
+  const exportFormat = (result.log.format as ReportExportFormat) || 'xlsx';
   const name = buildReportFilename(
     result.log.reportType,
     new Date(String(filters.from)),
     new Date(String(filters.to)),
+    extensionForFormat(exportFormat),
   );
-  res.setHeader(
-    'Content-Type',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  );
+  res.setHeader('Content-Type', contentTypeForFormat(exportFormat));
   res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
   res.send(result.buffer);
 });
@@ -239,16 +246,24 @@ export const customerOrderHistory = asyncHandler(async (req: Request, res: Respo
     limit: query.limit,
     userId: actor.id,
   };
-  if (query.format === 'xlsx') {
-    const exported = await reportEngine.runExport(actor, 'customer-order-history', filters);
+  if (query.format === 'xlsx' || query.format === 'csv' || query.format === 'pdf') {
+    const exported = await reportEngine.runExport(
+      actor,
+      'customer-order-history',
+      filters,
+      query.format,
+    );
     if (exported.async) {
       res.json(ok(exported));
       return;
     }
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    );
+    const contentType =
+      query.format === 'csv'
+        ? 'text/csv; charset=utf-8'
+        : query.format === 'pdf'
+          ? 'application/pdf'
+          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${exported.filename}"`);
     res.send(exported.buffer);
     return;

@@ -5,6 +5,7 @@ import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { validate } from '@middleware/validate.middleware';
 import { walletService } from './wallet.service';
+import { exportWalletStatement, WalletStatementSchema } from './walletStatement.service';
 
 const ListTransactionsSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional().default(50),
@@ -43,6 +44,24 @@ router.get(
         })),
       }),
     );
+  }),
+);
+
+router.get(
+  '/statement',
+  authenticate,
+  validate(WalletStatementSchema, 'query'),
+  asyncHandler(async (req, res) => {
+    const query = WalletStatementSchema.parse(req.query);
+    const { buffer, filename, contentType } = await exportWalletStatement({
+      userId: req.user!.id,
+      from: query.from,
+      to: query.to,
+      format: query.format,
+    });
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
   }),
 );
 

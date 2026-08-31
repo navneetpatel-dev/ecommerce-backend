@@ -5,6 +5,7 @@ import { adminCatalogReports } from './adminCatalog';
 import { vendorOwnerReports } from './vendorOwner';
 import { vendorStaffReports } from './vendorStaff';
 import { customerReports } from './customer';
+import { reportGapDefinitions } from './reportGaps';
 
 export {
   adminFinanceReports,
@@ -13,6 +14,7 @@ export {
   vendorOwnerReports,
   vendorStaffReports,
   customerReports,
+  reportGapDefinitions,
 };
 
 export const ALL_REPORT_DEFINITIONS: ReportDefinition[] = [
@@ -22,4 +24,5 @@ export const ALL_REPORT_DEFINITIONS: ReportDefinition[] = [
   ...vendorOwnerReports,
   ...vendorStaffReports,
   ...customerReports,
+  ...reportGapDefinitions,
 ];

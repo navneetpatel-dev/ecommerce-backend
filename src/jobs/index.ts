@@ -8,6 +8,7 @@ import {
   startS3OrphanCleanupWorker,
   stopS3OrphanCleanupWorker,
 } from './s3OrphanCleanup.processor';
+import { startScheduledReportsScheduler, stopScheduledReportsScheduler } from './scheduledReports.processor';
 
 let emailWorkers: Worker[] = [];
 let reportExportWorker: Worker | null = null;
@@ -21,12 +22,14 @@ export async function startBackgroundWorkers(): Promise<void> {
   s3OrphanCleanupWorker = startS3OrphanCleanupWorker();
   await scheduleS3OrphanCleanupJob();
   startNotificationScheduler();
+  startScheduledReportsScheduler();
   workersStarted = true;
   logger.info('Background workers ready');
 }
 
 export async function stopBackgroundWorkers(): Promise<void> {
   stopNotificationScheduler();
+  stopScheduledReportsScheduler();
   await stopEmailWorkers(emailWorkers);
   await stopReportExportWorker(reportExportWorker);
   await stopS3OrphanCleanupWorker(s3OrphanCleanupWorker);

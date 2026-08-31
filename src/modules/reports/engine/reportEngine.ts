@@ -15,7 +15,13 @@ import { logger } from '@core/logger';
 import { env } from '@config/env';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { getReportDefinition, listReportDefinitionsForPermissions } from './reportRegistry';
-import { buildExcelBuffer, buildReportFilename } from './excelExporter';
+import { buildReportFilename } from './excelExporter';
+import {
+  contentTypeForFormat,
+  extensionForFormat,
+  type ReportExportFormat,
+} from './csvExporter';
+import { buildExportBuffer } from './reportEngineExport';
 import {
   REPORT_ASYNC_ROW_THRESHOLD,
   REPORT_EXPORT_PAGE_SIZE,
@@ -105,12 +111,16 @@ async function fetchAllRows(
   return { rows, total: first.total, meta: first.meta };
 }
 
-async function persistExportFile(key: string, buffer: Buffer): Promise<{ fileKey: string; fileUrl: string | null }> {
+async function persistExportFile(
+  key: string,
+  buffer: Buffer,
+  format: ReportExportFormat,
+): Promise<{ fileKey: string; fileUrl: string | null }> {
   if (isS3Configured()) {
     const fileUrl = await uploadObject({
       key,
       body: buffer,
-      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      contentType: contentTypeForFormat(format),
     });
     return { fileKey: key, fileUrl };
   }
@@ -165,6 +175,7 @@ export class ReportEngine {
     actor: ReportActor,
     reportType: string,
     rawFilters: ReportFilters,
+    exportFormat: ReportExportFormat = 'xlsx',
   ): Promise<
     | {
         async: true;
@@ -208,7 +219,7 @@ export class ReportEngine {
         userId: actor.id,
         reportType: def.type,
         filtersUsed,
-        format: 'xlsx',
+        format: exportFormat,
         status: 'PENDING',
         rowCount: countProbe.total,
         fileKey: null,
@@ -242,15 +253,16 @@ export class ReportEngine {
     }
 
     const full = await fetchAllRows(def.query, filters);
-    const buffer = await buildExcelBuffer(def.columns, full.rows, def.type);
-    const filename = buildReportFilename(def.type, filters.from, filters.to);
+    const buffer = await buildExportBuffer(exportFormat, def.columns, full.rows, def.type);
+    const ext = extensionForFormat(exportFormat);
+    const filename = buildReportFilename(def.type, filters.from, filters.to, ext);
     const key = buildS3Key(S3_ENTITY_TYPES.REPORTS, actor.id, S3_PURPOSES.EXPORT, filename);
-    const stored = await persistExportFile(key, buffer);
+    const stored = await persistExportFile(key, buffer, exportFormat);
     const log = await ReportExportLog.create({
       userId: actor.id,
       reportType: def.type,
       filtersUsed,
-      format: 'xlsx',
+      format: exportFormat,
       status: 'SYNC',
       rowCount: full.total,
       fileKey: stored.fileKey,
@@ -292,10 +304,17 @@ export class ReportEngine {
         userId: log.userId,
       });
       const full = await fetchAllRows(def.query, filters);
-      const buffer = await buildExcelBuffer(def.columns, full.rows, def.type);
-      const filename = buildReportFilename(def.type, filters.from, filters.to);
+      const exportFormat = (log.format as ReportExportFormat) || 'xlsx';
+      const buffer = await buildExportBuffer(
+        exportFormat,
+        def.columns,
+        full.rows,
+        def.type,
+      );
+      const ext = extensionForFormat(exportFormat);
+      const filename = buildReportFilename(def.type, filters.from, filters.to, ext);
       const key = buildS3Key(S3_ENTITY_TYPES.REPORTS, log.userId, S3_PURPOSES.EXPORT, filename);
-      const stored = await persistExportFile(key, buffer);
+      const stored = await persistExportFile(key, buffer, exportFormat);
       await log.update({
         status: 'READY',
         rowCount: full.total,

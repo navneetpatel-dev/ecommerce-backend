@@ -8,5 +8,6 @@ const router = Router();
 
 router.get('/dashboard', authenticate, authorize(PERMISSIONS.ANALYTICS_VIEW), adminController.getDashboard);
 router.get('/analytics/platform', authenticate, authorize(PERMISSIONS.ANALYTICS_VIEW), adminController.getPlatformAnalytics);
+router.get('/analytics/platform/export', authenticate, authorize(PERMISSIONS.ANALYTICS_VIEW), adminController.exportPlatformAnalytics);
 
 export default router;

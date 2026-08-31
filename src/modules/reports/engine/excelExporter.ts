@@ -16,8 +16,8 @@ function formatCell(value: unknown, format?: string): string | number | Date {
   return typeof value === 'object' ? JSON.stringify(value) : String(value);
 }
 
-export function buildReportFilename(reportType: string, from: Date, to: Date): string {
-  return buildReportEngineExportFilename(reportType, from, to);
+export function buildReportFilename(reportType: string, from: Date, to: Date, extension = 'xlsx'): string {
+  return buildReportEngineExportFilename(reportType, from, to, extension);
 }
 
 export async function buildExcelBuffer(

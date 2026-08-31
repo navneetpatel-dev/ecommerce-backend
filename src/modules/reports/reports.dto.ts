@@ -17,7 +17,7 @@ export const WriteOffReportSchema = ReportRangeSchema.extend({
 export const EngineReportQuerySchema = pageLimitQuerySchema.extend({
   from: z.coerce.date(),
   to: z.coerce.date().transform(inclusiveReportTo),
-  format: z.enum(['json', 'xlsx']).default('json'),
+  format: z.enum(['json', 'xlsx', 'csv', 'pdf']).default('json'),
   vendorId: z.string().uuid().optional().nullable(),
   categoryId: z.string().uuid().optional().nullable(),
   status: z.string().optional().nullable(),
@@ -27,7 +27,7 @@ export const EngineReportQuerySchema = pageLimitQuerySchema.extend({
 export const CustomerOrderHistorySchema = pageLimitQuerySchema.extend({
   from: z.coerce.date(),
   to: z.coerce.date().transform(inclusiveReportTo),
-  format: z.enum(['json', 'xlsx']).default('json'),
+  format: z.enum(['json', 'xlsx', 'csv', 'pdf']).default('json'),
 });
 
 export type ReportRangeQuery = z.infer<typeof ReportRangeSchema>;
