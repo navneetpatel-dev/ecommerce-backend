@@ -1,7 +1,5 @@
 /** User-facing tax invoice PDF copy — keep in sync with FE LABELS where applicable. */
 export const TAX_INVOICE_COPY = {
-  brandName: 'Ink & Brass',
-  brandTagline: 'Multi-seller marketplace',
   title: 'GST Tax Invoice',
   originalForRecipient: 'Original for Recipient',
   continuation: 'Continued',

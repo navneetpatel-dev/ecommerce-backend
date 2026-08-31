@@ -1,5 +1,4 @@
 import PDFDocument from 'pdfkit';
-import { PDF_BRAND } from './pdfTheme';
 
 export type BrandedPdfMeta = {
   title: string;
@@ -12,8 +11,8 @@ export function createBrandedPdfDocument(meta: BrandedPdfMeta): PDFKit.PDFDocume
     margin: 0,
     info: {
       Title: meta.title,
-      Author: PDF_BRAND.name,
-      Creator: PDF_BRAND.name,
+      Author: meta.title,
+      Creator: 'Marketplace',
       Subject: meta.subject ?? meta.title,
     },
   });

@@ -1,7 +1,5 @@
-/** Ink & Brass print tokens — match the storefront light palette. */
+/** Print tokens — match the storefront light palette. */
 export const PDF_BRAND = {
-  name: 'Ink & Brass',
-  tagline: 'Multi-seller marketplace',
   currencyPrefix: 'Rs ',
   emptyValue: '--',
   computerGenerated:
