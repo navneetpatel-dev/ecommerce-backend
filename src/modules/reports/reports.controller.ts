@@ -18,6 +18,11 @@ import { TaxRule } from '@database/models/taxRule.model';
 import { sequelize } from '@database/models';
 import { DOCUMENT_SEQUENCE_KIND } from '@core/constants/statuses';
 import { nextDocumentNumber } from '@modules/pricing/documentSequence';
+import {
+  buildDatedExportFilename,
+  buildTaxInvoicePdfFilename,
+  documentKeyToPdfTitle,
+} from '@core/export/exportFilenames';
 import { reportsService } from './reports.service';
 import { renderTaxInvoicePdf, toTaxInvoiceSource } from './taxInvoicePdf';
 import {
@@ -25,7 +30,9 @@ import {
   WriteOffReportSchema,
   EngineReportQuerySchema,
   CustomerOrderHistorySchema,
+  type ReportRangeQuery,
 } from './reports.dto';
+import { buildReportFilename } from './engine/excelExporter';
 import { reportEngine, type ReportActor } from './engine/reportEngine';
 import type { PermissionKey } from '@core/permissions/permissionKeys';
 
@@ -50,22 +57,25 @@ async function actorFromReq(req: Request): Promise<ReportActor> {
 
 async function sendExport(
   res: Response,
-  query: { format: 'json' | 'csv' | 'pdf' },
-  filenameBase: string,
+  query: ReportRangeQuery,
+  documentKey: string,
   payload: unknown,
   rows: Record<string, unknown>[],
+  suffix?: string | null,
 ) {
   if (query.format === 'csv') {
+    const filename = buildDatedExportFilename(documentKey, query.from, query.to, 'csv', suffix);
     const csv = reportsService.toCsv(rows);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${filenameBase}.csv"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(csv);
     return;
   }
   if (query.format === 'pdf') {
-    const pdf = await reportsService.toPdf(filenameBase, rows);
+    const filename = buildDatedExportFilename(documentKey, query.from, query.to, 'pdf', suffix);
+    const pdf = await reportsService.toPdf(documentKeyToPdfTitle(documentKey), rows);
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${filenameBase}.pdf"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(pdf);
     return;
   }
@@ -90,26 +100,33 @@ function flattenRecord(value: unknown): Record<string, unknown> {
 export const adminSummary = asyncHandler(async (req: Request, res: Response) => {
   const query = rangeFromQuery(req);
   const data = await reportsService.adminSummary(query);
-  sendExport(res, query, 'admin-summary', data, [flattenRecord(data)]);
+  sendExport(res, query, 'admin-dashboard-summary', data, [flattenRecord(data)]);
 });
 
 export const adminVendors = asyncHandler(async (req: Request, res: Response) => {
   const query = rangeFromQuery(req);
   const data = await reportsService.adminVendorSettlements(query);
-  sendExport(res, query, 'vendor-settlements', data, data.vendors as unknown as Record<string, unknown>[]);
+  sendExport(res, query, 'admin-vendor-settlements', data, data.vendors as unknown as Record<string, unknown>[]);
 });
 
 export const adminReconciliation = asyncHandler(async (req: Request, res: Response) => {
   const query = rangeFromQuery(req);
   const data = await reportsService.adminReconciliation(query);
-  sendExport(res, query, 'reconciliation', data, [flattenRecord(data)]);
+  sendExport(res, query, 'admin-reconciliation', data, [flattenRecord(data)]);
 });
 
 export const vendorSummary = asyncHandler(async (req: Request, res: Response) => {
   const query = rangeFromQuery(req);
   const vendorId = req.params.vendorId!;
   const data = await reportsService.vendorSummary(vendorId, query, req.user?.vendorId ?? null);
-  sendExport(res, query, 'vendor-settlement', data, [flattenRecord(data)]);
+  sendExport(
+    res,
+    query,
+    'vendor-settlement-summary',
+    data,
+    [flattenRecord(data)],
+    vendorId.slice(0, 8),
+  );
 });
 
 export const walletLiability = asyncHandler(async (req: Request, res: Response) => {
@@ -120,7 +137,7 @@ export const walletLiability = asyncHandler(async (req: Request, res: Response) 
     page: exportAll ? 1 : (query.page ?? 1),
     limit: exportAll ? 100_000 : (query.limit ?? 50),
   });
-  sendExport(res, query, 'wallet-liability', data, data.rows as unknown as Record<string, unknown>[]);
+  sendExport(res, query, 'admin-wallet-liability', data, data.rows as unknown as Record<string, unknown>[]);
 });
 
 export const cashbackWriteOff = asyncHandler(async (req: Request, res: Response) => {
@@ -131,7 +148,14 @@ export const cashbackWriteOff = asyncHandler(async (req: Request, res: Response)
     page: exportAll ? 1 : (query.page ?? 1),
     limit: exportAll ? 100_000 : (query.limit ?? 50),
   });
-  sendExport(res, query, 'cashback-write-off', data, data.rows as unknown as Record<string, unknown>[]);
+  sendExport(
+    res,
+    query,
+    'admin-cashback-write-offs',
+    data,
+    data.rows as unknown as Record<string, unknown>[],
+    query.bornBy?.toLowerCase() ?? null,
+  );
 });
 
 export const catalog = asyncHandler(async (req: Request, res: Response) => {
@@ -195,7 +219,12 @@ export const downloadExport = asyncHandler(async (req: Request, res: Response) =
     res.redirect(result.url);
     return;
   }
-  const name = `${result.log.reportType}_${result.log.id}.xlsx`;
+  const filters = result.log.filtersUsed as Record<string, unknown>;
+  const name = buildReportFilename(
+    result.log.reportType,
+    new Date(String(filters.from)),
+    new Date(String(filters.to)),
+  );
   res.setHeader(
     'Content-Type',
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -306,10 +335,8 @@ export const customerOrderInvoice = asyncHandler(async (req: Request, res: Respo
 
   const source = toTaxInvoiceSource(invoiceNo, order, hsnByCategory);
   const pdf = await renderTaxInvoicePdf(source);
+  const filename = buildTaxInvoicePdfFilename(invoiceNo);
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader(
-    'Content-Disposition',
-    `attachment; filename="invoice_${order.id.slice(0, 8)}.pdf"`,
-  );
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.send(pdf);
 });

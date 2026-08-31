@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import { buildReportEngineExportFilename } from '@core/export/exportFilenames';
 import { resolveReportColumnLabel } from '../reports.constants';
 import type { ReportColumn } from './types';
 
@@ -16,10 +17,7 @@ function formatCell(value: unknown, format?: string): string | number | Date {
 }
 
 export function buildReportFilename(reportType: string, from: Date, to: Date): string {
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const fromS = from.toISOString().slice(0, 10);
-  const toS = to.toISOString().slice(0, 10);
-  return `${reportType}_${fromS}_${toS}_${stamp}.xlsx`;
+  return buildReportEngineExportFilename(reportType, from, to);
 }
 
 export async function buildExcelBuffer(
