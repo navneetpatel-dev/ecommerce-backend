@@ -27,6 +27,8 @@ import { vendorsService } from '@modules/vendors/vendors.service';
 import { shippingService } from '@modules/shipping/shipping.service';
 import type { Transaction } from 'sequelize';
 import { resolvePdpPolicy } from './pdpPolicy';
+import { productDiscountPercent, taxInclusivePrice } from '@modules/pricing/displayMoney';
+import { roundMoney } from '@modules/pricing/money';
 import type {
   CreateProductRequest,
   UpdateProductRequest,
@@ -61,15 +63,19 @@ function mapProductResponse(product: Product, reviewCount = 0) {
     status: category.status,
   }));
 
+  const basePrice = roundMoney(plain.basePrice ?? 0);
+  const compareAtPrice =
+    plain.compareAtPrice != null && plain.compareAtPrice !== ''
+      ? roundMoney(plain.compareAtPrice)
+      : null;
+
   return {
     ...plain,
     variants,
     secondaryCategories,
-    basePrice: Number(plain.basePrice ?? 0),
-    compareAtPrice:
-      plain.compareAtPrice != null && plain.compareAtPrice !== ''
-        ? Number(plain.compareAtPrice)
-        : null,
+    basePrice,
+    compareAtPrice,
+    discountPercent: productDiscountPercent(basePrice, compareAtPrice),
     specs: plain.specs && typeof plain.specs === 'object' ? plain.specs : {},
     highlights: Array.isArray(plain.highlights) ? plain.highlights : [],
     brand: plain.brand ?? null,
@@ -116,6 +122,11 @@ async function mapDetailResponse(product: Product, reviewCount = 0) {
     displayWarrantyMonths: policy.warrantyMonths,
     displayWarrantyType: policy.warrantyType,
     vendorPerformanceScore: policy.vendorPerformanceScore,
+    taxInclusivePrice: taxInclusivePrice(
+      mapped.basePrice,
+      policy.gstPercentage,
+      policy.taxInclusive,
+    ),
   };
 }
 

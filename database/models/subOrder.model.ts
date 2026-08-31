@@ -8,6 +8,10 @@ export class SubOrder extends Model<InferAttributes<SubOrder>, InferCreationAttr
   declare subtotal: number;
   declare shippingCost: CreationOptional<number>;
   declare shippingDiscountAmount: CreationOptional<number>;
+  /** Net shipping charged to the customer. */
+  declare shippingCharged: CreationOptional<number>;
+  /** Customer total for this vendor slice. */
+  declare customerTotal: CreationOptional<number>;
   declare taxAmount: CreationOptional<number>;
   declare taxableAmount: CreationOptional<number>;
   declare taxBreakdown: CreationOptional<Record<string, unknown> | null>;
@@ -55,6 +59,8 @@ export const initSubOrderModel = (sequelize: Sequelize) => {
       subtotal: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
       shippingCost: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       shippingDiscountAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      shippingCharged: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+      customerTotal: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       taxAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       taxableAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       taxBreakdown: { type: DataTypes.JSONB, allowNull: true },

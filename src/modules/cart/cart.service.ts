@@ -4,6 +4,8 @@ import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { type UnavailableReason } from '@core/constants/statuses';
 import { resolveItemAvailability } from '@core/catalog/customerVisibility';
+import { lineSubtotal } from '@modules/pricing/displayMoney';
+import { roundMoney } from '@modules/pricing/money';
 import { cartRepository } from './cart.repository';
 import { MAX_CART_LINE_QUANTITY } from './cart.constants';
 import { Cart } from '@database/models/cart.model';
@@ -18,6 +20,7 @@ export type CartViewItem = {
   id: string;
   variantId: string;
   quantity: number;
+  lineSubtotal: number;
   isAvailable: boolean;
   unavailableReason: UnavailableReason | null;
   product: {
@@ -67,6 +70,7 @@ function mapCartItem(item: CartItem & { variant?: ProductVariant & { product?: a
     images.find((img: any) => img.isPrimary)?.url || images[0]?.url || '';
   const vendor = product?.vendor ?? product?.Vendor ?? null;
   const quantity = Number(item.quantity);
+  const price = roundMoney(variant?.price ?? product?.basePrice ?? 0);
   const stock = Number(variant?.stock ?? 0);
   const { isAvailable, unavailableReason } = resolveItemAvailability({
     product,
@@ -79,6 +83,7 @@ function mapCartItem(item: CartItem & { variant?: ProductVariant & { product?: a
     id: String(item.id),
     variantId: String(item.variantId),
     quantity,
+    lineSubtotal: lineSubtotal(price, quantity),
     isAvailable,
     unavailableReason,
     product: {
@@ -86,7 +91,7 @@ function mapCartItem(item: CartItem & { variant?: ProductVariant & { product?: a
       name: product?.name ?? 'Unknown product',
       slug: product?.slug ?? '',
       imageUrl: primaryImage,
-      price: Number(variant?.price ?? product?.basePrice ?? 0),
+      price,
       vendor: vendor
         ? {
             id: String(vendor.id),
@@ -150,9 +155,8 @@ export class CartService {
 
     const mappedItems = items.map(mapCartItem);
     const available = mappedItems.filter((item) => item.isAvailable);
-    const merchandiseSubtotal = available.reduce(
-      (sum, item) => sum + item.product.price * item.quantity,
-      0,
+    const merchandiseSubtotal = roundMoney(
+      available.reduce((sum, item) => sum + item.lineSubtotal, 0),
     );
 
     let appliedCoupon: CartView['appliedCoupon'] = null;

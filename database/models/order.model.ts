@@ -19,6 +19,14 @@ export class Order extends Model<InferAttributes<Order>, InferCreationAttributes
   declare originalTotalAmount: CreationOptional<number>;
   /** Razorpay-charged portion at checkout (originalTotal − wallet). */
   declare razorpayAmountPaid: CreationOptional<number>;
+  /** Frozen merchandise subtotal across all vendors. */
+  declare merchandiseSubtotal: CreationOptional<number>;
+  /** Frozen tax total across all vendors. */
+  declare taxTotal: CreationOptional<number>;
+  /** Frozen net shipping total across all vendors. */
+  declare shippingTotal: CreationOptional<number>;
+  /** Amount payable after wallet (Razorpay or COD remainder). */
+  declare amountDue: CreationOptional<number>;
   /** Sequential GST tax invoice number (allocated on first PDF download). */
   declare taxInvoiceNumber: CreationOptional<string | null>;
   /** Vendor that bears VENDOR cashback (coupon.vendorId). */
@@ -63,6 +71,10 @@ export const initOrderModel = (sequelize: Sequelize) => {
       cashbackDiscountBearer: { type: DataTypes.ENUM('PLATFORM', 'VENDOR'), allowNull: true },
       originalTotalAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       razorpayAmountPaid: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      merchandiseSubtotal: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+      taxTotal: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+      shippingTotal: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+      amountDue: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       taxInvoiceNumber: { type: DataTypes.STRING(32), allowNull: true, unique: true },
       cashbackVendorId: { type: DataTypes.UUID, allowNull: true },
       shippingAddressId: { type: DataTypes.UUID, allowNull: false },

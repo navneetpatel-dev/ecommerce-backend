@@ -8,6 +8,14 @@ import { OrderItem } from '@database/models/orderItem.model';
 import { Vendor } from '@database/models/vendor.model';
 import { Shipment } from '@database/models/shipment.model';
 import { coerceRupees, roundMoney } from '@modules/pricing/money';
+import {
+  combinedDiscount,
+  lineSubtotal,
+  lineTotal,
+  orderAmountDue,
+  shippingCharged,
+  subOrderCustomerTotal,
+} from '@modules/pricing/displayMoney';
 import type { CreateOrderRequest, GetOrdersQuery } from './orders.dto';
 
 const orderDetailInclude = [
@@ -23,31 +31,60 @@ const orderDetailInclude = [
 ];
 
 function mapOrderItem(item: any) {
+  const unitPrice = roundMoney(item.unitPrice);
+  const quantity = Math.trunc(coerceRupees(item.quantity)) || 0;
+  const taxableAmount = roundMoney(item.taxableAmount);
+  const taxAmount = roundMoney(item.taxAmount);
   return {
     ...item,
-    quantity: Math.trunc(coerceRupees(item.quantity)) || 0,
-    unitPrice: roundMoney(item.unitPrice),
+    quantity,
+    unitPrice,
     discountAmount: roundMoney(item.discountAmount),
-    taxableAmount: roundMoney(item.taxableAmount),
-    taxAmount: roundMoney(item.taxAmount),
+    taxableAmount,
+    taxAmount,
     commissionAmount: roundMoney(item.commissionAmount),
     tcsAmount: roundMoney(item.tcsAmount),
     netPayoutAmount: roundMoney(item.netPayoutAmount),
+    lineSubtotal:
+      item.lineSubtotal != null && item.lineSubtotal !== ''
+        ? roundMoney(item.lineSubtotal)
+        : lineSubtotal(unitPrice, quantity),
+    lineTotal:
+      item.lineTotal != null && item.lineTotal !== ''
+        ? roundMoney(item.lineTotal)
+        : lineTotal(taxableAmount, taxAmount),
   };
 }
 
 function mapSubOrder(sub: any) {
+  const shippingCost = roundMoney(sub.shippingCost);
+  const shippingDiscountAmount = roundMoney(sub.shippingDiscountAmount);
+  const discountAmount = roundMoney(sub.discountAmount);
+  const taxableAmount = roundMoney(sub.taxableAmount);
+  const taxAmount = roundMoney(sub.taxAmount);
   return {
     ...sub,
     subtotal: roundMoney(sub.subtotal),
-    shippingCost: roundMoney(sub.shippingCost),
-    shippingDiscountAmount: roundMoney(sub.shippingDiscountAmount),
-    taxAmount: roundMoney(sub.taxAmount),
-    taxableAmount: roundMoney(sub.taxableAmount),
-    discountAmount: roundMoney(sub.discountAmount),
+    shippingCost,
+    shippingDiscountAmount,
+    shippingCharged:
+      sub.shippingCharged != null && sub.shippingCharged !== ''
+        ? roundMoney(sub.shippingCharged)
+        : shippingCharged(shippingCost, shippingDiscountAmount),
+    taxAmount,
+    taxableAmount,
+    discountAmount,
+    discountTotal: combinedDiscount(discountAmount, shippingDiscountAmount),
     commissionAmount: roundMoney(sub.commissionAmount),
     tcsAmount: roundMoney(sub.tcsAmount),
     netPayoutAmount: roundMoney(sub.netPayoutAmount),
+    customerTotal: subOrderCustomerTotal({
+      customerTotal: sub.customerTotal,
+      taxableAmount,
+      taxAmount,
+      shippingCost,
+      shippingDiscountAmount,
+    }),
     items: (sub.items ?? []).map(mapOrderItem),
   };
 }
@@ -60,6 +97,24 @@ function mapOrderResponse(order: any) {
   const razorpayAmountPaid = roundMoney(
     plain.razorpayAmountPaid ?? Math.max(0, originalTotalAmount - walletAmountUsed),
   );
+  const subOrders = (plain.subOrders ?? []).map(mapSubOrder);
+  const merchandiseSubtotal =
+    plain.merchandiseSubtotal != null && plain.merchandiseSubtotal !== ''
+      ? roundMoney(plain.merchandiseSubtotal)
+      : roundMoney(subOrders.reduce((sum: number, sub: { subtotal: number }) => sum + sub.subtotal, 0));
+  const taxTotal =
+    plain.taxTotal != null && plain.taxTotal !== ''
+      ? roundMoney(plain.taxTotal)
+      : roundMoney(subOrders.reduce((sum: number, sub: { taxAmount: number }) => sum + sub.taxAmount, 0));
+  const shippingTotal =
+    plain.shippingTotal != null && plain.shippingTotal !== ''
+      ? roundMoney(plain.shippingTotal)
+      : roundMoney(
+          subOrders.reduce(
+            (sum: number, sub: { shippingCharged: number }) => sum + sub.shippingCharged,
+            0,
+          ),
+        );
   return {
     ...plain,
     totalAmount,
@@ -67,12 +122,22 @@ function mapOrderResponse(order: any) {
     walletAmountUsed,
     originalTotalAmount,
     razorpayAmountPaid,
+    amountDue: orderAmountDue({
+      amountDue: plain.amountDue,
+      paymentMethod: plain.paymentMethod,
+      totalAmount,
+      walletAmountUsed,
+      razorpayAmountPaid,
+    }),
+    merchandiseSubtotal,
+    taxTotal,
+    shippingTotal,
     pendingCashbackAmount: roundMoney(plain.pendingCashbackAmount),
     cashbackCreditedAt: plain.cashbackCreditedAt ?? null,
     cashbackDiscountBearer: plain.cashbackDiscountBearer ?? null,
     paymentMethod: plain.paymentMethod ?? null,
     customerName: plain.user?.name ?? null,
-    subOrders: (plain.subOrders ?? []).map(mapSubOrder),
+    subOrders,
   };
 }
 

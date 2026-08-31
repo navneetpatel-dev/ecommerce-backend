@@ -27,7 +27,7 @@ import {
   type CartLineForCoupon,
 } from '@modules/coupons/couponEngine';
 import { pricingService } from '@modules/pricing/pricing.service';
-import { fromPaise } from '@modules/pricing/money';
+import { fromPaise, roundMoney } from '@modules/pricing/money';
 import { resolveItemAvailability } from '@core/catalog/customerVisibility';
 import type {
   CancelCheckoutRequest,
@@ -214,7 +214,15 @@ export class CheckoutService {
     vendorBreakdowns: Array<{
       vendorId: string;
       vendor: { id: string; businessName: string; slug: string; logoUrl: string | null };
-      items: Array<{ id: string; variantId: string; productName: string; quantity: number; unitPrice: number }>;
+      items: Array<{
+        id: string;
+        variantId: string;
+        productName: string;
+        quantity: number;
+        unitPrice: number;
+        lineSubtotal: number;
+        lineTotal: number;
+      }>;
       subtotal: number;
       shippingCost: number;
       tax: { cgst: number; sgst: number; igst: number; total: number };
@@ -229,6 +237,7 @@ export class CheckoutService {
     walletBalance: number;
     walletAmountToUse: number;
     amountDue: number;
+    maxWalletApplicable: number;
     appliedCoupon: { code: string; discount: number; cashbackAmount?: number } | null;
     appliedCoupons: Array<{ code: string; discount: number; cashbackAmount?: number }>;
     codAvailable: boolean;
@@ -381,13 +390,20 @@ export class CheckoutService {
               logoUrl: vendor.logoUrl ?? null,
             }
           : { id: row.vendorId, businessName: 'Marketplace', slug: 'platform', logoUrl: null },
-        items: row.items.map((item) => ({
-          id: item.id,
-          variantId: item.variantId,
-          productName: item.variant.product.name,
-          quantity: item.quantity,
-          unitPrice: Number(item.variant.price),
-        })),
+        items: row.items.map((item) => {
+          const line = r.lines.find((entry) => entry.key === item.id);
+          return {
+            id: item.id,
+            variantId: item.variantId,
+            productName: item.variant.product.name,
+            quantity: item.quantity,
+            unitPrice: Number(item.variant.price),
+            lineSubtotal: line?.lineSubtotal ?? 0,
+            lineTotal: line
+              ? roundMoney(line.taxableAmount + line.tax.total)
+              : 0,
+          };
+        }),
         subtotal: r.subtotal,
         shippingCost: r.shippingCharged,
         tax: {
@@ -412,6 +428,7 @@ export class CheckoutService {
       grandTotal,
     );
     const amountDue = Math.round((grandTotal - walletAmountToUse) * 100) / 100;
+    const maxWalletApplicable = Math.min(walletBalance, grandTotal);
     const codAvailable = await resolveCodForCatalogItems(
       catalogItemsForCod(quoteCart.items),
       grandTotal,
@@ -424,6 +441,7 @@ export class CheckoutService {
       walletBalance,
       walletAmountToUse,
       amountDue,
+      maxWalletApplicable,
       appliedCoupon: applied,
       appliedCoupons,
       codAvailable,
@@ -572,6 +590,18 @@ export class CheckoutService {
         customerGrandTotalPaise += priced.paise.customerTotalPaise;
       }
 
+      let merchandiseSubtotal = 0;
+      let orderTaxTotal = 0;
+      let orderShippingTotal = 0;
+      for (const priced of Object.values(pricedByVendor)) {
+        merchandiseSubtotal += priced.rupees.subtotal;
+        orderTaxTotal += priced.rupees.tax.total;
+        orderShippingTotal += priced.rupees.shippingCharged;
+      }
+      merchandiseSubtotal = roundMoney(merchandiseSubtotal);
+      orderTaxTotal = roundMoney(orderTaxTotal);
+      orderShippingTotal = roundMoney(orderShippingTotal);
+
       const orderTotalRupees = fromPaise(customerGrandTotalPaise);
       if (data.paymentMethod === PAYMENT_METHOD.COD) {
         const codAvailable = await resolveCodForCatalogItems(
@@ -593,6 +623,10 @@ export class CheckoutService {
         walletAmountUsed = Math.round(walletAmountUsed * 100) / 100;
       }
       const razorpayRemainder = Math.round((orderTotalRupees - walletAmountUsed) * 100) / 100;
+      const amountDue =
+        data.paymentMethod === PAYMENT_METHOD.COD
+          ? roundMoney(Math.max(0, orderTotalRupees - walletAmountUsed))
+          : roundMoney(Math.max(0, razorpayRemainder));
 
       const orderRow = await Order.create({
         userId,
@@ -601,6 +635,10 @@ export class CheckoutService {
         appliedCouponIds: coupons.map((c) => c.id),
         totalAmount: orderTotalRupees,
         discountTotal,
+        merchandiseSubtotal,
+        taxTotal: orderTaxTotal,
+        shippingTotal: orderShippingTotal,
+        amountDue,
         status: ORDER_STATUS.PENDING,
         paymentStatus: PAYMENT_STATUS.PENDING,
         paymentMethod: data.paymentMethod,
@@ -669,6 +707,8 @@ export class CheckoutService {
           subtotal: r.subtotal,
           shippingCost: r.shippingCost,
           shippingDiscountAmount: r.shippingDiscount,
+          shippingCharged: r.shippingCharged,
+          customerTotal: r.customerTotal,
           taxAmount: r.tax.total,
           taxableAmount: r.taxableAmount,
           taxBreakdown: r.tax,
@@ -705,6 +745,8 @@ export class CheckoutService {
             productName: item.variant.product.name,
             quantity: item.quantity,
             unitPrice: Number(item.variant.price),
+            lineSubtotal: lineRupees.lineSubtotal,
+            lineTotal: roundMoney(lineRupees.taxableAmount + lineRupees.tax.total),
             discountAmount: lineRupees.discountAmount,
             taxableAmount: lineRupees.taxableAmount,
             taxAmount: lineRupees.tax.total,

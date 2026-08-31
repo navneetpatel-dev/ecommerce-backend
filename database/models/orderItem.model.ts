@@ -7,6 +7,10 @@ export class OrderItem extends Model<InferAttributes<OrderItem>, InferCreationAt
   declare productName: string;
   declare quantity: number;
   declare unitPrice: number;
+  /** Pre-discount extended price frozen at checkout. */
+  declare lineSubtotal: CreationOptional<number>;
+  /** Customer line total after discount, including tax. */
+  declare lineTotal: CreationOptional<number>;
   declare discountAmount: CreationOptional<number>;
   declare taxableAmount: CreationOptional<number>;
   declare taxAmount: CreationOptional<number>;
@@ -43,6 +47,8 @@ export const initOrderItemModel = (sequelize: Sequelize) => {
       productName: { type: DataTypes.STRING, allowNull: false },
       quantity: { type: DataTypes.INTEGER, allowNull: false },
       unitPrice: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
+      lineSubtotal: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+      lineTotal: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       discountAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       taxableAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       taxAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
