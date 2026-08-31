@@ -403,6 +403,176 @@ async function vendorPayoutStatementExport(
   return { rows: page.rows, nextCursor: page.nextCursor };
 }
 
+const COMMISSION_LEDGER_KEYSET: KeysetOrderCol[] = [
+  { column: 'createdAt', direction: 'DESC' },
+  { column: 'ledgerId', direction: 'DESC' },
+];
+
+function mapCommissionLedgerExportRow(row: Record<string, unknown>) {
+  return {
+    subOrderId: String(row.subOrderId ?? ''),
+    status: String(row.status ?? ''),
+    saleAmount: fromPaise(Number(row.saleAmountPaise ?? 0)),
+    commissionRate: Number(row.commissionRate ?? 0),
+    commissionAmount: fromPaise(Number(row.commissionAmountPaise ?? 0)),
+    tcsAmount: fromPaise(Number(row.tcsAmountPaise ?? 0)),
+    netPayout: fromPaise(Number(row.netPayoutAmountPaise ?? 0)),
+    createdAt: row.createdAt as Date,
+  };
+}
+
+function commissionLedgerSelectSql(): string {
+  return `
+    SELECT
+      cl.id AS "ledgerId",
+      cl."subOrderId" AS "subOrderId",
+      cl.status AS status,
+      cl."saleAmountPaise" AS "saleAmountPaise",
+      cl."commissionRate" AS "commissionRate",
+      cl."commissionAmountPaise" AS "commissionAmountPaise",
+      cl."tcsAmountPaise" AS "tcsAmountPaise",
+      cl."netPayoutAmountPaise" AS "netPayoutAmountPaise",
+      cl."createdAt" AS "createdAt"
+    FROM commission_ledgers cl
+    WHERE cl."deletedAt" IS NULL
+      AND cl."createdAt" BETWEEN :from AND :to
+      AND cl.status <> :clawedBack
+      AND (:vendorId::uuid IS NULL OR cl."vendorId" = :vendorId)
+  `;
+}
+
+async function vendorCommissionDeductedExport(
+  filters: ReportFilters,
+  cursor: { values: unknown[] } | null,
+  limit: number,
+) {
+  assertReportRange(filters);
+  const vendorId = filters.scopedVendorId ?? filters.vendorId ?? null;
+  const page = await keysetSqlQuery({
+    selectSql: commissionLedgerSelectSql(),
+    order: COMMISSION_LEDGER_KEYSET,
+    replacements: {
+      from: filters.from,
+      to: filters.to,
+      vendorId,
+      clawedBack: COMMISSION_STATUS.CLAWED_BACK,
+    },
+    limit,
+    cursor,
+    mapRow: mapCommissionLedgerExportRow,
+  });
+  return { rows: page.rows, nextCursor: page.nextCursor };
+}
+
+const SUB_ORDER_SLA_KEYSET: KeysetOrderCol[] = [
+  { column: 'createdAt', direction: 'DESC' },
+  { column: 'subOrderId', direction: 'DESC' },
+];
+
+async function vendorFulfillmentSlaExport(
+  filters: ReportFilters,
+  cursor: { values: unknown[] } | null,
+  limit: number,
+) {
+  assertReportRange(filters);
+  const vendorId = filters.scopedVendorId ?? filters.vendorId ?? null;
+  const page = await keysetSqlQuery({
+    selectSql: `
+      SELECT
+        s.id AS "subOrderId",
+        s."orderId" AS "orderId",
+        s.status AS status,
+        s."createdAt" AS "createdAt",
+        s."updatedAt" AS "updatedAt"
+      FROM sub_orders s
+      WHERE s."deletedAt" IS NULL
+        AND s."createdAt" BETWEEN :from AND :to
+        AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
+        AND (:status::text IS NULL OR s.status::text = :status)
+    `,
+    order: SUB_ORDER_SLA_KEYSET,
+    replacements: {
+      from: filters.from,
+      to: filters.to,
+      vendorId,
+      status: filters.status ?? null,
+    },
+    limit,
+    cursor,
+    mapRow: (row) => {
+      const created = row.createdAt as Date;
+      const updated = row.updatedAt as Date;
+      const delivered =
+        row.status === ORDER_STATUS.DELIVERED
+          ? hoursBetween(created, updated)
+          : null;
+      return {
+        subOrderId: String(row.subOrderId ?? ''),
+        orderId: String(row.orderId ?? ''),
+        status: String(row.status ?? ''),
+        createdAt: created,
+        updatedAt: updated,
+        hoursToDeliver: delivered,
+      };
+    },
+  });
+  return { rows: page.rows, nextCursor: page.nextCursor };
+}
+
+const RETURN_REFUND_KEYSET: KeysetOrderCol[] = [
+  { column: 'createdAt', direction: 'DESC' },
+  { column: 'returnId', direction: 'DESC' },
+];
+
+async function vendorReturnRefundExport(
+  filters: ReportFilters,
+  cursor: { values: unknown[] } | null,
+  limit: number,
+) {
+  assertReportRange(filters);
+  const vendorId = filters.scopedVendorId ?? filters.vendorId ?? null;
+  const page = await keysetSqlQuery({
+    selectSql: `
+      SELECT
+        r.id AS "returnId",
+        so."orderId" AS "orderId",
+        r."subOrderId" AS "subOrderId",
+        r."orderItemId" AS "orderItemId",
+        r."reasonCode" AS "reasonCode",
+        r.status AS status,
+        r."refundAmount" AS "refundAmount",
+        r."createdAt" AS "createdAt",
+        r."resolvedAt" AS "resolvedAt"
+      FROM return_requests r
+      INNER JOIN sub_orders so ON so.id = r."subOrderId" AND so."deletedAt" IS NULL
+      WHERE r."deletedAt" IS NULL
+        AND r."createdAt" BETWEEN :from AND :to
+        AND (:vendorId::uuid IS NULL OR so."vendorId" = :vendorId)
+    `,
+    order: RETURN_REFUND_KEYSET,
+    replacements: { from: filters.from, to: filters.to, vendorId },
+    limit,
+    cursor,
+    mapRow: (row) => {
+      const created = row.createdAt as Date;
+      const resolved = row.resolvedAt as Date | null;
+      return {
+        id: String(row.returnId ?? ''),
+        orderId: String(row.orderId ?? ''),
+        subOrderId: String(row.subOrderId ?? ''),
+        orderItemId: String(row.orderItemId ?? ''),
+        reasonCode: String(row.reasonCode ?? ''),
+        status: String(row.status ?? ''),
+        refundAmount: Number(row.refundAmount ?? 0),
+        turnaroundHours: resolved ? hoursBetween(created, resolved) : null,
+        createdAt: created,
+        resolvedAt: resolved,
+      };
+    },
+  });
+  return { rows: page.rows, nextCursor: page.nextCursor };
+}
+
 async function vendorCommissionDeducted(filters: ReportFilters) {
   assertReportRange(filters);
 
@@ -772,6 +942,7 @@ export const vendorOwnerReports: ReportDefinition[] = [
       { key: 'createdAt', labelKey: 'createdAt', format: 'date' },
     ],
     query: vendorCommissionDeducted,
+    exportQuery: vendorCommissionDeductedExport,
   },
   {
     type: 'vendor-discount-cost',
@@ -806,6 +977,7 @@ export const vendorOwnerReports: ReportDefinition[] = [
       { key: 'resolvedAt', labelKey: 'resolvedAt', format: 'date' },
     ],
     query: vendorReturnRefund,
+    exportQuery: vendorReturnRefundExport,
   },
   {
     type: 'vendor-inventory',
@@ -841,5 +1013,6 @@ export const vendorOwnerReports: ReportDefinition[] = [
       { key: 'hoursToDeliver', labelKey: 'hoursToDeliver', format: 'number' },
     ],
     query: vendorFulfillmentSla,
+    exportQuery: vendorFulfillmentSlaExport,
   },
 ];

@@ -1,8 +1,7 @@
-import { Op } from 'sequelize';
+import { Op, QueryTypes } from 'sequelize';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { sequelize } from '@database/models';
 import { WalletWriteOff } from '@database/models/walletWriteOff.model';
-import { WalletLedger } from '@database/models/walletLedger.model';
 import { adminService } from '@modules/admin/admin.service';
 import { paginationOffset } from '@core/http/pagination';
 import { DEFAULT_PAGE_LIMIT } from '@core/constants/http';
@@ -47,6 +46,40 @@ function walletLiabilitySelectSql(): string {
     SELECT "userId", balance, "asOf"
     FROM latest WHERE balance > 0
   `;
+}
+
+export async function walletLiabilityTotals(filters: {
+  from: Date;
+  to: Date;
+}): Promise<{ customerCount: number; totalLiability: number }> {
+  const [[totals]] = (await sequelize.query(
+    `WITH active_users AS (
+       SELECT DISTINCT "userId"
+       FROM wallet_ledgers
+       WHERE "deletedAt" IS NULL
+         AND "createdAt" BETWEEN :from AND :to
+     ),
+     latest AS (
+       SELECT DISTINCT ON (wl."userId")
+         wl."userId",
+         wl."balanceAfter"
+       FROM wallet_ledgers wl
+       INNER JOIN active_users au ON au."userId" = wl."userId"
+       WHERE wl."deletedAt" IS NULL
+         AND wl."createdAt" <= :to
+       ORDER BY wl."userId", wl."createdAt" DESC
+     )
+     SELECT
+       COUNT(*)::int AS "customerCount",
+       COALESCE(SUM("balanceAfter"), 0)::float AS "totalLiability"
+     FROM latest
+     WHERE "balanceAfter" > 0`,
+    { replacements: { from: filters.from, to: filters.to } },
+  )) as [Array<{ customerCount: number; totalLiability: number }>, unknown];
+  return {
+    customerCount: Number(totals?.customerCount ?? 0),
+    totalLiability: Number(totals?.totalLiability ?? 0),
+  };
 }
 
 async function walletLiabilityExport(
@@ -258,9 +291,25 @@ async function cashbackWriteOffExport(
 async function platformAnalyticsQuery(filters: ReportFilters) {
   assertReportRange(filters);
   const data = await adminService.getPlatformAnalytics();
+  const orderVolumeRows = await sequelize.query<{ date: string; count: string; revenue: string }>(
+    `SELECT to_char(date_trunc('day', "createdAt"), 'YYYY-MM-DD') AS date,
+            COUNT(*)::int AS count,
+            COALESCE(SUM("totalAmount"), 0)::numeric AS revenue
+     FROM orders
+     WHERE "createdAt" BETWEEN :from AND :to
+       AND status <> 'CANCELLED'
+       AND "deletedAt" IS NULL
+     GROUP BY date_trunc('day', "createdAt")
+     ORDER BY date_trunc('day', "createdAt") ASC`,
+    {
+      replacements: { from: filters.from, to: filters.to },
+      type: QueryTypes.SELECT,
+    },
+  );
+
   const rows: Record<string, unknown>[] = [
-    { metric: 'GMV', value: data.gmv, extra: null },
-    { metric: 'Paid GMV', value: data.paidGmv, extra: null },
+    { metric: 'GMV (all time)', value: data.gmv, extra: null },
+    { metric: 'Paid GMV (all time)', value: data.paidGmv, extra: null },
     { metric: 'AOV', value: data.aov, extra: null },
     { metric: 'Total orders', value: data.totalOrders, extra: null },
     { metric: 'Total customers', value: data.totalCustomers, extra: null },
@@ -272,41 +321,13 @@ async function platformAnalyticsQuery(filters: ReportFilters) {
       value: row.businessName ?? '',
       extra: row.revenue,
     })),
-    ...data.orderVolume.map((row) => ({
+    ...orderVolumeRows.map((row) => ({
       metric: `Volume ${row.date}`,
-      value: row.count,
-      extra: row.revenue,
+      value: Number(row.count),
+      extra: Number(row.revenue),
     })),
   ];
   return { rows, total: rows.length };
-}
-
-async function customerWalletStatementQuery(filters: ReportFilters) {
-  if (!filters.userId) return emptyPage(filters);
-  assertReportRange(filters);
-  const { rows, total } = await pagedFindAndCount(
-    WalletLedger,
-    {
-      where: {
-        userId: filters.userId,
-        createdAt: { [Op.between]: [filters.from, filters.to] },
-      },
-      order: [['createdAt', 'DESC']],
-    },
-    filters,
-  );
-  return {
-    rows: rows.map((row) => ({
-      createdAt: row.createdAt,
-      type: row.type,
-      amount: Number(row.amount),
-      balanceAfter: Number(row.balanceAfter),
-      referenceType: row.referenceType,
-      referenceId: row.referenceId,
-      description: row.description,
-    })),
-    total,
-  };
 }
 
 async function adminDashboardSummaryQuery(filters: ReportFilters) {

@@ -40,6 +40,23 @@ export async function runReportExportCleanup(): Promise<{
   );
   failedPending += stalePending;
 
+  const processingStaleCutoff = new Date(
+    Date.now() - reportExportConfig.staleProcessingMin * 60 * 1000,
+  );
+  const [staleProcessing] = await ReportExportLog.update(
+    {
+      status: 'FAILED',
+      errorMessage: 'Export processing timed out',
+    },
+    {
+      where: {
+        status: 'PROCESSING',
+        updatedAt: { [Op.lt]: processingStaleCutoff },
+      },
+    },
+  );
+  failedPending += staleProcessing;
+
   await ReportExportLog.destroy({
     where: {
       status: 'FAILED',

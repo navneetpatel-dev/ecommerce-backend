@@ -12,6 +12,7 @@ export const reportExportConfig = {
   staleProcessingMin: env.REPORT_EXPORT_STALE_PROCESSING_MIN,
   pendingStaleMin: env.REPORT_EXPORT_PENDING_STALE_MIN,
   failedRetentionDays: env.REPORT_EXPORT_FAILED_RETENTION_DAYS,
+  maxRows: env.REPORT_EXPORT_MAX_ROWS,
   statusCacheTtlSec: 5,
   presignedExpiresSec: 15 * 60,
   userExportPriority: 1,

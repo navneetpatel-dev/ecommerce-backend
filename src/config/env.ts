@@ -102,6 +102,8 @@ const envSchema = z.object({
   REPORT_EXPORT_STALE_PROCESSING_MIN: z.coerce.number().int().positive().default(30),
   REPORT_EXPORT_PENDING_STALE_MIN: z.coerce.number().int().positive().default(15),
   REPORT_EXPORT_FAILED_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
+  /** Hard cap on rows streamed per export job (0 = unlimited). */
+  REPORT_EXPORT_MAX_ROWS: z.coerce.number().int().nonnegative().default(500_000),
   REPORT_EXPORT_INLINE_DEV: z
     .union([z.boolean(), z.string()])
     .optional()

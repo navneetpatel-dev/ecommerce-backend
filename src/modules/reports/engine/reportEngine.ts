@@ -24,6 +24,10 @@ import { logger } from '@core/logger';
 import { redisClient } from '@config/redis';
 import { env } from '@config/env';
 import { notificationsService } from '@modules/notifications/notifications.service';
+import { User } from '@database/models/user.model';
+import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
+import { roleNameOf } from '@utils/userRole';
+import { sanitizeExportErrorMessage } from './export/exportErrorMessage';
 import { getReportDefinition, listReportDefinitionsForPermissions } from './reportRegistry';
 import { buildReportFilename } from './excelExporter';
 import {
@@ -48,6 +52,7 @@ export const REPORT_EXPORT_JOB = 'report-export';
 
 const LOCAL_EXPORT_DIR = path.join(process.cwd(), 'storage', 'report-exports');
 const STATUS_CACHE_PREFIX = 'report-export:status:';
+const PRESIGNED_CACHE_PREFIX = 'report-export:presigned:';
 
 export type ReportActor = {
   id: string;
@@ -74,7 +79,10 @@ export type AsyncExportResult = {
   rowCount: number;
   /** False until worker finishes streaming (row count unknown at enqueue). */
   rowCountKnown: boolean;
+  /** True when a READY artifact was reused within cache TTL. */
   cached?: boolean;
+  /** True when an in-flight export with the same key was reused. */
+  deduped?: boolean;
 };
 
 function actorCanAccess(
@@ -163,6 +171,26 @@ async function invalidateExportStatusCache(exportId: string): Promise<void> {
   try {
     if (redisClient.status === 'wait' || redisClient.status === 'end') await redisClient.connect();
     await redisClient.del(`${STATUS_CACHE_PREFIX}${exportId}`);
+    await redisClient.del(`${PRESIGNED_CACHE_PREFIX}${exportId}`);
+  } catch {
+    /* optional */
+  }
+}
+
+async function readCachedPresignedUrl(exportId: string): Promise<string | null> {
+  try {
+    if (redisClient.status === 'wait' || redisClient.status === 'end') await redisClient.connect();
+    return redisClient.get(`${PRESIGNED_CACHE_PREFIX}${exportId}`);
+  } catch {
+    return null;
+  }
+}
+
+async function cachePresignedUrl(exportId: string, url: string, ttlSec: number): Promise<void> {
+  try {
+    if (redisClient.status === 'wait' || redisClient.status === 'end') await redisClient.connect();
+    const cacheTtl = Math.max(60, ttlSec - 60);
+    await redisClient.setex(`${PRESIGNED_CACHE_PREFIX}${exportId}`, cacheTtl, url);
   } catch {
     /* optional */
   }
@@ -209,7 +237,61 @@ async function findCachedExport(exportKey: string): Promise<ReportExportLog | nu
   return null;
 }
 
+async function loadReportActor(userId: string): Promise<ReportActor | null> {
+  const user = await User.findByPk(userId, {
+    attributes: ['id', 'vendorId', 'roleId'],
+    include: [{ association: 'role', attributes: ['name'] }],
+  });
+  if (!user) return null;
+  const roleName = user.role?.name ?? roleNameOf(user as never);
+  const permissions = await resolvePermissionsForUser({
+    roleId: user.roleId,
+    role: { name: roleName },
+  });
+  return {
+    id: user.id,
+    vendorId: user.vendorId ?? null,
+    roleName,
+    permissions,
+  };
+}
+
+async function findInflightExport(exportKey: string): Promise<ReportExportLog | null> {
+  return ReportExportLog.findOne({
+    where: {
+      exportKey,
+      status: { [Op.in]: ['PENDING', 'PROCESSING'] },
+    },
+    order: [['createdAt', 'DESC']],
+  });
+}
+
+async function failStaleInflightForKey(exportKey: string): Promise<void> {
+  const pendingStaleCutoff = new Date(
+    Date.now() - reportExportConfig.pendingStaleMin * 60 * 1000,
+  );
+  const processingStaleCutoff = new Date(
+    Date.now() - reportExportConfig.staleProcessingMin * 60 * 1000,
+  );
+  await ReportExportLog.update(
+    {
+      status: 'FAILED',
+      errorMessage: 'Export timed out',
+    },
+    {
+      where: {
+        exportKey,
+        [Op.or]: [
+          { status: 'PENDING', createdAt: { [Op.lt]: pendingStaleCutoff } },
+          { status: 'PROCESSING', updatedAt: { [Op.lt]: processingStaleCutoff } },
+        ],
+      },
+    },
+  );
+}
+
 async function findPendingExport(exportKey: string): Promise<ReportExportLog | null> {
+  await failStaleInflightForKey(exportKey);
   const pendingStaleCutoff = new Date(
     Date.now() - reportExportConfig.pendingStaleMin * 60 * 1000,
   );
@@ -253,6 +335,22 @@ export async function readLocalExport(fileKey: string): Promise<Buffer> {
   const full = path.join(LOCAL_EXPORT_DIR, fileKey);
   return fsp.readFile(full);
 }
+
+export type AdminExportListRow = {
+  id: string;
+  userId: string;
+  reportType: string;
+  format: string | null;
+  status: string;
+  rowCount: number;
+  rowCountKnown: boolean;
+  byteSize: number | null;
+  errorMessage: string | null;
+  exportedAt: Date;
+  filtersUsed: Record<string, unknown> | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
 
 export class ReportEngine {
   catalog(actor: ReportActor) {
@@ -347,7 +445,7 @@ export class ReportEngine {
         format: (pending.format as ReportExportFormat) || exportFormat,
         rowCount: pending.rowCount,
         rowCountKnown: pending.rowCount > 0,
-        cached: true,
+        deduped: true,
       };
     }
 
@@ -370,6 +468,7 @@ export class ReportEngine {
     const artifactExpiresAt = new Date(
       Date.now() + reportExportConfig.artifactTtlDays * 24 * 60 * 60 * 1000,
     );
+    await failStaleInflightForKey(exportKey);
     let log: ReportExportLog;
     try {
       log = await ReportExportLog.create({
@@ -392,16 +491,17 @@ export class ReportEngine {
       });
     } catch (err) {
       if (err instanceof UniqueConstraintError) {
-        const existing = await findPendingExport(exportKey);
+        await failStaleInflightForKey(exportKey);
+        const existing = await findInflightExport(exportKey);
         if (existing) {
           return {
             async: true,
             exportId: existing.id,
-            status: 'PENDING',
+            status: existing.status === 'PROCESSING' ? 'PENDING' : 'PENDING',
             format: (existing.format as ReportExportFormat) || exportFormat,
             rowCount: existing.rowCount,
             rowCountKnown: existing.rowCount > 0,
-            cached: true,
+            deduped: true,
           };
         }
       }
@@ -476,7 +576,33 @@ export class ReportEngine {
 
     const def = getReportDefinition(log.reportType);
     if (!def) {
-      await log.update({ status: 'FAILED', errorMessage: ERROR_MESSAGES.REPORT_NOT_FOUND });
+      await log.update({
+        status: 'FAILED',
+        errorMessage: sanitizeExportErrorMessage(new Error(ERROR_MESSAGES.REPORT_NOT_FOUND)),
+      });
+      return;
+    }
+
+    const actor = await loadReportActor(log.userId);
+    if (!actor) {
+      await log.update({
+        status: 'FAILED',
+        errorMessage: 'Export user no longer exists',
+      });
+      return;
+    }
+    if (!actorCanAccess(actor.permissions, actor.roleName, def.permissions)) {
+      await log.update({
+        status: 'FAILED',
+        errorMessage: sanitizeExportErrorMessage(new Error(ERROR_MESSAGES.REPORT_FORBIDDEN)),
+      });
+      return;
+    }
+    if (isVendorStaff(actor.permissions, actor.roleName) && def.financial) {
+      await log.update({
+        status: 'FAILED',
+        errorMessage: sanitizeExportErrorMessage(new Error(ERROR_MESSAGES.REPORT_FORBIDDEN)),
+      });
       return;
     }
 
@@ -504,8 +630,14 @@ export class ReportEngine {
 
       const knownTotal = log.rowCount > 0 ? log.rowCount : undefined;
       let actualRowCount = 0;
+      const maxRows = reportExportConfig.maxRows;
       for await (const chunk of createReportRowIterator(def, filters, knownTotal)) {
         actualRowCount += chunk.length;
+        if (maxRows > 0 && actualRowCount > maxRows) {
+          throw new ValidationError(
+            `Export exceeds maximum row limit (${maxRows.toLocaleString()}) — narrow the date range`,
+          );
+        }
         await writer.writeRows(chunk);
       }
 
@@ -563,7 +695,7 @@ export class ReportEngine {
       });
       await log.update({
         status: 'FAILED',
-        errorMessage: err instanceof Error ? err.message : 'Export failed',
+        errorMessage: sanitizeExportErrorMessage(err),
       });
       await invalidateExportStatusCache(log.id);
       throw err;
@@ -622,10 +754,18 @@ export class ReportEngine {
     let downloadUrl: string | null = null;
     let expiresIn: number | null = null;
     if (log.status === 'READY' && log.fileKey && isS3Configured()) {
-      const s3Key = log.fileUrl ? extractS3KeyFromUrl(log.fileUrl) ?? log.fileKey : log.fileKey;
-      if (s3Key) {
+      downloadUrl = await readCachedPresignedUrl(exportId);
+      if (!downloadUrl) {
+        const s3Key = log.fileUrl ? extractS3KeyFromUrl(log.fileUrl) ?? log.fileKey : log.fileKey;
+        if (s3Key) {
+          expiresIn = reportExportConfig.presignedExpiresSec;
+          downloadUrl = await signedGetObjectUrl(s3Key, expiresIn);
+          if (downloadUrl) {
+            await cachePresignedUrl(exportId, downloadUrl, expiresIn);
+          }
+        }
+      } else {
         expiresIn = reportExportConfig.presignedExpiresSec;
-        downloadUrl = await signedGetObjectUrl(s3Key, expiresIn);
       }
     }
 
@@ -640,7 +780,9 @@ export class ReportEngine {
       fileUrl: isS3Configured() ? null : log.fileUrl,
       downloadUrl,
       expiresIn,
-      errorMessage: log.errorMessage,
+      errorMessage: log.errorMessage
+        ? sanitizeExportErrorMessage(new Error(log.errorMessage))
+        : null,
       exportedAt: log.exportedAt,
       filterFrom: typeof filtersUsed.from === 'string' ? filtersUsed.from : null,
       filterTo: typeof filtersUsed.to === 'string' ? filtersUsed.to : null,
@@ -701,7 +843,7 @@ export class ReportEngine {
     const f = log.filtersUsed as Record<string, unknown>;
     const exportActor: ReportActor =
       options?.asOriginalUser && actor.roleName === ROLES.SUPER_ADMIN
-        ? { ...actor, id: log.userId }
+        ? ((await loadReportActor(log.userId)) ?? actor)
         : actor;
     return this.runExport(
       exportActor,
@@ -719,12 +861,15 @@ export class ReportEngine {
     );
   }
 
-  async listRecentExports(limit = 50, filters?: { status?: string; reportType?: string }) {
+  async listRecentExports(
+    limit = 50,
+    filters?: { status?: string; reportType?: string },
+  ): Promise<AdminExportListRow[]> {
     const where: Record<string, unknown> = {};
     if (filters?.status) where.status = filters.status;
     if (filters?.reportType) where.reportType = filters.reportType;
 
-    return ReportExportLog.findAll({
+    const rows = await ReportExportLog.findAll({
       where,
       order: [['createdAt', 'DESC']],
       limit,
@@ -743,6 +888,25 @@ export class ReportEngine {
         'updatedAt',
       ],
     });
+
+    return rows.map((log) => ({
+      id: log.id,
+      userId: log.userId,
+      reportType: log.reportType,
+      format: log.format,
+      status: log.status,
+      rowCount: log.rowCount,
+      rowCountKnown:
+        log.status === 'READY' || log.status === 'SYNC' || log.rowCount > 0,
+      byteSize: log.byteSize,
+      errorMessage: log.errorMessage
+        ? sanitizeExportErrorMessage(new Error(log.errorMessage))
+        : null,
+      exportedAt: log.exportedAt,
+      filtersUsed: log.filtersUsed as Record<string, unknown> | null,
+      createdAt: log.createdAt,
+      updatedAt: log.updatedAt,
+    }));
   }
 }
 

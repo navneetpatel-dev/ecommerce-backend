@@ -2,7 +2,6 @@ import { Op } from 'sequelize';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
-import { DISCOUNT_BEARER, COMMISSION_STATUS } from '@core/constants/statuses';
 import { sequelize } from '@database/models';
 import { WalletWriteOff } from '@database/models/walletWriteOff.model';
 import { fromPaise } from '@modules/pricing/money';
@@ -10,12 +9,12 @@ import { paginationOffset, buildPaginationMeta } from '@core/http/pagination';
 import { DEFAULT_PAGE_LIMIT } from '@core/constants/http';
 import type { ReportRangeQuery, WriteOffReportQuery } from './reports.dto';
 import { getReportDefinition } from './engine/reportRegistry';
+import { walletLiabilityTotals } from './definitions/legacyPanelReports';
 import {
   inclusiveReportTo,
   frozenPaise,
   computeReconciliationSummary,
   assertReportRange,
-  sqlFrozenPaise,
 } from './engine/queryHelpers';
 import { renderReportTablePdf } from '@core/pdf';
 import { resolveReportColumnLabel } from './reports.constants';
@@ -115,58 +114,30 @@ export class ReportsService {
     }
     assertRange(query);
     const range = engineRange(query);
-
-    const commissionExpr = sqlFrozenPaise('cl', 'commissionAmountPaise', 'commissionAmount');
-    const netExpr = `CASE
-      WHEN COALESCE(cl."netPayoutAmountPaise", 0) <> 0 THEN cl."netPayoutAmountPaise"
-      ELSE ROUND(
-        (
-          CASE
-            WHEN cl."netPayoutAmount" IS NOT NULL THEN cl."netPayoutAmount"::numeric
-            ELSE COALESCE(cl."saleAmount", 0)::numeric - COALESCE(cl."commissionAmount", 0)::numeric
-          END
-        ) * 100
-      )::bigint
-    END`;
-    const taxableExpr = sqlFrozenPaise('cl', 'taxableAmountPaise', 'taxableAmount');
-    const tcsExpr = sqlFrozenPaise('cl', 'tcsAmountPaise', 'tcsAmount');
-    const discountExpr = sqlFrozenPaise('cl', 'discountAmountPaise', 'discountAmount');
-
-    const [rows] = await sequelize.query(
-      `
-      SELECT
-        COALESCE(SUM(${taxableExpr}), 0)::bigint AS "salesPaise",
-        COALESCE(SUM(${commissionExpr}), 0)::bigint AS "commissionPaise",
-        COALESCE(SUM(${tcsExpr}), 0)::bigint AS "tcsPaise",
-        COALESCE(SUM(${netExpr}), 0)::bigint AS "netPaise",
-        COALESCE(SUM(CASE WHEN cl.status = '${COMMISSION_STATUS.PENDING}' THEN ${netExpr} ELSE 0 END), 0)::bigint AS "pendingPaise",
-        COALESCE(SUM(CASE WHEN cl.status = '${COMMISSION_STATUS.SETTLED}' THEN ${netExpr} ELSE 0 END), 0)::bigint AS "settledPaise",
-        COALESCE(SUM(CASE WHEN cl."discountBearer" = '${DISCOUNT_BEARER.VENDOR}' THEN ${discountExpr} ELSE 0 END), 0)::bigint AS "vendorDiscountPaise",
-        COALESCE(SUM(CASE WHEN cl."discountBearer" IS DISTINCT FROM '${DISCOUNT_BEARER.VENDOR}' THEN ${discountExpr} ELSE 0 END), 0)::bigint AS "platformDiscountPaise"
-      FROM commission_ledgers cl
-      WHERE cl."deletedAt" IS NULL
-        AND cl."vendorId" = :vendorId
-        AND cl."createdAt" BETWEEN :from AND :to
-        AND cl.status <> '${COMMISSION_STATUS.CLAWED_BACK}'
-      `,
-      { replacements: { vendorId, from: range.from, to: range.to } },
-    );
-    const row = (rows as Array<Record<string, unknown>>)[0] ?? {};
-
+    const def = getReportDefinition('vendor-summary');
+    if (!def) throw new ValidationError(ERROR_MESSAGES.REPORT_NOT_FOUND);
+    const result = await def.query({
+      ...range,
+      vendorId,
+      scopedVendorId: vendorId,
+      page: 1,
+      limit: 1,
+    });
+    const row = (result.rows[0] ?? {}) as Record<string, unknown>;
     return {
       from: range.from,
       to: range.to,
       vendorId,
-      sales: fromPaise(Number(row.salesPaise ?? 0)),
-      commissionDeducted: fromPaise(Number(row.commissionPaise ?? 0)),
-      tcsDeducted: fromPaise(Number(row.tcsPaise ?? 0)),
+      sales: Number(row.sales ?? 0),
+      commissionDeducted: Number(row.commissionDeducted ?? 0),
+      tcsDeducted: Number(row.tcsDeducted ?? 0),
       discountAbsorbed: {
-        ownCoupons: fromPaise(Number(row.vendorDiscountPaise ?? 0)),
-        platformCouponsOnMyItems: fromPaise(Number(row.platformDiscountPaise ?? 0)),
+        ownCoupons: Number(row.discountOwnCoupons ?? 0),
+        platformCouponsOnMyItems: Number(row.discountPlatformCoupons ?? 0),
       },
-      netPayout: fromPaise(Number(row.netPaise ?? 0)),
-      upcomingPayout: fromPaise(Number(row.pendingPaise ?? 0)),
-      historicalPayout: fromPaise(Number(row.settledPaise ?? 0)),
+      netPayout: Number(row.netPayout ?? 0),
+      upcomingPayout: Number(row.upcomingPayout ?? 0),
+      historicalPayout: Number(row.historicalPayout ?? 0),
     };
   }
 
@@ -185,70 +156,23 @@ export class ReportsService {
     const range = engineRange(query);
     const page = Math.max(1, query.page ?? 1);
     const limit = Math.max(1, query.limit ?? DEFAULT_PAGE_LIMIT);
-    const offset = paginationOffset(page, limit);
-    const replacements = { from: range.from, to: range.to, limit, offset };
+    const def = getReportDefinition('wallet-liability');
+    if (!def) throw new ValidationError(ERROR_MESSAGES.REPORT_NOT_FOUND);
 
-    const [[totals]] = (await sequelize.query(
-      `WITH active_users AS (
-         SELECT DISTINCT "userId"
-         FROM wallet_ledgers
-         WHERE "deletedAt" IS NULL
-           AND "createdAt" BETWEEN :from AND :to
-       ),
-       latest AS (
-         SELECT DISTINCT ON (wl."userId")
-           wl."userId",
-           wl."balanceAfter"
-         FROM wallet_ledgers wl
-         INNER JOIN active_users au ON au."userId" = wl."userId"
-         WHERE wl."deletedAt" IS NULL
-           AND wl."createdAt" <= :to
-         ORDER BY wl."userId", wl."createdAt" DESC
-       )
-       SELECT
-         COUNT(*)::int AS "customerCount",
-         COALESCE(SUM("balanceAfter"), 0)::float AS "totalLiability"
-       FROM latest
-       WHERE "balanceAfter" > 0`,
-      { replacements: { from: range.from, to: range.to } },
-    )) as [Array<{ customerCount: number; totalLiability: number }>, unknown];
+    const [totals, result] = await Promise.all([
+      walletLiabilityTotals(range),
+      def.query({ ...range, page, limit }),
+    ]);
 
-    const [rows] = (await sequelize.query(
-      `WITH active_users AS (
-         SELECT DISTINCT "userId"
-         FROM wallet_ledgers
-         WHERE "deletedAt" IS NULL
-           AND "createdAt" BETWEEN :from AND :to
-       ),
-       latest AS (
-         SELECT DISTINCT ON (wl."userId")
-           wl."userId" AS "userId",
-           wl."balanceAfter" AS balance,
-           wl."createdAt" AS "asOf"
-         FROM wallet_ledgers wl
-         INNER JOIN active_users au ON au."userId" = wl."userId"
-         WHERE wl."deletedAt" IS NULL
-           AND wl."createdAt" <= :to
-         ORDER BY wl."userId", wl."createdAt" DESC
-       )
-       SELECT "userId", balance, "asOf"
-       FROM latest
-       WHERE balance > 0
-       ORDER BY balance DESC
-       LIMIT :limit OFFSET :offset`,
-      { replacements },
-    )) as [Array<{ userId: string; balance: number; asOf: Date }>, unknown];
-
-    const customerCount = Number(totals?.customerCount ?? 0);
     return {
-      totalLiability: Math.round(Number(totals?.totalLiability ?? 0) * 100) / 100,
-      customerCount,
-      rows: rows.map((r) => ({
-        userId: r.userId,
-        balance: Number(r.balance),
-        asOf: r.asOf,
+      totalLiability: Math.round(totals.totalLiability * 100) / 100,
+      customerCount: totals.customerCount,
+      rows: result.rows.map((r) => ({
+        userId: String(r.userId ?? ''),
+        balance: Number(r.balance ?? 0),
+        asOf: r.asOf as Date,
       })),
-      pagination: buildPaginationMeta(customerCount, page, limit),
+      pagination: buildPaginationMeta(result.total, page, limit),
     };
   }
 

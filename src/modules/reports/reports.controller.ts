@@ -23,6 +23,7 @@ import { reportEngine, type ReportActor } from './engine/reportEngine';
 import type { ReportFilters } from './engine/types';
 import type { PermissionKey } from '@core/permissions/permissionKeys';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
+import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { roleNameOf } from '@utils/userRole';
@@ -48,7 +49,7 @@ async function actorFromReq(req: Request): Promise<ReportActor> {
 
 function panelExportFormat(format: string): ReportExportFormat {
   if (format === 'csv' || format === 'pdf' || format === 'xlsx') return format;
-  return 'pdf';
+  throw new ValidationError(`Unsupported export format: ${format}`);
 }
 
 async function enqueuePanelExport(

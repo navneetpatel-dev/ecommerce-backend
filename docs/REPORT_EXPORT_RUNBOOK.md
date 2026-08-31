@@ -72,7 +72,8 @@ cd backend && npm run db:migrate
 | `REPORT_EXPORT_ARTIFACT_TTL_DAYS` | 7 | S3/local artifact retention |
 | `REPORT_EXPORT_PENDING_STALE_MIN` | 15 | PENDING → FAILED in engine filter + cleanup |
 | `REPORT_EXPORT_FAILED_RETENTION_DAYS` | 30 | Delete old FAILED log rows |
-| `REPORT_EXPORT_STALE_PROCESSING_MIN` | 60 | Reclaim stuck PROCESSING |
-| `REPORT_EXPORT_MAX_PENDING_PER_USER` | 3 | Inflight cap per user |
+| `REPORT_EXPORT_STALE_PROCESSING_MIN` | 30 | Reclaim stuck PROCESSING |
+| `REPORT_EXPORT_MAX_PENDING_PER_USER` | 2 | Inflight cap per user |
+| `REPORT_EXPORT_MAX_ROWS` | 500000 | Hard row cap per export (0 = unlimited) |
 
 See `backend/src/modules/reports/reportExportConfig.ts` for chunk size, presigned URL expiry, worker concurrency, and rate limits.

@@ -750,6 +750,55 @@ async function customerWalletStatement(filters: ReportFilters) {
   };
 }
 
+const CUSTOMER_WALLET_KEYSET: KeysetOrderCol[] = [
+  { column: 'createdAt', direction: 'DESC' },
+  { column: 'ledgerId', direction: 'DESC' },
+];
+
+async function customerWalletStatementExport(
+  filters: ReportFilters,
+  cursor: { values: unknown[] } | null,
+  limit: number,
+) {
+  if (!filters.userId) return { rows: [], nextCursor: null };
+  assertReportRange(filters);
+  const page = await keysetSqlQuery({
+    selectSql: `
+      SELECT
+        wl.id AS "ledgerId",
+        wl."createdAt" AS "createdAt",
+        wl.type AS type,
+        wl.amount AS amount,
+        wl."balanceAfter" AS "balanceAfter",
+        wl."referenceType" AS "referenceType",
+        wl."referenceId" AS "referenceId",
+        wl.description AS description
+      FROM wallet_ledgers wl
+      WHERE wl."deletedAt" IS NULL
+        AND wl."userId" = :userId
+        AND wl."createdAt" BETWEEN :from AND :to
+    `,
+    order: CUSTOMER_WALLET_KEYSET,
+    replacements: {
+      userId: filters.userId,
+      from: filters.from,
+      to: filters.to,
+    },
+    limit,
+    cursor,
+    mapRow: (row) => ({
+      createdAt: row.createdAt as Date,
+      type: String(row.type ?? ''),
+      amount: Number(row.amount ?? 0),
+      balanceAfter: Number(row.balanceAfter ?? 0),
+      referenceType: row.referenceType,
+      referenceId: row.referenceId,
+      description: row.description,
+    }),
+  });
+  return { rows: page.rows, nextCursor: page.nextCursor };
+}
+
 async function vendorPayoutReconciliation(filters: ReportFilters) {
   assertReportRange(filters);
   const vendorFilter = `AND (:vendorId::uuid IS NULL OR p."vendorId" = :vendorId)`;
@@ -1133,6 +1182,7 @@ export const customerGapReports: ReportDefinition[] = [
       { key: 'description', labelKey: 'description' },
     ],
     query: customerWalletStatement,
+    exportQuery: customerWalletStatementExport,
   },
 ];
 
