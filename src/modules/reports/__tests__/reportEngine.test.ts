@@ -7,13 +7,13 @@ import { randomUUID } from 'node:crypto';
 import ExcelJS from 'exceljs';
 import { sequelize } from '@database/models';
 import { Vendor } from '@database/models/vendor.model';
-import { TcsLedger } from '@database/models/tcsLedger.model';
 import { ROLES } from '@core/constants/statuses';
 import { PERMISSIONS as PERM_KEYS } from '@core/permissions/permissionKeys';
 import { reportEngine, type ReportActor } from '../engine/reportEngine';
 import { getReportDefinition } from '../engine/reportRegistry';
 import { buildExcelBuffer } from '../engine/excelExporter';
 import { fromPaise } from '@modules/pricing/money';
+import { normalizeReportFilters, REPORTABLE_ORDER_SQL } from '../engine/queryHelpers';
 import { resolveReportColumnLabel } from '../reports.constants';
 
 let dbReady = false;
@@ -171,13 +171,26 @@ describe('report engine', () => {
     const def = getReportDefinition('gst-tcs-summary')!;
     const from = new Date('2000-01-01');
     const to = new Date('2099-01-01');
-    const result = await def.query({ from, to, page: 1, limit: 10000 });
-    const vendorRows = result.rows.filter((r) => r.groupType === 'VENDOR' || !r.groupType);
+    const filters = normalizeReportFilters({ from, to, page: 1, limit: 10000 });
+    const result = await def.query(filters);
+    const vendorRows = result.rows.filter((r) => r.groupType === 'VENDOR');
     const reportTotal = vendorRows.reduce((s, r) => s + Number(r.tcsTotal ?? 0), 0);
-    const ledgers = await TcsLedger.findAll({ attributes: ['tcsAmountPaise'] });
-    const ledgerTotal = fromPaise(
-      ledgers.reduce((s, row) => s + Number(row.tcsAmountPaise ?? 0), 0),
-    );
+
+    const [ledgerAgg] = (await sequelize.query(
+      `
+      SELECT COALESCE(SUM(t."tcsAmountPaise"), 0)::bigint AS "tcsTotalPaise"
+      FROM tcs_ledgers t
+      INNER JOIN orders o ON o.id = t."orderId" AND o."deletedAt" IS NULL
+      WHERE t."deletedAt" IS NULL
+        AND t."createdAt" BETWEEN :from AND :to
+        AND ${REPORTABLE_ORDER_SQL}
+      `,
+      {
+        replacements: { from: filters.from, to: filters.to },
+      },
+    )) as [{ tcsTotalPaise: string }[]];
+
+    const ledgerTotal = fromPaise(Number(ledgerAgg[0]?.tcsTotalPaise ?? 0));
     assert.ok(Math.abs(reportTotal - ledgerTotal) < 0.02 || result.total === 0);
   });
 

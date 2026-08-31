@@ -28,7 +28,7 @@ import {
 } from '@modules/coupons/couponEngine';
 import { pricingService } from '@modules/pricing/pricing.service';
 import { fromPaise, roundMoney } from '@modules/pricing/money';
-import { lineSubtotal, lineTotal, checkoutAmountDue } from '@modules/pricing/displayMoney';
+import { checkoutAmountDue, lineSubtotal, lineTotal } from '@modules/pricing/displayMoney';
 import { resolveItemAvailability } from '@core/catalog/customerVisibility';
 import type {
   CancelCheckoutRequest,
@@ -620,14 +620,11 @@ export class CheckoutService {
           throw new ValidationError(ERROR_MESSAGES.WALLET_INVALID_AMOUNT);
         }
         const balance = await walletService.getBalance(userId, t);
-        walletAmountUsed = Math.min(requestedWallet, balance, orderTotalRupees);
-        walletAmountUsed = Math.round(walletAmountUsed * 100) / 100;
+        walletAmountUsed = roundMoney(
+          Math.min(requestedWallet, balance, orderTotalRupees),
+        );
       }
-      const razorpayRemainder = Math.round((orderTotalRupees - walletAmountUsed) * 100) / 100;
-      const amountDue =
-        data.paymentMethod === PAYMENT_METHOD.COD
-          ? roundMoney(Math.max(0, orderTotalRupees - walletAmountUsed))
-          : roundMoney(Math.max(0, razorpayRemainder));
+      const amountDue = checkoutAmountDue(orderTotalRupees, walletAmountUsed);
 
       const orderRow = await Order.create({
         userId,
@@ -650,7 +647,7 @@ export class CheckoutService {
         cashbackVendorId,
         originalTotalAmount: orderTotalRupees,
         razorpayAmountPaid:
-          data.paymentMethod === PAYMENT_METHOD.COD ? 0 : Math.max(0, razorpayRemainder),
+          data.paymentMethod === PAYMENT_METHOD.COD ? 0 : Math.max(0, amountDue),
         razorpayOrderId: null,
         razorpayPaymentId: null,
       }, { transaction: t });
@@ -666,7 +663,7 @@ export class CheckoutService {
       }
 
       // Wallet covers full amount — mark paid inside the same transaction.
-      if (data.paymentMethod === PAYMENT_METHOD.RAZORPAY && razorpayRemainder <= 0) {
+      if (data.paymentMethod === PAYMENT_METHOD.RAZORPAY && amountDue <= 0) {
         await orderRow.update(
           {
             paymentStatus: PAYMENT_STATUS.PAID,
@@ -852,7 +849,7 @@ export class CheckoutService {
 
     if (data.paymentMethod === PAYMENT_METHOD.RAZORPAY) {
       const walletUsed = Number(order.walletAmountUsed ?? 0);
-      const remainder = Math.round((Number(order.totalAmount) - walletUsed) * 100) / 100;
+      const remainder = checkoutAmountDue(order.totalAmount, walletUsed);
       if (remainder <= 0 || order.paymentStatus === PAYMENT_STATUS.PAID) {
         void notifyOrderConfirmed(order.id);
         return { orderId: order.id };

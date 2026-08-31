@@ -6,6 +6,7 @@ import { type UnavailableReason } from '@core/constants/statuses';
 import { resolveItemAvailability } from '@core/catalog/customerVisibility';
 import { lineSubtotal } from '@modules/pricing/displayMoney';
 import { roundMoney } from '@modules/pricing/money';
+import { getRatesForQuote } from '@modules/shipping/shipping.service';
 import { cartRepository } from './cart.repository';
 import { MAX_CART_LINE_QUANTITY } from './cart.constants';
 import { Cart } from '@database/models/cart.model';
@@ -225,14 +226,11 @@ export class CartService {
     const { categoriesService } = await import('@modules/categories/categories.service');
     const { pricingService } = await import('@modules/pricing/pricing.service');
     const { resolveVendorDiscountBearer } = await import('@modules/coupons/couponEngine');
-    const { ShippingRate } = await import('@database/models/shippingRate.model');
     const { Address } = await import('@database/models/address.model');
 
     const settings = await settingsService.getPlatformSettings();
-    const cheapest = await ShippingRate.findOne({ order: [['price', 'ASC']] });
-    const estShippingPerVendor = Number(cheapest?.price ?? 0);
 
-    let shippingStateCode = '';
+    let shippingAddress: { pincode: string; state: string } | null = null;
     if (input.userId) {
       const address = await Address.findOne({
         where: { userId: input.userId },
@@ -241,7 +239,12 @@ export class CartService {
           ['updatedAt', 'DESC'],
         ],
       });
-      shippingStateCode = String(address?.state ?? '').trim();
+      if (address?.pincode) {
+        shippingAddress = {
+          pincode: String(address.pincode).trim(),
+          state: String(address.state ?? '').trim(),
+        };
+      }
     }
 
     const byVendor = new Map<string, CartViewItem[]>();
@@ -289,8 +292,35 @@ export class CartService {
       }
       const fallback = lineMeta[0];
       const merchandiseDiscount = input.vendorDiscountShares[vendorId] ?? 0;
+      const vendorSubtotal = vendorItems.reduce(
+        (sum, item) => sum + item.lineSubtotal,
+        0,
+      );
+      const weightGrams = vendorItems.reduce(
+        (sum, item) => sum + item.quantity * Number(item.variant.weightGrams ?? 500),
+        0,
+      );
+
+      let shippingCost = 0;
+      if (shippingAddress) {
+        const rates = await getRatesForQuote({
+          pincode: shippingAddress.pincode,
+          state: shippingAddress.state,
+          weightGrams,
+          method: 'STANDARD',
+          vendorId: vendorId !== 'platform' ? vendorId : null,
+        });
+        const rate = rates.find((candidate) => candidate.method === 'STANDARD') ?? rates[0];
+        if (rate) {
+          shippingCost =
+            rate.freeShippingThreshold != null && vendorSubtotal >= rate.freeShippingThreshold
+              ? 0
+              : rate.cost;
+        }
+      }
+
       const shippingDiscount = Math.min(
-        estShippingPerVendor,
+        shippingCost,
         input.vendorShippingDiscountShares[vendorId] ?? 0,
       );
       const vendorBorne = input.vendorBorneDiscountShares[vendorId] ?? 0;
@@ -300,10 +330,10 @@ export class CartService {
         merchandiseDiscount,
         vendorBorneMerchandiseDiscount: vendorBorne,
         shippingDiscount,
-        shippingCost: estShippingPerVendor,
+        shippingCost,
         gstPercentage: fallback?.gstPercentage ?? 0,
         vendorStateCode: String(vendor?.state ?? ''),
-        shippingStateCode: shippingStateCode || String(vendor?.state ?? ''),
+        shippingStateCode: shippingAddress?.state ?? String(vendor?.state ?? ''),
         commissionRatePercent: fallback?.commissionRatePercent ?? settings.defaultCommissionRate,
         discountBearer: resolveVendorDiscountBearer(vendorBorne, merchandiseDiscount),
         tcsRatePercent: settings.tcsRatePercent,
@@ -318,11 +348,11 @@ export class CartService {
     }
 
     return {
-      merchandiseSubtotal,
-      discount,
-      taxTotal,
-      shippingTotal,
-      grandTotal,
+      merchandiseSubtotal: roundMoney(merchandiseSubtotal),
+      discount: roundMoney(discount),
+      taxTotal: roundMoney(taxTotal),
+      shippingTotal: roundMoney(shippingTotal),
+      grandTotal: roundMoney(grandTotal),
     };
   }
 

@@ -29,8 +29,9 @@ import { DebitNote } from '@database/models/debitNote.model';
 import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
-import { fromPaise, toPaise } from '@modules/pricing/money';
+import { fromPaise, roundMoney, toPaise } from '@modules/pricing/money';
 import {
+  checkoutAmountDue,
   lineSubtotal,
   lineTotal,
   recomputeOrderDisplayFields,
@@ -724,16 +725,18 @@ export class ReturnsService {
     });
     const walletAlready = prior.reduce((s, r) => s + Number(r.walletRefundAmount ?? 0), 0);
     const razorpayAlready = prior.reduce((s, r) => s + Number(r.razorpayRefundAmount ?? 0), 0);
-    const walletRemaining = Math.max(0, Math.round((walletUsed - walletAlready) * 100) / 100);
-    const razorpayRemaining = Math.max(
-      0,
-      Math.round((Number(order.razorpayAmountPaid ?? originalTotal - walletUsed) - razorpayAlready) * 100) /
-        100,
+    const walletRemaining = roundMoney(Math.max(0, walletUsed - walletAlready));
+    const razorpayRemaining = roundMoney(
+      Math.max(
+        0,
+        roundMoney(order.razorpayAmountPaid ?? checkoutAmountDue(originalTotal, walletUsed)) -
+          razorpayAlready,
+      ),
     );
 
-    let walletShare = Math.round(((customerRefund * walletUsed) / originalTotal) * 100) / 100;
-    walletShare = Math.min(walletShare, walletRemaining, customerRefund);
-    let razorpayShare = Math.round((customerRefund - walletShare) * 100) / 100;
+    let walletShare = roundMoney((customerRefund * walletUsed) / originalTotal);
+    walletShare = roundMoney(Math.min(walletShare, walletRemaining, customerRefund));
+    let razorpayShare = roundMoney(customerRefund - walletShare);
     if (razorpayShare > razorpayRemaining) {
       const overflow = razorpayShare - razorpayRemaining;
       razorpayShare = razorpayRemaining;
