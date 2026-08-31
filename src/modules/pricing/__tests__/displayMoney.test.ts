@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  checkoutAmountDue,
   invoiceLineTaxBreakdown,
   lineSubtotal,
   lineTotal,
@@ -94,6 +95,11 @@ describe('displayMoney', () => {
       taxableAmount: 0,
       taxAmount: 0,
     }), 0);
+  });
+
+  it('derives checkout amount due before payment capture', () => {
+    assert.equal(checkoutAmountDue('2364.16', '500.00'), 1864.16);
+    assert.equal(checkoutAmountDue('100.00', '150.00'), 0);
   });
 
   it('scales tax breakdown for partial returns', () => {

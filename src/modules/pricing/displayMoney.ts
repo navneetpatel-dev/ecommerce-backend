@@ -181,6 +181,14 @@ export function scaleTaxBreakdown(
   };
 }
 
+/** Payable remainder at quote/checkout before payment is captured. */
+export function checkoutAmountDue(
+  totalAmount: unknown,
+  walletAmountUsed: unknown,
+): number {
+  return roundMoney(Math.max(0, roundMoney(totalAmount) - roundMoney(walletAmountUsed)));
+}
+
 export function productDiscountPercent(
   basePrice: unknown,
   compareAtPrice: unknown,

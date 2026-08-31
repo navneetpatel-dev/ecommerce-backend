@@ -28,7 +28,7 @@ import {
 } from '@modules/coupons/couponEngine';
 import { pricingService } from '@modules/pricing/pricing.service';
 import { fromPaise, roundMoney } from '@modules/pricing/money';
-import { lineSubtotal, lineTotal } from '@modules/pricing/displayMoney';
+import { lineSubtotal, lineTotal, checkoutAmountDue } from '@modules/pricing/displayMoney';
 import { resolveItemAvailability } from '@core/catalog/customerVisibility';
 import type {
   CancelCheckoutRequest,
@@ -419,14 +419,16 @@ export class CheckoutService {
       };
     });
 
-    const grandTotal = vendorBreakdowns.reduce((sum, row) => sum + row.total, 0);
+    const grandTotal = roundMoney(
+      vendorBreakdowns.reduce((sum, row) => sum + row.total, 0),
+    );
     const walletBalance = await walletService.getBalance(userId);
     const walletAmountToUse = Math.min(
       Math.max(0, Number(data.walletAmountToUse ?? 0)),
       walletBalance,
       grandTotal,
     );
-    const amountDue = Math.round((grandTotal - walletAmountToUse) * 100) / 100;
+    const amountDue = checkoutAmountDue(grandTotal, walletAmountToUse);
     const maxWalletApplicable = Math.min(walletBalance, grandTotal);
     const codAvailable = await resolveCodForCatalogItems(
       catalogItemsForCod(quoteCart.items),
