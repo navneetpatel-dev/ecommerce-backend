@@ -5,11 +5,14 @@ import {
   reportEngine,
   REPORT_EXPORT_JOB,
 } from '@modules/reports/engine/reportEngine';
+import { failExportIfProcessing } from '@modules/reports/engine/export/exportJobLifecycle';
 import { reportExportConfig } from '@modules/reports/reportExportConfig';
 import {
   SCHEDULED_REPORTS_JOB,
   runScheduledWeeklyReports,
 } from './scheduledReports.processor';
+
+const EXPORT_JOB_TIMEOUT_MS = 3 * 60 * 1000;
 
 export function startReportExportWorker(): Worker {
   const worker = new Worker(
@@ -22,7 +25,18 @@ export function startReportExportWorker(): Worker {
       if (job.name !== REPORT_EXPORT_JOB) return;
       const exportLogId = String((job.data as { exportLogId?: string }).exportLogId ?? '');
       if (!exportLogId) return;
-      await reportEngine.processExportJob(exportLogId);
+      try {
+        await Promise.race([
+          reportEngine.processExportJob(exportLogId),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error('Export job timed out')), EXPORT_JOB_TIMEOUT_MS);
+          }),
+        ]);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Export timed out';
+        await failExportIfProcessing(exportLogId, message);
+        throw err;
+      }
     },
     { connection: getQueueConnection(), concurrency: reportExportConfig.workerConcurrency },
   );

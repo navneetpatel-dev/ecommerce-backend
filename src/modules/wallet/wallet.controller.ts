@@ -57,8 +57,8 @@ export const downloadRechargeInvoice = asyncHandler(async (req: Request, res: Re
 
 export const listTransactions = asyncHandler(async (req: Request, res: Response) => {
   const query = ListTransactionsSchema.parse(req.query);
-  const transactions = await walletService.listTransactionsView(req.user!.id, query);
-  res.json(ok({ transactions }));
+  const result = await walletService.listTransactionsView(req.user!.id, query);
+  res.json(ok(result.transactions, { pagination: result.pagination }));
 });
 
 export const exportStatement = asyncHandler(async (req: Request, res: Response) => {

@@ -3,7 +3,6 @@ import {
   PDF_FONT,
   PDF_PAGE,
 } from './pdfTheme';
-import { measureTextHeight } from './pdfText';
 
 export type PdfTotalsLine = { label: string; value: string };
 
@@ -13,6 +12,40 @@ export type PdfTotalsOptions = {
   grandTotalValue: string;
 };
 
+const H_PAD = 12;
+const LABEL_VALUE_GAP = 8;
+const VALUE_TAIL_PAD = 4;
+
+function measureLabelColW(
+  doc: PDFKit.PDFDocument,
+  lines: PdfTotalsLine[],
+  grandTotalLabel: string,
+): number {
+  doc.font(PDF_FONT.regular).fontSize(8);
+  let max = 0;
+  for (const line of lines) {
+    max = Math.max(max, doc.widthOfString(line.label));
+  }
+  doc.font(PDF_FONT.bold).fontSize(8);
+  max = Math.max(max, doc.widthOfString(grandTotalLabel.toUpperCase()));
+  return Math.ceil(max) + LABEL_VALUE_GAP;
+}
+
+function measureValueColW(
+  doc: PDFKit.PDFDocument,
+  lines: PdfTotalsLine[],
+  grandTotalValue: string,
+): number {
+  doc.font(PDF_FONT.regular).fontSize(8.5);
+  let max = 0;
+  for (const line of lines) {
+    max = Math.max(max, doc.widthOfString(line.value));
+  }
+  doc.font(PDF_FONT.bold).fontSize(10);
+  max = Math.max(max, doc.widthOfString(grandTotalValue));
+  return Math.ceil(max) + VALUE_TAIL_PAD;
+}
+
 function measureTotalsBoxWidth(
   doc: PDFKit.PDFDocument,
   lines: PdfTotalsLine[],
@@ -20,18 +53,44 @@ function measureTotalsBoxWidth(
   grandTotalValue: string,
   maxWidth: number,
 ): number {
-  let labelW = 0;
-  let valueW = 0;
-  doc.font(PDF_FONT.regular).fontSize(8);
-  for (const line of lines) {
-    labelW = Math.max(labelW, doc.widthOfString(line.label));
-    valueW = Math.max(valueW, doc.widthOfString(line.value));
-  }
-  doc.font(PDF_FONT.bold).fontSize(10);
-  valueW = Math.max(valueW, doc.widthOfString(grandTotalValue));
-  doc.font(PDF_FONT.bold).fontSize(8);
-  labelW = Math.max(labelW, doc.widthOfString(grandTotalLabel.toUpperCase()));
-  return Math.min(maxWidth, Math.ceil(labelW + valueW + 48));
+  const labelColW = measureLabelColW(doc, lines, grandTotalLabel);
+  const valueColW = measureValueColW(doc, lines, grandTotalValue);
+  return Math.min(maxWidth, H_PAD + labelColW + valueColW + H_PAD);
+}
+
+function roundedTopRectPath(
+  doc: PDFKit.PDFDocument,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+) {
+  doc.moveTo(x + r, y)
+    .lineTo(x + w - r, y)
+    .quadraticCurveTo(x + w, y, x + w, y + r)
+    .lineTo(x + w, y + h)
+    .lineTo(x, y + h)
+    .lineTo(x, y + r)
+    .quadraticCurveTo(x, y, x + r, y)
+    .closePath();
+}
+
+function roundedBottomRectPath(
+  doc: PDFKit.PDFDocument,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+) {
+  doc.moveTo(x, y)
+    .lineTo(x + w, y)
+    .lineTo(x + w, y + h - r)
+    .quadraticCurveTo(x + w, y + h, x + w - r, y + h)
+    .lineTo(x + r, y + h)
+    .quadraticCurveTo(x, y + h, x, y + h - r)
+    .closePath();
 }
 
 function drawGrandTotalBar(
@@ -45,26 +104,22 @@ function drawGrandTotalBar(
   grandTotalValue: string,
 ) {
   const barH = 36;
-  doc.roundedRect(x, y, boxW, barH, PDF_PAGE.radius).fill(PDF_COLOR.ink);
+  roundedBottomRectPath(doc, x, y, boxW, barH, PDF_PAGE.radius);
+  doc.fill(PDF_COLOR.ink);
 
-  doc.font(PDF_FONT.bold).fontSize(8).fillColor(PDF_COLOR.brand);
-  const labelH = measureTextHeight(doc, grandTotalLabel.toUpperCase(), labelColW, {
-    bold: true,
-    size: 8,
-    lineBreak: false,
-  });
-  doc.text(grandTotalLabel.toUpperCase(), x + 12, y + (barH - labelH) / 2, {
+  const labelX = x + H_PAD;
+  const valueX = x + H_PAD + labelColW;
+
+  doc.font(PDF_FONT.bold).fontSize(8).fillColor(PDF_COLOR.white);
+  const labelY = y + (barH - doc.currentLineHeight(false)) / 2;
+  doc.text(grandTotalLabel.toUpperCase(), labelX, labelY, {
     width: labelColW,
     lineBreak: false,
   });
 
   doc.font(PDF_FONT.bold).fontSize(10).fillColor(PDF_COLOR.white);
-  const amountH = measureTextHeight(doc, grandTotalValue, valueColW, {
-    bold: true,
-    size: 10,
-    lineBreak: false,
-  });
-  doc.text(grandTotalValue, x + 12 + labelColW, y + (barH - amountH) / 2, {
+  const valueY = y + (barH - doc.currentLineHeight(false)) / 2;
+  doc.text(grandTotalValue, valueX, valueY, {
     width: valueColW,
     align: 'right',
     lineBreak: false,
@@ -89,29 +144,31 @@ export function drawPdfTotalsBox(
   const x = marginX + contentWidth - boxW;
   const summaryPad = 10;
   const rowH = 16;
-  const grandGap = 4;
   const grandBarH = 36;
   const summaryH = summaryPad + lines.length * rowH + summaryPad;
-  const boxH = summaryH + grandGap + grandBarH;
-  const labelColW = Math.min(120, Math.floor(boxW * 0.42));
-  const valueColW = boxW - labelColW - 24;
+  const boxH = summaryH + grandBarH;
+  const labelColW = measureLabelColW(doc, lines, grandTotalLabel);
+  const valueColW = measureValueColW(doc, lines, grandTotalValue);
+  const labelX = x + H_PAD;
+  const valueX = x + H_PAD + labelColW;
 
   doc.save();
   doc.fillColor(PDF_COLOR.surface).strokeColor(PDF_COLOR.line).lineWidth(0.8);
-  doc.roundedRect(x, y, boxW, summaryH, PDF_PAGE.radius).fillAndStroke();
+  roundedTopRectPath(doc, x, y, boxW, summaryH, PDF_PAGE.radius);
+  doc.fillAndStroke();
   let rowY = y + summaryPad;
   for (const line of lines) {
     doc.font(PDF_FONT.regular).fontSize(8).fillColor(PDF_COLOR.inkMuted);
-    doc.text(line.label, x + 12, rowY, { width: labelColW, lineBreak: false });
+    doc.text(line.label, labelX, rowY, { width: labelColW, lineBreak: false });
     doc.font(PDF_FONT.regular).fontSize(8.5).fillColor(PDF_COLOR.ink);
-    doc.text(line.value, x + 12 + labelColW, rowY, {
+    doc.text(line.value, valueX, rowY, {
       width: valueColW,
       align: 'right',
       lineBreak: false,
     });
     rowY += rowH;
   }
-  const totalY = y + summaryH + grandGap;
+  const totalY = y + summaryH;
   drawGrandTotalBar(
     doc,
     x,

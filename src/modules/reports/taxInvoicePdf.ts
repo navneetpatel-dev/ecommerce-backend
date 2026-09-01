@@ -469,7 +469,7 @@ function paintTaxInvoice(doc: PDFKit.PDFDocument, source: TaxInvoiceSource) {
     { label: COPY.taxTotal, value: formatInvoiceMoney(tax) },
   ];
 
-  const totalsBoxH = 10 + totalLines.length * 16 + 10 + 4 + 36;
+  const totalsBoxH = 10 + totalLines.length * 16 + 10 + 36;
   layout.ensure(totalsBoxH + 44);
   const boxH = drawPdfTotalsBox(
     doc,

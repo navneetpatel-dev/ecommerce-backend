@@ -18,6 +18,10 @@ import { paymentsService } from '@modules/payments/payments.service';
 import { walletService } from './wallet.service';
 import { WALLET_DESCRIPTIONS } from './wallet.constants';
 import { ensureWalletRechargeInvoice } from './walletRechargeInvoice.service';
+import {
+  checkWalletRechargeAmountRange,
+  walletRechargeAmountRangeMessage,
+} from './walletRechargeAmount.validation';
 
 export type WalletRechargeCheckoutPayload = {
   rechargeId: string;
@@ -77,11 +81,25 @@ export class WalletRechargeService {
       throw new ValidationError(ERROR_MESSAGES.WALLET_RECHARGE_DISABLED);
     }
     const amount = roundMoney(amountInr);
-    if (amount < settings.walletMinRechargeInr) {
-      throw new ValidationError(ERROR_MESSAGES.WALLET_RECHARGE_BELOW_MIN);
+    const rangeError = checkWalletRechargeAmountRange(amount, {
+      minInr: settings.walletMinRechargeInr,
+      maxInr: settings.walletMaxRechargeInr,
+    });
+    if (rangeError === 'below-min') {
+      throw new ValidationError(
+        walletRechargeAmountRangeMessage('below-min', {
+          minInr: settings.walletMinRechargeInr,
+          maxInr: settings.walletMaxRechargeInr,
+        }),
+      );
     }
-    if (amount > settings.walletMaxRechargeInr) {
-      throw new ValidationError(ERROR_MESSAGES.WALLET_RECHARGE_ABOVE_MAX);
+    if (rangeError === 'above-max') {
+      throw new ValidationError(
+        walletRechargeAmountRangeMessage('above-max', {
+          minInr: settings.walletMinRechargeInr,
+          maxInr: settings.walletMaxRechargeInr,
+        }),
+      );
     }
     const pointsToCredit = roundMoney(amount * settings.pointsPerRupee);
     const balance = await walletService.getBalance(userId);

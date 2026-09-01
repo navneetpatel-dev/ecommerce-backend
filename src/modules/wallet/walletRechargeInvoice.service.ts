@@ -101,6 +101,8 @@ export async function getWalletRechargeInvoicePdf(
       { label: 'Points', value: String(Number(recharge.pointsCredited)) },
       { label: 'Status', value: 'PAID', tone: 'status' },
     ],
+    undefined,
+    { rightValueAlign: 'right' },
   );
   layout.y += cardH + 16;
 

@@ -6,6 +6,11 @@ import { WalletWriteOff } from '@database/models/walletWriteOff.model';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import {
+  buildPaginationMeta,
+  paginationOffset,
+  type PaginationMeta,
+} from '@core/http/pagination';
+import {
   DISCOUNT_BEARER,
   WALLET_LEDGER_TYPE,
   WALLET_POINT_SOURCE,
@@ -103,22 +108,31 @@ export class WalletService {
 
   async listTransactions(
     userId: string,
-    opts: { limit?: number; offset?: number } = {},
-  ): Promise<WalletLedger[]> {
-    return WalletLedger.findAll({
+    opts: { page?: number; limit?: number } = {},
+  ): Promise<{ rows: WalletLedger[]; count: number }> {
+    const page = opts.page ?? 1;
+    const limit = opts.limit ?? 20;
+    const offset = paginationOffset(page, limit);
+    const { rows, count } = await WalletLedger.findAndCountAll({
       where: { userId },
       order: [['createdAt', 'DESC']],
-      limit: opts.limit ?? 50,
-      offset: opts.offset ?? 0,
+      limit,
+      offset,
     });
+    return { rows, count };
   }
 
   async listTransactionsView(
     userId: string,
-    opts: { limit?: number; offset?: number } = {},
-  ): Promise<WalletTransactionView[]> {
-    const rows = await this.listTransactions(userId, opts);
-    return rows.map(serializeWalletLedger);
+    opts: { page?: number; limit?: number } = {},
+  ): Promise<{ transactions: WalletTransactionView[]; pagination: PaginationMeta }> {
+    const page = opts.page ?? 1;
+    const limit = opts.limit ?? 20;
+    const { rows, count } = await this.listTransactions(userId, { page, limit });
+    return {
+      transactions: rows.map(serializeWalletLedger),
+      pagination: buildPaginationMeta(count, page, limit),
+    };
   }
 
   async credit(

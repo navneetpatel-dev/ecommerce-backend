@@ -13,7 +13,7 @@ import { walletRechargeService } from '../walletRecharge.service';
 
 const defaultSettings = {
   walletRechargeEnabled: true,
-  walletMinRechargeInr: 100,
+  walletMinRechargeInr: 1,
   walletMaxRechargeInr: 10000,
   walletMaxBalancePoints: 50000,
   walletRechargePresetsInr: [500, 1000],
@@ -44,8 +44,9 @@ describe('WalletRechargeService.validateRechargeAmount', () => {
     mock.method(settingsService, 'getPlatformSettings', async () => defaultSettings);
     mock.method(walletService, 'getBalance', async () => 0);
     await assert.rejects(
-      () => walletRechargeService.validateRechargeAmount('user-1', 50),
-      (err) => isValidation(err, ERROR_MESSAGES.WALLET_RECHARGE_BELOW_MIN),
+      () => walletRechargeService.validateRechargeAmount('user-1', 0),
+      (err) =>
+        err instanceof ValidationError && /at least ₹1/.test(err.message),
     );
   });
 
@@ -54,7 +55,9 @@ describe('WalletRechargeService.validateRechargeAmount', () => {
     mock.method(walletService, 'getBalance', async () => 0);
     await assert.rejects(
       () => walletRechargeService.validateRechargeAmount('user-1', 20000),
-      (err) => isValidation(err, ERROR_MESSAGES.WALLET_RECHARGE_ABOVE_MAX),
+      (err) =>
+        err instanceof ValidationError &&
+        /cannot exceed ₹10,000/.test(err.message),
     );
   });
 

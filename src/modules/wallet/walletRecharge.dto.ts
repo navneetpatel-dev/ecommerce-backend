@@ -1,8 +1,37 @@
 import { z } from 'zod';
+import {
+  checkWalletRechargeAmountRange,
+  walletRechargeAmountRangeMessage,
+} from './walletRechargeAmount.validation';
 
-export const CreateWalletRechargeSchema = z.object({
-  amountInr: z.coerce.number().positive(),
-  idempotencyKey: z.string().min(8).max(64).optional(),
+export type WalletRechargeSchemaLimits = {
+  minInr: number;
+  maxInr: number;
+};
+
+export function buildCreateWalletRechargeSchema(limits: WalletRechargeSchemaLimits) {
+  return z.object({
+    amountInr: z.coerce
+      .number({ invalid_type_error: 'Recharge amount must be a number' })
+      .finite('Recharge amount must be a valid number')
+      .positive('Recharge amount must be greater than zero')
+      .superRefine((value, ctx) => {
+        const code = checkWalletRechargeAmountRange(value, limits);
+        if (code) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: walletRechargeAmountRangeMessage(code, limits),
+          });
+        }
+      }),
+    idempotencyKey: z.string().min(8).max(64).optional(),
+  });
+}
+
+/** Default limits for unit tests and offline parsing. */
+export const CreateWalletRechargeSchema = buildCreateWalletRechargeSchema({
+  minInr: 1,
+  maxInr: 10000,
 });
 
 export const VerifyWalletRechargeSchema = z

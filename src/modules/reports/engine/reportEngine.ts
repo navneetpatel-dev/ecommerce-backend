@@ -83,7 +83,7 @@ export const REPORT_EXPORT_JOB_OPTIONS = {
 export type AsyncExportResult = {
   async: true;
   exportId: string;
-  status: 'PENDING' | 'READY';
+  status: 'PENDING' | 'PROCESSING' | 'READY';
   format: ReportExportFormat;
   rowCount: number;
   /** False until worker finishes streaming (row count unknown at enqueue). */
@@ -298,8 +298,59 @@ async function failStaleInflightForKey(exportKey: string): Promise<void> {
   );
 }
 
+/** Matches FE export poll window so a retry can start a fresh job. */
+const USER_EXPORT_STALE_MS = 5 * 60 * 1000;
+
+async function failUserVisibleStaleExports(exportKey: string): Promise<void> {
+  const cutoff = new Date(Date.now() - USER_EXPORT_STALE_MS);
+  const stale = await ReportExportLog.findAll({
+    where: {
+      exportKey,
+      status: { [Op.in]: ['PENDING', 'PROCESSING'] },
+      updatedAt: { [Op.lt]: cutoff },
+    },
+    attributes: ['id'],
+  });
+  if (stale.length === 0) return;
+  for (const log of stale) {
+    await purgeExportRedisCaches(log.id);
+  }
+  await ReportExportLog.update(
+    { status: 'FAILED', errorMessage: 'Export timed out' },
+    {
+      where: {
+        exportKey,
+        status: { [Op.in]: ['PENDING', 'PROCESSING'] },
+        updatedAt: { [Op.lt]: cutoff },
+      },
+    },
+  );
+}
+
+async function requeuePendingExportIfNeeded(log: ReportExportLog): Promise<void> {
+  if (log.status !== 'PENDING') return;
+  if (!areQueuesReady()) return;
+  try {
+    await queues.reportExport.add(
+      REPORT_EXPORT_JOB,
+      { exportLogId: log.id },
+      {
+        ...REPORT_EXPORT_JOB_OPTIONS,
+        jobId: log.id,
+        priority: reportExportConfig.userExportPriority,
+      },
+    );
+  } catch (err) {
+    logger.warn('Report export requeue skipped', {
+      exportLogId: log.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 async function findPendingExport(exportKey: string): Promise<ReportExportLog | null> {
   await failStaleInflightForKey(exportKey);
+  await failUserVisibleStaleExports(exportKey);
   const pendingStaleCutoff = new Date(
     Date.now() - reportExportConfig.pendingStaleMin * 60 * 1000,
   );
@@ -451,10 +502,15 @@ export class ReportEngine {
 
     const pending = await findPendingExport(exportKey);
     if (pending) {
+      await requeuePendingExportIfNeeded(pending);
+      const reportStatus =
+        pending.status === 'READY' || pending.status === 'PROCESSING'
+          ? pending.status
+          : 'PENDING';
       return {
         async: true,
         exportId: pending.id,
-        status: 'PENDING',
+        status: reportStatus,
         format: (pending.format as ReportExportFormat) || exportFormat,
         rowCount: pending.rowCount,
         rowCountKnown: pending.rowCount > 0,
@@ -585,7 +641,16 @@ export class ReportEngine {
         },
       },
     );
-    if (claimed === 0) return;
+    if (claimed === 0) {
+      const current = await ReportExportLog.findByPk(exportLogId);
+      if (
+        current?.status === 'PROCESSING' &&
+        current.updatedAt < new Date(Date.now() - USER_EXPORT_STALE_MS)
+      ) {
+        await failExportIfProcessing(exportLogId, 'Export timed out');
+      }
+      return;
+    }
 
     const def = getReportDefinition(log.reportType);
     if (!def) {

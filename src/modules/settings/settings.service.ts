@@ -63,7 +63,7 @@ const DEFAULTS: PlatformSettingsPayload = {
   codMinOrderValue: 0,
   codMaxOrderValue: null,
   walletRechargeEnabled: true,
-  walletMinRechargeInr: 100,
+  walletMinRechargeInr: 1,
   walletMaxRechargeInr: 10000,
   walletMaxBalancePoints: 50000,
   walletRechargePresetsInr: [500, 1000, 2000, 5000],

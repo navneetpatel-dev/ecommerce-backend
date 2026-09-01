@@ -23,10 +23,17 @@ export function pipePdfDocument(
   dest: NodeJS.WritableStream,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    dest.on('finish', () => resolve());
-    dest.on('error', reject);
-    doc.on('error', reject);
-    doc.end();
+    const writable = dest as NodeJS.WritableStream & { writableFinished?: boolean };
+    if (writable.writableFinished) {
+      resolve();
+      return;
+    }
+    dest.once('finish', () => resolve());
+    dest.once('error', reject);
+    doc.once('error', reject);
+    if (!doc.writableEnded) {
+      doc.end();
+    }
   });
 }
 

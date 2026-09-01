@@ -12,6 +12,7 @@ export type PdfMetaRow = {
   value: string;
   tone?: PdfMetaTone;
   statusColor?: string;
+  valueAlign?: 'left' | 'right';
 };
 
 export function drawPdfMetaCards(
@@ -22,6 +23,7 @@ export function drawPdfMetaCards(
   left: PdfMetaRow[],
   right: PdfMetaRow[],
   statusColor?: string,
+  options?: { rightValueAlign?: 'left' | 'right' },
 ): number {
   const cardW = (contentWidth - PDF_PAGE.gutter) / 2;
   const cardH = Math.max(
@@ -29,7 +31,16 @@ export function drawPdfMetaCards(
     measureMetaCardHeight(doc, cardW, right),
   );
   drawMetaCard(doc, x, y, cardW, cardH, left, statusColor);
-  drawMetaCard(doc, x + cardW + PDF_PAGE.gutter, y, cardW, cardH, right, statusColor);
+  drawMetaCard(
+    doc,
+    x + cardW + PDF_PAGE.gutter,
+    y,
+    cardW,
+    cardH,
+    right,
+    statusColor,
+    options?.rightValueAlign,
+  );
   return cardH;
 }
 
@@ -70,6 +81,7 @@ function drawMetaCard(
   h: number,
   rows: PdfMetaRow[],
   statusColor?: string,
+  defaultValueAlign: 'left' | 'right' = 'left',
 ) {
   doc.save();
   doc.fillColor(PDF_COLOR.surface).strokeColor(PDF_COLOR.line).lineWidth(0.8);
@@ -90,7 +102,11 @@ function drawMetaCard(
       .fontSize(8.5)
       .fillColor(resolveToneColor(row, statusColor));
     const valueH = doc.heightOfString(row.value, { width: valueW });
-    doc.text(row.value, valueX, rowY, { width: valueW, lineBreak: true });
+    doc.text(row.value, valueX, rowY, {
+      width: valueW,
+      align: row.valueAlign ?? defaultValueAlign,
+      lineBreak: true,
+    });
     rowY += Math.max(14, valueH) + 4;
   }
   doc.restore();

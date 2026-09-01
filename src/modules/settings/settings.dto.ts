@@ -23,7 +23,7 @@ export const UpdateSettingsSchema = z.object({
   codMinOrderValue: z.number().min(0).default(0),
   codMaxOrderValue: z.number().min(0).nullable().default(null),
   walletRechargeEnabled: z.boolean().default(true),
-  walletMinRechargeInr: z.number().min(1).default(100),
+  walletMinRechargeInr: z.number().min(1).default(1),
   walletMaxRechargeInr: z.number().min(1).default(10000),
   walletMaxBalancePoints: z.number().min(0).default(50000),
   walletRechargePresetsInr: z.array(z.number().min(1)).default([500, 1000, 2000, 5000]),
