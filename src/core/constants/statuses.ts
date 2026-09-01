@@ -201,7 +201,15 @@ export const WALLET_REFERENCE_TYPE = {
   CLAWBACK: 'CLAWBACK',
   COD_REFUND: 'COD_REFUND',
   WALLET_REFUND: 'WALLET_REFUND',
+  TOPUP: 'TOPUP',
 } as const;
+
+export const WALLET_POINT_SOURCE = {
+  PURCHASED: 'PURCHASED',
+  PROMOTIONAL: 'PROMOTIONAL',
+} as const;
+export type WalletPointSource =
+  (typeof WALLET_POINT_SOURCE)[keyof typeof WALLET_POINT_SOURCE];
 
 export const COMMISSION_REFERENCE_TYPE = {
   CASHBACK_COST: 'CashbackCost',

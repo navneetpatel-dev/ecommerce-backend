@@ -8,6 +8,11 @@ import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { roleNameOf } from '@utils/userRole';
 import { reportExportGuard } from '@modules/reports/reportExportGuard';
 import { walletService } from './wallet.service';
+import { walletRechargeService } from './walletRecharge.service';
+import {
+  CreateWalletRechargeSchema,
+  VerifyWalletRechargeSchema,
+} from './walletRecharge.dto';
 import { exportWalletStatement, WalletStatementSchema } from './walletStatement.service';
 import type { PermissionKey } from '@core/permissions/permissionKeys';
 
@@ -22,8 +27,70 @@ router.get(
   '/balance',
   authenticate,
   asyncHandler(async (req, res) => {
-    const balance = await walletService.getBalance(req.user!.id);
-    res.json(ok({ balance }));
+    const userId = req.user!.id;
+    const [balance, limits] = await Promise.all([
+      walletService.getBalance(userId),
+      walletRechargeService.getRechargeLimits(),
+    ]);
+    res.json(
+      ok({
+        balance,
+        points: balance,
+        unit: 'POINT' as const,
+        redemptionRate: 1,
+        rechargeEnabled: limits.rechargeEnabled,
+        limits: {
+          minInr: limits.minInr,
+          maxInr: limits.maxInr,
+          maxBalance: limits.maxBalance,
+          presetsInr: limits.presetsInr,
+          pointsPerRupee: limits.pointsPerRupee,
+        },
+      }),
+    );
+  }),
+);
+
+router.post(
+  '/recharge',
+  authenticate,
+  validate(CreateWalletRechargeSchema),
+  asyncHandler(async (req, res) => {
+    const body = CreateWalletRechargeSchema.parse(req.body);
+    const checkout = await walletRechargeService.createRecharge(
+      req.user!.id,
+      body.amountInr,
+      body.idempotencyKey,
+    );
+    res.json(ok(checkout));
+  }),
+);
+
+router.post(
+  '/recharge/verify',
+  authenticate,
+  validate(VerifyWalletRechargeSchema),
+  asyncHandler(async (req, res) => {
+    const body = VerifyWalletRechargeSchema.parse(req.body);
+    const result = await walletRechargeService.verifyRecharge(req.user!.id, {
+      razorpayOrderId: body.razorpayOrderId!,
+      razorpayPaymentId: body.razorpayPaymentId!,
+      razorpaySignature: body.razorpaySignature!,
+      rechargeId: body.rechargeId,
+    });
+    res.json(ok(result));
+  }),
+);
+
+router.get(
+  '/recharge/:id',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const result = await walletRechargeService.getRecharge(
+      req.user!.id,
+      String(req.params.id),
+    );
+    res.json(ok(result));
   }),
 );
 
@@ -44,6 +111,7 @@ router.get(
           referenceType: row.referenceType,
           referenceId: row.referenceId,
           description: row.description,
+          pointSource: row.pointSource,
           createdAt: row.createdAt,
         })),
       }),

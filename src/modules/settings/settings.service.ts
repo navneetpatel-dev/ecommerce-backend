@@ -29,6 +29,12 @@ export type PlatformSettingsPayload = {
   codEnabled: boolean;
   codMinOrderValue: number;
   codMaxOrderValue: number | null;
+  walletRechargeEnabled: boolean;
+  walletMinRechargeInr: number;
+  walletMaxRechargeInr: number;
+  walletMaxBalancePoints: number;
+  walletRechargePresetsInr: number[];
+  pointsPerRupee: number;
 };
 
 const SETTINGS_KEY = 'platform';
@@ -54,6 +60,12 @@ const DEFAULTS: PlatformSettingsPayload = {
   codEnabled: true,
   codMinOrderValue: 0,
   codMaxOrderValue: null,
+  walletRechargeEnabled: true,
+  walletMinRechargeInr: 100,
+  walletMaxRechargeInr: 10000,
+  walletMaxBalancePoints: 50000,
+  walletRechargePresetsInr: [500, 1000, 2000, 5000],
+  pointsPerRupee: 1,
 };
 
 export const settingsService = {

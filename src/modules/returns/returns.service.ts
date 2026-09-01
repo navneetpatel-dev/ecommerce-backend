@@ -11,6 +11,7 @@ import {
   REFUND_STATUS,
   RETURN_STATUS,
   WALLET_REFERENCE_TYPE,
+  WALLET_POINT_SOURCE,
   type ReturnReason,
   type ReturnStatus,
 } from '@core/constants/statuses';
@@ -1029,6 +1030,7 @@ export class ReturnsService {
             },
             desc,
             t,
+            { pointSource: WALLET_POINT_SOURCE.PROMOTIONAL },
           );
         }
 

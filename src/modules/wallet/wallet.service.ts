@@ -14,6 +14,10 @@ import { fromPaise, toPaise, roundMoney } from '@modules/pricing/money';
 
 export type WalletRef = { type: string; id: string };
 
+export type WalletCreditOptions = {
+  pointSource?: 'PURCHASED' | 'PROMOTIONAL' | null;
+};
+
 /**
  * Serialize all wallet mutations per user — including when the ledger is empty
  * (FOR UPDATE on WalletLedger alone cannot lock a missing row).
@@ -71,6 +75,7 @@ export class WalletService {
     ref: WalletRef,
     description: string,
     outerTransaction?: Transaction,
+    options?: WalletCreditOptions,
   ): Promise<WalletLedger> {
     const value = roundMoney(amount);
     if (value <= 0) {
@@ -89,6 +94,7 @@ export class WalletService {
           referenceType: ref.type,
           referenceId: ref.id,
           description,
+          pointSource: options?.pointSource ?? null,
           createdBy: userId,
           updatedBy: userId,
           deletedBy: null,

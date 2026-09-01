@@ -18,6 +18,10 @@ export const getPublicSettings = asyncHandler(async (_req: Request, res: Respons
     codEnabled: settings.codEnabled,
     codMinOrderValue: settings.codMinOrderValue,
     codMaxOrderValue: settings.codMaxOrderValue,
+    walletRechargeEnabled: settings.walletRechargeEnabled,
+    walletMinRechargeInr: settings.walletMinRechargeInr,
+    walletMaxRechargeInr: settings.walletMaxRechargeInr,
+    walletRechargePresetsInr: settings.walletRechargePresetsInr,
   }));
 });
 

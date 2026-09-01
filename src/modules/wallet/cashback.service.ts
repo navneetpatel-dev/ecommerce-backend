@@ -10,6 +10,7 @@ import {
   DISCOUNT_BEARER,
   ORDER_STATUS,
   WALLET_REFERENCE_TYPE,
+  WALLET_POINT_SOURCE,
   type DiscountBearer,
 } from '@core/constants/statuses';
 import { toPaise, fromPaise } from '@modules/pricing/money';
@@ -47,6 +48,7 @@ export async function creditPendingCashbackForOrder(
       { type: WALLET_REFERENCE_TYPE.CASHBACK, id: order.id },
       `${WALLET_DESCRIPTIONS.CASHBACK_CREDIT} #${order.id.slice(0, 8).toUpperCase()}`,
       transaction,
+      { pointSource: WALLET_POINT_SOURCE.PROMOTIONAL },
     );
 
     const bearer = (order.cashbackDiscountBearer as DiscountBearer | null) ?? DISCOUNT_BEARER.PLATFORM;

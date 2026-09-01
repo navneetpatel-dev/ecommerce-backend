@@ -746,6 +746,7 @@ async function customerWalletStatement(filters: ReportFilters) {
       referenceType: row.referenceType,
       referenceId: row.referenceId,
       description: row.description,
+      pointSource: row.pointSource,
       createdAt: row.createdAt,
     })),
     total,
@@ -774,6 +775,7 @@ async function customerWalletStatementExport(
         wl."balanceAfter" AS "balanceAfter",
         wl."referenceType" AS "referenceType",
         wl."referenceId" AS "referenceId",
+        wl."pointSource" AS "pointSource",
         wl.description AS description
       FROM wallet_ledgers wl
       WHERE wl."deletedAt" IS NULL
@@ -795,6 +797,7 @@ async function customerWalletStatementExport(
       balanceAfter: Number(row.balanceAfter ?? 0),
       referenceType: row.referenceType,
       referenceId: row.referenceId,
+      pointSource: row.pointSource,
       description: row.description,
     }),
   });
@@ -1193,6 +1196,7 @@ export const customerGapReports: ReportDefinition[] = [
       { key: 'balanceAfter', labelKey: 'balanceAfter', format: 'currency' },
       { key: 'referenceType', labelKey: 'referenceType' },
       { key: 'referenceId', labelKey: 'referenceId' },
+      { key: 'pointSource', labelKey: 'pointSource' },
       { key: 'description', labelKey: 'description' },
     ],
     query: customerWalletStatement,

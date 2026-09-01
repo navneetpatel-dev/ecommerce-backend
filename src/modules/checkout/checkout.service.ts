@@ -46,6 +46,7 @@ import {
   COMMISSION_STATUS,
   DISCOUNT_BEARER,
   WALLET_REFERENCE_TYPE,
+  WALLET_POINT_SOURCE,
 } from '@core/constants/statuses';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { resolveCodForCatalogItems } from '@modules/products/pdpPolicy';
@@ -955,6 +956,7 @@ export class CheckoutService {
           { type: WALLET_REFERENCE_TYPE.ORDER, id: order.id },
           `${WALLET_DESCRIPTIONS.CHECKOUT_SPEND} rollback`,
           t,
+          { pointSource: WALLET_POINT_SOURCE.PROMOTIONAL },
         );
       }
 

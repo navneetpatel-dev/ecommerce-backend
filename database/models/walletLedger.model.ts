@@ -9,6 +9,7 @@ export class WalletLedger extends Model<InferAttributes<WalletLedger>, InferCrea
   declare referenceType: string;
   declare referenceId: string;
   declare description: string;
+  declare pointSource: 'PURCHASED' | 'PROMOTIONAL' | null;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -32,6 +33,7 @@ export const initWalletLedgerModel = (sequelize: Sequelize) => {
       referenceType: { type: DataTypes.STRING(64), allowNull: false },
       referenceId: { type: DataTypes.STRING(64), allowNull: false },
       description: { type: DataTypes.STRING(255), allowNull: false },
+      pointSource: { type: DataTypes.ENUM('PURCHASED', 'PROMOTIONAL'), allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

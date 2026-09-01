@@ -275,29 +275,36 @@ export class PaymentsService {
     if (event.event === 'payment.captured') {
       const payment = event.payload?.payment?.entity;
       if (payment?.order_id && payment?.id) {
-        let confirmedOrderId: string | null = null;
-        await sequelize.transaction(async (t) => {
-          const order = await Order.findOne({
-            where: { razorpayOrderId: payment.order_id },
-            transaction: t,
-            lock: t.LOCK.UPDATE,
-          });
-          if (!order) return;
-          if (order.paymentStatus === PAYMENT_STATUS.PAID) return;
+        const { walletRechargeService } = await import('@modules/wallet/walletRecharge.service');
+        const handledRecharge = await walletRechargeService.handlePaymentCaptured(
+          payment.order_id,
+          payment.id,
+        );
+        if (!handledRecharge) {
+          let confirmedOrderId: string | null = null;
+          await sequelize.transaction(async (t) => {
+            const order = await Order.findOne({
+              where: { razorpayOrderId: payment.order_id },
+              transaction: t,
+              lock: t.LOCK.UPDATE,
+            });
+            if (!order) return;
+            if (order.paymentStatus === PAYMENT_STATUS.PAID) return;
 
-          await order.update(
-            {
-              paymentStatus: PAYMENT_STATUS.PAID,
-              razorpayPaymentId: payment.id,
-              status: ORDER_STATUS.CONFIRMED,
-            },
-            { transaction: t },
-          );
-          await this.applyCouponOnPaymentCaptured(order, t);
-          confirmedOrderId = order.id;
-        });
-        if (confirmedOrderId) {
-          void notifyOrderConfirmed(confirmedOrderId);
+            await order.update(
+              {
+                paymentStatus: PAYMENT_STATUS.PAID,
+                razorpayPaymentId: payment.id,
+                status: ORDER_STATUS.CONFIRMED,
+              },
+              { transaction: t },
+            );
+            await this.applyCouponOnPaymentCaptured(order, t);
+            confirmedOrderId = order.id;
+          });
+          if (confirmedOrderId) {
+            void notifyOrderConfirmed(confirmedOrderId);
+          }
         }
       }
     }
@@ -305,19 +312,23 @@ export class PaymentsService {
     if (event.event === 'payment.failed') {
       const payment = event.payload?.payment?.entity;
       if (payment?.order_id) {
-        const order = await Order.findOne({ where: { razorpayOrderId: payment.order_id } });
-        if (order) {
-          void notificationsService.sendPaymentFailed(order.userId, order.id, {
-            orderId: order.id,
-            orderNumber: order.id.slice(0, 8).toUpperCase(),
-          });
-        }
-        const cancelledOrderId = await this.restoreCancelledRazorpayOrder(payment.order_id);
-        if (cancelledOrderId && order) {
-          void notificationsService.sendOrderCancelled(order.userId, cancelledOrderId, {
-            orderId: cancelledOrderId,
-            orderNumber: cancelledOrderId.slice(0, 8).toUpperCase(),
-          });
+        const { walletRechargeService } = await import('@modules/wallet/walletRecharge.service');
+        const handledRecharge = await walletRechargeService.handlePaymentFailed(payment.order_id);
+        if (!handledRecharge) {
+          const order = await Order.findOne({ where: { razorpayOrderId: payment.order_id } });
+          if (order) {
+            void notificationsService.sendPaymentFailed(order.userId, order.id, {
+              orderId: order.id,
+              orderNumber: order.id.slice(0, 8).toUpperCase(),
+            });
+          }
+          const cancelledOrderId = await this.restoreCancelledRazorpayOrder(payment.order_id);
+          if (cancelledOrderId && order) {
+            void notificationsService.sendOrderCancelled(order.userId, cancelledOrderId, {
+              orderId: cancelledOrderId,
+              orderNumber: cancelledOrderId.slice(0, 8).toUpperCase(),
+            });
+          }
         }
       }
     }

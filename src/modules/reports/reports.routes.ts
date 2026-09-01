@@ -121,6 +121,15 @@ router.get(
 );
 
 router.get(
+  '/admin/wallet-recharge',
+  authenticate,
+  authorize(PERMISSIONS.ANALYTICS_VIEW, PERMISSIONS.COMMISSION_VIEW),
+  validate(ReportRangeSchema, 'query'),
+  reportExportGuard,
+  reportsController.walletRecharge,
+);
+
+router.get(
   '/admin/cashback-write-offs',
   authenticate,
   authorize(PERMISSIONS.ANALYTICS_VIEW, PERMISSIONS.COMMISSION_VIEW),

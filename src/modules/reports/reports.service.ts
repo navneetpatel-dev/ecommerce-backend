@@ -6,7 +6,7 @@ import { buildPaginationMeta } from '@core/http/pagination';
 import { DEFAULT_PAGE_LIMIT } from '@core/constants/http';
 import type { ReportRangeQuery } from './reports.dto';
 import { getReportDefinition } from './engine/reportRegistry';
-import { walletLiabilityTotals } from './definitions/legacyPanelReports';
+import { walletLiabilityTotals, walletPointSourceLiabilityTotals } from './definitions/legacyPanelReports';
 import {
   inclusiveReportTo,
   computeReconciliationSummary,
@@ -143,7 +143,16 @@ export class ReportsService {
   ): Promise<{
     totalLiability: number;
     customerCount: number;
-    rows: Array<{ userId: string; balance: number; asOf: Date }>;
+    totalPointsLiability: number;
+    purchasedPointsLiability: number;
+    promotionalPointsLiability: number;
+    rows: Array<{
+      userId: string;
+      balance: number;
+      asOf: Date;
+      purchasedPoints: number;
+      promotionalPoints: number;
+    }>;
     pagination: ReturnType<typeof buildPaginationMeta>;
   }> {
     assertRange(query);
@@ -153,19 +162,55 @@ export class ReportsService {
     const def = getReportDefinition('wallet-liability');
     if (!def) throw new ValidationError(ERROR_MESSAGES.REPORT_NOT_FOUND);
 
-    const [totals, result] = await Promise.all([
+    const [totals, pointTotals, result] = await Promise.all([
       walletLiabilityTotals(range),
+      walletPointSourceLiabilityTotals({ to: range.to }),
       def.query({ ...range, page, limit }),
     ]);
 
     return {
       totalLiability: Math.round(totals.totalLiability * 100) / 100,
       customerCount: totals.customerCount,
+      totalPointsLiability: Math.round(pointTotals.totalPointsLiability * 100) / 100,
+      purchasedPointsLiability: Math.round(pointTotals.purchasedPointsLiability * 100) / 100,
+      promotionalPointsLiability: Math.round(pointTotals.promotionalPointsLiability * 100) / 100,
       rows: result.rows.map((r) => ({
         userId: String(r.userId ?? ''),
         balance: Number(r.balance ?? 0),
         asOf: r.asOf as Date,
+        purchasedPoints: Number(r.purchasedPoints ?? 0),
+        promotionalPoints: Number(r.promotionalPoints ?? 0),
       })),
+      pagination: buildPaginationMeta(result.total, page, limit),
+    };
+  }
+
+  async walletRechargeReport(
+    query: ReportRangeQuery & { page?: number; limit?: number },
+  ) {
+    assertRange(query);
+    const range = engineRange(query);
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.max(1, query.limit ?? DEFAULT_PAGE_LIMIT);
+    const def = getReportDefinition('wallet-recharge');
+    if (!def) throw new ValidationError(ERROR_MESSAGES.REPORT_NOT_FOUND);
+
+    const result = await def.query({ ...range, page, limit });
+    const meta = (result.meta ?? {}) as {
+      totalInrCollected?: number;
+      successCount?: number;
+      failedCount?: number;
+      pointsIssued?: number;
+    };
+
+    return {
+      from: range.from,
+      to: range.to,
+      totalInrCollected: Number(meta.totalInrCollected ?? 0),
+      successCount: Number(meta.successCount ?? 0),
+      failedCount: Number(meta.failedCount ?? 0),
+      pointsIssued: Number(meta.pointsIssued ?? 0),
+      rows: result.rows,
       pagination: buildPaginationMeta(result.total, page, limit),
     };
   }

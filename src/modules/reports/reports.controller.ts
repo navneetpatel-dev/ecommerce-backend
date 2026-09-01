@@ -160,6 +160,24 @@ export const walletLiability = asyncHandler(async (req: Request, res: Response) 
   res.json(ok(data));
 });
 
+export const walletRecharge = asyncHandler(async (req: Request, res: Response) => {
+  const query = rangeFromQuery(req);
+  if (query.format !== 'json') {
+    const actor = await actorFromReq(req);
+    await enqueuePanelExport(res, actor, 'wallet-recharge', {
+      from: query.from,
+      to: query.to,
+    }, panelExportFormat(query.format));
+    return;
+  }
+  const data = await reportsService.walletRechargeReport({
+    ...query,
+    page: query.page ?? 1,
+    limit: query.limit ?? 50,
+  });
+  res.json(ok(data));
+});
+
 export const cashbackWriteOff = asyncHandler(async (req: Request, res: Response) => {
   const query = WriteOffReportSchema.parse(req.query);
   const actor = await actorFromReq(req);

@@ -2,6 +2,7 @@ import { Op, QueryTypes } from 'sequelize';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { sequelize } from '@database/models';
 import { WalletWriteOff } from '@database/models/walletWriteOff.model';
+import { WalletRechargeOrder } from '@database/models/walletRechargeOrder.model';
 import { paginationOffset } from '@core/http/pagination';
 import { DEFAULT_PAGE_LIMIT } from '@core/constants/http';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
@@ -24,6 +25,20 @@ const WALLET_LIABILITY_KEYSET: KeysetOrderCol[] = [
   { column: 'userId', direction: 'ASC' },
 ];
 
+function walletLiabilityUserSourcesCte(): string {
+  return `
+    user_sources AS (
+      SELECT wl."userId",
+        COALESCE(SUM(CASE WHEN wl.type = 'CREDIT' AND wl."pointSource" = 'PURCHASED' THEN wl.amount ELSE 0 END), 0)::float AS purchased_cr,
+        COALESCE(SUM(CASE WHEN wl.type = 'CREDIT' AND (wl."pointSource" = 'PROMOTIONAL' OR wl."pointSource" IS NULL) THEN wl.amount ELSE 0 END), 0)::float AS promo_cr,
+        COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' THEN wl.amount ELSE 0 END), 0)::float AS debits
+      FROM wallet_ledgers wl
+      WHERE wl."deletedAt" IS NULL
+        AND wl."createdAt" <= :to
+      GROUP BY wl."userId"
+    )`;
+}
+
 function walletLiabilitySelectSql(): string {
   return `
     WITH active_users AS (
@@ -32,10 +47,11 @@ function walletLiabilitySelectSql(): string {
       WHERE "deletedAt" IS NULL
         AND "createdAt" BETWEEN :from AND :to
     ),
+    ${walletLiabilityUserSourcesCte()},
     latest AS (
       SELECT DISTINCT ON (wl."userId")
         wl."userId" AS "userId",
-        wl."balanceAfter" AS balance,
+        wl."balanceAfter"::float AS balance,
         wl."createdAt" AS "asOf"
       FROM wallet_ledgers wl
       INNER JOIN active_users au ON au."userId" = wl."userId"
@@ -43,8 +59,29 @@ function walletLiabilitySelectSql(): string {
         AND wl."createdAt" <= :to
       ORDER BY wl."userId", wl."createdAt" DESC
     )
-    SELECT "userId", balance, "asOf"
-    FROM latest WHERE balance > 0
+    SELECT
+      l."userId",
+      l.balance,
+      l."asOf",
+      GREATEST(
+        0,
+        us.purchased_cr - CASE
+          WHEN (us.purchased_cr + us.promo_cr) > 0
+          THEN us.debits * us.purchased_cr / (us.purchased_cr + us.promo_cr)
+          ELSE 0
+        END
+      ) AS "purchasedPoints",
+      l.balance - GREATEST(
+        0,
+        us.purchased_cr - CASE
+          WHEN (us.purchased_cr + us.promo_cr) > 0
+          THEN us.debits * us.purchased_cr / (us.purchased_cr + us.promo_cr)
+          ELSE 0
+        END
+      ) AS "promotionalPoints"
+    FROM latest l
+    INNER JOIN user_sources us ON us."userId" = l."userId"
+    WHERE l.balance > 0
   `;
 }
 
@@ -82,6 +119,69 @@ export async function walletLiabilityTotals(filters: {
   };
 }
 
+export async function walletPointSourceLiabilityTotals(filters: {
+  to: Date;
+}): Promise<{
+  totalPointsLiability: number;
+  purchasedPointsLiability: number;
+  promotionalPointsLiability: number;
+}> {
+  const [[row]] = (await sequelize.query(
+    `WITH latest AS (
+       SELECT DISTINCT ON (wl."userId")
+         wl."userId",
+         wl."balanceAfter"::float AS balance
+       FROM wallet_ledgers wl
+       WHERE wl."deletedAt" IS NULL
+         AND wl."createdAt" <= :to
+       ORDER BY wl."userId", wl."createdAt" DESC
+     ),
+     user_sources AS (
+       SELECT wl."userId",
+         COALESCE(SUM(CASE WHEN wl.type = 'CREDIT' AND wl."pointSource" = 'PURCHASED' THEN wl.amount ELSE 0 END), 0)::float AS purchased_cr,
+         COALESCE(SUM(CASE WHEN wl.type = 'CREDIT' AND (wl."pointSource" = 'PROMOTIONAL' OR wl."pointSource" IS NULL) THEN wl.amount ELSE 0 END), 0)::float AS promo_cr,
+         COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' THEN wl.amount ELSE 0 END), 0)::float AS debits
+       FROM wallet_ledgers wl
+       WHERE wl."deletedAt" IS NULL
+         AND wl."createdAt" <= :to
+       GROUP BY wl."userId"
+     ),
+     breakdown AS (
+       SELECT
+         l.balance,
+         GREATEST(
+           0,
+           us.purchased_cr - CASE
+             WHEN (us.purchased_cr + us.promo_cr) > 0
+             THEN us.debits * us.purchased_cr / (us.purchased_cr + us.promo_cr)
+             ELSE 0
+           END
+         ) AS purchased_net
+       FROM latest l
+       INNER JOIN user_sources us ON us."userId" = l."userId"
+       WHERE l.balance > 0
+     )
+     SELECT
+       COALESCE(SUM(balance), 0)::float AS "totalPointsLiability",
+       COALESCE(SUM(purchased_net), 0)::float AS "purchasedPointsLiability",
+       COALESCE(SUM(balance - purchased_net), 0)::float AS "promotionalPointsLiability"
+     FROM breakdown`,
+    { replacements: { to: filters.to } },
+  )) as [
+    Array<{
+      totalPointsLiability: number;
+      purchasedPointsLiability: number;
+      promotionalPointsLiability: number;
+    }>,
+    unknown,
+  ];
+  return {
+    totalPointsLiability: Number(row?.totalPointsLiability ?? 0),
+    purchasedPointsLiability: Number(row?.purchasedPointsLiability ?? 0),
+    promotionalPointsLiability: Number(row?.promotionalPointsLiability ?? 0),
+  };
+}
+
 async function walletLiabilityExport(
   filters: ReportFilters,
   cursor: { values: unknown[] } | null,
@@ -98,6 +198,8 @@ async function walletLiabilityExport(
       userId: String(row.userId ?? ''),
       balance: Number(row.balance ?? 0),
       asOf: row.asOf as Date,
+      purchasedPoints: Number(row.purchasedPoints ?? 0),
+      promotionalPoints: Number(row.promotionalPoints ?? 0),
     }),
   });
   return { rows: page.rows, nextCursor: page.nextCursor };
@@ -141,35 +243,28 @@ async function walletLiabilityQuery(filters: ReportFilters) {
   if (customerCount === 0) return emptyPage(filters);
 
   const [rows] = (await sequelize.query(
-    `WITH active_users AS (
-       SELECT DISTINCT "userId"
-       FROM wallet_ledgers
-       WHERE "deletedAt" IS NULL
-         AND "createdAt" BETWEEN :from AND :to
-     ),
-     latest AS (
-       SELECT DISTINCT ON (wl."userId")
-         wl."userId" AS "userId",
-         wl."balanceAfter" AS balance,
-         wl."createdAt" AS "asOf"
-       FROM wallet_ledgers wl
-       INNER JOIN active_users au ON au."userId" = wl."userId"
-       WHERE wl."deletedAt" IS NULL
-         AND wl."createdAt" <= :to
-       ORDER BY wl."userId", wl."createdAt" DESC
-     )
-     SELECT "userId", balance, "asOf"
-     FROM latest WHERE balance > 0
+    `${walletLiabilitySelectSql()}
      ORDER BY balance DESC
      LIMIT :limit OFFSET :offset`,
     { replacements },
-  )) as [Array<{ userId: string; balance: number; asOf: Date }>, unknown];
+  )) as [
+    Array<{
+      userId: string;
+      balance: number;
+      asOf: Date;
+      purchasedPoints: number;
+      promotionalPoints: number;
+    }>,
+    unknown,
+  ];
 
   return {
     rows: rows.map((r) => ({
       userId: r.userId,
       balance: Number(r.balance),
       asOf: r.asOf,
+      purchasedPoints: Number(r.purchasedPoints ?? 0),
+      promotionalPoints: Number(r.promotionalPoints ?? 0),
     })),
     total: customerCount,
   };
@@ -472,6 +567,81 @@ async function vendorSummaryQuery(filters: ReportFilters) {
   };
 }
 
+async function walletRechargeQuery(filters: ReportFilters) {
+  assertReportRange(filters);
+  const from = filters.from;
+  const to = inclusiveReportTo(filters.to);
+  const page = Math.max(1, filters.page ?? 1);
+  const limit = Math.max(1, filters.limit ?? DEFAULT_PAGE_LIMIT);
+  const where = { createdAt: { [Op.between]: [from, to] } };
+
+  const findOpts = {
+    where,
+    order: [['createdAt', 'DESC']] as [string, string][],
+    limit,
+    offset: paginationOffset(page, limit),
+  };
+
+  if (filters._exportSkipCount && filters._exportKnownTotal != null) {
+    const rows = await WalletRechargeOrder.findAll(findOpts);
+    return {
+      rows: rows.map(mapWalletRechargeRow),
+      total: filters._exportKnownTotal,
+      meta: await walletRechargeMeta(from, to),
+    };
+  }
+
+  const pageResult = await WalletRechargeOrder.findAndCountAll(findOpts);
+  return {
+    rows: pageResult.rows.map(mapWalletRechargeRow),
+    total: pageResult.count,
+    meta: await walletRechargeMeta(from, to),
+  };
+}
+
+function mapWalletRechargeRow(row: WalletRechargeOrder) {
+  return {
+    id: row.id,
+    userId: row.userId,
+    amountInr: Number(row.amountInr),
+    pointsCredited: Number(row.pointsCredited),
+    status: row.status,
+    razorpayOrderId: row.razorpayOrderId,
+    paidAt: row.paidAt,
+    createdAt: row.createdAt as Date,
+  };
+}
+
+async function walletRechargeMeta(from: Date, to: Date) {
+  const [[totals]] = (await sequelize.query(
+    `SELECT
+       COALESCE(SUM(CASE WHEN status = 'PAID' THEN "amountInr" ELSE 0 END), 0)::float AS "totalInrCollected",
+       COUNT(*) FILTER (WHERE status = 'PAID')::int AS "successCount",
+       COUNT(*) FILTER (WHERE status IN ('FAILED', 'EXPIRED'))::int AS "failedCount",
+       COALESCE(SUM(CASE WHEN status = 'PAID' THEN "pointsCredited" ELSE 0 END), 0)::float AS "pointsIssued"
+     FROM wallet_recharge_orders
+     WHERE "deletedAt" IS NULL
+       AND "createdAt" BETWEEN :from AND :to`,
+    { replacements: { from, to } },
+  )) as [
+    Array<{
+      totalInrCollected: number;
+      successCount: number;
+      failedCount: number;
+      pointsIssued: number;
+    }>,
+    unknown,
+  ];
+  return {
+    totalInrCollected: Number(totals?.totalInrCollected ?? 0),
+    successCount: Number(totals?.successCount ?? 0),
+    failedCount: Number(totals?.failedCount ?? 0),
+    pointsIssued: Number(totals?.pointsIssued ?? 0),
+  };
+}
+
+const walletRechargeExport = createOffsetExportQuery(walletRechargeQuery);
+
 export const legacyPanelReports: ReportDefinition[] = [
   {
     type: 'wallet-liability',
@@ -483,10 +653,31 @@ export const legacyPanelReports: ReportDefinition[] = [
     columns: [
       { key: 'userId', labelKey: 'userId' },
       { key: 'balance', labelKey: 'balance', format: 'currency' },
+      { key: 'purchasedPoints', labelKey: 'purchasedPoints', format: 'currency' },
+      { key: 'promotionalPoints', labelKey: 'promotionalPoints', format: 'currency' },
       { key: 'asOf', labelKey: 'asOf', format: 'date' },
     ],
     query: walletLiabilityQuery,
     exportQuery: walletLiabilityExport,
+  },
+  {
+    type: 'wallet-recharge',
+    labelKey: 'reportWalletRecharge',
+    audience: 'admin_finance',
+    permissions: [PERMISSIONS.ANALYTICS_VIEW, PERMISSIONS.COMMISSION_VIEW],
+    vendorScoped: false,
+    financial: true,
+    columns: [
+      { key: 'userId', labelKey: 'userId' },
+      { key: 'amountInr', labelKey: 'amountInr', format: 'currency' },
+      { key: 'pointsCredited', labelKey: 'pointsCredited', format: 'currency' },
+      { key: 'status', labelKey: 'status' },
+      { key: 'razorpayOrderId', labelKey: 'razorpayOrderId' },
+      { key: 'paidAt', labelKey: 'paidAt', format: 'date' },
+      { key: 'createdAt', labelKey: 'createdAt', format: 'date' },
+    ],
+    query: walletRechargeQuery,
+    exportQuery: walletRechargeExport,
   },
   {
     type: 'cashback-write-offs',
