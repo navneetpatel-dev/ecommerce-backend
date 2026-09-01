@@ -63,6 +63,12 @@ const envSchema = z.object({
 
   /** Public storefront URL used in email CTAs. */
   CLIENT_URL: z.string().default('http://localhost:5173'),
+
+  /** Google OAuth — optional until credentials are added in Google Cloud Console. */
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  /** Defaults to http://localhost:{PORT}/api/auth/google/callback when unset. */
+  GOOGLE_CALLBACK_URL: z.string().url().optional(),
   /** Hours of cart inactivity before abandoned-cart marketing email. */
   ABANDONED_CART_HOURS: z.coerce.number().int().positive().default(24),
   /** Days after delivery before review-request marketing email. */

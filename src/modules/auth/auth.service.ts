@@ -218,11 +218,20 @@ export class AuthService {
       throw new ForbiddenError(ERROR_MESSAGES.ACCOUNT_BLOCKED);
     }
 
+    if (!user.passwordHash) {
+      throw new ValidationError({ email: [ERROR_MESSAGES.OAUTH_PASSWORD_ACCOUNT] });
+    }
+
     const valid = await bcrypt.compare(dto.password, user.passwordHash);
     if (!valid) {
       throw new ValidationError({ email: [ERROR_MESSAGES.INVALID_CREDENTIALS] });
     }
 
+    return this.issueSession(user, meta);
+  }
+
+  /** Used by Google OAuth after resolving the user row. */
+  async issueSessionFromUser(user: User, meta: SessionDeviceMeta = {}): Promise<LoginSuccess> {
     return this.issueSession(user, meta);
   }
 
@@ -392,6 +401,10 @@ export class AuthService {
     const user = await repo.findById(userId);
     if (!user) {
       throw new NotFoundError('User');
+    }
+
+    if (!user.passwordHash) {
+      throw new ValidationError({ currentPassword: [ERROR_MESSAGES.OAUTH_PASSWORD_ACCOUNT] });
     }
 
     const valid = await bcrypt.compare(currentPassword, user.passwordHash);

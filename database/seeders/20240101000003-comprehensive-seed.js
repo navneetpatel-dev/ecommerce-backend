@@ -249,10 +249,14 @@ module.exports = {
 
     for (let i = 0; i < 100; i++) {
       const customerId = uuidv4();
-      const firstName = randomElement(firstNames);
-      const lastName = randomElement(lastNames);
+      const firstName = i === 54 ? 'Amit' : randomElement(firstNames);
+      const lastName = i === 54 ? 'Gupta' : randomElement(lastNames);
+      const email =
+        i === 54
+          ? 'amit.gupta54@example.com'
+          : `${firstName.toLowerCase()}.${lastName.toLowerCase()}${i}@example.com`;
       customers.push({
-        id: customerId, email: `${firstName.toLowerCase()}.${lastName.toLowerCase()}${i}@example.com`, passwordHash,
+        id: customerId, email, passwordHash,
         name: `${firstName} ${lastName}`, phone: `+91987${String(i).padStart(7, '0')}`,
         status: 'ACTIVE', roleId: roleMap.CUSTOMER, vendorId: null,
         emailVerified: true, emailMarketingConsent: i % 3 === 0, emailSuppressed: false,
@@ -711,12 +715,13 @@ module.exports = {
     console.log(`  ${taxRules.length} tax rules`);
     console.log(`  ${shippingZones.length} shipping zones`);
     console.log(`  ${shippingRates.length} shipping rates\n`);
-    console.log('Test credentials: all passwords are Test@123');
-    console.log('  SUPER_ADMIN: admin@ecommerce.com');
-    console.log('  ADMIN_ORDER_MANAGER: ordermanager@ecommerce.com');
-    console.log('  ADMIN_CATALOG_MANAGER: catalogmanager@ecommerce.com');
-    console.log('  VENDOR_OWNER (example): owner@techworld.com (first 22 approved)');
-    console.log('  CUSTOMER (example): rahul.sharma0@example.com (100 customers)\n');
+    console.log('Test credentials (Super Admin uses Admin@123; everyone else Test@123):');
+    console.log('  SUPER_ADMIN:        admin@ecommerce.com');
+    console.log('  ORDER_MANAGER:      ordermanager@ecommerce.com');
+    console.log('  CATALOG_MANAGER:    catalogmanager@ecommerce.com');
+    console.log('  VENDOR_OWNER:       owner@techworld.com');
+    console.log('  VENDOR_STAFF:       staff@techworld.com');
+    console.log('  CUSTOMER:           amit.gupta54@example.com\n');
   },
 
   async down(queryInterface) {

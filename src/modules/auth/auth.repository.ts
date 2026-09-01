@@ -33,6 +33,13 @@ export class AuthRepository extends BaseRepository<User> {
     });
   }
 
+  async findByGoogleId(googleId: string) {
+    return User.findOne({
+      where: { googleId },
+      include: [{ model: Role, as: 'role' }],
+    });
+  }
+
   async findRefreshToken(hash: string) {
     return RefreshToken.findOne({ where: { tokenHash: hash } });
   }

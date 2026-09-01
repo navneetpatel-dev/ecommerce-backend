@@ -7,6 +7,9 @@ import * as controller from './auth.controller';
 
 const router = Router();
 
+router.get('/google', controller.googleStart);
+router.get('/google/callback', controller.googleCallback);
+
 router.post('/register', validate(RegisterSchema), authRateLimiter, controller.register);
 router.post('/login', validate(LoginSchema), authRateLimiter, controller.login);
 router.post('/refresh', controller.refresh);

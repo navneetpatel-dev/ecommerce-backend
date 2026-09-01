@@ -5,7 +5,8 @@ import type { Vendor } from './vendor.model';
 export class User extends Model<InferAttributes<User>, InferCreationAttributes<User>> {
   declare id: CreationOptional<string>;
   declare email: string;
-  declare passwordHash: string;
+  declare passwordHash: string | null;
+  declare googleId: string | null;
   declare name: string;
   declare phone: string | null;
   declare status: 'ACTIVE' | 'BLOCKED';
@@ -37,7 +38,8 @@ export const initUserModel = (sequelize: Sequelize) => {
     {
       id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
       email: { type: DataTypes.STRING, allowNull: false },
-      passwordHash: { type: DataTypes.STRING, allowNull: false },
+      passwordHash: { type: DataTypes.STRING, allowNull: true },
+      googleId: { type: DataTypes.STRING, allowNull: true },
       name: { type: DataTypes.STRING, allowNull: false },
       phone: { type: DataTypes.STRING, allowNull: true },
       status: { type: DataTypes.ENUM('ACTIVE', 'BLOCKED'), defaultValue: 'ACTIVE' },
