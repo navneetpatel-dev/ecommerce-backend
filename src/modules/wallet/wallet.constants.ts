@@ -6,4 +6,6 @@ export const WALLET_DESCRIPTIONS = {
   CASHBACK_CREDIT: 'Cashback for order',
   CASHBACK_CLAWBACK: 'Cashback clawback on return',
   TOPUP_CREDIT: 'Points recharge',
+  PROMO_EXPIRY: 'Promotional points expired',
+  ADMIN_ADJUSTMENT: 'Admin adjustment',
 } as const;

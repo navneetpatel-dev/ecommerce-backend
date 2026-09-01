@@ -25,14 +25,14 @@ const PERMISSION_KEYS = [
   'banner.manage',
   'audit.view', 'analytics.view', 'product.create', 'product.update', 'product.delete',
   'suborder.manage', 'payout.view', 'review.respond',
-  'ticket.manage', 'bug_report.manage',
+  'ticket.manage', 'bug_report.manage', 'wallet.adjust',
 ];
 
 const ROLE_PERMISSIONS = {
   SUPER_ADMIN: PERMISSION_KEYS,
   ADMIN_ORDER_MANAGER: [
     'order.manage', 'order.refund', 'analytics.view', 'audit.view',
-    'ticket.manage', 'bug_report.manage',
+    'ticket.manage', 'bug_report.manage', 'wallet.adjust',
   ],
   ADMIN_CATALOG_MANAGER: [
     'product.manage', 'product.approve', 'category.manage', 'banner.manage',

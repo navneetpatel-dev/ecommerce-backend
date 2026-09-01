@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { describe, it, before, after, mock } from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { sequelize } from '@database/models';
+import { ensureTestRoles } from '../../../testHelpers/ensureTestRoles';
 import { User } from '@database/models/user.model';
 import { Role } from '@database/models/role.model';
 import { Vendor } from '@database/models/vendor.model';
@@ -42,6 +43,11 @@ import {
   WALLET_REFERENCE_TYPE,
 } from '@core/constants/statuses';
 import { toPaise } from '@modules/pricing/money';
+import {
+  rollbackOrderWalletIfNeeded,
+  hasWalletRollbackCredit,
+} from '@modules/wallet/walletOrderRollback';
+import { cancelPaidOrder } from '@modules/orders/ordersCancel.service';
 
 let dbReady = false;
 let sharedVariantId: string | null = null;
@@ -285,6 +291,7 @@ describe('consolidated refund scenarios (seeded)', () => {
   before(async () => {
     try {
       await withTimeout(sequelize.authenticate(), 2000);
+      await ensureTestRoles();
       dbReady = true;
     } catch {
       dbReady = false;
@@ -718,5 +725,329 @@ describe('consolidated refund scenarios (seeded)', () => {
     const debitSum = debits.reduce((s, row) => s + Number(row.amount), 0);
     assert.ok(debitSum <= 50.001);
     assert.equal(Math.round((50 - debitSum) * 100) / 100, bal);
+  });
+
+  it('11. clawback writes pointSourceBreakdown on partial recover', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    await walletService.credit(
+      customer.id,
+      60,
+      { type: WALLET_REFERENCE_TYPE.CASHBACK, id: randomUUID() },
+      'promo',
+      undefined,
+      { pointSource: 'PROMOTIONAL' as const },
+    );
+    await walletService.credit(
+      customer.id,
+      40,
+      { type: WALLET_REFERENCE_TYPE.TOPUP, id: randomUUID() },
+      'purchased',
+      undefined,
+      { pointSource: 'PURCHASED' as const },
+    );
+
+    const result = await walletService.clawback(
+      customer.id,
+      50,
+      { type: WALLET_REFERENCE_TYPE.CLAWBACK, id: randomUUID() },
+      'clawback test',
+      DISCOUNT_BEARER.PLATFORM,
+    );
+
+    assert.ok(result.ledger);
+    const breakdown = result.ledger!.pointSourceBreakdown as {
+      promotional?: number;
+      purchased?: number;
+    };
+    assert.equal(breakdown.promotional, 50);
+    assert.equal(breakdown.purchased, 0);
+  });
+
+  it('12. ambiguous refund webhook does not complete wrong return', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    const paymentId = `pay_${randomUUID().slice(0, 10)}`;
+    const { order, sub, item } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.RAZORPAY,
+      totalAmount: 400,
+      razorpayAmountPaid: 400,
+      shippingCharged: 0,
+      lineTaxable: 169.49,
+      lineTax: 30.51,
+      razorpayPaymentId: paymentId,
+    });
+
+    const item2 = await OrderItem.create({
+      subOrderId: sub.id,
+      variantId: await resolveVariantId(),
+      productName: 'Test Item 2',
+      quantity: 1,
+      unitPrice: 169.49,
+      discountAmount: 0,
+      taxableAmount: 169.49,
+      taxAmount: 30.51,
+      taxBreakdown: { cgst: 15.25, sgst: 15.26, igst: 0, total: 30.51, gstPercentage: 18 },
+      commissionAmount: 10,
+      tcsAmount: 1,
+      netPayoutAmount: 158.49,
+      unitPricePaise: toPaise(169.49),
+      discountAmountPaise: 0,
+      taxableAmountPaise: toPaise(169.49),
+      taxAmountPaise: toPaise(30.51),
+      commissionAmountPaise: toPaise(10),
+      tcsAmountPaise: toPaise(1),
+      netPayoutAmountPaise: toPaise(158.49),
+      createdBy: customer.id,
+      updatedBy: customer.id,
+      deletedBy: null,
+    } as any);
+
+    const createRefund = mock.method(paymentsService, 'createRazorpayRefund', async () => `rfnd_${randomUUID().slice(0, 8)}`);
+
+    const rrA = await returnsService.create(customer.id, {
+      orderItemId: item.id,
+      reasonCode: RETURN_REASON.DAMAGED,
+      reason: 'Damaged A',
+    });
+    const rrB = await returnsService.create(customer.id, {
+      orderItemId: item2.id,
+      reasonCode: RETURN_REASON.DAMAGED,
+      reason: 'Damaged B',
+    });
+    const approvedA = await returnsService.transition(rrA.id, RETURN_STATUS.APPROVED, customer.id);
+    const approvedB = await returnsService.transition(rrB.id, RETURN_STATUS.APPROVED, customer.id);
+
+    const refundPaise = toPaise(Number(approvedA.razorpayRefundAmount));
+    assert.equal(refundPaise, toPaise(Number(approvedB.razorpayRefundAmount)));
+
+    await returnsService.markRazorpayRefundProcessed({
+      paymentId,
+      amountPaise: refundPaise,
+    });
+
+    const afterAmbiguousA = await ReturnRequest.findByPk(rrA.id);
+    const afterAmbiguousB = await ReturnRequest.findByPk(rrB.id);
+    assert.equal(afterAmbiguousA!.refundStatus, REFUND_STATUS.INITIATED);
+    assert.equal(afterAmbiguousB!.refundStatus, REFUND_STATUS.INITIATED);
+
+    await returnsService.markRazorpayRefundProcessed({
+      paymentId,
+      amountPaise: refundPaise,
+      returnRequestId: rrB.id,
+      razorpayRefundId: 'rfnd_target_b',
+    });
+
+    const doneB = await ReturnRequest.findByPk(rrB.id);
+    const stillA = await ReturnRequest.findByPk(rrA.id);
+    assert.equal(doneB!.refundStatus, REFUND_STATUS.COMPLETED);
+    assert.equal(stillA!.refundStatus, REFUND_STATUS.INITIATED);
+
+    void order;
+    createRefund.mock.restore();
+  });
+
+  it('13. wallet rollback restores promo+purchased once; second call no-ops', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    await walletService.credit(
+      customer.id,
+      40,
+      { type: WALLET_REFERENCE_TYPE.CASHBACK, id: randomUUID() },
+      'promo seed',
+      undefined,
+      { pointSource: 'PROMOTIONAL' as const },
+    );
+    await walletService.credit(
+      customer.id,
+      60,
+      { type: WALLET_REFERENCE_TYPE.TOPUP, id: randomUUID() },
+      'purchased seed',
+      undefined,
+      { pointSource: 'PURCHASED' as const },
+    );
+
+    const { order } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.RAZORPAY,
+      totalAmount: 100,
+      walletAmountUsed: 100,
+      razorpayAmountPaid: 0,
+      shippingCharged: 0,
+      lineTaxable: 84.75,
+      lineTax: 15.25,
+    });
+
+    await sequelize.transaction(async (txn) => {
+      await walletService.debit(
+        customer.id,
+        100,
+        { type: WALLET_REFERENCE_TYPE.ORDER, id: order.id },
+        'checkout spend',
+        txn,
+      );
+    });
+    assert.equal(await walletService.getBalance(customer.id), 0);
+
+    await sequelize.transaction(async (txn) => {
+      const restored = await rollbackOrderWalletIfNeeded(order, customer.id, txn);
+      assert.equal(restored, true);
+      assert.equal(await hasWalletRollbackCredit(order.id, txn), true);
+      const again = await rollbackOrderWalletIfNeeded(order, customer.id, txn);
+      assert.equal(again, false);
+    });
+
+    assert.equal(await walletService.getBalance(customer.id), 100);
+    const rollbackCredits = await WalletLedger.findAll({
+      where: {
+        userId: customer.id,
+        referenceId: order.id,
+        type: 'CREDIT',
+      },
+    });
+    assert.equal(rollbackCredits.length, 2);
+    const promoCredit = rollbackCredits.find((r) => r.pointSource === 'PROMOTIONAL');
+    const purchasedCredit = rollbackCredits.find((r) => r.pointSource === 'PURCHASED');
+    assert.equal(Number(promoCredit?.amount), 40);
+    assert.equal(Number(purchasedCredit?.amount), 60);
+  });
+
+  it('14. cancel on already-CANCELLED restores wallet once; second call no-ops', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    await walletService.credit(
+      customer.id,
+      80,
+      { type: WALLET_REFERENCE_TYPE.TOPUP, id: randomUUID() },
+      'seed',
+      undefined,
+      { pointSource: 'PURCHASED' as const },
+    );
+
+    const { order } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.RAZORPAY,
+      totalAmount: 80,
+      walletAmountUsed: 80,
+      razorpayAmountPaid: 0,
+      shippingCharged: 0,
+      lineTaxable: 67.8,
+      lineTax: 12.2,
+    });
+
+    await sequelize.transaction(async (txn) => {
+      await walletService.debit(
+        customer.id,
+        80,
+        { type: WALLET_REFERENCE_TYPE.ORDER, id: order.id },
+        'checkout spend',
+        txn,
+      );
+    });
+    assert.equal(await walletService.getBalance(customer.id), 0);
+
+    await Order.update(
+      { status: ORDER_STATUS.CANCELLED, walletAmountUsed: 80 },
+      { where: { id: order.id } },
+    );
+
+    await cancelPaidOrder(order.id, customer.id, false);
+    assert.equal(await walletService.getBalance(customer.id), 80);
+
+    await cancelPaidOrder(order.id, customer.id, false);
+    assert.equal(await walletService.getBalance(customer.id), 80);
+  });
+
+  it('15. payment.failed path restores wallet on already-cancelled order', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    const razorpayOrderId = `order_${randomUUID().slice(0, 10)}`;
+
+    await walletService.credit(
+      customer.id,
+      60,
+      { type: WALLET_REFERENCE_TYPE.CASHBACK, id: randomUUID() },
+      'seed',
+      undefined,
+      { pointSource: 'PROMOTIONAL' as const },
+    );
+
+    const address = await Address.create({
+      userId: customer.id,
+      line1: 'Line 1',
+      line2: null,
+      city: 'Bengaluru',
+      state: 'KA',
+      country: 'IN',
+      pincode: '560001',
+      isDefault: true,
+      createdBy: customer.id,
+      updatedBy: customer.id,
+      deletedBy: null,
+    });
+
+    const order = await Order.create({
+      userId: customer.id,
+      couponId: null,
+      appliedCouponIds: [],
+      totalAmount: 60,
+      discountTotal: 0,
+      status: ORDER_STATUS.CANCELLED,
+      paymentStatus: PAYMENT_STATUS.FAILED,
+      paymentMethod: PAYMENT_METHOD.RAZORPAY,
+      walletAmountUsed: 60,
+      pendingCashbackAmount: 0,
+      cashbackCreditedAt: null,
+      cashbackDiscountBearer: null,
+      cashbackVendorId: null,
+      originalTotalAmount: 60,
+      razorpayAmountPaid: 60,
+      shippingAddressId: address.id,
+      razorpayOrderId,
+      razorpayPaymentId: null,
+      createdBy: customer.id,
+      updatedBy: customer.id,
+      deletedBy: null,
+    });
+    cleanupIds.orders.push(order.id);
+
+    await sequelize.transaction(async (txn) => {
+      await walletService.debit(
+        customer.id,
+        60,
+        { type: WALLET_REFERENCE_TYPE.ORDER, id: order.id },
+        'checkout spend',
+        txn,
+      );
+    });
+    assert.equal(await walletService.getBalance(customer.id), 0);
+
+    await sequelize.transaction(async (txn) => {
+      const locked = await Order.findOne({
+        where: { razorpayOrderId },
+        transaction: txn,
+        lock: txn.LOCK.UPDATE,
+      });
+      assert.ok(locked);
+      if (locked.status === ORDER_STATUS.CANCELLED) {
+        const walletRestored = await rollbackOrderWalletIfNeeded(locked, locked.userId, txn);
+        if (walletRestored) {
+          await locked.update({ walletAmountUsed: 0 }, { transaction: txn });
+        }
+      }
+    });
+
+    assert.equal(await walletService.getBalance(customer.id), 60);
+    await sequelize.transaction(async (txn) => {
+      assert.equal(await hasWalletRollbackCredit(order.id, txn), true);
+    });
   });
 });

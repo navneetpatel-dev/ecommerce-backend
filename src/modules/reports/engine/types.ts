@@ -8,7 +8,7 @@ export type ReportAudience =
   | 'vendor_staff'
   | 'customer';
 
-export type ReportColumnFormat = 'string' | 'number' | 'currency' | 'date' | 'percent';
+export type ReportColumnFormat = 'string' | 'number' | 'currency' | 'points' | 'date' | 'percent';
 
 export type ReportColumn = {
   key: string;

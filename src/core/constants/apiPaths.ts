@@ -31,6 +31,7 @@ export const API_MOUNTS = {
   homepage: '/homepage',
   reports: '/reports',
   wallet: '/wallet',
+  adminWallet: '/admin/wallet',
   uploads: '/uploads',
   supportTickets: '/support-tickets',
   bugReports: '/bug-reports',

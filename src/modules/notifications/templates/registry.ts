@@ -67,6 +67,9 @@ function bodyFor(type: NotificationType, data: EmailTemplateData): string {
     subject: str(data, 'subject'),
     reportNumber: str(data, 'reportNumber'),
     title: str(data, 'title'),
+    amountInr: str(data, 'amountInr'),
+    reasonMessage: str(data, 'reasonMessage'),
+    slaDays: str(data, 'slaDays', '5–7'),
   });
 }
 
@@ -89,6 +92,7 @@ function defaultCta(type: NotificationType, data: EmailTemplateData): { label?: 
     case 'ORDER_CANCELLED':
     case 'ORDER_RETURNED':
     case 'REFUND_PROCESSED':
+    case 'REFUND_INITIATED':
     case 'SUBORDER_SHIPPED':
     case 'SUBORDER_DELIVERED':
       return {
@@ -102,6 +106,8 @@ function defaultCta(type: NotificationType, data: EmailTemplateData): { label?: 
       };
     case 'ABANDONED_CART':
       return { label: EMAIL_COPY.ctaViewCart, url: str(data, 'actionUrl', `${base}/cart`) };
+    case 'WALLET_RECHARGE_FAILED':
+      return { label: 'View wallet', url: str(data, 'actionUrl', `${base}/account/wallet`) };
     case 'VENDOR_APPROVED':
     case 'VENDOR_NEW_ORDER':
     case 'LOW_STOCK_ALERT':

@@ -20,6 +20,7 @@ router.get(
   returnsController.downloadDebitNote,
 );
 router.patch('/:id/transition', authenticate, authorize(PERMISSIONS.ORDER_REFUND), validate(TransitionReturnSchema), returnsController.transition);
+router.post('/:id/retry-refund', authenticate, authorize(PERMISSIONS.ORDER_REFUND), returnsController.retryRefund);
 router.delete('/:id', authenticate, authorize(PERMISSIONS.ORDER_REFUND), returnsController.remove);
 
 export default router;

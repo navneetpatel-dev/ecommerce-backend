@@ -11,6 +11,10 @@ function formatCell(value: unknown, format?: string): string {
     const n = Number(value);
     return Number.isFinite(n) ? String(n) : '0';
   }
+  if (format === 'points') {
+    const n = Number(value);
+    return Number.isFinite(n) ? `${n} pts` : '0 pts';
+  }
   return typeof value === 'object' ? JSON.stringify(value) : String(value);
 }
 

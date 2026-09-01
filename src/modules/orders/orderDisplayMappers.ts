@@ -106,6 +106,8 @@ export function mapOrderResponse(order: Record<string, unknown>) {
     cashbackCreditedAt: plain.cashbackCreditedAt ?? null,
     cashbackDiscountBearer: plain.cashbackDiscountBearer ?? null,
     paymentMethod: plain.paymentMethod ?? null,
+    cancelRefundStatus: plain.cancelRefundStatus ?? null,
+    cancelRazorpayRefundId: plain.cancelRazorpayRefundId ?? null,
     customerName: (plain.user as { name?: string } | undefined)?.name ?? null,
     subOrders,
   };

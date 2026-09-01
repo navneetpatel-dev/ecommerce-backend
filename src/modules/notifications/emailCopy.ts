@@ -32,6 +32,8 @@ export const EMAIL_COPY = {
     ORDER_CANCELLED: 'Order cancelled — #{orderNumber}',
     ORDER_RETURNED: 'Return update — #{orderNumber}',
     REFUND_PROCESSED: 'Refund processed — #{orderNumber}',
+    REFUND_INITIATED: 'Refund initiated — #{orderNumber}',
+    WALLET_RECHARGE_FAILED: 'Wallet recharge update',
     VENDOR_APPLICATION_RECEIVED: 'We received your vendor application',
     VENDOR_APPROVED: 'Your vendor account is approved',
     VENDOR_REJECTED: 'Vendor application update',
@@ -83,6 +85,10 @@ export const EMAIL_COPY = {
     ORDER_CANCELLED: 'Order #{orderNumber} has been cancelled.',
     ORDER_RETURNED: 'Your return for order #{orderNumber} has been updated ({status}).',
     REFUND_PROCESSED: 'A refund of ₹{amount} for order #{orderNumber} has been processed.',
+    REFUND_INITIATED:
+      'Your refund of ₹{amount} for order #{orderNumber} has been initiated. Bank posting may take {slaDays} business days.',
+    WALLET_RECHARGE_FAILED:
+      'Your wallet recharge of ₹{amountInr} could not be completed. {reasonMessage}',
     VENDOR_APPLICATION_RECEIVED:
       'We received your vendor application for {businessName}. We will review it shortly.',
     VENDOR_APPROVED: 'Congratulations — {businessName} is approved. You can start listing products.',

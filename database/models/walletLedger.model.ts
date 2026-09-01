@@ -10,6 +10,8 @@ export class WalletLedger extends Model<InferAttributes<WalletLedger>, InferCrea
   declare referenceId: string;
   declare description: string;
   declare pointSource: 'PURCHASED' | 'PROMOTIONAL' | null;
+  declare expiresAt: Date | null;
+  declare pointSourceBreakdown: { promotional?: number; purchased?: number } | null;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -34,6 +36,8 @@ export const initWalletLedgerModel = (sequelize: Sequelize) => {
       referenceId: { type: DataTypes.STRING(64), allowNull: false },
       description: { type: DataTypes.STRING(255), allowNull: false },
       pointSource: { type: DataTypes.ENUM('PURCHASED', 'PROMOTIONAL'), allowNull: true },
+      expiresAt: { type: DataTypes.DATE, allowNull: true },
+      pointSourceBreakdown: { type: DataTypes.JSONB, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

@@ -139,10 +139,22 @@ async function findReturnForUpdate(id: string, t: Transaction): Promise<ReturnRe
   });
 }
 
-function serializeReturn(row: ReturnRequest | (ReturnRequest & { orderItem?: OrderItem })) {
+function serializeReturn(
+  row: ReturnRequest | (ReturnRequest & { orderItem?: OrderItem }),
+  slaDays: number,
+) {
   const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
   const creditNote = plain.CreditNote ?? plain.creditNote ?? null;
   const debitNote = plain.DebitNote ?? plain.debitNote ?? null;
+  const refundStatus = plain.refundStatus ?? REFUND_STATUS.NONE;
+  let refundCustomerMessage: string | null = null;
+  if (refundStatus === REFUND_STATUS.INITIATED) {
+    refundCustomerMessage = `Refund initiated — bank posting may take ${slaDays} business days.`;
+  } else if (refundStatus === REFUND_STATUS.FAILED) {
+    refundCustomerMessage = 'There was an issue processing your bank refund. Our team is retrying.';
+  } else if (refundStatus === REFUND_STATUS.COMPLETED) {
+    refundCustomerMessage = 'Refund completed.';
+  }
   return {
     id: plain.id,
     orderItemId: plain.orderItemId,
@@ -154,6 +166,7 @@ function serializeReturn(row: ReturnRequest | (ReturnRequest & { orderItem?: Ord
     photoUrls: Array.isArray(plain.photoUrls) ? plain.photoUrls : [],
     refundMethod: plain.refundMethod ?? null,
     refundStatus: plain.refundStatus ?? REFUND_STATUS.NONE,
+    refundCustomerMessage,
     refundAmount: plain.refundAmount != null ? Number(plain.refundAmount) : null,
     refundTaxAmount: plain.refundTaxAmount != null ? Number(plain.refundTaxAmount) : null,
     refundCommissionAmount:
@@ -198,17 +211,26 @@ async function resolveReturnShippingFeePaise(vendorId: string | null | undefined
   return toPaise(fee);
 }
 
+async function refundSlaDays(): Promise<number> {
+  const settings = await settingsService.getPlatformSettings();
+  return settings.refundSlaBusinessDays;
+}
+
 export class ReturnsService {
   async listForUser(userId: string) {
+    const slaDays = await refundSlaDays();
     const rows = await ReturnRequest.findAll({
       where: { userId },
       include: returnListInclude,
       order: [['createdAt', 'DESC']],
     });
-    return rows.map((row) => serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }));
+    return rows.map((row) =>
+      serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }, slaDays),
+    );
   }
 
   async listAll(query: { page: number; limit: number }) {
+    const slaDays = await refundSlaDays();
     const offset = paginationOffset(query.page, query.limit);
     const { rows, count } = await ReturnRequest.findAndCountAll({
       include: returnListInclude,
@@ -219,7 +241,9 @@ export class ReturnsService {
       col: 'id',
     });
     return {
-      returns: rows.map((row) => serializeReturn(row as ReturnRequest & { orderItem?: OrderItem })),
+      returns: rows.map((row) =>
+        serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }, slaDays),
+      ),
       pagination: buildPaginationMeta(count, query.page, query.limit),
     };
   }
@@ -228,11 +252,12 @@ export class ReturnsService {
     id: string,
     requester: { id: string; roleId: string; role: { name: string } },
   ) {
+    const slaDays = await refundSlaDays();
     const row = await ReturnRequest.findByPk(id, { include: returnListInclude });
     if (!row) throw new NotFoundError('ReturnRequest');
 
     if (row.userId === requester.id) {
-      return serializeReturn(row as ReturnRequest & { orderItem?: OrderItem });
+      return serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }, slaDays);
     }
 
     const permissions = await resolvePermissionsForUser(requester);
@@ -240,10 +265,11 @@ export class ReturnsService {
       throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_RETURN);
     }
 
-    return serializeReturn(row as ReturnRequest & { orderItem?: OrderItem });
+    return serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }, slaDays);
   }
 
   async create(userId: string, data: CreateReturnInput) {
+    const slaDays = await refundSlaDays();
     return sequelize.transaction(async (t: Transaction) => {
       const orderItem = await OrderItem.findByPk(data.orderItemId, {
         include: [
@@ -333,7 +359,7 @@ export class ReturnsService {
         { transaction: t },
       );
 
-      return serializeReturn(created as ReturnRequest & { orderItem?: OrderItem });
+      return serializeReturn(created as ReturnRequest & { orderItem?: OrderItem }, slaDays);
     });
   }
 
@@ -966,6 +992,7 @@ export class ReturnsService {
   }
 
   async transition(id: string, status: ReturnStatus, actorId: string) {
+    const slaDays = await refundSlaDays();
     const razorpayBox: {
       refund: { returnId: string; paymentId: string; amountPaise: number } | null;
     } = { refund: null };
@@ -1071,7 +1098,7 @@ export class ReturnsService {
       }
 
       await row.update(patch, { transaction: t });
-      return serializeReturn(row as ReturnRequest & { orderItem?: OrderItem });
+      return serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }, slaDays);
     });
 
     const pendingRazorpay = razorpayBox.refund;
@@ -1080,17 +1107,35 @@ export class ReturnsService {
         const refundId = await paymentsService.createRazorpayRefund(
           pendingRazorpay.paymentId,
           pendingRazorpay.amountPaise,
-          pendingRazorpay.returnId,
+          { returnRequestId: pendingRazorpay.returnId },
         );
         await ReturnRequest.update(
           { razorpayRefundId: refundId, refundStatus: REFUND_STATUS.INITIATED },
           { where: { id: pendingRazorpay.returnId } },
         );
-      } catch {
-        await ReturnRequest.update(
-          { refundStatus: REFUND_STATUS.FAILED },
-          { where: { id: pendingRazorpay.returnId } },
-        );
+        const orderItem = await OrderItem.findByPk(result.orderItemId, {
+          include: [{ model: SubOrder, as: 'subOrder', include: [{ model: Order, as: 'order' }] }],
+        });
+        const order = (orderItem as any)?.subOrder?.order as Order | undefined;
+        if (order?.userId) {
+          void notificationsService.sendRefundInitiated(order.userId, pendingRazorpay.returnId, {
+            orderId: order.id,
+            orderNumber: order.id.slice(0, 8).toUpperCase(),
+            amount: Number(pendingRazorpay.amountPaise) / 100,
+            slaDays,
+          });
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Refund failed';
+        const failedRow = await ReturnRequest.findByPk(pendingRazorpay.returnId);
+        if (failedRow) {
+          await failedRow.update({
+            refundStatus: REFUND_STATUS.FAILED,
+            refundAttemptCount: Number(failedRow.refundAttemptCount ?? 0) + 1,
+            lastRefundAttemptAt: new Date(),
+            refundFailureReason: message.slice(0, 255),
+          });
+        }
         throw new ValidationError(ERROR_MESSAGES.RETURN_REFUND_PENDING);
       }
     }
@@ -1099,7 +1144,7 @@ export class ReturnsService {
       await this.completeRefundTrack(id, actorId);
       const refreshed = await ReturnRequest.findByPk(id, { include: returnListInclude });
       if (refreshed) {
-        return serializeReturn(refreshed as ReturnRequest & { orderItem?: OrderItem });
+        return serializeReturn(refreshed as ReturnRequest & { orderItem?: OrderItem }, slaDays);
       }
     }
 
@@ -1127,6 +1172,48 @@ export class ReturnsService {
   }
 
   /** Called from refund.processed webhook — flips refund track when Razorpay portion settles. */
+  async retryRazorpayRefund(returnRequestId: string, actorId: string): Promise<void> {
+    const row = await ReturnRequest.findByPk(returnRequestId);
+    if (!row) throw new NotFoundError('ReturnRequest');
+    if (row.refundStatus !== REFUND_STATUS.FAILED) {
+      throw new ValidationError('Refund retry only allowed for failed refunds');
+    }
+    const razorpayAmount = Number(row.razorpayRefundAmount ?? 0);
+    if (razorpayAmount <= 0) {
+      throw new ValidationError('No Razorpay refund amount on this return');
+    }
+
+    const orderItem = await OrderItem.findByPk(row.orderItemId, {
+      include: [{ model: SubOrder, as: 'subOrder', include: [{ model: Order, as: 'order' }] }],
+    });
+    const order = (orderItem as any)?.subOrder?.order as Order | undefined;
+    const paymentId = order?.razorpayPaymentId;
+    if (!paymentId) throw new ValidationError('Order has no Razorpay payment to refund');
+
+    const amountPaise = Math.round(razorpayAmount * 100);
+    try {
+      const refundId = await paymentsService.createRazorpayRefund(paymentId, amountPaise, {
+        returnRequestId: row.id,
+      });
+      await row.update({
+        razorpayRefundId: refundId,
+        refundStatus: REFUND_STATUS.INITIATED,
+        refundFailureReason: null,
+        updatedBy: actorId === 'system' ? row.userId : actorId,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Refund failed';
+      await row.update({
+        refundStatus: REFUND_STATUS.FAILED,
+        refundAttemptCount: Number(row.refundAttemptCount ?? 0) + 1,
+        lastRefundAttemptAt: new Date(),
+        refundFailureReason: message.slice(0, 255),
+        updatedBy: actorId === 'system' ? row.userId : actorId,
+      });
+      throw new ValidationError(ERROR_MESSAGES.RETURN_REFUND_PENDING);
+    }
+  }
+
   async markRazorpayRefundProcessed(input: {
     razorpayRefundId?: string;
     paymentId: string;
@@ -1156,14 +1243,26 @@ export class ReturnsService {
       const subOrderIds = subOrders.map((s) => s.id);
       if (subOrderIds.length === 0) return;
 
-      returnRow = await ReturnRequest.findOne({
+      const amountRupees = roundMoney(input.amountPaise / 100);
+      const candidates = await ReturnRequest.findAll({
         where: {
           subOrderId: { [Op.in]: subOrderIds },
           refundStatus: { [Op.in]: [REFUND_STATUS.PENDING, REFUND_STATUS.INITIATED] },
-          razorpayRefundAmount: { [Op.gt]: 0 },
+          razorpayRefundAmount: amountRupees,
         },
         order: [['updatedAt', 'DESC']],
       });
+      if (candidates.length === 1) {
+        returnRow = candidates[0]!;
+      } else if (candidates.length > 1) {
+        const { logger } = await import('@core/logger');
+        logger.warn('Ambiguous refund webhook match — manual review required', {
+          paymentId: input.paymentId,
+          amountPaise: input.amountPaise,
+          candidateIds: candidates.map((c) => c.id),
+        });
+        return;
+      }
     }
 
     if (!returnRow) return;

@@ -25,6 +25,7 @@ import { ERROR_MESSAGES, ERROR_CODES } from '@core/constants/errors';
 import { RAZORPAY_MIN_AMOUNT_PAISE } from '@core/constants/http';
 import { notifyOrderConfirmed } from '@modules/notifications/orderNotifications';
 import { notificationsService } from '@modules/notifications/notifications.service';
+import { rollbackOrderWalletIfNeeded } from '@modules/wallet/walletOrderRollback';
 
 export type RazorpayCheckoutPayload = {
   razorpayOrderId: string;
@@ -56,7 +57,14 @@ export class PaymentsService {
       });
 
       if (!locked) return;
-      if (locked.status === ORDER_STATUS.CANCELLED || locked.paymentStatus === PAYMENT_STATUS.PAID) {
+      if (locked.paymentStatus === PAYMENT_STATUS.PAID) return;
+
+      if (locked.status === ORDER_STATUS.CANCELLED) {
+        const walletRestored = await rollbackOrderWalletIfNeeded(locked, locked.userId, t);
+        if (walletRestored) {
+          await locked.update({ walletAmountUsed: 0 }, { transaction: t });
+        }
+        cancelledOrderId = locked.id;
         return;
       }
 
@@ -97,10 +105,13 @@ export class PaymentsService {
 
       await cartService.restoreItemsToUserCart(order.userId, restoreLines, t);
 
+      await rollbackOrderWalletIfNeeded(order, order.userId, t);
+
       await order.update(
         {
           status: ORDER_STATUS.CANCELLED,
           paymentStatus: PAYMENT_STATUS.FAILED,
+          walletAmountUsed: 0,
         },
         { transaction: t },
       );
@@ -184,14 +195,14 @@ export class PaymentsService {
   async createRazorpayRefund(
     paymentId: string,
     amountPaise: number,
-    returnRequestId: string,
+    notes: Record<string, string>,
   ): Promise<string> {
     if (!razorpayConfigured) {
       throw new AppError(ERROR_MESSAGES.RAZORPAY_NOT_CONFIGURED, 503, ERROR_CODES.RAZORPAY_NOT_CONFIGURED);
     }
     const refund = await razorpay.payments.refund(paymentId, {
       amount: amountPaise,
-      notes: { returnRequestId },
+      notes,
     });
     return String(refund.id);
   }
@@ -356,6 +367,29 @@ export class PaymentsService {
     if (refund.status && refund.status !== 'processed') return;
 
     const notes = refund.notes ?? {};
+    const rechargeId = typeof notes.rechargeId === 'string' ? notes.rechargeId : null;
+    if (rechargeId) {
+      const { walletRechargeService } = await import('@modules/wallet/walletRecharge.service');
+      await walletRechargeService.markRazorpayRefundProcessed({
+        razorpayRefundId: refund.id,
+        rechargeId,
+      });
+      return;
+    }
+
+    const orderId = typeof notes.orderId === 'string' ? notes.orderId : null;
+    if (orderId && notes.reason === 'ORDER_CANCEL') {
+      await Order.update(
+        {
+          paymentStatus: PAYMENT_STATUS.REFUNDED,
+          cancelRefundStatus: 'COMPLETED' as const,
+          cancelRazorpayRefundId: refund.id,
+        },
+        { where: { id: orderId } },
+      );
+      return;
+    }
+
     const returnRequestId =
       typeof notes.returnRequestId === 'string' ? notes.returnRequestId : null;
 

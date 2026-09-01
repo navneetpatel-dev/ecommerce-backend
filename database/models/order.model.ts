@@ -34,6 +34,10 @@ export class Order extends Model<InferAttributes<Order>, InferCreationAttributes
   declare shippingAddressId: string;
   declare razorpayOrderId: string | null;
   declare razorpayPaymentId: string | null;
+  declare cancelRefundStatus: CreationOptional<
+    'NONE' | 'PENDING' | 'INITIATED' | 'COMPLETED' | 'FAILED'
+  >;
+  declare cancelRazorpayRefundId: CreationOptional<string | null>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -80,6 +84,12 @@ export const initOrderModel = (sequelize: Sequelize) => {
       shippingAddressId: { type: DataTypes.UUID, allowNull: false },
       razorpayOrderId: { type: DataTypes.STRING, allowNull: true },
       razorpayPaymentId: { type: DataTypes.STRING, allowNull: true },
+      cancelRefundStatus: {
+        type: DataTypes.ENUM('NONE', 'PENDING', 'INITIATED', 'COMPLETED', 'FAILED'),
+        allowNull: false,
+        defaultValue: 'NONE',
+      },
+      cancelRazorpayRefundId: { type: DataTypes.STRING(64), allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

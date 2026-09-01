@@ -11,6 +11,7 @@ const router = Router();
 router.post('/', authenticate, validate(CreateOrderSchema), ordersController.createOrder);
 router.get('/', authenticate, validate(GetOrdersQuerySchema, 'query'), ordersController.getOrders);
 router.get('/:id', authenticate, ordersController.getOrderById);
+router.post('/:id/cancel', authenticate, ordersController.cancelOrder);
 router.patch('/:id/status', authenticate, authorize(PERMISSIONS.ORDER_MANAGE), validate(UpdateOrderStatusSchema), ordersController.updateOrderStatus);
 
 export default router;

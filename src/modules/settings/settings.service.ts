@@ -35,6 +35,8 @@ export type PlatformSettingsPayload = {
   walletMaxBalancePoints: number;
   walletRechargePresetsInr: number[];
   pointsPerRupee: number;
+  promotionalPointsTtlDays: number;
+  refundSlaBusinessDays: number;
 };
 
 const SETTINGS_KEY = 'platform';
@@ -66,6 +68,8 @@ const DEFAULTS: PlatformSettingsPayload = {
   walletMaxBalancePoints: 50000,
   walletRechargePresetsInr: [500, 1000, 2000, 5000],
   pointsPerRupee: 1,
+  promotionalPointsTtlDays: 0,
+  refundSlaBusinessDays: 7,
 };
 
 export const settingsService = {

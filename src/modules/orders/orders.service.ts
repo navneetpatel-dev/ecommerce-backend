@@ -8,7 +8,11 @@ import { OrderItem } from '@database/models/orderItem.model';
 import { Vendor } from '@database/models/vendor.model';
 import { Shipment } from '@database/models/shipment.model';
 import { mapOrderResponse } from './orderDisplayMappers';
+import { cancelPaidOrder } from './ordersCancel.service';
 import type { CreateOrderRequest, GetOrdersQuery } from './orders.dto';
+import { ReturnRequest } from '@database/models/returnRequest.model';
+import { Op } from 'sequelize';
+import { REFUND_STATUS, RETURN_STATUS } from '@core/constants/statuses';
 
 const orderDetailInclude = [
   {
@@ -57,7 +61,42 @@ export class OrdersService {
     if (userId && order.userId !== userId) {
       throw new ForbiddenError('You do not have access to this order');
     }
-    return mapOrderResponse(order as unknown as Record<string, unknown>);
+    const mapped = mapOrderResponse(order as unknown as Record<string, unknown>);
+    return {
+      ...mapped,
+      ...(await this.orderReturnSummary(
+        mapped.subOrders as unknown as Array<{ id: string }>,
+      )),
+    };
+  }
+
+  async cancelPaidOrder(orderId: string, userId: string, isAdmin: boolean) {
+    return cancelPaidOrder(orderId, userId, isAdmin);
+  }
+
+  private async orderReturnSummary(subOrders: Array<{ id: string }>) {
+    const subOrderIds = subOrders.map((sub) => sub.id).filter(Boolean);
+    if (subOrderIds.length === 0) {
+      return { openReturnCount: 0, returnRefundAlerts: [] as Array<{ id: string; refundStatus: string }> };
+    }
+    const rows = await ReturnRequest.findAll({
+      where: { subOrderId: { [Op.in]: subOrderIds } },
+      attributes: ['id', 'status', 'refundStatus'],
+    });
+    const openStatuses = new Set<string>([
+      RETURN_STATUS.REQUESTED,
+      RETURN_STATUS.APPROVED,
+      RETURN_STATUS.PICKUP_SCHEDULED,
+      RETURN_STATUS.RECEIVED,
+    ]);
+    const openReturnCount = rows.filter((row) => openStatuses.has(row.status)).length;
+    const returnRefundAlerts = rows
+      .filter(
+        (row) =>
+          row.refundStatus === REFUND_STATUS.INITIATED || row.refundStatus === REFUND_STATUS.FAILED,
+      )
+      .map((row) => ({ id: row.id, refundStatus: String(row.refundStatus) }));
+    return { openReturnCount, returnRefundAlerts };
   }
 
   async updateOrderStatus(id: string, status: string) {

@@ -206,6 +206,15 @@ export const REPORT_COLUMN_LABELS: Record<string, string> = {
   metric: 'Metric',
   value: 'Value',
   subscribedAt: 'Subscribed At',
+  purchasedPoints: 'Purchased Points',
+  promotionalPoints: 'Promotional Points',
+  pointSource: 'Point Source',
+  pointsAmount: 'Points',
+  pointsBalanceAfter: 'Balance (Points)',
+  pointsCredited: 'Points Credited',
+  amountInr: 'Amount (INR)',
+  walletRechargeInflow: 'Wallet Recharge Inflow',
+  walletPointsRedeemedAtCheckout: 'Wallet Points Redeemed',
 };
 
 export function resolveReportColumnLabel(labelKey: string): string {

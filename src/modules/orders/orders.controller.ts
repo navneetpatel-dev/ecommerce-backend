@@ -29,3 +29,9 @@ export const updateOrderStatus = asyncHandler(async (req: Request, res: Response
   const order = await ordersService.updateOrderStatus(req.params.id!, dto.status);
   res.json(ok(order));
 });
+
+export const cancelOrder = asyncHandler(async (req: Request, res: Response) => {
+  const isAdmin = (ADMIN_ROLES as readonly string[]).includes(req.user!.role.name);
+  const result = await ordersService.cancelPaidOrder(req.params.id!, req.user!.id, isAdmin);
+  res.json(ok(result));
+});

@@ -13,6 +13,10 @@ function formatCell(value: unknown, format?: string): string | number | Date {
     const n = Number(value);
     return Number.isFinite(n) ? n : 0;
   }
+  if (format === 'points') {
+    const n = Number(value);
+    return Number.isFinite(n) ? `${n} pts` : '0 pts';
+  }
   return typeof value === 'object' ? JSON.stringify(value) : String(value);
 }
 

@@ -48,6 +48,16 @@ export const transition = asyncHandler(async (req: Request, res: Response) => {
   res.json(ok(updated));
 });
 
+export const retryRefund = asyncHandler(async (req: Request, res: Response) => {
+  await returnsService.retryRazorpayRefund(req.params.id!, req.user!.id);
+  const item = await returnsService.getById(req.params.id!, {
+    id: req.user!.id,
+    roleId: req.user!.roleId,
+    role: req.user!.role,
+  });
+  res.json(ok(item));
+});
+
 export const remove = asyncHandler(async (req: Request, res: Response) => {
   await returnsService.delete(req.params.id!, req.user!.id);
   res.status(204).send();

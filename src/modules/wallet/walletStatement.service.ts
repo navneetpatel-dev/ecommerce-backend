@@ -1,14 +1,16 @@
-import { z } from 'zod';
-import { inclusiveReportTo } from '@modules/reports/engine/queryHelpers';
 import { reportEngine, type ReportActor } from '@modules/reports/engine/reportEngine';
 import type { ReportExportFormat } from '@modules/reports/engine/csvExporter';
 import type { AsyncExportResult } from '@modules/reports/engine/reportEngine';
+import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
+import { roleNameOf } from '@utils/userRole';
+import type { PermissionKey } from '@core/permissions/permissionKeys';
 
-const WalletStatementSchema = z.object({
-  from: z.coerce.date(),
-  to: z.coerce.date().transform(inclusiveReportTo),
-  format: z.enum(['xlsx', 'csv', 'pdf']).default('xlsx'),
-});
+type StatementActorUser = {
+  id: string;
+  roleId: string;
+  vendorId?: string | null;
+  role?: { name?: string } | null;
+};
 
 export async function exportWalletStatement(input: {
   actor: ReportActor;
@@ -28,4 +30,24 @@ export async function exportWalletStatement(input: {
   );
 }
 
-export { WalletStatementSchema };
+export async function exportWalletStatementForUser(
+  user: StatementActorUser,
+  query: { from: Date; to: Date; format: ReportExportFormat },
+): Promise<AsyncExportResult> {
+  const roleName = user.role?.name ?? roleNameOf(user as Parameters<typeof roleNameOf>[0]);
+  const permissions = (await resolvePermissionsForUser({
+    roleId: user.roleId,
+    role: { name: roleName },
+  })) as PermissionKey[];
+  return exportWalletStatement({
+    actor: {
+      id: user.id,
+      vendorId: user.vendorId ?? null,
+      roleName,
+      permissions,
+    },
+    from: query.from,
+    to: query.to,
+    format: query.format,
+  });
+}

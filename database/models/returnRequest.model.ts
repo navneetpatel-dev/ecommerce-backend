@@ -34,6 +34,9 @@ export class ReturnRequest extends Model<InferAttributes<ReturnRequest>, InferCr
   declare shippingRefundAmount: CreationOptional<number>;
   declare returnShippingFeeAmount: CreationOptional<number>;
   declare razorpayRefundId: CreationOptional<string | null>;
+  declare refundAttemptCount: CreationOptional<number>;
+  declare lastRefundAttemptAt: CreationOptional<Date | null>;
+  declare refundFailureReason: CreationOptional<string | null>;
   declare receivedAt: CreationOptional<Date | null>;
   declare resolvedById: string | null;
   declare resolvedAt: Date | null;
@@ -91,6 +94,9 @@ export const initReturnRequestModel = (sequelize: Sequelize) => {
       shippingRefundAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       returnShippingFeeAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       razorpayRefundId: { type: DataTypes.STRING, allowNull: true },
+      refundAttemptCount: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+      lastRefundAttemptAt: { type: DataTypes.DATE, allowNull: true },
+      refundFailureReason: { type: DataTypes.STRING(255), allowNull: true },
       receivedAt: { type: DataTypes.DATE, allowNull: true },
       resolvedById: { type: DataTypes.UUID, allowNull: true },
       resolvedAt: { type: DataTypes.DATE, allowNull: true },

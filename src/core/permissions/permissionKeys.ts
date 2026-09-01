@@ -27,6 +27,7 @@ export const PERMISSIONS = {
   REVIEW_RESPOND: 'review.respond',
   TICKET_MANAGE: 'ticket.manage',
   BUG_REPORT_MANAGE: 'bug_report.manage',
+  WALLET_ADJUST: 'wallet.adjust',
 } as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -42,6 +43,7 @@ export const ROLE_PERMISSIONS: Record<string, readonly PermissionKey[]> = {
     PERMISSIONS.AUDIT_VIEW,
     PERMISSIONS.TICKET_MANAGE,
     PERMISSIONS.BUG_REPORT_MANAGE,
+    PERMISSIONS.WALLET_ADJUST,
   ],
   [ROLES.ADMIN_CATALOG_MANAGER]: [
     PERMISSIONS.PRODUCT_MANAGE,

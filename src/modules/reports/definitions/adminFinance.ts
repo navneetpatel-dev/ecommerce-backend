@@ -16,6 +16,7 @@ import { AuditLog } from '@database/models/auditLog.model';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
 import { createOffsetExportQuery, createSingleShotExportQuery } from '../engine/export/createOffsetExportQuery';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
+import { sequelize } from '@database/models';
 
 function resolveVendorId(filters: ReportFilters): string | null {
   return filters.scopedVendorId ?? filters.vendorId ?? null;
@@ -429,6 +430,30 @@ async function reconciliation(filters: ReportFilters) {
     vendorId: resolveVendorId(filters),
   });
 
+  const [walletRows] = await sequelize.query(
+    `
+    SELECT
+      COALESCE((
+        SELECT SUM(wro."amountInr")::float
+        FROM wallet_recharge_orders wro
+        WHERE wro.status = 'PAID'
+          AND wro."paidAt" BETWEEN :from AND :to
+          AND wro."deletedAt" IS NULL
+      ), 0) AS "walletRechargeInflow",
+      COALESCE((
+        SELECT SUM(o."walletAmountUsed")::float
+        FROM orders o
+        WHERE o."createdAt" BETWEEN :from AND :to
+          AND o."deletedAt" IS NULL
+          AND o."paymentStatus" = 'PAID'
+      ), 0) AS "walletPointsRedeemedAtCheckout"
+    `,
+    { replacements: { from: filters.from, to: filters.to } },
+  );
+  const walletMeta = (walletRows as Array<Record<string, number>>)[0] ?? {};
+  const walletRechargeInflow = Number(walletMeta.walletRechargeInflow ?? 0);
+  const walletPointsRedeemedAtCheckout = Number(walletMeta.walletPointsRedeemedAtCheckout ?? 0);
+
   const customerPayments = fromPaise(summary.customerPaymentsPaise);
   const vendorNetPayouts = fromPaise(summary.vendorNetPayoutsPaise);
   const platformCommission = fromPaise(summary.platformCommissionPaise);
@@ -453,6 +478,8 @@ async function reconciliation(filters: ReportFilters) {
     tcsCollected,
     shippingCollected,
     refundsToCustomer,
+    walletRechargeInflow,
+    walletPointsRedeemedAtCheckout,
     accountedTotal: fromPaise(accountedPaise),
     difference: fromPaise(differencePaise),
     status: balanced ? 'BALANCED' : 'MISMATCH',
@@ -1144,6 +1171,8 @@ export const adminFinanceReports: ReportDefinition[] = [
       { key: 'tcsCollected', labelKey: 'tcsCollected', format: 'currency' },
       { key: 'shippingCollected', labelKey: 'shippingCollected', format: 'currency' },
       { key: 'refundsToCustomer', labelKey: 'refundsToCustomer', format: 'currency' },
+      { key: 'walletRechargeInflow', labelKey: 'walletRechargeInflow', format: 'currency' },
+      { key: 'walletPointsRedeemedAtCheckout', labelKey: 'walletPointsRedeemedAtCheckout', format: 'points' },
       { key: 'accountedTotal', labelKey: 'accountedTotal', format: 'currency' },
       { key: 'difference', labelKey: 'difference', format: 'currency' },
       { key: 'status', labelKey: 'status' },

@@ -28,6 +28,8 @@ export const UpdateSettingsSchema = z.object({
   walletMaxBalancePoints: z.number().min(0).default(50000),
   walletRechargePresetsInr: z.array(z.number().min(1)).default([500, 1000, 2000, 5000]),
   pointsPerRupee: z.number().min(0.01).default(1),
+  promotionalPointsTtlDays: z.number().int().min(0).default(0),
+  refundSlaBusinessDays: z.number().int().positive().max(30).default(7),
 });
 
 export type UpdateSettingsRequest = z.infer<typeof UpdateSettingsSchema>;

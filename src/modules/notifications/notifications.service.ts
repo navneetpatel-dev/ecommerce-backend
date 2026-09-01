@@ -334,6 +334,41 @@ export class NotificationsService {
     });
   }
 
+  sendRefundInitiated(
+    userId: string,
+    returnId: string,
+    templateData: EmailTemplateData = {},
+  ) {
+    return this.enqueue({
+      userId,
+      type: 'REFUND_INITIATED',
+      referenceType: 'ReturnRequest',
+      referenceId: returnId,
+      templateData,
+    });
+  }
+
+  sendWalletRechargeFailed(
+    userId: string,
+    rechargeId: string,
+    templateData: EmailTemplateData = {},
+  ) {
+    const reason = String(templateData.reason ?? 'payment_failed');
+    const reasonMessage =
+      reason === 'max_balance_refunded'
+        ? 'Your payment has been refunded to your original payment method.'
+        : reason === 'max_balance_refund_initiated'
+          ? 'Your payment is being refunded because your wallet balance limit was reached.'
+          : 'The payment did not complete. You can try again from your wallet page.';
+    return this.enqueue({
+      userId,
+      type: 'WALLET_RECHARGE_FAILED',
+      referenceType: 'WalletRechargeOrder',
+      referenceId: `${rechargeId}:${reason}:${todayBucket()}`,
+      templateData: { ...templateData, rechargeId, reasonMessage },
+    });
+  }
+
   sendVendorApplicationReceived(userId: string, vendorId: string, templateData: EmailTemplateData = {}) {
     return this.enqueue({
       userId,

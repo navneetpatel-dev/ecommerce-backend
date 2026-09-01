@@ -39,6 +39,7 @@ import type {
 import type { Coupon } from '@database/models/coupon.model';
 import { walletService } from '@modules/wallet/wallet.service';
 import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
+import { rollbackOrderWalletIfNeeded } from '@modules/wallet/walletOrderRollback';
 import {
   ORDER_STATUS,
   PAYMENT_STATUS,
@@ -903,7 +904,11 @@ export class CheckoutService {
         throw new ValidationError('Paid orders cannot be cancelled from checkout');
       }
       if (locked.status === ORDER_STATUS.CANCELLED) {
-        return { restored: false, orderId: locked.id };
+        const walletRestored = await rollbackOrderWalletIfNeeded(locked, userId, t);
+        if (walletRestored) {
+          await locked.update({ walletAmountUsed: 0 }, { transaction: t });
+        }
+        return { restored: walletRestored, orderId: locked.id };
       }
 
       const orderResult = await Order.findByPk(data.orderId, {
@@ -948,17 +953,7 @@ export class CheckoutService {
 
       await cartService.restoreItemsToUserCart(userId, restoreLines, t);
 
-      const walletUsed = Number(order.walletAmountUsed ?? 0);
-      if (walletUsed > 0) {
-        await walletService.credit(
-          userId,
-          walletUsed,
-          { type: WALLET_REFERENCE_TYPE.ORDER, id: order.id },
-          `${WALLET_DESCRIPTIONS.CHECKOUT_SPEND} rollback`,
-          t,
-          { pointSource: WALLET_POINT_SOURCE.PROMOTIONAL },
-        );
-      }
+      const walletRestored = await rollbackOrderWalletIfNeeded(order, userId, t);
 
       await order.update(
         {

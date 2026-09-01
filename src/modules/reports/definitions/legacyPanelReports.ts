@@ -31,12 +31,25 @@ function walletLiabilityUserSourcesCte(): string {
       SELECT wl."userId",
         COALESCE(SUM(CASE WHEN wl.type = 'CREDIT' AND wl."pointSource" = 'PURCHASED' THEN wl.amount ELSE 0 END), 0)::float AS purchased_cr,
         COALESCE(SUM(CASE WHEN wl.type = 'CREDIT' AND (wl."pointSource" = 'PROMOTIONAL' OR wl."pointSource" IS NULL) THEN wl.amount ELSE 0 END), 0)::float AS promo_cr,
-        COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' THEN wl.amount ELSE 0 END), 0)::float AS debits
+        COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' AND wl."pointSourceBreakdown" IS NOT NULL THEN COALESCE((wl."pointSourceBreakdown"->>'purchased')::float, 0) ELSE 0 END), 0)::float AS purchased_dr_explicit,
+        COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' AND wl."pointSourceBreakdown" IS NOT NULL THEN COALESCE((wl."pointSourceBreakdown"->>'promotional')::float, 0) ELSE 0 END), 0)::float AS promo_dr_explicit,
+        COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' AND wl."pointSourceBreakdown" IS NULL THEN wl.amount ELSE 0 END), 0)::float AS legacy_debits
       FROM wallet_ledgers wl
       WHERE wl."deletedAt" IS NULL
         AND wl."createdAt" <= :to
       GROUP BY wl."userId"
     )`;
+}
+
+function fifoPurchasedRemainingSql(alias = 'us'): string {
+  return `GREATEST(
+        0,
+        ${alias}.purchased_cr - ${alias}.purchased_dr_explicit
+          - GREATEST(
+            0,
+            ${alias}.legacy_debits - GREATEST(0, ${alias}.promo_cr - ${alias}.promo_dr_explicit)
+          )
+      )`;
 }
 
 function walletLiabilitySelectSql(): string {
@@ -63,22 +76,8 @@ function walletLiabilitySelectSql(): string {
       l."userId",
       l.balance,
       l."asOf",
-      GREATEST(
-        0,
-        us.purchased_cr - CASE
-          WHEN (us.purchased_cr + us.promo_cr) > 0
-          THEN us.debits * us.purchased_cr / (us.purchased_cr + us.promo_cr)
-          ELSE 0
-        END
-      ) AS "purchasedPoints",
-      l.balance - GREATEST(
-        0,
-        us.purchased_cr - CASE
-          WHEN (us.purchased_cr + us.promo_cr) > 0
-          THEN us.debits * us.purchased_cr / (us.purchased_cr + us.promo_cr)
-          ELSE 0
-        END
-      ) AS "promotionalPoints"
+      LEAST(l.balance, ${fifoPurchasedRemainingSql('us')}) AS "purchasedPoints",
+      l.balance - LEAST(l.balance, ${fifoPurchasedRemainingSql('us')}) AS "promotionalPoints"
     FROM latest l
     INNER JOIN user_sources us ON us."userId" = l."userId"
     WHERE l.balance > 0
@@ -140,7 +139,9 @@ export async function walletPointSourceLiabilityTotals(filters: {
        SELECT wl."userId",
          COALESCE(SUM(CASE WHEN wl.type = 'CREDIT' AND wl."pointSource" = 'PURCHASED' THEN wl.amount ELSE 0 END), 0)::float AS purchased_cr,
          COALESCE(SUM(CASE WHEN wl.type = 'CREDIT' AND (wl."pointSource" = 'PROMOTIONAL' OR wl."pointSource" IS NULL) THEN wl.amount ELSE 0 END), 0)::float AS promo_cr,
-         COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' THEN wl.amount ELSE 0 END), 0)::float AS debits
+         COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' AND wl."pointSourceBreakdown" IS NOT NULL THEN COALESCE((wl."pointSourceBreakdown"->>'purchased')::float, 0) ELSE 0 END), 0)::float AS purchased_dr_explicit,
+         COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' AND wl."pointSourceBreakdown" IS NOT NULL THEN COALESCE((wl."pointSourceBreakdown"->>'promotional')::float, 0) ELSE 0 END), 0)::float AS promo_dr_explicit,
+         COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' AND wl."pointSourceBreakdown" IS NULL THEN wl.amount ELSE 0 END), 0)::float AS legacy_debits
        FROM wallet_ledgers wl
        WHERE wl."deletedAt" IS NULL
          AND wl."createdAt" <= :to
@@ -149,13 +150,13 @@ export async function walletPointSourceLiabilityTotals(filters: {
      breakdown AS (
        SELECT
          l.balance,
-         GREATEST(
-           0,
-           us.purchased_cr - CASE
-             WHEN (us.purchased_cr + us.promo_cr) > 0
-             THEN us.debits * us.purchased_cr / (us.purchased_cr + us.promo_cr)
-             ELSE 0
-           END
+         LEAST(
+           l.balance,
+           GREATEST(
+             0,
+             us.purchased_cr - us.purchased_dr_explicit
+               - GREATEST(0, us.legacy_debits - GREATEST(0, us.promo_cr - us.promo_dr_explicit))
+           )
          ) AS purchased_net
        FROM latest l
        INNER JOIN user_sources us ON us."userId" = l."userId"
@@ -652,9 +653,9 @@ export const legacyPanelReports: ReportDefinition[] = [
     financial: true,
     columns: [
       { key: 'userId', labelKey: 'userId' },
-      { key: 'balance', labelKey: 'balance', format: 'currency' },
-      { key: 'purchasedPoints', labelKey: 'purchasedPoints', format: 'currency' },
-      { key: 'promotionalPoints', labelKey: 'promotionalPoints', format: 'currency' },
+      { key: 'balance', labelKey: 'balance', format: 'points' },
+      { key: 'purchasedPoints', labelKey: 'purchasedPoints', format: 'points' },
+      { key: 'promotionalPoints', labelKey: 'promotionalPoints', format: 'points' },
       { key: 'asOf', labelKey: 'asOf', format: 'date' },
     ],
     query: walletLiabilityQuery,
@@ -670,7 +671,7 @@ export const legacyPanelReports: ReportDefinition[] = [
     columns: [
       { key: 'userId', labelKey: 'userId' },
       { key: 'amountInr', labelKey: 'amountInr', format: 'currency' },
-      { key: 'pointsCredited', labelKey: 'pointsCredited', format: 'currency' },
+      { key: 'pointsCredited', labelKey: 'pointsCredited', format: 'points' },
       { key: 'status', labelKey: 'status' },
       { key: 'razorpayOrderId', labelKey: 'razorpayOrderId' },
       { key: 'paidAt', labelKey: 'paidAt', format: 'date' },

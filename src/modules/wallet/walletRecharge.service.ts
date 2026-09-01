@@ -8,6 +8,7 @@ import { RAZORPAY_MIN_AMOUNT_PAISE } from '@core/constants/http';
 import {
   WALLET_POINT_SOURCE,
   WALLET_REFERENCE_TYPE,
+  REFUND_STATUS,
 } from '@core/constants/statuses';
 import { sequelize } from '@database/models';
 import { WalletRechargeOrder } from '@database/models/walletRechargeOrder.model';
@@ -16,6 +17,7 @@ import { roundMoney } from '@modules/pricing/money';
 import { paymentsService } from '@modules/payments/payments.service';
 import { walletService } from './wallet.service';
 import { WALLET_DESCRIPTIONS } from './wallet.constants';
+import { ensureWalletRechargeInvoice } from './walletRechargeInvoice.service';
 
 export type WalletRechargeCheckoutPayload = {
   rechargeId: string;
@@ -40,7 +42,36 @@ export class WalletRechargeService {
     };
   }
 
-  private async validateRechargeAmount(userId: string, amountInr: number) {
+  async getBalanceView(userId: string) {
+    const [balance, limits, subBalances] = await Promise.all([
+      walletService.getBalance(userId),
+      this.getRechargeLimits(),
+      walletService.getPointSourceBalances(userId),
+    ]);
+    return {
+      balance,
+      points: balance,
+      unit: 'POINT' as const,
+      redemptionRate: 1,
+      purchasedBalance: subBalances.purchased,
+      promotionalBalance: subBalances.promotional,
+      rechargeEnabled: limits.rechargeEnabled,
+      limits: {
+        minInr: limits.minInr,
+        maxInr: limits.maxInr,
+        maxBalance: limits.maxBalance,
+        presetsInr: limits.presetsInr,
+        pointsPerRupee: limits.pointsPerRupee,
+      },
+    };
+  }
+
+  async downloadInvoicePdf(userId: string, rechargeId: string) {
+    const { getWalletRechargeInvoicePdf } = await import('./walletRechargeInvoice.service');
+    return getWalletRechargeInvoicePdf(userId, rechargeId);
+  }
+
+  async validateRechargeAmount(userId: string, amountInr: number) {
     const settings = await settingsService.getPlatformSettings();
     if (!settings.walletRechargeEnabled) {
       throw new ValidationError(ERROR_MESSAGES.WALLET_RECHARGE_DISABLED);
@@ -73,7 +104,7 @@ export class WalletRechargeService {
       );
     }
 
-    const { amount, pointsToCredit } = await this.validateRechargeAmount(userId, amountInr);
+    const { amount, pointsToCredit, settings } = await this.validateRechargeAmount(userId, amountInr);
 
     if (idempotencyKey) {
       const existing = await WalletRechargeOrder.findOne({
@@ -95,6 +126,45 @@ export class WalletRechargeService {
       }
       if (existing?.status === 'PAID') {
         throw new ValidationError(ERROR_MESSAGES.WALLET_RECHARGE_ALREADY_PAID);
+      }
+      if (
+        existing &&
+        existing.status === 'PENDING' &&
+        !existing.razorpayOrderId
+      ) {
+        const amountInPaise = Math.round(amount * 100);
+        const rzpOrder = await razorpay.orders.create({
+          amount: amountInPaise,
+          currency: 'INR',
+          receipt: existing.id.slice(0, 40),
+          payment_capture: true,
+          notes: {
+            type: 'wallet_recharge',
+            rechargeId: existing.id,
+            userId,
+          },
+          ...(env.RAZORPAY_CHECKOUT_CONFIG_ID
+            ? { checkout_config_id: env.RAZORPAY_CHECKOUT_CONFIG_ID }
+            : {}),
+        });
+        await existing.update({
+          amountInr: amount,
+          pointsCredited: pointsToCredit,
+          pointsPerRupee: (await settingsService.getPlatformSettings()).pointsPerRupee,
+          razorpayOrderId: rzpOrder.id,
+          updatedBy: userId,
+        });
+        return {
+          rechargeId: existing.id,
+          razorpayOrderId: rzpOrder.id,
+          amount: Number(rzpOrder.amount),
+          currency: rzpOrder.currency,
+          keyId: env.RAZORPAY_KEY_ID,
+          pointsToCredit,
+          ...(env.RAZORPAY_CHECKOUT_CONFIG_ID
+            ? { checkoutConfigId: env.RAZORPAY_CHECKOUT_CONFIG_ID }
+            : {}),
+        };
       }
       if (existing && (existing.status === 'FAILED' || existing.status === 'EXPIRED')) {
         await existing.update({
@@ -149,44 +219,51 @@ export class WalletRechargeService {
       userId,
       amountInr: amount,
       pointsCredited: pointsToCredit,
+      pointsPerRupee: settings.pointsPerRupee,
       status: 'PENDING',
+      refundStatus: 'NONE',
       idempotencyKey: idempotencyKey ?? null,
       createdBy: userId,
       updatedBy: userId,
       deletedBy: null,
     });
 
-    const rzpOrder = await razorpay.orders.create({
-      amount: amountInPaise,
-      currency: 'INR',
-      receipt: recharge.id.slice(0, 40),
-      payment_capture: true,
-      notes: {
-        type: 'wallet_recharge',
+    try {
+      const rzpOrder = await razorpay.orders.create({
+        amount: amountInPaise,
+        currency: 'INR',
+        receipt: recharge.id.slice(0, 40),
+        payment_capture: true,
+        notes: {
+          type: 'wallet_recharge',
+          rechargeId: recharge.id,
+          userId,
+        },
+        ...(env.RAZORPAY_CHECKOUT_CONFIG_ID
+          ? { checkout_config_id: env.RAZORPAY_CHECKOUT_CONFIG_ID }
+          : {}),
+      });
+
+      await recharge.update({
+        razorpayOrderId: rzpOrder.id,
+        updatedBy: userId,
+      });
+
+      return {
         rechargeId: recharge.id,
-        userId,
-      },
-      ...(env.RAZORPAY_CHECKOUT_CONFIG_ID
-        ? { checkout_config_id: env.RAZORPAY_CHECKOUT_CONFIG_ID }
-        : {}),
-    });
-
-    await recharge.update({
-      razorpayOrderId: rzpOrder.id,
-      updatedBy: userId,
-    });
-
-    return {
-      rechargeId: recharge.id,
-      razorpayOrderId: rzpOrder.id,
-      amount: Number(rzpOrder.amount),
-      currency: rzpOrder.currency,
-      keyId: env.RAZORPAY_KEY_ID,
-      pointsToCredit,
-      ...(env.RAZORPAY_CHECKOUT_CONFIG_ID
-        ? { checkoutConfigId: env.RAZORPAY_CHECKOUT_CONFIG_ID }
-        : {}),
-    };
+        razorpayOrderId: rzpOrder.id,
+        amount: Number(rzpOrder.amount),
+        currency: rzpOrder.currency,
+        keyId: env.RAZORPAY_KEY_ID,
+        pointsToCredit,
+        ...(env.RAZORPAY_CHECKOUT_CONFIG_ID
+          ? { checkoutConfigId: env.RAZORPAY_CHECKOUT_CONFIG_ID }
+          : {}),
+      };
+    } catch (err) {
+      await recharge.update({ status: 'FAILED', updatedBy: userId });
+      throw err;
+    }
   }
 
   async getRecharge(
@@ -254,57 +331,132 @@ export class WalletRechargeService {
     expectedUserId?: string;
     expectedRechargeId?: string;
   }): Promise<WalletRechargeOrder> {
-    return sequelize.transaction(async (transaction) => {
-      const recharge = await WalletRechargeOrder.findOne({
+    let maxBalanceRecharge: WalletRechargeOrder | null = null;
+    let maxBalancePaymentId: string | null = null;
+
+    const recharge = await sequelize.transaction(async (transaction) => {
+      const row = await WalletRechargeOrder.findOne({
         where: { razorpayOrderId: input.razorpayOrderId },
         transaction,
         lock: transaction.LOCK.UPDATE,
       });
-      if (!recharge) {
+      if (!row) {
         throw new NotFoundError('WalletRechargeOrder');
       }
-      if (input.expectedUserId && recharge.userId !== input.expectedUserId) {
+      if (input.expectedUserId && row.userId !== input.expectedUserId) {
         throw new ValidationError(ERROR_MESSAGES.FORBIDDEN);
       }
-      if (input.expectedRechargeId && recharge.id !== input.expectedRechargeId) {
+      if (input.expectedRechargeId && row.id !== input.expectedRechargeId) {
         throw new ValidationError(ERROR_MESSAGES.FORBIDDEN);
       }
-      if (recharge.status === 'PAID' && recharge.creditedLedgerId) {
-        return recharge;
+      if (row.status === 'PAID' && row.creditedLedgerId) {
+        return row;
       }
 
       const settings = await settingsService.getPlatformSettings();
-      const balance = await walletService.getBalance(recharge.userId, transaction);
-      const points = Number(recharge.pointsCredited);
+      const balance = await walletService.getBalance(row.userId, transaction);
+      const points = Number(row.pointsCredited);
       if (balance + points > settings.walletMaxBalancePoints) {
-        await recharge.update(
-          { status: 'FAILED', updatedBy: recharge.userId },
+        await row.update(
+          {
+            status: 'FAILED',
+            razorpayPaymentId: input.razorpayPaymentId,
+            refundStatus: REFUND_STATUS.PENDING,
+            updatedBy: row.userId,
+          },
           { transaction },
         );
-        throw new ValidationError(ERROR_MESSAGES.WALLET_MAX_BALANCE_EXCEEDED);
+        maxBalanceRecharge = row;
+        maxBalancePaymentId = input.razorpayPaymentId;
+        return row;
       }
 
       const ledger = await walletService.credit(
-        recharge.userId,
+        row.userId,
         points,
-        { type: WALLET_REFERENCE_TYPE.TOPUP, id: recharge.id },
+        { type: WALLET_REFERENCE_TYPE.TOPUP, id: row.id },
         WALLET_DESCRIPTIONS.TOPUP_CREDIT,
         transaction,
         { pointSource: WALLET_POINT_SOURCE.PURCHASED },
       );
 
-      await recharge.update(
+      await row.update(
         {
           status: 'PAID',
           razorpayPaymentId: input.razorpayPaymentId,
           creditedLedgerId: ledger.id,
           paidAt: new Date(),
-          updatedBy: recharge.userId,
+          updatedBy: row.userId,
         },
         { transaction },
       );
 
-      return recharge;
+      return row;
+    });
+
+    if (recharge.status === 'PAID') {
+      await ensureWalletRechargeInvoice(recharge.id).catch(() => undefined);
+    }
+
+    if (maxBalanceRecharge && maxBalancePaymentId) {
+      await this.initiateMaxBalanceRefund(maxBalanceRecharge, maxBalancePaymentId);
+      throw new ValidationError(ERROR_MESSAGES.WALLET_MAX_BALANCE_EXCEEDED);
+    }
+
+    if (recharge.status === 'FAILED' && recharge.refundStatus === REFUND_STATUS.PENDING) {
+      throw new ValidationError(ERROR_MESSAGES.WALLET_MAX_BALANCE_EXCEEDED);
+    }
+
+    return recharge;
+  }
+
+  private async initiateMaxBalanceRefund(
+    recharge: WalletRechargeOrder,
+    razorpayPaymentId: string,
+  ): Promise<void> {
+    const amountPaise = Math.round(Number(recharge.amountInr) * 100);
+    try {
+      const refundId = await paymentsService.createRazorpayRefund(razorpayPaymentId, amountPaise, {
+        rechargeId: recharge.id,
+        reason: 'MAX_BALANCE_EXCEEDED',
+      });
+      await recharge.update({
+        refundStatus: REFUND_STATUS.INITIATED,
+        razorpayRefundId: refundId,
+        updatedBy: recharge.userId,
+      });
+      const { notificationsService } = await import('@modules/notifications/notifications.service');
+      void notificationsService.sendWalletRechargeFailed(recharge.userId, recharge.id, {
+        rechargeId: recharge.id,
+        amountInr: Number(recharge.amountInr),
+        reason: 'max_balance_refund_initiated',
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Refund initiation failed';
+      await recharge.update({
+        refundStatus: REFUND_STATUS.FAILED,
+        refundFailureReason: message.slice(0, 255),
+        updatedBy: recharge.userId,
+      });
+    }
+  }
+
+  async markRazorpayRefundProcessed(input: {
+    razorpayRefundId: string;
+    rechargeId: string;
+  }): Promise<void> {
+    const recharge = await WalletRechargeOrder.findByPk(input.rechargeId);
+    if (!recharge) return;
+    await recharge.update({
+      refundStatus: REFUND_STATUS.COMPLETED,
+      razorpayRefundId: input.razorpayRefundId,
+      updatedBy: recharge.userId,
+    });
+    const { notificationsService } = await import('@modules/notifications/notifications.service');
+    void notificationsService.sendWalletRechargeFailed(recharge.userId, recharge.id, {
+      rechargeId: recharge.id,
+      amountInr: Number(recharge.amountInr),
+      reason: 'max_balance_refunded',
     });
   }
 
@@ -314,7 +466,17 @@ export class WalletRechargeService {
   ): Promise<boolean> {
     const exists = await WalletRechargeOrder.findOne({ where: { razorpayOrderId } });
     if (!exists) return false;
-    await this.creditFromPayment({ razorpayOrderId, razorpayPaymentId });
+    try {
+      await this.creditFromPayment({ razorpayOrderId, razorpayPaymentId });
+    } catch (err) {
+      if (
+        err instanceof ValidationError &&
+        err.message === ERROR_MESSAGES.WALLET_MAX_BALANCE_EXCEEDED
+      ) {
+        return true;
+      }
+      throw err;
+    }
     return true;
   }
 
@@ -322,6 +484,12 @@ export class WalletRechargeService {
     const recharge = await WalletRechargeOrder.findOne({ where: { razorpayOrderId } });
     if (!recharge || recharge.status !== 'PENDING') return false;
     await recharge.update({ status: 'FAILED', updatedBy: recharge.userId });
+    const { notificationsService } = await import('@modules/notifications/notifications.service');
+    void notificationsService.sendWalletRechargeFailed(recharge.userId, recharge.id, {
+      rechargeId: recharge.id,
+      amountInr: Number(recharge.amountInr),
+      reason: 'payment_failed',
+    });
     return true;
   }
 }

@@ -23,6 +23,16 @@ export class WalletRechargeOrder extends Model<
   declare idempotencyKey: string | null;
   declare creditedLedgerId: string | null;
   declare paidAt: Date | null;
+  declare refundStatus: 'NONE' | 'PENDING' | 'INITIATED' | 'COMPLETED' | 'FAILED';
+  declare razorpayRefundId: string | null;
+  declare refundFailureReason: string | null;
+  declare invoiceNumber: string | null;
+  declare taxableAmount: number | null;
+  declare cgst: number | null;
+  declare sgst: number | null;
+  declare igst: number | null;
+  declare invoiceGeneratedAt: Date | null;
+  declare pointsPerRupee: number | null;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -52,6 +62,20 @@ export const initWalletRechargeOrderModel = (sequelize: Sequelize) => {
       idempotencyKey: { type: DataTypes.STRING(64), allowNull: true },
       creditedLedgerId: { type: DataTypes.UUID, allowNull: true },
       paidAt: { type: DataTypes.DATE, allowNull: true },
+      refundStatus: {
+        type: DataTypes.ENUM('NONE', 'PENDING', 'INITIATED', 'COMPLETED', 'FAILED'),
+        allowNull: false,
+        defaultValue: 'NONE',
+      },
+      razorpayRefundId: { type: DataTypes.STRING(64), allowNull: true },
+      refundFailureReason: { type: DataTypes.STRING(255), allowNull: true },
+      invoiceNumber: { type: DataTypes.STRING(32), allowNull: true },
+      taxableAmount: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
+      cgst: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
+      sgst: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
+      igst: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
+      invoiceGeneratedAt: { type: DataTypes.DATE, allowNull: true },
+      pointsPerRupee: { type: DataTypes.DECIMAL(8, 2), allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

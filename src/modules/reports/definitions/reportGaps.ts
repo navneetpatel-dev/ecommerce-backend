@@ -1192,8 +1192,8 @@ export const customerGapReports: ReportDefinition[] = [
     columns: [
       { key: 'createdAt', labelKey: 'createdAt', format: 'date' },
       { key: 'type', labelKey: 'type' },
-      { key: 'amount', labelKey: 'amount', format: 'currency' },
-      { key: 'balanceAfter', labelKey: 'balanceAfter', format: 'currency' },
+      { key: 'amount', labelKey: 'pointsAmount', format: 'points' },
+      { key: 'balanceAfter', labelKey: 'pointsBalanceAfter', format: 'points' },
       { key: 'referenceType', labelKey: 'referenceType' },
       { key: 'referenceId', labelKey: 'referenceId' },
       { key: 'pointSource', labelKey: 'pointSource' },
