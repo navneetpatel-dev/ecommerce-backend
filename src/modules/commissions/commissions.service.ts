@@ -3,6 +3,7 @@ import { CommissionInvoice } from '@database/models/commissionInvoice.model';
 import { Vendor } from '@database/models/vendor.model';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { renderCommissionInvoicePdf } from './commissionInvoice.service';
 
@@ -64,7 +65,7 @@ export class CommissionsService {
     });
     if (!invoice) throw new NotFoundError('CommissionInvoice');
     if (requesterVendorId && requesterVendorId !== invoice.vendorId) {
-      throw new ForbiddenError('Not your commission invoice');
+      throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_COMMISSION_INVOICE);
     }
     const vendor = (invoice as any).vendor as Vendor | undefined;
     const buffer = await renderCommissionInvoicePdf(invoice, {

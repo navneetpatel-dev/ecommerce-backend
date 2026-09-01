@@ -7,6 +7,7 @@ import { Vendor } from '@database/models/vendor.model';
 import { CartItem } from '@database/models/cartItem.model';
 import { Cart } from '@database/models/cart.model';
 import { sequelize } from '@database/models';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 import { resolveItemAvailability, isProductCustomerVisible } from '@core/catalog/customerVisibility';
 
 function mapWishlistProduct(product: Product | null | undefined) {
@@ -105,7 +106,7 @@ export class WishlistService {
       });
 
       if (existing && !existing.deletedAt) {
-        throw new ValidationError('Product already in wishlist');
+        throw new ValidationError(ERROR_MESSAGES.WISHLIST_ALREADY_HAS_PRODUCT);
       }
 
       if (existing?.deletedAt) {
@@ -162,7 +163,7 @@ export class WishlistService {
       // Get default variant
       const variant = wishlistItem.product.variants?.[0];
       if (!variant) {
-        throw new ValidationError('Product has no variants');
+        throw new ValidationError(ERROR_MESSAGES.WISHLIST_NO_VARIANTS);
       }
 
       // Add to cart

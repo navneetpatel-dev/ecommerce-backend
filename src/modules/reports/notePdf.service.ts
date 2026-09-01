@@ -1,6 +1,7 @@
 import PDFDocument from 'pdfkit';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 import { CreditNote } from '@database/models/creditNote.model';
 import { DebitNote } from '@database/models/debitNote.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
@@ -106,7 +107,7 @@ export async function getCreditNotePdfForActor(input: {
   const isOwner = ret?.userId === input.userId || note.userId === input.userId;
   const isVendor = Boolean(input.vendorId && note.vendorId === input.vendorId);
   if (!input.isAdmin && !isOwner && !isVendor) {
-    throw new ForbiddenError('Not allowed to download this credit note');
+    throw new ForbiddenError(ERROR_MESSAGES.CREDIT_NOTE_FORBIDDEN);
   }
   const buffer = await renderCreditNotePdf(note, {
     vendorName: vendor?.businessName,
@@ -131,7 +132,7 @@ export async function getDebitNotePdfForActor(input: {
   const vendor = (note as any).Vendor as Vendor | undefined;
   const isVendor = Boolean(input.vendorId && note.vendorId === input.vendorId);
   if (!input.isAdmin && !isVendor) {
-    throw new ForbiddenError('Not allowed to download this debit note');
+    throw new ForbiddenError(ERROR_MESSAGES.DEBIT_NOTE_FORBIDDEN);
   }
   const buffer = await renderDebitNotePdf(note, {
     vendorName: vendor?.businessName,

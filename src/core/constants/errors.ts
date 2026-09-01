@@ -1,5 +1,13 @@
 import { PRODUCT_FIELD_LIMITS } from './product';
 
+/**
+ * Error message authoring guidelines:
+ * - Write for end users, not developers (no API paths, env vars, or provider internals).
+ * - Do not include PII in error text.
+ * - Prefer stable ERROR_CODES for client logic; use message for human-readable display.
+ * - Field validation details should use the same copy as the top-level message when single-field.
+ */
+
 /** Machine-readable API error codes (response `error.code`). */
 export const ERROR_CODES = {
   UNAUTHORIZED: 'UNAUTHORIZED',
@@ -82,6 +90,35 @@ export const ERROR_CODES = {
   BUG_NOT_FOUND: 'BUG_NOT_FOUND',
   BUG_REPORTER_FIELDS_FORBIDDEN: 'BUG_REPORTER_FIELDS_FORBIDDEN',
   BUG_REPORTER_ROLE_INVALID: 'BUG_REPORTER_ROLE_INVALID',
+  ORDER_CANCEL_PAID_ONLY: 'ORDER_CANCEL_PAID_ONLY',
+  ORDER_CANCEL_SHIPPED: 'ORDER_CANCEL_SHIPPED',
+  ORDER_CANCEL_ITEMS_SHIPPED: 'ORDER_CANCEL_ITEMS_SHIPPED',
+  ORDER_USE_CHECKOUT: 'ORDER_USE_CHECKOUT',
+  REVIEW_ITEM_NOT_DELIVERED: 'REVIEW_ITEM_NOT_DELIVERED',
+  REVIEW_ALREADY_EXISTS: 'REVIEW_ALREADY_EXISTS',
+  WISHLIST_ALREADY_HAS_PRODUCT: 'WISHLIST_ALREADY_HAS_PRODUCT',
+  WISHLIST_NO_VARIANTS: 'WISHLIST_NO_VARIANTS',
+  CHECKOUT_PAID_CANNOT_CANCEL: 'CHECKOUT_PAID_CANNOT_CANCEL',
+  SHIPPING_METHOD_UNSUPPORTED: 'SHIPPING_METHOD_UNSUPPORTED',
+  SHIPPING_RATE_UNAVAILABLE: 'SHIPPING_RATE_UNAVAILABLE',
+  RETURN_QUANTITY_INVALID: 'RETURN_QUANTITY_INVALID',
+  RETURN_CREDIT_NOTE_VENDOR_REQUIRED: 'RETURN_CREDIT_NOTE_VENDOR_REQUIRED',
+  RETURN_REFUND_RETRY_FAILED_ONLY: 'RETURN_REFUND_RETRY_FAILED_ONLY',
+  RETURN_NO_RAZORPAY_REFUND: 'RETURN_NO_RAZORPAY_REFUND',
+  RETURN_NO_RAZORPAY_PAYMENT: 'RETURN_NO_RAZORPAY_PAYMENT',
+  WALLET_RECHARGE_RAZORPAY_MIN: 'WALLET_RECHARGE_RAZORPAY_MIN',
+  NOT_YOUR_ORDER: 'NOT_YOUR_ORDER',
+  NOT_YOUR_PRODUCT_REVIEW: 'NOT_YOUR_PRODUCT_REVIEW',
+  AUTH_RATE_LIMITED: 'AUTH_RATE_LIMITED',
+  COUPON_APPLY_RATE_LIMITED: 'COUPON_APPLY_RATE_LIMITED',
+  SHIPPING_STATUS_UNSUPPORTED: 'SHIPPING_STATUS_UNSUPPORTED',
+  ORDER_AMOUNT_BELOW_RAZORPAY_MIN: 'ORDER_AMOUNT_BELOW_RAZORPAY_MIN',
+  INVALID_WEBHOOK_PAYLOAD: 'INVALID_WEBHOOK_PAYLOAD',
+  NOT_YOUR_COMMISSION_INVOICE: 'NOT_YOUR_COMMISSION_INVOICE',
+  NOT_YOUR_VENDOR_PAYOUTS: 'NOT_YOUR_VENDOR_PAYOUTS',
+  CREDIT_NOTE_FORBIDDEN: 'CREDIT_NOTE_FORBIDDEN',
+  DEBIT_NOTE_FORBIDDEN: 'DEBIT_NOTE_FORBIDDEN',
+  REPORT_EXPORT_RETRY_FAILED_ONLY: 'REPORT_EXPORT_RETRY_FAILED_ONLY',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -222,4 +259,33 @@ export const ERROR_MESSAGES = {
   BUG_REPORTER_FIELDS_FORBIDDEN:
     'Reporters cannot set assignee, affected module, or status',
   BUG_REPORTER_ROLE_INVALID: 'Only customers and vendors can file bug reports',
+  INVALID_SIGNATURE: 'Payment verification failed. Please try again.',
+  ORDER_CANCEL_PAID_ONLY: 'Only paid orders can be cancelled',
+  ORDER_CANCEL_SHIPPED: 'Shipped or delivered orders cannot be cancelled',
+  ORDER_CANCEL_ITEMS_SHIPPED: 'One or more items have already shipped',
+  ORDER_USE_CHECKOUT: 'Complete checkout to place your order',
+  REVIEW_ITEM_NOT_DELIVERED: 'Item must be delivered before you can review it',
+  REVIEW_ALREADY_EXISTS: 'You have already reviewed this item',
+  WISHLIST_ALREADY_HAS_PRODUCT: 'Product is already in your wishlist',
+  WISHLIST_NO_VARIANTS: 'This product has no variants to save',
+  CHECKOUT_PAID_CANNOT_CANCEL: 'Paid orders cannot be cancelled from checkout',
+  SHIPPING_METHOD_UNSUPPORTED: 'The selected shipping method is not supported',
+  SHIPPING_RATE_UNAVAILABLE: 'No shipping rate is available for the selected method',
+  RETURN_QUANTITY_INVALID: 'Return quantity must be between 1 and the ordered quantity',
+  RETURN_CREDIT_NOTE_VENDOR_REQUIRED: 'Credit note requires a vendor-owned sub-order',
+  RETURN_REFUND_RETRY_FAILED_ONLY: 'Refund retry is only allowed for failed refunds',
+  RETURN_NO_RAZORPAY_REFUND: 'There is no online payment refund amount for this return',
+  RETURN_NO_RAZORPAY_PAYMENT: 'This order has no online payment to refund',
+  WALLET_RECHARGE_RAZORPAY_MIN: 'Recharge amount is below the minimum allowed for online payment',
+  NOT_YOUR_PRODUCT_REVIEW: 'You do not have access to this product review',
+  AUTH_RATE_LIMITED: 'Too many login attempts. Please wait a few minutes and try again.',
+  COUPON_APPLY_RATE_LIMITED: 'Too many coupon attempts. Please try again shortly.',
+  SHIPPING_STATUS_UNSUPPORTED: 'This shipment status is not supported',
+  ORDER_AMOUNT_BELOW_RAZORPAY_MIN: 'Order amount is below the minimum allowed for online payment',
+  INVALID_WEBHOOK_PAYLOAD: 'Invalid webhook payload',
+  NOT_YOUR_COMMISSION_INVOICE: 'You do not have access to this commission invoice',
+  NOT_YOUR_VENDOR_PAYOUTS: 'You do not have access to these payouts',
+  CREDIT_NOTE_FORBIDDEN: 'You do not have access to this credit note',
+  DEBIT_NOTE_FORBIDDEN: 'You do not have access to this debit note',
+  REPORT_EXPORT_RETRY_FAILED_ONLY: 'Only failed exports can be retried',
 } as const;

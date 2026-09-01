@@ -20,12 +20,16 @@ export async function* createReportRowIterator(
         ? Math.ceil(reportExportConfig.maxRows / chunkSize) + 1
         : 10_000;
     let pages = 0;
+    let lastCursorKey: string | null = null;
     while (pages < maxPages) {
       const page = await def.exportQuery(filters, cursor, chunkSize);
       if (page.rows.length === 0) break;
       yield page.rows;
       pages += 1;
       if (!page.nextCursor || page.rows.length < chunkSize) break;
+      const cursorKey = JSON.stringify(page.nextCursor.values);
+      if (cursorKey === lastCursorKey) break;
+      lastCursorKey = cursorKey;
       cursor = page.nextCursor;
     }
     return;

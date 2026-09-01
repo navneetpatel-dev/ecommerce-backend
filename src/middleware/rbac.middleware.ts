@@ -52,7 +52,7 @@ export const authorize = (...permissionKeys: PermissionKey[]) => {
     }
 
     if (permissionKeys.length === 0) {
-      return next(new ForbiddenError('Missing permission'));
+      return next(new ForbiddenError(ERROR_MESSAGES.FORBIDDEN));
     }
 
     let perms = rolePermissionCache.get(user.roleId);
@@ -64,9 +64,7 @@ export const authorize = (...permissionKeys: PermissionKey[]) => {
       return next();
     }
 
-    return next(
-      new ForbiddenError(`Missing permission: ${permissionKeys.join(' or ')}`),
-    );
+    return next(new ForbiddenError(ERROR_MESSAGES.FORBIDDEN));
   };
 };
 

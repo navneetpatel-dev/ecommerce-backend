@@ -929,7 +929,7 @@ export class ReportEngine {
     const log = await ReportExportLog.findByPk(exportId);
     if (!log) throw new NotFoundError('ReportExportLog');
     if (log.status !== 'FAILED') {
-      throw new ValidationError('Only failed exports can be retried');
+      throw new ValidationError(ERROR_MESSAGES.REPORT_EXPORT_RETRY_FAILED_ONLY);
     }
     if (log.userId !== actor.id && actor.roleName !== ROLES.SUPER_ADMIN) {
       throw new ForbiddenError(ERROR_MESSAGES.REPORT_FORBIDDEN);

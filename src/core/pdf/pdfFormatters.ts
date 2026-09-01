@@ -90,7 +90,8 @@ export function formatPdfCellValue(value: unknown, empty = '--'): string {
       return Number.isInteger(n) ? String(n) : formatInrAmount(n);
     }
   }
-  if (typeof value === 'object') return JSON.stringify(value);
+  if (typeof value === 'object') return JSON.stringify(value).slice(0, 512);
   const raw = String(value).replace(/\s+/g, ' ').trim();
-  return raw || empty;
+  if (!raw) return empty;
+  return raw.length > 512 ? `${raw.slice(0, 509)}...` : raw;
 }

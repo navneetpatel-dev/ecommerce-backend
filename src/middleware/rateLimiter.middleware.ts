@@ -1,17 +1,18 @@
 import rateLimit, { type Options } from 'express-rate-limit';
 import { env } from '@config/env';
+import { AppError } from '@core/errors/AppError';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
+import { sendApiError } from '@core/http/sendApiError';
 
 const isDev = env.NODE_ENV === 'development';
 
 const jsonRateLimitHandler: Options['handler'] = (_req, res, _next, options) => {
-  res.status(options.statusCode).json({
-    success: false,
-    error: {
-      code: ERROR_CODES.RATE_LIMITED,
-      message: options.message?.toString() || ERROR_MESSAGES.RATE_LIMITED,
-    },
-  });
+  const message = options.message?.toString() || ERROR_MESSAGES.RATE_LIMITED;
+  sendApiError(
+    res,
+    new AppError(message, options.statusCode, ERROR_CODES.RATE_LIMITED),
+    options.statusCode,
+  );
 };
 
 export const globalRateLimiter = rateLimit({
@@ -31,7 +32,7 @@ export const authRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: jsonRateLimitHandler,
-  message: 'Too many login attempts. Please wait a few minutes and try again.',
+  message: ERROR_MESSAGES.AUTH_RATE_LIMITED,
 });
 
 export const couponApplyRateLimiter = rateLimit({
@@ -40,5 +41,5 @@ export const couponApplyRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: jsonRateLimitHandler,
-  message: 'Too many coupon attempts. Please try again shortly.',
+  message: ERROR_MESSAGES.COUPON_APPLY_RATE_LIMITED,
 });

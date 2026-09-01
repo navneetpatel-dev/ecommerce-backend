@@ -132,7 +132,7 @@ function assertCartItemsAvailable(cart: CartWithItems) {
 function requestedMethod(method?: string): 'STANDARD' | 'EXPRESS' {
   const normalized = (method || 'STANDARD').toUpperCase();
   if (normalized !== 'STANDARD' && normalized !== 'EXPRESS') {
-    throw new ValidationError(`Unsupported shipping method: ${method}`);
+    throw new ValidationError(ERROR_MESSAGES.SHIPPING_METHOD_UNSUPPORTED);
   }
   return normalized;
 }
@@ -301,7 +301,7 @@ export class CheckoutService {
         method,
       });
       const rate = rates.find((candidate) => candidate.method === method);
-      if (!rate) throw new ValidationError(`No ${method} shipping rate is available`);
+      if (!rate) throw new ValidationError(ERROR_MESSAGES.SHIPPING_RATE_UNAVAILABLE);
       const shippingCost =
         rate.freeShippingThreshold != null && subtotal >= rate.freeShippingThreshold
           ? 0
@@ -501,7 +501,7 @@ export class CheckoutService {
           method,
         });
         const rate = rates.find((candidate) => candidate.method === method);
-        if (!rate) throw new ValidationError(`No ${method} shipping rate is available`);
+        if (!rate) throw new ValidationError(ERROR_MESSAGES.SHIPPING_RATE_UNAVAILABLE);
         const shippingCost =
           rate.freeShippingThreshold != null && vendorSubtotal >= rate.freeShippingThreshold
             ? 0
@@ -901,7 +901,7 @@ export class CheckoutService {
         throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_ORDER);
       }
       if (locked.paymentStatus === PAYMENT_STATUS.PAID) {
-        throw new ValidationError('Paid orders cannot be cancelled from checkout');
+        throw new ValidationError(ERROR_MESSAGES.CHECKOUT_PAID_CANNOT_CANCEL);
       }
       if (locked.status === ORDER_STATUS.CANCELLED) {
         const walletRestored = await rollbackOrderWalletIfNeeded(locked, userId, t);

@@ -335,7 +335,7 @@ export class ReturnsService {
 
       const returnQuantity = data.returnQuantity ?? lineQty;
       if (returnQuantity < 1 || returnQuantity > lineQty) {
-        throw new ValidationError('Return quantity must be between 1 and the ordered quantity');
+        throw new ValidationError(ERROR_MESSAGES.RETURN_QUANTITY_INVALID);
       }
 
       const created = await ReturnRequest.create(
@@ -909,7 +909,7 @@ export class ReturnsService {
         const issuedAt = new Date();
         const vendorId = orderItem.subOrder.vendorId;
         if (!vendorId) {
-          throw new ValidationError('Credit note requires a vendor-owned sub-order');
+          throw new ValidationError(ERROR_MESSAGES.RETURN_CREDIT_NOTE_VENDOR_REQUIRED);
         }
         const { number: cnNumber } = await nextVendorDocumentNumber(
           vendorId,
@@ -1176,11 +1176,11 @@ export class ReturnsService {
     const row = await ReturnRequest.findByPk(returnRequestId);
     if (!row) throw new NotFoundError('ReturnRequest');
     if (row.refundStatus !== REFUND_STATUS.FAILED) {
-      throw new ValidationError('Refund retry only allowed for failed refunds');
+      throw new ValidationError(ERROR_MESSAGES.RETURN_REFUND_RETRY_FAILED_ONLY);
     }
     const razorpayAmount = Number(row.razorpayRefundAmount ?? 0);
     if (razorpayAmount <= 0) {
-      throw new ValidationError('No Razorpay refund amount on this return');
+      throw new ValidationError(ERROR_MESSAGES.RETURN_NO_RAZORPAY_REFUND);
     }
 
     const orderItem = await OrderItem.findByPk(row.orderItemId, {
@@ -1188,7 +1188,7 @@ export class ReturnsService {
     });
     const order = (orderItem as any)?.subOrder?.order as Order | undefined;
     const paymentId = order?.razorpayPaymentId;
-    if (!paymentId) throw new ValidationError('Order has no Razorpay payment to refund');
+    if (!paymentId) throw new ValidationError(ERROR_MESSAGES.RETURN_NO_RAZORPAY_PAYMENT);
 
     const amountPaise = Math.round(razorpayAmount * 100);
     try {

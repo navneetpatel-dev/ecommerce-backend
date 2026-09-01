@@ -1,6 +1,7 @@
 import { env } from '@config/env';
 import { razorpay, razorpayConfigured } from '@config/razorpay';
 import { AppError } from '@core/errors/AppError';
+import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
@@ -230,7 +231,7 @@ export class WalletRechargeService {
 
     const amountInPaise = Math.round(amount * 100);
     if (amountInPaise < RAZORPAY_MIN_AMOUNT_PAISE) {
-      throw new ValidationError('Recharge amount below Razorpay minimum');
+      throw new ValidationError(ERROR_MESSAGES.WALLET_RECHARGE_RAZORPAY_MIN);
     }
 
     const recharge = await WalletRechargeOrder.create({
@@ -362,10 +363,10 @@ export class WalletRechargeService {
         throw new NotFoundError('WalletRechargeOrder');
       }
       if (input.expectedUserId && row.userId !== input.expectedUserId) {
-        throw new ValidationError(ERROR_MESSAGES.FORBIDDEN);
+        throw new ForbiddenError(ERROR_MESSAGES.FORBIDDEN);
       }
       if (input.expectedRechargeId && row.id !== input.expectedRechargeId) {
-        throw new ValidationError(ERROR_MESSAGES.FORBIDDEN);
+        throw new ForbiddenError(ERROR_MESSAGES.FORBIDDEN);
       }
       if (row.status === 'PAID' && row.creditedLedgerId) {
         return row;

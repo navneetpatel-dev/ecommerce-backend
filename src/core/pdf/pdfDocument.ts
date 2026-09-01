@@ -9,6 +9,7 @@ export function createBrandedPdfDocument(meta: BrandedPdfMeta): PDFKit.PDFDocume
   return new PDFDocument({
     size: 'A4',
     margin: 0,
+    bufferPages: false,
     info: {
       Title: meta.title,
       Author: meta.title,

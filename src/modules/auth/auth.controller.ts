@@ -13,6 +13,8 @@ import { Role } from '@database/models/role.model';
 import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { COOKIES, REFRESH_TOKEN_TTL_MS } from '@core/constants/http';
 import { AUTH_COOKIE_PATH } from '@core/constants/apiPaths';
+import { AppError } from '@core/errors';
+import { sendApiError } from '@core/http/sendApiError';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { env } from '@config/env';
 import { roleNameOf } from '@utils/userRole';
@@ -154,10 +156,10 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
 export const refresh = asyncHandler(async (req: Request, res: Response) => {
   const token = req.cookies?.[COOKIES.REFRESH_TOKEN] || req.body?.refreshToken;
   if (!token) {
-    res.status(401).json({
-      success: false,
-      error: { code: ERROR_CODES.REFRESH_REQUIRED, message: ERROR_MESSAGES.REFRESH_REQUIRED },
-    });
+    sendApiError(
+      res,
+      new AppError(ERROR_MESSAGES.REFRESH_REQUIRED, 401, ERROR_CODES.REFRESH_REQUIRED),
+    );
     return;
   }
   const result = await authService.refreshToken(token, deviceMeta(req));
@@ -213,10 +215,10 @@ export const revokeSession = asyncHandler(async (req: Request, res: Response) =>
 export const revokeOtherSessions = asyncHandler(async (req: Request, res: Response) => {
   const current = req.cookies?.[COOKIES.REFRESH_TOKEN];
   if (!current) {
-    res.status(400).json({
-      success: false,
-      error: { code: ERROR_CODES.SESSION_REQUIRED, message: ERROR_MESSAGES.SESSION_REQUIRED },
-    });
+    sendApiError(
+      res,
+      new AppError(ERROR_MESSAGES.SESSION_REQUIRED, 400, ERROR_CODES.SESSION_REQUIRED),
+    );
     return;
   }
   await authService.revokeOtherSessions(req.user!.id, current);
@@ -225,7 +227,10 @@ export const revokeOtherSessions = asyncHandler(async (req: Request, res: Respon
 
 export const me = asyncHandler(async (req: Request, res: Response) => {
   const user = await User.findByPk(req.user!.id, { include: [{ model: Role, as: 'role' }] });
-  if (!user) { res.status(404).json({ success: false, error: { message: 'User not found' } }); return; }
+  if (!user) {
+    sendApiError(res, new AppError(ERROR_MESSAGES.NOT_FOUND, 404, ERROR_CODES.NOT_FOUND));
+    return;
+  }
   const roleName = roleNameOf(user);
   const permissions = await resolvePermissionsForUser({ roleId: user.roleId, role: { name: roleName } });
   res.json(ok({

@@ -162,7 +162,7 @@ export class PaymentsService {
       amountOverrideRupees != null ? Number(amountOverrideRupees) : Number(order.totalAmount);
     const amountInPaise = Math.round(chargeAmount * 100);
     if (amountInPaise < RAZORPAY_MIN_AMOUNT_PAISE) {
-      throw new ValidationError('Order amount below Razorpay minimum');
+      throw new ValidationError(ERROR_MESSAGES.ORDER_AMOUNT_BELOW_RAZORPAY_MIN);
     }
 
     const rzpOrder = await razorpay.orders.create({
@@ -226,7 +226,7 @@ export class PaymentsService {
       .digest('hex');
 
     if (!safeTimingEqual(expected, input.razorpaySignature)) {
-      throw new AppError('Signature mismatch', 400, ERROR_CODES.INVALID_SIGNATURE);
+      throw new AppError(ERROR_MESSAGES.INVALID_SIGNATURE, 400, ERROR_CODES.INVALID_SIGNATURE);
     }
 
     return { verified: true };
@@ -240,7 +240,7 @@ export class PaymentsService {
       throw new AppError('Razorpay webhook secret is not configured', 503, ERROR_CODES.RAZORPAY_NOT_CONFIGURED);
     }
     if (!signature) {
-      throw new AppError('Missing webhook signature', 400, ERROR_CODES.INVALID_SIGNATURE);
+      throw new AppError(ERROR_MESSAGES.INVALID_SIGNATURE, 400, ERROR_CODES.INVALID_SIGNATURE);
     }
 
     const bodyString = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : String(rawBody);
@@ -250,7 +250,7 @@ export class PaymentsService {
       .digest('hex');
 
     if (!safeTimingEqual(expected, signature)) {
-      throw new AppError('Invalid signature', 400, ERROR_CODES.INVALID_SIGNATURE);
+      throw new AppError(ERROR_MESSAGES.INVALID_SIGNATURE, 400, ERROR_CODES.INVALID_SIGNATURE);
     }
 
     const event = JSON.parse(bodyString) as {
@@ -271,7 +271,7 @@ export class PaymentsService {
     };
 
     if (!event?.id) {
-      throw new ValidationError('Invalid webhook payload');
+      throw new ValidationError(ERROR_MESSAGES.INVALID_WEBHOOK_PAYLOAD);
     }
 
     const [, created] = await WebhookEvent.findOrCreate({

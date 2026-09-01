@@ -1,5 +1,9 @@
 import { ERROR_CODES, ERROR_MESSAGES, type ErrorCode } from '@core/constants/errors';
 import type { AppError } from '@core/errors';
+import {
+  validationDetailsMessage,
+  type ValidationErrorDetails,
+} from '@core/http/validationErrorDetails';
 
 const INTERNAL_ERROR_PATTERNS = [
   /\b(?:backend|frontend|infra|src|node_modules)\//i,
@@ -35,6 +39,12 @@ Object.assign(CODE_TO_PUBLIC_MESSAGE, {
   [ERROR_CODES.REFRESH_TOKEN_EXPIRED]: ERROR_MESSAGES.TOKEN_EXPIRED,
 });
 
+const KNOWN_SAFE_MESSAGES = new Set<string>(Object.values(ERROR_MESSAGES));
+
+function isKnownSafeMessage(message: string): boolean {
+  return KNOWN_SAFE_MESSAGES.has(message.trim());
+}
+
 export function looksLikeInternalErrorMessage(message: string): boolean {
   const trimmed = message.trim();
   if (!trimmed) return false;
@@ -42,7 +52,21 @@ export function looksLikeInternalErrorMessage(message: string): boolean {
 }
 
 /** Safe message for API clients (Postman, Swagger, web). Full text stays in logs only. */
-export function publicErrorMessage(code: string, internalMessage: string): string {
+export function publicErrorMessage(code: string, internalMessage: string, details?: unknown): string {
+  if (code === ERROR_CODES.VALIDATION_ERROR && details && typeof details === 'object') {
+    const validationMessage = validationDetailsMessage(details as ValidationErrorDetails);
+    if (validationMessage !== 'Validation failed') {
+      const sanitized = sanitizePublicString(validationMessage);
+      if (sanitized) return sanitized;
+    }
+  }
+
+  if (code === ERROR_CODES.FORBIDDEN) {
+    const trimmed = internalMessage.trim();
+    if (trimmed && isKnownSafeMessage(trimmed)) return trimmed;
+    return ERROR_MESSAGES.FORBIDDEN;
+  }
+
   const mapped = CODE_TO_PUBLIC_MESSAGE[code as ErrorCode];
   if (mapped) return mapped;
 
@@ -98,7 +122,7 @@ export function toPublicErrorBody(err: AppError): {
   const details = sanitizePublicDetails(err.details);
   return {
     code: err.code,
-    message: publicErrorMessage(err.code, err.message),
+    message: publicErrorMessage(err.code, err.message, err.details),
     ...(details !== undefined ? { details } : {}),
   };
 }

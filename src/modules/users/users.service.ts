@@ -311,7 +311,7 @@ export class UsersService {
 
     const actorPerms = await resolvePermissionsForUser(actor);
     if (!actorPerms.includes(permission as PermissionKey)) {
-      throw new ForbiddenError(`Missing permission: ${permission}`);
+      throw new ForbiddenError(ERROR_MESSAGES.FORBIDDEN);
     }
 
     const offset = paginationOffset(query.page, query.limit);

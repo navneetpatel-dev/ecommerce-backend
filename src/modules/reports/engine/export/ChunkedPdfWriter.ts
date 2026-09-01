@@ -130,8 +130,15 @@ export class ChunkedPdfWriter implements StreamingExportWriter {
     const rowH = measureTableRowHeight(this.layout.doc, this.cols!, {
       title: values[this.primaryKey] ?? '',
     });
+    const available = this.layout.pageBottomY - this.layout.y;
+    const effectiveRowH = Math.min(rowH, Math.max(20, available - 8));
 
-    if (this.layout.y + rowH + rowGap > this.layout.pageBottomY) {
+    let pageGuard = 0;
+    while (this.layout.y + effectiveRowH + rowGap > this.layout.pageBottomY) {
+      if (pageGuard >= 50) {
+        throw new Error('PDF export exceeded maximum page count for a single row');
+      }
+      pageGuard += 1;
       this.layout.addPage();
       this.layout.y += drawContinuationLabel(
         this.layout.doc,
@@ -148,13 +155,13 @@ export class ChunkedPdfWriter implements StreamingExportWriter {
       this.layout.margin,
       this.layout.y,
       this.layout.contentWidth,
-      rowH,
+      effectiveRowH,
       this.cols!,
       values,
       this.rowIndex,
       { title: values[this.primaryKey] ?? '' },
     );
-    this.layout.y += rowH + rowGap;
+    this.layout.y += effectiveRowH + rowGap;
     this.rowIndex += 1;
   }
 

@@ -12,6 +12,7 @@ import { cancelPaidOrder } from './ordersCancel.service';
 import type { CreateOrderRequest, GetOrdersQuery } from './orders.dto';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { Op } from 'sequelize';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 import { REFUND_STATUS, RETURN_STATUS } from '@core/constants/statuses';
 
 const orderDetailInclude = [
@@ -30,7 +31,7 @@ export class OrdersService {
   async createOrder(userId: string, data: CreateOrderRequest) {
     void userId;
     void data;
-    throw new ValidationError('Use /api/checkout to place orders');
+    throw new ValidationError(ERROR_MESSAGES.ORDER_USE_CHECKOUT);
   }
 
   async getOrders(userId: string | null, query: GetOrdersQuery) {
@@ -59,7 +60,7 @@ export class OrdersService {
     });
     if (!order) throw new NotFoundError('Order');
     if (userId && order.userId !== userId) {
-      throw new ForbiddenError('You do not have access to this order');
+      throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_ORDER);
     }
     const mapped = mapOrderResponse(order as unknown as Record<string, unknown>);
     return {

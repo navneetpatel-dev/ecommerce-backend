@@ -5,6 +5,7 @@ import { TdsLedger } from '@database/models/tdsLedger.model';
 import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 import { COMMISSION_STATUS, PAYOUT_STATUS } from '@core/constants/statuses';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { notificationsService } from '@modules/notifications/notifications.service';
@@ -79,7 +80,7 @@ export class PayoutsService {
 
   async listByVendor(vendorId: string, requesterVendorId?: string | null) {
     if (requesterVendorId && requesterVendorId !== vendorId) {
-      throw new ForbiddenError('Not your vendor payouts');
+      throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_VENDOR_PAYOUTS);
     }
     const rows = await Payout.findAll({
       where: { vendorId },

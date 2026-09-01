@@ -6,6 +6,7 @@ import { Role } from '@database/models/role.model';
 import { BEARER_PREFIX } from '@core/constants/http';
 import { USER_STATUS } from '@core/constants/statuses';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
+import { publicErrorMessage } from '@core/http/publicError';
 import { roleNameOf } from '@utils/userRole';
 
 interface JwtPayload {
@@ -16,7 +17,10 @@ interface JwtPayload {
 }
 
 function unauthorized(res: Response, code: string, message: string) {
-  res.status(401).json({ success: false, error: { code, message } });
+  res.status(401).json({
+    success: false,
+    error: { code, message: publicErrorMessage(code, message) },
+  });
 }
 
 async function loadUserFromBearer(authHeader: string) {

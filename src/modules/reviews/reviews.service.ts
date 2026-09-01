@@ -56,7 +56,7 @@ export class ReviewsService {
         throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_ORDER);
       }
       if (orderItem.subOrder.status !== ORDER_STATUS.DELIVERED) {
-        throw new ForbiddenError('Item not yet delivered');
+        throw new ForbiddenError(ERROR_MESSAGES.REVIEW_ITEM_NOT_DELIVERED);
       }
 
       // Check if already reviewed
@@ -65,7 +65,7 @@ export class ReviewsService {
         transaction: t,
       });
       if (existing) {
-        throw new ValidationError('Order item already reviewed');
+        throw new ValidationError(ERROR_MESSAGES.REVIEW_ALREADY_EXISTS);
       }
 
       // Create review
@@ -166,7 +166,9 @@ export class ReviewsService {
   async respondToReview(reviewId: string, vendorId: string | null, response: string) {
     const review = await Review.findByPk(reviewId, { include: [{ model: Product, as: 'product' }] });
     if (!review) throw new NotFoundError('Review');
-    if (!vendorId || (review as any).product?.vendorId !== vendorId) throw new ForbiddenError('Not your product review');
+    if (!vendorId || (review as any).product?.vendorId !== vendorId) {
+      throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_PRODUCT_REVIEW);
+    }
     return review.update({ vendorResponse: response, vendorRespondedAt: new Date() });
   }
 

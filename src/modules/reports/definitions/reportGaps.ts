@@ -721,6 +721,20 @@ async function vendorKycCompliance(filters: ReportFilters) {
   });
 }
 
+function mapWalletStatementRow(row: WalletLedger) {
+  return {
+    id: row.id,
+    type: row.type,
+    amount: Number(row.amount),
+    balanceAfter: Number(row.balanceAfter),
+    referenceType: row.referenceType,
+    referenceId: row.referenceId,
+    description: row.description,
+    pointSource: row.pointSource,
+    createdAt: row.createdAt,
+  };
+}
+
 async function customerWalletStatement(filters: ReportFilters) {
   assertReportRange(filters);
   if (!filters.userId) return emptyPage(filters);
@@ -738,17 +752,7 @@ async function customerWalletStatement(filters: ReportFilters) {
   );
 
   return {
-    rows: rows.map((row) => ({
-      id: row.id,
-      type: row.type,
-      amount: Number(row.amount),
-      balanceAfter: Number(row.balanceAfter),
-      referenceType: row.referenceType,
-      referenceId: row.referenceId,
-      description: row.description,
-      pointSource: row.pointSource,
-      createdAt: row.createdAt,
-    })),
+    rows: rows.map(mapWalletStatementRow),
     total,
   };
 }
@@ -1149,6 +1153,7 @@ export const customerGapReports: ReportDefinition[] = [
       { key: 'description', labelKey: 'description' },
     ],
     query: customerWalletStatement,
+    exportQuery: createOffsetExportQuery(customerWalletStatement),
   },
 ];
 

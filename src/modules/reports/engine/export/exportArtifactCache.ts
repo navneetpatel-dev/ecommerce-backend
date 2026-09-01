@@ -64,10 +64,20 @@ async function probeArtifact(log: ReportExportLog): Promise<boolean> {
   }
 }
 
+type ExportArtifactExistsOptions = {
+  /** Bypass Redis so cache hits re-check storage before download. */
+  forceProbe?: boolean;
+};
+
 /** Redis-backed S3/local artifact probe (TTL 5 min). */
-export async function exportArtifactExists(log: ReportExportLog): Promise<boolean> {
-  const cached = await readArtifactCache(log.id);
-  if (cached != null) return cached;
+export async function exportArtifactExists(
+  log: ReportExportLog,
+  options?: ExportArtifactExistsOptions,
+): Promise<boolean> {
+  if (!options?.forceProbe) {
+    const cached = await readArtifactCache(log.id);
+    if (cached != null) return cached;
+  }
   const exists = await probeArtifact(log);
   await writeArtifactCache(log.id, exists);
   return exists;

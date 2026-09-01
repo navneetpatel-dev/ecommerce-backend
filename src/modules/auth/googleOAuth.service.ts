@@ -104,7 +104,7 @@ async function exchangeCodeForAccessToken(code: string): Promise<string> {
   const payload = (await response.json()) as GoogleTokenResponse;
   if (!response.ok || !payload.access_token) {
     throw new ValidationError({
-      oauth: [payload.error_description || ERROR_MESSAGES.OAUTH_GOOGLE_FAILED],
+      oauth: [ERROR_MESSAGES.OAUTH_GOOGLE_FAILED],
     });
   }
 

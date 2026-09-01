@@ -52,7 +52,7 @@ export async function cancelPaidOrder(
       throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_ORDER);
     }
     if (locked.paymentStatus !== PAYMENT_STATUS.PAID) {
-      throw new ValidationError('Only paid orders can be cancelled');
+      throw new ValidationError(ERROR_MESSAGES.ORDER_CANCEL_PAID_ONLY);
     }
     if (locked.status === ORDER_STATUS.CANCELLED) {
       const walletRestored = await rollbackOrderWalletIfNeeded(locked, locked.userId, t);
@@ -68,7 +68,7 @@ export async function cancelPaidOrder(
         locked.status as typeof ORDER_STATUS.SHIPPED,
       )
     ) {
-      throw new ValidationError('Shipped or delivered orders cannot be cancelled');
+      throw new ValidationError(ERROR_MESSAGES.ORDER_CANCEL_SHIPPED);
     }
 
     const orderResult = await Order.findByPk(orderId, {
@@ -92,7 +92,7 @@ export async function cancelPaidOrder(
 
     for (const subOrder of order.subOrders ?? []) {
       if (!CANCELLABLE_SUB_STATUSES.has(subOrder.status)) {
-        throw new ValidationError('One or more items have already shipped');
+        throw new ValidationError(ERROR_MESSAGES.ORDER_CANCEL_ITEMS_SHIPPED);
       }
     }
 

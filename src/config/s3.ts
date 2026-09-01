@@ -107,7 +107,7 @@ export async function signedPutObjectUrl(
   expiresInSeconds = SIGNED_PUT_EXPIRES_SECONDS,
 ): Promise<string> {
   if (!s3Client) {
-    throw new Error('S3 is not configured');
+    throw new AppError(ERROR_MESSAGES.S3_NOT_CONFIGURED, 503, ERROR_CODES.S3_NOT_CONFIGURED);
   }
   return getSignedUrl(
     s3Client,
@@ -178,8 +178,9 @@ function rethrowS3Error(error: unknown): never {
       cause: error,
     });
   }
-  if (error instanceof Error) throw error;
-  throw new Error(String(error));
+  throw new AppError(ERROR_MESSAGES.UPLOAD_FAILED, 503, ERROR_CODES.UPLOAD_FAILED, undefined, {
+    cause: error instanceof Error ? error : undefined,
+  });
 }
 
 export async function uploadObject(params: {
@@ -190,9 +191,7 @@ export async function uploadObject(params: {
   privateObject?: boolean;
 }): Promise<string> {
   if (!s3Client) {
-    throw new Error(
-      'S3 is not configured. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, and S3_BUCKET.',
-    );
+    throw new AppError(ERROR_MESSAGES.S3_NOT_CONFIGURED, 503, ERROR_CODES.S3_NOT_CONFIGURED);
   }
 
   await s3Client.send(
@@ -219,9 +218,7 @@ export async function uploadObjectStream(params: {
   contentDisposition?: string;
 }): Promise<string> {
   if (!s3Client) {
-    throw new Error(
-      'S3 is not configured. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, and S3_BUCKET.',
-    );
+    throw new AppError(ERROR_MESSAGES.S3_NOT_CONFIGURED, 503, ERROR_CODES.S3_NOT_CONFIGURED);
   }
 
   const upload = new Upload({
@@ -254,10 +251,12 @@ export async function deleteObject(key: string, options: { strict?: boolean } = 
       }),
     );
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
     if (options.strict) {
-      throw new Error(`Failed to delete S3 object ${key}: ${message}`);
+      throw new AppError(ERROR_MESSAGES.UPLOAD_FAILED, 503, ERROR_CODES.UPLOAD_FAILED, undefined, {
+        cause: error instanceof Error ? error : undefined,
+      });
     }
+    const message = error instanceof Error ? error.message : String(error);
     logger.warn('Failed to delete S3 object', { key, error: message });
   }
 }

@@ -5,6 +5,7 @@ import { Product } from '@database/models/product.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 import { Op } from 'sequelize';
 import type { CreateZoneRequest, UpdateZoneRequest, CreateRateRequest, GetShippingRatesRequest } from './shipping.dto';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
@@ -219,7 +220,7 @@ export const shippingService = {
   async processWebhook(trackingNumber: string, status: string) {
     const normalizedStatus = String(status).toUpperCase().replace(/[\s-]+/g, '_');
     const mappedStatus = WEBHOOK_STATUS_MAP[normalizedStatus];
-    if (!mappedStatus) throw new ValidationError(`Unsupported shipment status: ${status}`);
+    if (!mappedStatus) throw new ValidationError(ERROR_MESSAGES.SHIPPING_STATUS_UNSUPPORTED);
 
     const shipment = await Shipment.findOne({ where: { trackingNumber } });
     if (!shipment) throw new NotFoundError('Shipment');
