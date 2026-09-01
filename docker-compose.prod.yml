@@ -1,3 +1,5 @@
+name: ecommerce-prod
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -7,6 +9,8 @@ services:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -21,6 +25,8 @@ services:
     image: redis:7-alpine
     container_name: ecommerce-redis-prod
     restart: always
+    ports:
+      - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -28,30 +34,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - ecommerce-network
-
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: ecommerce-app-prod
-    restart: always
-    env_file:
-      - .env
-    environment:
-      DB_HOST: postgres
-      REDIS_URL: redis://redis:6379
-      NODE_ENV: production
-    ports:
-      - "3000:3000"
-    volumes:
-      - ./logs:/app/logs
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
     networks:
       - ecommerce-network
 

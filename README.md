@@ -36,9 +36,9 @@ Multi-vendor e-commerce platform backend built with Node.js, Express, TypeScript
 
 ## Quick Start (Docker) 🐳
 
-**Recommended for quick setup!**
+Docker runs **PostgreSQL** and **Redis** only. The API runs on the host.
 
-1. **Prerequisites**: Docker & Docker Compose
+1. **Prerequisites**: Docker, Docker Compose, Node.js 20+
 
 2. **Run setup script**:
 ```bash
@@ -47,26 +47,25 @@ Multi-vendor e-commerce platform backend built with Node.js, Express, TypeScript
 
 That's it! The script will:
 - Create `.env` from template
-- Start PostgreSQL, Redis, and the app
+- Start PostgreSQL and Redis (Compose project `ecommerce`)
 - Run migrations
 - Seed initial data
 
-**Manual Docker setup:**
+Then start the API:
 ```bash
-# Create .env
-cp .env.example .env
-
-# Start services
-docker-compose up -d
-
-# Run migrations
-docker-compose exec app npm run db:migrate
-
-# Seed data
-docker-compose exec app npm run db:seed
+npm run dev
 ```
 
-Access the API at `http://localhost:3000`
+**Manual Docker setup:**
+```bash
+cp .env.example .env
+docker compose up -d
+npm run db:migrate
+npm run db:seed
+npm run dev
+```
+
+Access the API at `http://localhost:9000`
 
 See [DOCKER.md](DOCKER.md) for detailed Docker documentation.
 
@@ -138,15 +137,13 @@ npm run db:migrate      # Run migrations
 npm run db:seed        # Seed initial data
 ```
 
-### Docker
+### Docker (PostgreSQL + Redis)
 ```bash
-npm run docker:dev          # Start dev environment
-npm run docker:dev:build    # Rebuild and start dev
-npm run docker:dev:down     # Stop dev environment
+npm run docker:dev          # Start Postgres + Redis
+npm run docker:dev:down     # Stop Postgres + Redis
 
-npm run docker:prod         # Start production environment
-npm run docker:prod:build   # Rebuild and start production
-npm run docker:prod:down    # Stop production environment
+npm run docker:prod         # Start production Postgres + Redis
+npm run docker:prod:down    # Stop production Postgres + Redis
 ```
 
 ### Testing
@@ -182,9 +179,8 @@ ecommerce/
 │   └── seeders/         # Initial data
 ├── logs/                # Log files (auto-created)
 ├── dist/                # Compiled output
-├── docker-compose.yml   # Docker dev setup
-├── Dockerfile           # Production image
-└── Dockerfile.dev       # Development image
+├── docker-compose.yml   # Postgres + Redis (dev)
+└── Dockerfile           # Optional production API image
 ```
 
 ## Environment Variables
@@ -287,14 +283,15 @@ npm run db:migrate
 
 ## Production Deployment
 
-1. **Build Docker image**:
+1. **Start production Postgres + Redis**:
 ```bash
-docker build -t ecommerce-backend:latest .
+docker compose -f docker-compose.prod.yml up -d
+npm run db:migrate
 ```
 
-2. **Run with production compose**:
+2. **Optional — build an API image**:
 ```bash
-docker-compose -f docker-compose.prod.yml up -d
+docker build -t ecommerce-backend:latest .
 ```
 
 Or deploy to your container orchestration platform (Kubernetes, ECS, etc.)

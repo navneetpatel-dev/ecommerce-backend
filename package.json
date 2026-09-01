@@ -17,13 +17,12 @@
     "db:seed:tickets": "sequelize-cli db:seed --seed 20240101000080-seed-support-tickets.js",
     "db:seed:bugs": "sequelize-cli db:seed --seed 20240101000081-seed-bug-reports.js",
     "db:seed:gallery": "sequelize-cli db:seed --seed 20240101000095-seed-product-gallery-images.js",
+    "db:reset": "sequelize-cli db:migrate:undo:all && sequelize-cli db:migrate && sequelize-cli db:seed:all",
     "test": "tsx --tsconfig tsconfig.json --test 'src/**/__tests__/**/*.test.ts'",
-    "docker:dev": "docker-compose up",
-    "docker:dev:build": "docker-compose up --build",
-    "docker:dev:down": "docker-compose down",
-    "docker:prod": "docker-compose -f docker-compose.prod.yml up -d",
-    "docker:prod:build": "docker-compose -f docker-compose.prod.yml up --build -d",
-    "docker:prod:down": "docker-compose -f docker-compose.prod.yml down"
+    "docker:dev": "docker compose up -d",
+    "docker:dev:down": "docker compose down",
+    "docker:prod": "docker compose -f docker-compose.prod.yml up -d",
+    "docker:prod:down": "docker compose -f docker-compose.prod.yml down"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1104.0",

@@ -413,18 +413,18 @@ Execute requests in logical order:
 
 **Solution:** Verify the API is running:
 ```bash
-# Check if Docker is running
-docker-compose ps
+# Check if Postgres + Redis are running
+docker compose ps
 
 # Or check local server
-curl http://localhost:3000/health
+curl http://localhost:9000/health
 ```
 
 ### Issue: "Invalid credentials"
 
 **Solution:** Ensure database is seeded:
 ```bash
-docker-compose exec app npm run db:seed
+npm run db:seed
 ```
 
 ### Issue: "Validation error"

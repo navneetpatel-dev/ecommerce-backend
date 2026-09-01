@@ -1,5 +1,6 @@
+name: ecommerce
+
 services:
-  # PostgreSQL Database
   postgres:
     image: postgres:16-alpine
     container_name: ecommerce-postgres
@@ -18,7 +19,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # Redis Cache
   redis:
     image: redis:7-alpine
     container_name: ecommerce-redis
@@ -32,37 +32,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-
-  # Node.js Application
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile.dev
-    container_name: ecommerce-app
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      # Override DB/Redis to point to Docker services
-      DB_HOST: postgres
-      DB_PORT: 5432
-      REDIS_URL: redis://redis:6379
-      NODE_ENV: development
-    ports:
-      - "3000:3000"
-    volumes:
-      # Mount source code for hot reload
-      - ./src:/app/src
-      - ./database:/app/database
-      - ./logs:/app/logs
-      # Prevent node_modules from being overwritten
-      - /app/node_modules
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    command: npm run dev
 
 volumes:
   postgres_data:

@@ -307,7 +307,7 @@ newman run postman/Ecommerce-Backend-Complete.postman_collection.json \
 → Run login request first
 
 **"Connection refused"**
-→ Start the API: `docker-compose up` or `npm run dev`
+→ Start Postgres + Redis (`docker compose up -d`), then the API (`npm run dev`)
 
 **"Invalid credentials"**
 → Seed database: `npm run db:seed`
