@@ -114,6 +114,7 @@ function isVendorStaff(permissions: PermissionKey[], roleName: string): boolean 
 }
 
 function reportsHubPath(actor: ReportActor): string {
+  if (actor.roleName === ROLES.CUSTOMER) return '/wallet';
   if (actor.roleName === ROLES.VENDOR_OWNER || actor.roleName === ROLES.VENDOR_STAFF) {
     return '/vendor/dashboard/reports';
   }
@@ -234,7 +235,7 @@ async function findCachedExport(exportKey: string): Promise<ReportExportLog | nu
     order: [['exportedAt', 'DESC']],
   });
   if (!cached) return null;
-  if (await exportArtifactExists(cached)) return cached;
+  if (await exportArtifactExists(cached, { forceProbe: true })) return cached;
   await cached.update({
     status: 'FAILED',
     errorMessage: 'Export artifact missing or expired',
@@ -327,10 +328,31 @@ async function failUserVisibleStaleExports(exportKey: string): Promise<void> {
   );
 }
 
-async function requeuePendingExportIfNeeded(log: ReportExportLog): Promise<void> {
+async function requeuePendingExportIfNeeded(
+  log: ReportExportLog,
+  processJob?: (exportLogId: string) => Promise<void>,
+): Promise<void> {
   if (log.status !== 'PENDING') return;
-  if (!areQueuesReady()) return;
+  if (!areQueuesReady()) {
+    if (reportExportConfig.inlineDev && !reportExportConfig.isProduction && processJob) {
+      void processJob(log.id).catch((err) =>
+        logger.error('Inline report export requeue failed', {
+          exportLogId: log.id,
+          error: err instanceof Error ? err.message : err,
+        }),
+      );
+    }
+    return;
+  }
   try {
+    const existing = await queues.reportExport.getJob(log.id);
+    if (existing) {
+      const state = await existing.getState();
+      if (state === 'active' || state === 'waiting' || state === 'delayed') return;
+      if (state === 'completed' || state === 'failed') {
+        await existing.remove();
+      }
+    }
     await queues.reportExport.add(
       REPORT_EXPORT_JOB,
       { exportLogId: log.id },
@@ -345,7 +367,38 @@ async function requeuePendingExportIfNeeded(log: ReportExportLog): Promise<void>
       exportLogId: log.id,
       error: err instanceof Error ? err.message : String(err),
     });
+    if (reportExportConfig.inlineDev && !reportExportConfig.isProduction && processJob) {
+      void processJob(log.id).catch((inlineErr) =>
+        logger.error('Inline report export fallback failed', {
+          exportLogId: log.id,
+          error: inlineErr instanceof Error ? inlineErr.message : inlineErr,
+        }),
+      );
+    }
   }
+}
+
+async function invalidateStaleReadyExport(log: ReportExportLog): Promise<boolean> {
+  if (log.status !== 'READY' && log.status !== 'SYNC') return true;
+  if (!log.fileKey) {
+    await log.update({
+      status: 'FAILED',
+      errorMessage: 'Export artifact missing or expired',
+      fileKey: null,
+      fileUrl: null,
+    });
+    await purgeExportRedisCaches(log.id);
+    return false;
+  }
+  if (await exportArtifactExists(log, { forceProbe: true })) return true;
+  await log.update({
+    status: 'FAILED',
+    errorMessage: 'Export artifact missing or expired',
+    fileKey: null,
+    fileUrl: null,
+  });
+  await purgeExportRedisCaches(log.id);
+  return false;
 }
 
 async function findPendingExport(exportKey: string): Promise<ReportExportLog | null> {
@@ -502,7 +555,7 @@ export class ReportEngine {
 
     const pending = await findPendingExport(exportKey);
     if (pending) {
-      await requeuePendingExportIfNeeded(pending);
+      await requeuePendingExportIfNeeded(pending, this.processExportJob.bind(this));
       const reportStatus =
         pending.status === 'READY' || pending.status === 'PROCESSING'
           ? pending.status
@@ -831,7 +884,11 @@ export class ReportEngine {
     }
 
     const cached = await readCachedExportStatus(exportId);
-    if (cached && (cached.status === 'PENDING' || cached.status === 'PROCESSING')) {
+    if (
+      cached &&
+      (cached.status === 'PENDING' || cached.status === 'PROCESSING') &&
+      (log.status === 'PENDING' || log.status === 'PROCESSING')
+    ) {
       const cachedEtag = typeof cached.etag === 'string' ? cached.etag : etag;
       if (ifNoneMatch && ifNoneMatch === cachedEtag) {
         return { notModified: true, etag: cachedEtag };
@@ -864,6 +921,7 @@ export class ReportEngine {
     }
 
     const filtersUsed = log.filtersUsed as Record<string, unknown>;
+    const currentEtag = statusEtag(log);
     const payload = {
       id: log.id,
       reportType: log.reportType,
@@ -880,7 +938,7 @@ export class ReportEngine {
       exportedAt: log.exportedAt,
       filterFrom: typeof filtersUsed.from === 'string' ? filtersUsed.from : null,
       filterTo: typeof filtersUsed.to === 'string' ? filtersUsed.to : null,
-      etag,
+      etag: currentEtag,
     };
 
     if (log.status === 'PENDING' || log.status === 'PROCESSING') {
@@ -899,6 +957,10 @@ export class ReportEngine {
     if (log.status !== 'READY' && log.status !== 'SYNC') {
       throw new ValidationError(ERROR_MESSAGES.REPORT_EXPORT_NOT_READY);
     }
+    if (!(await invalidateStaleReadyExport(log))) {
+      throw new ValidationError(ERROR_MESSAGES.REPORT_EXPORT_NOT_READY);
+    }
+    await log.reload();
 
     if (isS3Configured() && log.fileKey) {
       const s3Key = log.fileUrl ? extractS3KeyFromUrl(log.fileUrl) ?? log.fileKey : log.fileKey;
