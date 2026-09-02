@@ -5,6 +5,8 @@ import { AppError } from '@core/errors/AppError';
 import { ROLES, VENDOR_STATUS, ORDER_STATUS, COMMISSION_STATUS } from '@core/constants/statuses';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
+import { fromPaise } from '@modules/pricing/money';
+import { sqlVendorNetPayoutPaise } from '@modules/pricing/frozenMoneySql';
 import {
   deleteS3ObjectIfReplaced,
   cascadeDeleteEntityMedia,
@@ -702,15 +704,11 @@ export class VendorsService {
          AND "createdAt" >= date_trunc('month', NOW())`,
       { replacements: { vendorId, cancelled: ORDER_STATUS.CANCELLED }, type: QueryTypes.SELECT },
     );
-    const [payout] = await sequelize.query<{ pending: string | null }>(
-      `SELECT COALESCE(SUM(
-         CASE
-           WHEN "netPayoutAmount" IS NOT NULL THEN "netPayoutAmount"
-           ELSE ("saleAmount" - "commissionAmount")
-         END
-       ), 0)::numeric AS pending
-       FROM commission_ledgers
-       WHERE "vendorId" = :vendorId AND status = :pending`,
+    // Same net-payout definition the admin settlement report uses, so the two agree.
+    const [payout] = await sequelize.query<{ pendingPaise: string | null }>(
+      `SELECT COALESCE(SUM(${sqlVendorNetPayoutPaise('cl')}), 0)::bigint AS "pendingPaise"
+       FROM commission_ledgers cl
+       WHERE cl."vendorId" = :vendorId AND cl.status = :pending`,
       {
         replacements: { vendorId, pending: COMMISSION_STATUS.PENDING },
         type: QueryTypes.SELECT,
@@ -720,7 +718,7 @@ export class VendorsService {
       todayOrders: Number(today?.orders ?? 0),
       pendingShipments: Number(pending?.shipments ?? 0),
       monthRevenue: Number(month?.revenue ?? 0),
-      pendingPayouts: Number(payout?.pending ?? 0),
+      pendingPayouts: fromPaise(Number(payout?.pendingPaise ?? 0)),
       performanceScore: vendor.performanceScore == null ? null : Number(vendor.performanceScore),
     };
   }

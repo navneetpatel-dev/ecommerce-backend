@@ -31,6 +31,24 @@ describe('buildCheckoutOrderTotals', () => {
     assert.equal(totals.discountTotal, 10);
     assert.equal(totals.taxDisplayKey, 'GST');
   });
+
+  it('rounds each aggregate so many-vendor float drift cannot leak out', () => {
+    // 0.1 + 0.2 style drift: three vendors whose raw sum is 30.599999999999998.
+    const vendor = {
+      subtotal: 10.2,
+      shippingCost: 3.1,
+      tax: { cgst: 0.1, sgst: 0.2, igst: 0, total: 0.3 },
+      discount: 1.1,
+    };
+    const totals = buildCheckoutOrderTotals([vendor, vendor, vendor]);
+
+    assert.equal(totals.merchandiseSubtotal, 30.6);
+    assert.equal(totals.shippingTotal, 9.3);
+    assert.equal(totals.cgst, 0.3);
+    assert.equal(totals.sgst, 0.6);
+    assert.equal(totals.taxTotal, 0.9);
+    assert.equal(totals.discountTotal, 3.3);
+  });
 });
 
 describe('resolveTaxDisplayKey', () => {

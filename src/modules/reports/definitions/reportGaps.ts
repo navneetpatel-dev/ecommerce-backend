@@ -522,6 +522,9 @@ async function abandonedCartReport(filters: ReportFilters) {
       u.name AS "userName",
       c."updatedAt" AS "lastActivityAt",
       COUNT(ci.id)::int AS "itemCount",
+      -- A cart has no frozen price by design, so live variant price IS the DB truth
+      -- here. This is merchandise value only — no tax, shipping or discount — which is
+      -- why the column is labelled as an estimate.
       COALESCE(SUM(ci.quantity * pv.price), 0)::float AS "cartValue"
     FROM carts c
     INNER JOIN cart_items ci ON ci."cartId" = c.id AND ci."deletedAt" IS NULL

@@ -4,6 +4,7 @@ import { ERROR_MESSAGES } from '@core/constants/errors';
 import { paginationOffset } from '@core/http/pagination';
 import { reportExportConfig } from '../reportExportConfig';
 import { fromPaise, toPaise } from '@modules/pricing/money';
+import { REPORTABLE_ORDER_SQL, sqlFrozenPaise } from '@modules/pricing/frozenMoneySql';
 import {
   COMMISSION_STATUS,
   PAYMENT_STATUS,
@@ -51,14 +52,6 @@ export function dateBetween(from: Date, to: Date): { [Op.between]: [Date, Date] 
   return { [Op.between]: [from, to] };
 }
 
-export function frozenPaise(paiseValue: unknown, rupeeValue: unknown): number {
-  const paise = Number(paiseValue ?? 0);
-  const rupees = Number(rupeeValue ?? 0);
-  if (paise !== 0) return paise;
-  if (rupees === 0) return 0;
-  return toPaise(rupees);
-}
-
 export function reportPageParams(filters: ReportFilters): {
   page: number;
   limit: number;
@@ -91,23 +84,17 @@ export function reportableOrderWhere(from?: Date, to?: Date): Record<string, unk
   return where;
 }
 
-/** SQL fragment matching `reportableOrderWhere` (alias `o` = orders). */
-export const REPORTABLE_ORDER_SQL = `(
-  o."paymentStatus" = '${PAYMENT_STATUS.PAID}'
-  OR (
-    o."paymentMethod" = '${PAYMENT_METHOD.COD}'
-    AND o."paymentStatus" NOT IN ('${PAYMENT_STATUS.FAILED}', '${PAYMENT_STATUS.REFUNDED}')
-    AND o."status" <> '${ORDER_STATUS.CANCELLED}'
-  )
-)`;
-
-/** Prefer frozen paise column; fall back to rupee × 100 (SQL). */
-export function sqlFrozenPaise(alias: string, paiseCol: string, rupeeCol: string): string {
-  return `CASE
-    WHEN COALESCE(${alias}."${paiseCol}", 0) <> 0 THEN ${alias}."${paiseCol}"
-    ELSE ROUND(COALESCE(${alias}."${rupeeCol}", 0)::numeric * 100)::bigint
-  END`;
-}
+/**
+ * Frozen-money read primitives live in `@modules/pricing/frozenMoneySql` so analytics
+ * and dashboards can share them without importing the reports engine. Re-exported here
+ * because every existing report call site imports them from this module.
+ */
+export {
+  frozenPaise,
+  sqlFrozenPaise,
+  REPORTABLE_ORDER_SQL,
+  sqlVendorNetPayoutPaise,
+} from '@modules/pricing/frozenMoneySql';
 
 /**
  * Single-row settlement identity computed entirely in SQL (no Node-side load-all).

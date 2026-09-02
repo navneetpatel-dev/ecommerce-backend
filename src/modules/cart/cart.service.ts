@@ -4,12 +4,11 @@ import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { type UnavailableReason } from '@core/constants/statuses';
 import { resolveItemAvailability } from '@core/catalog/customerVisibility';
-import { lineSubtotal } from '@modules/pricing/displayMoney';
+import { combinedDiscount, lineSubtotal } from '@modules/pricing/displayMoney';
 import { roundMoney } from '@modules/pricing/money';
 import {
   computeVendorShippingWeightsByVendor,
 } from '@modules/shipping/shippingWeight';
-import { resolveVendorShippingQuote } from '@modules/shipping/vendorShippingQuote';
 import { resolveShippingDisplayKey } from '@modules/checkout/checkoutOrderTotals';
 import { cartRepository } from './cart.repository';
 import { MAX_CART_LINE_QUANTITY } from './cart.constants';
@@ -62,6 +61,15 @@ export type CartView = {
     shippingTotal: number;
     shippingDisplayKey: 'FREE' | 'PAID';
     grandTotal: number;
+    /**
+     * What the preview's tax and shipping were based on. The cart has no chosen
+     * address or shipping method, so anything but EXACT is an estimate the FE
+     * should label as such — checkout re-quotes against the real selection.
+     *
+     * NO_SHIPPING_RATE means no rate matched the default address, so shipping is
+     * shown as zero here but checkout will reject that address.
+     */
+    basisKey: 'EXACT' | 'DEFAULT_ADDRESS' | 'NO_SHIPPING_RATE' | 'NO_ADDRESS';
   };
   appliedCoupon?: {
     code: string;
@@ -251,14 +259,15 @@ export class CartService {
         shippingTotal: 0,
         shippingDisplayKey: 'FREE',
         grandTotal: 0,
+        basisKey: 'NO_ADDRESS',
       };
     }
 
     const { settingsService } = await import('@modules/settings/settings.service');
-    const { taxService } = await import('@modules/tax/tax.service');
-    const { categoriesService } = await import('@modules/categories/categories.service');
-    const { pricingService } = await import('@modules/pricing/pricing.service');
-    const { resolveVendorDiscountBearer } = await import('@modules/coupons/couponEngine');
+    // Dynamic import: checkout imports cart, so a static edge here would close the cycle.
+    const { buildVendorPricingRows, priceVendorRows, PLATFORM_VENDOR_ID } = await import(
+      '@modules/checkout/vendorPricingPlan'
+    );
     const { Address } = await import('@database/models/address.model');
 
     const settings = await settingsService.getPlatformSettings();
@@ -280,85 +289,55 @@ export class CartService {
       }
     }
 
-    const byVendor = new Map<string, CartViewItem[]>();
-    for (const item of input.items) {
-      const vendorId = item.product.vendor.id || 'platform';
-      const list = byVendor.get(vendorId) ?? [];
-      list.push(item);
-      byVendor.set(vendorId, list);
-    }
+    // categoryId is not on CartViewItem — batch-load it rather than querying per line.
+    const productIds = [...new Set(input.items.map((item) => item.product.id).filter(Boolean))];
+    const products = productIds.length
+      ? await Product.findAll({
+          where: { id: productIds },
+          attributes: ['id', 'categoryId'],
+        })
+      : [];
+    const categoryByProduct = new Map(
+      products.map((product) => [String(product.id), product.categoryId ?? null]),
+    );
+
+    const plan = await buildVendorPricingRows({
+      lines: input.items.map((item) => ({
+        key: item.id,
+        vendorId: item.product.vendor.id || PLATFORM_VENDOR_ID,
+        unitPrice: item.product.price,
+        quantity: item.quantity,
+        categoryId: categoryByProduct.get(item.product.id) ?? null,
+        weightGrams: item.variant.weightGrams ?? null,
+      })),
+      destination: shippingAddress,
+      // The cart has no chosen method yet; checkout re-quotes with the real selection.
+      shippingMethodByVendor: {},
+      settings,
+      onMissingRate: 'estimate',
+    });
+
+    const { pricedByVendor } = priceVendorRows({
+      rows: plan.rows,
+      shares: {
+        vendorDiscountShares: input.vendorDiscountShares,
+        vendorShippingDiscountShares: input.vendorShippingDiscountShares,
+        vendorBorneDiscountShares: input.vendorBorneDiscountShares,
+      },
+      shippingStateCode: shippingAddress?.state ?? '',
+      settings,
+    });
 
     let discount = 0;
     let taxTotal = 0;
     let shippingTotal = 0;
     let grandTotal = 0;
-
-    for (const [vendorId, vendorItems] of byVendor) {
-      const vendor = vendorId !== 'platform' ? await Vendor.findByPk(vendorId) : null;
-      const lineMeta: Array<{
-        key: string;
-        unitPrice: number;
-        quantity: number;
-        gstPercentage: number;
-        commissionRatePercent: number;
-      }> = [];
-      for (const item of vendorItems) {
-        const product = await Product.findByPk(item.product.id, {
-          attributes: ['categoryId', 'vendorId'],
-        });
-        const categoryId = product?.categoryId ?? null;
-        const gstPercentage = categoryId ? await taxService.getGstRate(categoryId) : 0;
-        const commissionRatePercent = categoryId
-          ? await categoriesService.resolveCommissionRate(
-              categoryId,
-              vendor?.commissionRate,
-              settings.defaultCommissionRate,
-            )
-          : settings.defaultCommissionRate;
-        lineMeta.push({
-          key: item.id,
-          unitPrice: item.product.price,
-          quantity: item.quantity,
-          gstPercentage,
-          commissionRatePercent,
-        });
-      }
-      const fallback = lineMeta[0];
-      const merchandiseDiscount = input.vendorDiscountShares[vendorId] ?? 0;
-      const shipping = await resolveVendorShippingQuote({
-        destination: shippingAddress,
-        vendorId: vendorId !== 'platform' ? vendorId : null,
-        method: 'STANDARD',
-        lines: vendorItems.map((item) => ({
-          unitPrice: item.product.price,
-          quantity: item.quantity,
-          weightGrams: item.variant.weightGrams,
-        })),
-      });
-      const shippingCost = shipping.shippingCost;
-
-      const shippingDiscount = Math.min(
-        shippingCost,
-        input.vendorShippingDiscountShares[vendorId] ?? 0,
-      );
-      const vendorBorne = input.vendorBorneDiscountShares[vendorId] ?? 0;
-      discount += merchandiseDiscount + shippingDiscount;
-      const priced = pricingService.computeVendorBreakdown({
-        lines: lineMeta,
-        merchandiseDiscount,
-        vendorBorneMerchandiseDiscount: vendorBorne,
-        shippingDiscount,
-        shippingCost,
-        gstPercentage: fallback?.gstPercentage ?? 0,
-        vendorStateCode: String(vendor?.state ?? ''),
-        shippingStateCode: shippingAddress?.state ?? String(vendor?.state ?? ''),
-        commissionRatePercent: fallback?.commissionRatePercent ?? settings.defaultCommissionRate,
-        discountBearer: resolveVendorDiscountBearer(vendorBorne, merchandiseDiscount),
-        tcsRatePercent: settings.tcsRatePercent,
-      });
-      taxTotal += priced.rupees.tax.total;
-      shippingTotal += priced.rupees.shippingCharged;
-      grandTotal += priced.rupees.customerTotal;
+    for (const priced of Object.values(pricedByVendor)) {
+      const r = priced.rupees;
+      discount += combinedDiscount(r.merchandiseDiscount, r.shippingDiscount);
+      taxTotal += r.tax.total;
+      shippingTotal += r.shippingCharged;
+      grandTotal += r.customerTotal;
     }
 
     if (discount === 0 && input.merchandiseDiscountTotal > 0) {
@@ -372,6 +351,13 @@ export class CartService {
       shippingTotal: roundMoney(shippingTotal),
       shippingDisplayKey: resolveShippingDisplayKey(shippingTotal),
       grandTotal: roundMoney(grandTotal),
+      // Report the weakest link: a missing rate makes the shipping figure a
+      // placeholder, which is less certain than merely guessing the address.
+      basisKey: !shippingAddress
+        ? 'NO_ADDRESS'
+        : plan.hasEstimatedShipping
+          ? 'NO_SHIPPING_RATE'
+          : 'DEFAULT_ADDRESS',
     };
   }
 

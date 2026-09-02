@@ -7,6 +7,7 @@ import {
   pagedSqlQuery,
   computeReconciliationSummary,
   sqlFrozenPaise,
+  sqlVendorNetPayoutPaise,
   DISCOUNT_BEARER,
   COMMISSION_STATUS,
 } from '../engine/queryHelpers';
@@ -598,17 +599,7 @@ const AUDIT_LOG_KEYSET: KeysetOrderCol[] = [
 ];
 
 function vendorSettlementSelectSql(): string {
-  const netPaiseExpr = `CASE
-    WHEN COALESCE(cl."netPayoutAmountPaise", 0) <> 0 THEN cl."netPayoutAmountPaise"
-    ELSE ROUND(
-      (
-        CASE
-          WHEN cl."netPayoutAmount" IS NOT NULL THEN cl."netPayoutAmount"::numeric
-          ELSE COALESCE(cl."saleAmount", 0)::numeric - COALESCE(cl."commissionAmount", 0)::numeric
-        END
-      ) * 100
-    )::bigint
-  END`;
+  const netPaiseExpr = sqlVendorNetPayoutPaise('cl');
 
   return `
     WITH ledger_agg AS (

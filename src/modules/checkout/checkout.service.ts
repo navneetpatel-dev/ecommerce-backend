@@ -15,20 +15,22 @@ import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
 import { paymentsService } from '@modules/payments/payments.service';
 import { cartService } from '@modules/cart/cart.service';
-import { resolveVendorShippingQuote } from '@modules/shipping/vendorShippingQuote';
-import { taxService } from '@modules/tax/tax.service';
 import { settingsService } from '@modules/settings/settings.service';
-import { categoriesService } from '@modules/categories/categories.service';
 import {
   validateCouponSet,
   resolveCartCouponCodes,
   recordCouponUsage,
-  resolveVendorDiscountBearer,
   type CartLineForCoupon,
 } from '@modules/coupons/couponEngine';
 import { pricingService } from '@modules/pricing/pricing.service';
 import { fromPaise, roundMoney, toPaise } from '@modules/pricing/money';
-import { checkoutAmountDue, lineTotal } from '@modules/pricing/displayMoney';
+import { checkoutAmountDue, combinedDiscount, lineTotal } from '@modules/pricing/displayMoney';
+import {
+  buildVendorPricingRows,
+  priceVendorRows,
+  PLATFORM_VENDOR_ID,
+  type PricedLine,
+} from './vendorPricingPlan';
 import {
   clampWalletApply,
   settleSubMinRazorpayRemainder,
@@ -59,15 +61,6 @@ import { resolveCodForCatalogItems } from '@modules/products/pdpPolicy';
 import { notifyOrderConfirmed } from '@modules/notifications/orderNotifications';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { buildCheckoutOrderTotals, resolveShippingDisplayKey, resolveTaxDisplayKey } from './checkoutOrderTotals';
-
-function groupBy<T>(array: T[], keyFn: (item: T) => string): Record<string, T[]> {
-  return array.reduce((acc, item) => {
-    const key = keyFn(item);
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(item);
-    return acc;
-  }, {} as Record<string, T[]>);
-}
 
 type CartWithItems = Cart & {
   items: (CartItem & { variant: ProductVariant & { product: any } })[];
@@ -135,18 +128,6 @@ function assertCartItemsAvailable(cart: CartWithItems) {
   }
 }
 
-function requestedMethod(method?: string): 'STANDARD' | 'EXPRESS' {
-  const normalized = (method || 'STANDARD').toUpperCase();
-  if (normalized !== 'STANDARD' && normalized !== 'EXPRESS') {
-    throw new ValidationError(ERROR_MESSAGES.SHIPPING_METHOD_UNSUPPORTED);
-  }
-  return normalized;
-}
-
-function vendorOriginState(vendor: Vendor | undefined): string {
-  return String(vendor?.state ?? '').trim();
-}
-
 function catalogItemsForCod(
   items: (CartItem & { variant: ProductVariant & { product: any } })[],
 ) {
@@ -191,30 +172,18 @@ function resolveCheckoutCouponCodes(
   return resolveCartCouponCodes(cart);
 }
 
-type LineRateMap = Record<string, { gstPercentage: number; commissionRatePercent: number }>;
-
-async function resolveItemLineRates(
+/** Map cart rows into the normalized shape `vendorPricingPlan` prices. */
+function toPricedLines(
   items: (CartItem & { variant: ProductVariant & { product: any } })[],
-  vendor: Vendor | undefined,
-  defaultCommissionRate: number,
-): Promise<{ lineRates: LineRateMap; fallbackGst: number; fallbackCommission: number }> {
-  const lineRates: LineRateMap = {};
-  for (const item of items) {
-    const categoryId = item.variant.product.categoryId;
-    const gstPercentage = await taxService.getGstRate(categoryId);
-    const commissionRatePercent = await categoriesService.resolveCommissionRate(
-      categoryId,
-      vendor?.commissionRate,
-      defaultCommissionRate,
-    );
-    lineRates[item.id] = { gstPercentage, commissionRatePercent };
-  }
-  const first = items[0] ? lineRates[items[0].id] : undefined;
-  return {
-    lineRates,
-    fallbackGst: first?.gstPercentage ?? 0,
-    fallbackCommission: first?.commissionRatePercent ?? defaultCommissionRate,
-  };
+): PricedLine[] {
+  return items.map((item) => ({
+    key: String(item.id),
+    vendorId: item.variant.product.vendorId || PLATFORM_VENDOR_ID,
+    unitPrice: Number(item.variant.price),
+    quantity: Number(item.quantity),
+    categoryId: item.variant.product.categoryId ?? null,
+    weightGrams: item.variant.weightGrams ?? null,
+  }));
 }
 
 export class CheckoutService {
@@ -274,55 +243,20 @@ export class CheckoutService {
     });
     const quoteCart = { ...cart, items: availableItems } as CartWithItems;
 
-    const itemsByVendor = groupBy(quoteCart.items, (item) => item.variant.product.vendorId || 'platform');
-    const vendorIds = Object.keys(itemsByVendor).filter((id) => id !== 'platform');
-    const vendors = vendorIds.length
-      ? await Vendor.findAll({ where: { id: vendorIds } })
-      : [];
-    const vendorMap = Object.fromEntries(vendors.map((v) => [v.id, v]));
     const settings = await settingsService.getPlatformSettings();
+    const itemById = new Map(quoteCart.items.map((item) => [String(item.id), item]));
+    const plan = await buildVendorPricingRows({
+      lines: toPricedLines(quoteCart.items),
+      destination: {
+        pincode: shippingAddress.pincode,
+        state: shippingAddress.state,
+      },
+      shippingMethodByVendor: data.shippingMethodByVendor,
+      settings,
+      onMissingRate: 'throw',
+    });
+    const { rows: baseVendorRows, shippingByVendor, shippingTotal } = plan;
 
-    const shippingByVendor: Record<string, number> = {};
-    const baseVendorRows: Array<{
-      vendorId: string;
-      items: (CartItem & { variant: ProductVariant & { product: any } })[];
-      shippingCost: number;
-      gstPercentage: number;
-      commissionRate: number;
-      lineRates: LineRateMap;
-    }> = [];
-
-    for (const [vendorId, items] of Object.entries(itemsByVendor)) {
-      const vendor = vendorMap[vendorId];
-      const method = requestedMethod(data.shippingMethodByVendor[vendorId]);
-      const shipping = await resolveVendorShippingQuote({
-        destination: {
-          pincode: shippingAddress.pincode,
-          state: shippingAddress.state,
-        },
-        vendorId: vendorId !== 'platform' ? vendorId : null,
-        method,
-        lines: items.map((item) => ({
-          unitPrice: Number(item.variant.price),
-          quantity: Number(item.quantity),
-          weightGrams: item.variant.weightGrams,
-        })),
-      });
-      if (!shipping.rate) throw new ValidationError(ERROR_MESSAGES.SHIPPING_RATE_UNAVAILABLE);
-      const shippingCost = shipping.shippingCost;
-      shippingByVendor[vendorId] = shippingCost;
-      const resolved = await resolveItemLineRates(items, vendor, settings.defaultCommissionRate);
-      baseVendorRows.push({
-        vendorId,
-        items,
-        shippingCost,
-        gstPercentage: resolved.fallbackGst,
-        commissionRate: resolved.fallbackCommission,
-        lineRates: resolved.lineRates,
-      });
-    }
-
-    const shippingTotal = Object.values(shippingByVendor).reduce((s, n) => s + n, 0);
     const couponCodes = resolveCheckoutCouponCodes(data, cart);
     let discount = 0;
     let cashbackAmount = 0;
@@ -362,32 +296,20 @@ export class CheckoutService {
       }
     }
 
+    const { pricedByVendor } = priceVendorRows({
+      rows: baseVendorRows,
+      shares: {
+        vendorDiscountShares,
+        vendorShippingDiscountShares,
+        vendorBorneDiscountShares,
+      },
+      shippingStateCode: shippingAddress.state,
+      settings,
+    });
+
     const vendorBreakdowns = baseVendorRows.map((row) => {
-      const vendor = vendorMap[row.vendorId];
-      const merchandiseDiscount = vendorDiscountShares[row.vendorId] ?? 0;
-      const shippingDiscount = vendorShippingDiscountShares[row.vendorId] ?? 0;
-      const vendorBorne = vendorBorneDiscountShares[row.vendorId] ?? 0;
-      const bearer = resolveVendorDiscountBearer(vendorBorne, merchandiseDiscount);
-      const priced = pricingService.computeVendorBreakdown({
-        lines: row.items.map((item) => ({
-          key: item.id,
-          unitPrice: Number(item.variant.price),
-          quantity: Number(item.quantity),
-          gstPercentage: row.lineRates[item.id]?.gstPercentage,
-          commissionRatePercent: row.lineRates[item.id]?.commissionRatePercent,
-        })),
-        merchandiseDiscount,
-        vendorBorneMerchandiseDiscount: vendorBorne,
-        shippingDiscount,
-        shippingCost: row.shippingCost,
-        gstPercentage: row.gstPercentage,
-        vendorStateCode: vendorOriginState(vendor),
-        shippingStateCode: shippingAddress.state,
-        commissionRatePercent: row.commissionRate,
-        discountBearer: bearer,
-        tcsRatePercent: settings.tcsRatePercent,
-      });
-      const r = priced.rupees;
+      const vendor = row.vendor;
+      const r = pricedByVendor[row.vendorId]!.rupees;
       return {
         vendorId: row.vendorId,
         vendor: vendor
@@ -398,19 +320,21 @@ export class CheckoutService {
               logoUrl: vendor.logoUrl ?? null,
             }
           : { id: row.vendorId, businessName: 'Marketplace', slug: 'platform', logoUrl: null },
-        items: row.items.map((item) => {
-          const line = r.lines.find((entry) => entry.key === item.id);
+        items: row.lines.map((line) => {
+          const item = itemById.get(line.key)!;
+          const priced = r.lines.find((entry) => entry.key === line.key);
           return {
             id: item.id,
             variantId: item.variantId,
             productName: item.variant.product.name,
             quantity: item.quantity,
-            unitPrice: Number(item.variant.price),
-            lineSubtotal: line?.lineSubtotal ?? 0,
-            lineTotal: line ? lineTotal(line.taxableAmount, line.tax.total) : 0,
+            unitPrice: line.unitPrice,
+            lineSubtotal: priced?.lineSubtotal ?? 0,
+            lineTotal: priced ? lineTotal(priced.taxableAmount, priced.tax.total) : 0,
           };
         }),
         subtotal: r.subtotal,
+        /** Net of shipping discount — `shippingCharged`, not the gross rate. */
         shippingCost: r.shippingCharged,
         shippingDisplayKey: resolveShippingDisplayKey(r.shippingCharged),
         tax: {
@@ -420,7 +344,7 @@ export class CheckoutService {
           total: r.tax.total,
         },
         taxDisplayKey: resolveTaxDisplayKey(r.tax),
-        discount: r.merchandiseDiscount + r.shippingDiscount,
+        discount: combinedDiscount(r.merchandiseDiscount, r.shippingDiscount),
         tcsAmount: r.tcsAmount,
         commissionAmount: r.commissionAmount,
         netPayout: r.netPayout,
@@ -487,53 +411,29 @@ export class CheckoutService {
         throw new NotFoundError('Shipping address');
       }
 
-      const itemsByVendor = groupBy(cart.items, (item) => item.variant.product.vendorId || 'platform');
-      const vendorIds = Object.keys(itemsByVendor).filter((id) => id !== 'platform');
-      const vendors = vendorIds.length ? await Vendor.findAll({ where: { id: vendorIds }, transaction: t }) : [];
-      const vendorMap = Object.fromEntries(vendors.map((vendor) => [vendor.id, vendor]));
       const settings = await settingsService.getPlatformSettings();
-      let shippingTotal = 0;
-      const shippingByVendor: Record<string, number> = {};
-      const vendorPrep: Record<
-        string,
-        {
-          items: (CartItem & { variant: ProductVariant & { product: any } })[];
-          shippingCost: number;
-          gstPercentage: number;
-          commissionRate: number;
-          lineRates: LineRateMap;
-        }
-      > = {};
-
-      for (const [vendorId, items] of Object.entries(itemsByVendor)) {
-        const method = requestedMethod(data.shippingMethodByVendor[vendorId]);
-        const shipping = await resolveVendorShippingQuote({
-          destination: {
-            pincode: shippingAddress.pincode,
-            state: shippingAddress.state,
-          },
-          vendorId: vendorId !== 'platform' ? vendorId : null,
-          method,
-          lines: items.map((item) => ({
-            unitPrice: Number(item.variant.price),
-            quantity: Number(item.quantity),
-            weightGrams: item.variant.weightGrams,
-          })),
-        });
-        if (!shipping.rate) throw new ValidationError(ERROR_MESSAGES.SHIPPING_RATE_UNAVAILABLE);
-        const shippingCost = shipping.shippingCost;
-        const vendor = vendorMap[vendorId];
-        const resolved = await resolveItemLineRates(items, vendor, settings.defaultCommissionRate);
-        shippingByVendor[vendorId] = shippingCost;
-        shippingTotal += shippingCost;
-        vendorPrep[vendorId] = {
-          items,
-          shippingCost,
-          gstPercentage: resolved.fallbackGst,
-          commissionRate: resolved.fallbackCommission,
-          lineRates: resolved.lineRates,
-        };
-      }
+      const itemById = new Map(cart.items.map((item) => [String(item.id), item]));
+      const plan = await buildVendorPricingRows({
+        lines: toPricedLines(cart.items),
+        destination: {
+          pincode: shippingAddress.pincode,
+          state: shippingAddress.state,
+        },
+        shippingMethodByVendor: data.shippingMethodByVendor,
+        settings,
+        onMissingRate: 'throw',
+        transaction: t,
+      });
+      const { shippingByVendor, shippingTotal } = plan;
+      const vendorMap = Object.fromEntries(
+        plan.rows.filter((row) => row.vendor).map((row) => [row.vendorId, row.vendor!]),
+      );
+      const vendorPrep = Object.fromEntries(
+        plan.rows.map((row) => [
+          row.vendorId,
+          { row, items: row.lines.map((line) => itemById.get(line.key)!) },
+        ]),
+      );
 
       const couponCodes = resolveCheckoutCouponCodes(data, cart);
       let discountTotal = 0;
@@ -574,41 +474,16 @@ export class CheckoutService {
         }
       }
 
-      let customerGrandTotalPaise = 0;
-      const pricedByVendor: Record<
-        string,
-        ReturnType<typeof pricingService.computeVendorBreakdown>
-      > = {};
-      const bearerByVendor: Record<string, (typeof DISCOUNT_BEARER)[keyof typeof DISCOUNT_BEARER]> = {};
-
-      for (const [vendorId, prep] of Object.entries(vendorPrep)) {
-        const merchandiseDiscount = vendorDiscountShares[vendorId] ?? 0;
-        const shippingDiscount = vendorShippingDiscountShares[vendorId] ?? 0;
-        const vendorBorne = vendorBorneDiscountShares[vendorId] ?? 0;
-        const bearer = resolveVendorDiscountBearer(vendorBorne, merchandiseDiscount);
-        bearerByVendor[vendorId] = bearer;
-        const priced = pricingService.computeVendorBreakdown({
-          lines: prep.items.map((item) => ({
-            key: item.id,
-            unitPrice: Number(item.variant.price),
-            quantity: Number(item.quantity),
-            gstPercentage: prep.lineRates[item.id]?.gstPercentage,
-            commissionRatePercent: prep.lineRates[item.id]?.commissionRatePercent,
-          })),
-          merchandiseDiscount,
-          vendorBorneMerchandiseDiscount: vendorBorne,
-          shippingDiscount,
-          shippingCost: prep.shippingCost,
-          gstPercentage: prep.gstPercentage,
-          vendorStateCode: vendorOriginState(vendorMap[vendorId]),
-          shippingStateCode: shippingAddress.state,
-          commissionRatePercent: prep.commissionRate,
-          discountBearer: bearer,
-          tcsRatePercent: settings.tcsRatePercent,
-        });
-        pricedByVendor[vendorId] = priced;
-        customerGrandTotalPaise += priced.paise.customerTotalPaise;
-      }
+      const { pricedByVendor, bearerByVendor, customerGrandTotalPaise } = priceVendorRows({
+        rows: plan.rows,
+        shares: {
+          vendorDiscountShares,
+          vendorShippingDiscountShares,
+          vendorBorneDiscountShares,
+        },
+        shippingStateCode: shippingAddress.state,
+        settings,
+      });
 
       let merchandiseSubtotal = 0;
       let orderTaxTotal = 0;
@@ -827,7 +702,7 @@ export class CheckoutService {
             commissionRate:
               p.commissionBasePaise > 0
                 ? Math.round((p.commissionPaise / p.commissionBasePaise) * 10000) / 100
-                : prep.commissionRate,
+                : prep.row.commissionRatePercent,
             commissionAmount: r.commissionAmount,
             taxableAmount: r.taxableAmount,
             discountAmount: r.merchandiseDiscount,

@@ -191,7 +191,7 @@ export const REPORT_COLUMN_LABELS: Record<string, string> = {
   cartId: 'Cart ID',
   lastActivityAt: 'Last Activity',
   itemCount: 'Item Count',
-  cartValue: 'Cart Value',
+  cartValue: 'Cart Value (est.)',
   ticketNumber: 'Ticket No',
   category: 'Category',
   priority: 'Priority',

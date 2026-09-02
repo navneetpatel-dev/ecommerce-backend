@@ -6,6 +6,8 @@ import { Review } from '@database/models/review.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { sequelize } from '@database/models';
 import { QueryTypes } from 'sequelize';
+import { fromPaise } from '@modules/pricing/money';
+import { REPORTABLE_ORDER_SQL, sqlFrozenPaise } from '@modules/pricing/frozenMoneySql';
 import {
   PRODUCT_STATUS,
   PAYMENT_STATUS,
@@ -36,8 +38,14 @@ export type PlatformAnalytics = {
   pendingReviews: number;
   ordersGrowthPct: number;
   revenueGrowthPct: number;
-  topVendors: Array<{ id: string; businessName: string; revenue: number }>;
-  topCategories: Array<{ id: string; name: string; revenue: number }>;
+  /** `sharePercent` is the row's share of platform-wide revenue, not of the top 8. */
+  topVendors: Array<{
+    id: string;
+    businessName: string;
+    revenue: number;
+    sharePercent: number;
+  }>;
+  topCategories: Array<{ id: string; name: string; revenue: number; sharePercent: number }>;
   orderVolume: Array<{ date: string; count: number; revenue: number }>;
   ordersByStatus: Array<{ status: string; count: number }>;
   paymentsByStatus: Array<{ status: string; count: number }>;
@@ -47,6 +55,14 @@ export type PlatformAnalytics = {
 function pctChange(current: number, previous: number): number {
   if (previous <= 0) return current > 0 ? 100 : 0;
   return Number((((current - previous) / previous) * 100).toFixed(1));
+}
+
+/** Row share of the platform-wide total, computed in paise to avoid rupee drift. */
+function sharePercent(rowPaise: unknown, totalPaise: unknown): number {
+  const row = Number(rowPaise ?? 0);
+  const total = Number(totalPaise ?? 0);
+  if (total <= 0) return 0;
+  return Number(((row / total) * 100).toFixed(1));
 }
 
 export const adminService = {
@@ -99,27 +115,57 @@ export const adminService = {
       Product.count({ where: { status: PRODUCT_STATUS.PENDING_APPROVAL } }),
       Vendor.count({ where: { status: VENDOR_STATUS.PENDING } }),
       Review.count({ where: { status: REVIEW_STATUS.PENDING } }),
-      sequelize.query<{ id: string; businessName: string; revenue: string }>(
-        `SELECT v.id, v."businessName",
-                COALESCE(SUM(so.subtotal), 0)::numeric AS revenue
-         FROM vendors v
-         LEFT JOIN sub_orders so ON so."vendorId" = v.id AND so.status <> 'CANCELLED'
-         WHERE v."deletedAt" IS NULL
-         GROUP BY v.id, v."businessName"
-         ORDER BY revenue DESC
+      // Ranked revenue reads the frozen sub-order snapshot, gated on the same
+      // "which orders count" rule the settlement reports use. `sharePercent` is
+      // computed here against the platform-wide total — never client-side, and
+      // never against the truncated top-N.
+      sequelize.query<{
+        id: string;
+        businessName: string;
+        revenuePaise: string;
+        totalPaise: string;
+      }>(
+        `WITH vendor_revenue AS (
+           SELECT v.id, v."businessName",
+                  COALESCE(SUM(${sqlFrozenPaise('so', 'subtotalPaise', 'subtotal')}), 0)::bigint AS "revenuePaise"
+           FROM vendors v
+           LEFT JOIN sub_orders so
+             ON so."vendorId" = v.id
+            AND so.status <> '${ORDER_STATUS.CANCELLED}'
+            AND so."deletedAt" IS NULL
+           LEFT JOIN orders o ON o.id = so."orderId" AND o."deletedAt" IS NULL
+           WHERE v."deletedAt" IS NULL
+             AND (so.id IS NULL OR ${REPORTABLE_ORDER_SQL})
+           GROUP BY v.id, v."businessName"
+         )
+         SELECT id, "businessName", "revenuePaise",
+                COALESCE(SUM("revenuePaise") OVER (), 0)::bigint AS "totalPaise"
+         FROM vendor_revenue
+         ORDER BY "revenuePaise" DESC
          LIMIT 8`,
         { type: QueryTypes.SELECT },
       ),
-      sequelize.query<{ id: string; name: string; revenue: string }>(
-        `SELECT c.id, c.name,
-                COALESCE(SUM(oi.quantity * oi."unitPrice"), 0)::numeric AS revenue
-         FROM categories c
-         JOIN products p ON p."categoryId" = c.id
-         JOIN product_variants pv ON pv."productId" = p.id
-         JOIN order_items oi ON oi."variantId" = pv.id
-         WHERE c."deletedAt" IS NULL
-         GROUP BY c.id, c.name
-         ORDER BY revenue DESC
+      sequelize.query<{ id: string; name: string; revenuePaise: string; totalPaise: string }>(
+        `WITH category_revenue AS (
+           SELECT c.id, c.name,
+                  COALESCE(SUM(${sqlFrozenPaise('oi', 'taxableAmountPaise', 'taxableAmount')}), 0)::bigint AS "revenuePaise"
+           FROM categories c
+           JOIN products p ON p."categoryId" = c.id
+           JOIN product_variants pv ON pv."productId" = p.id
+           JOIN order_items oi ON oi."variantId" = pv.id AND oi."deletedAt" IS NULL
+           JOIN sub_orders so
+             ON so.id = oi."subOrderId"
+            AND so.status <> '${ORDER_STATUS.CANCELLED}'
+            AND so."deletedAt" IS NULL
+           JOIN orders o ON o.id = so."orderId" AND o."deletedAt" IS NULL
+           WHERE c."deletedAt" IS NULL
+             AND ${REPORTABLE_ORDER_SQL}
+           GROUP BY c.id, c.name
+         )
+         SELECT id, name, "revenuePaise",
+                COALESCE(SUM("revenuePaise") OVER (), 0)::bigint AS "totalPaise"
+         FROM category_revenue
+         ORDER BY "revenuePaise" DESC
          LIMIT 8`,
         { type: QueryTypes.SELECT },
       ),
@@ -217,12 +263,14 @@ export const adminService = {
       topVendors: topVendorRows.map((row) => ({
         id: row.id,
         businessName: row.businessName,
-        revenue: Number(row.revenue ?? 0),
+        revenue: fromPaise(Number(row.revenuePaise ?? 0)),
+        sharePercent: sharePercent(row.revenuePaise, row.totalPaise),
       })),
       topCategories: topCategoryRows.map((row) => ({
         id: row.id,
         name: row.name,
-        revenue: Number(row.revenue ?? 0),
+        revenue: fromPaise(Number(row.revenuePaise ?? 0)),
+        sharePercent: sharePercent(row.revenuePaise, row.totalPaise),
       })),
       orderVolume: orderVolumeRows.map((row) => ({
         date: row.date,

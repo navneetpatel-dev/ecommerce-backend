@@ -1,3 +1,5 @@
+import { roundMoney } from '@modules/pricing/money';
+
 export type ShippingDisplayKey = 'FREE' | 'PAID';
 
 export type CheckoutOrderTotals = {
@@ -64,21 +66,23 @@ export function buildCheckoutOrderTotals(
     discountTotal += row.discount;
   }
 
-  let taxDisplayKey: CheckoutOrderTotals['taxDisplayKey'] = resolveTaxDisplayKey({
-    cgst,
-    sgst,
-    igst,
-  });
+  // Round each aggregate once at the end — summing raw floats across many vendors drifts.
+  merchandiseSubtotal = roundMoney(merchandiseSubtotal);
+  shippingTotal = roundMoney(shippingTotal);
+  cgst = roundMoney(cgst);
+  sgst = roundMoney(sgst);
+  igst = roundMoney(igst);
+  discountTotal = roundMoney(discountTotal);
 
   return {
     merchandiseSubtotal,
     shippingTotal,
     shippingDisplayKey: resolveShippingDisplayKey(shippingTotal),
-    taxTotal: cgst + sgst + igst,
+    taxTotal: roundMoney(cgst + sgst + igst),
     cgst,
     sgst,
     igst,
     discountTotal,
-    taxDisplayKey,
+    taxDisplayKey: resolveTaxDisplayKey({ cgst, sgst, igst }),
   };
 }
