@@ -57,7 +57,6 @@ import {
   initWalletRechargeOrderModel,
   WalletRechargeOrder,
 } from './walletRechargeOrder.model';
-import { initReportExportLogModel, ReportExportLog } from './reportExportLog.model';
 import { initSupportTicketModel, SupportTicket } from './supportTicket.model';
 import { initTicketMessageModel, TicketMessage } from './ticketMessage.model';
 import { initTicketAttachmentModel, TicketAttachment } from './ticketAttachment.model';
@@ -117,7 +116,6 @@ const models = {
   WalletLedger: initWalletLedgerModel(sequelize),
   WalletWriteOff: initWalletWriteOffModel(sequelize),
   WalletRechargeOrder: initWalletRechargeOrderModel(sequelize),
-  ReportExportLog: initReportExportLogModel(sequelize),
   SupportTicket: initSupportTicketModel(sequelize),
   TicketMessage: initTicketMessageModel(sequelize),
   TicketAttachment: initTicketAttachmentModel(sequelize),
@@ -146,7 +144,7 @@ export {
   PlatformSetting, PromoBanner,
   TcsLedger, TdsLedger, CreditNote, DebitNote, DocumentSequence,
   VendorInvoiceSequence, CommissionInvoice,
-  WalletLedger, WalletWriteOff, WalletRechargeOrder, ReportExportLog,
+  WalletLedger, WalletWriteOff, WalletRechargeOrder,
   SupportTicket, TicketMessage, TicketAttachment, TicketRead,
   BugReport, BugReportAttachment, BugReportComment,
   NewsletterSubscriber,

@@ -303,4 +303,25 @@ describe('report engine', () => {
       assert.ok(typeof def.exportQuery === 'function', `missing exportQuery for ${def.type}`);
     }
   });
+
+  it('runExportDirect produces a non-empty buffer for customer-wallet-statement', async () => {
+    if (!dbReady) return;
+    const actor: ReportActor = {
+      id: randomUUID(),
+      vendorId: null,
+      roleName: ROLES.CUSTOMER,
+      permissions: [],
+    };
+    const to = new Date();
+    const from = new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const result = await reportEngine.runExportDirect(
+      actor,
+      'customer-wallet-statement',
+      { from, to },
+      'pdf',
+    );
+    assert.ok(result.buffer.length > 0);
+    assert.ok(result.filename.endsWith('.pdf'));
+    assert.equal(result.contentType, 'application/pdf');
+  });
 });

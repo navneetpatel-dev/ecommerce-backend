@@ -51,10 +51,11 @@ That's it! The script will:
 - Run migrations
 - Seed initial data
 
-Then start the API and report-export worker (two terminals):
+Then start the API and frontend (worker optional for scheduled/background jobs):
 ```bash
-npm run dev
-npm run worker:dev
+npm run dev          # backend API — user exports download directly
+cd ../web && npm run dev
+# optional: npm run worker:dev   # scheduled emails + background jobs
 ```
 
 **Manual Docker setup:**
@@ -68,7 +69,7 @@ npm run dev
 
 Access the API at `http://localhost:9000`
 
-**Background workers:** With `START_WORKERS_IN_API=true` (default in development), email and schedulers run in the API process; **report exports** run in a separate `npm run worker:dev` process so PDF generation does not block HTTP. In production, set `START_WORKERS_IN_API=false` and run `npm run worker` for all background jobs.
+**Background workers:** With `START_WORKERS_IN_API=true` (default in development), email and schedulers run in the API process. User report exports are generated synchronously in the API — no separate export worker is required. Run `npm run worker:dev` only if you need scheduled weekly report emails or prefer isolating background jobs. In production, set `START_WORKERS_IN_API=false` and run `npm run worker` for background jobs.
 
 See [DOCKER.md](DOCKER.md) for detailed Docker documentation.
 

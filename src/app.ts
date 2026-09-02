@@ -8,7 +8,7 @@ import { env } from '@config/env';
 import { sequelize } from '@config/db';
 import { redisClient } from '@config/redis';
 import { checkQueuesHealth } from '@config/queue';
-import { readReportExportQueueDepth } from '@modules/reports/reportExportMetrics';
+import { readScheduledReportQueueDepth } from '@modules/reports/reportExportMetrics';
 import { requestIdMiddleware } from '@middleware/requestId.middleware';
 import { globalRateLimiter } from '@middleware/rateLimiter.middleware';
 import { errorHandlerMiddleware } from '@middleware/errorHandler.middleware';
@@ -79,7 +79,7 @@ app.get(HEALTH_PATH, async (_req, res) => {
       database: { status: 'down', message: '' },
       redis: { status: 'down', message: '' },
       queues: { status: 'down', message: '', queues: {} as Record<string, unknown> },
-      reportExport: { waiting: 0, active: 0, failed: 0 },
+      scheduledReportQueue: { waiting: 0, active: 0, failed: 0 },
     },
   };
 
@@ -114,10 +114,10 @@ app.get(HEALTH_PATH, async (_req, res) => {
       'Queue health',
     );
     health.services.queues = queuesHealth;
-    health.services.reportExport = await withTimeout(
-      readReportExportQueueDepth(),
+    health.services.scheduledReportQueue = await withTimeout(
+      readScheduledReportQueueDepth(),
       HEALTH_CHECK_TIMEOUT_MS,
-      'Report export queue depth',
+      'Scheduled report queue depth',
     );
   } catch (error) {
     health.services.queues = {
@@ -125,7 +125,7 @@ app.get(HEALTH_PATH, async (_req, res) => {
       message: error instanceof Error ? error.message : 'Connection failed',
       queues: {},
     };
-    health.services.reportExport = { waiting: 0, active: 0, failed: 0 };
+    health.services.scheduledReportQueue = { waiting: 0, active: 0, failed: 0 };
   }
 
   const statusCode = health.status === 'ok' ? 200 : 503;

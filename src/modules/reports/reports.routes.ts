@@ -14,34 +14,13 @@ import * as reportsController from './reports.controller';
 
 const router = Router();
 
-// Shared report engine
 router.get('/catalog', authenticate, reportsController.catalog);
 router.get(
-  '/exports/:id/download',
+  '/run/:type',
   authenticate,
-  reportsController.downloadExport,
-);
-router.get(
-  '/exports/:id',
-  authenticate,
-  reportsController.exportStatus,
-);
-router.get(
-  '/admin/exports',
-  authenticate,
-  authorize(PERMISSIONS.COMMISSION_VIEW),
-  reportsController.listAdminExports,
-);
-router.post(
-  '/exports/:id/retry',
-  authenticate,
-  reportsController.retryExport,
-);
-router.post(
-  '/admin/exports/:id/retry',
-  authenticate,
-  authorize(PERMISSIONS.COMMISSION_VIEW),
-  reportsController.retryAdminExport,
+  validate(EngineReportQuerySchema, 'query'),
+  reportExportGuard,
+  reportsController.runReport,
 );
 router.get(
   '/customer/order-history',
@@ -51,30 +30,21 @@ router.get(
   reportsController.customerOrderHistory,
 );
 router.get(
-  '/customer/order-invoice/:orderId/:subOrderId',
-  authenticate,
-  reportsController.customerOrderSubInvoice,
-);
-router.get(
   '/customer/order-invoice/:orderId',
   authenticate,
   reportsController.customerOrderInvoice,
 );
 router.get(
-  '/vendor/sub-orders/:subOrderId/invoice',
+  '/customer/order-invoice/:orderId/:subOrderId',
   authenticate,
-  authorize(PERMISSIONS.SUBORDER_MANAGE, PERMISSIONS.PAYOUT_VIEW),
-  reportsController.vendorSubOrderInvoice,
+  reportsController.customerOrderSubInvoice,
 );
 router.get(
-  '/run/:type',
+  '/vendor/sub-orders/:subOrderId/invoice',
   authenticate,
-  validate(EngineReportQuerySchema, 'query'),
-  reportExportGuard,
-  reportsController.runReport,
+  reportsController.vendorSubOrderInvoice,
 );
 
-// Legacy settlement / wallet reports
 router.get(
   '/admin/summary',
   authenticate,
@@ -83,7 +53,6 @@ router.get(
   reportExportGuard,
   reportsController.adminSummary,
 );
-
 router.get(
   '/admin/vendors',
   authenticate,
@@ -92,7 +61,6 @@ router.get(
   reportExportGuard,
   reportsController.adminVendors,
 );
-
 router.get(
   '/admin/reconciliation',
   authenticate,
@@ -101,41 +69,37 @@ router.get(
   reportExportGuard,
   reportsController.adminReconciliation,
 );
-
-router.get(
-  '/vendor/:vendorId',
-  authenticate,
-  authorize(PERMISSIONS.PAYOUT_VIEW, PERMISSIONS.COMMISSION_VIEW),
-  validate(ReportRangeSchema, 'query'),
-  reportExportGuard,
-  reportsController.vendorSummary,
-);
-
 router.get(
   '/admin/wallet-liability',
   authenticate,
-  authorize(PERMISSIONS.ANALYTICS_VIEW, PERMISSIONS.COMMISSION_VIEW),
+  authorize(PERMISSIONS.COMMISSION_VIEW),
   validate(ReportRangeSchema, 'query'),
   reportExportGuard,
   reportsController.walletLiability,
 );
-
 router.get(
   '/admin/wallet-recharge',
   authenticate,
-  authorize(PERMISSIONS.ANALYTICS_VIEW, PERMISSIONS.COMMISSION_VIEW),
+  authorize(PERMISSIONS.COMMISSION_VIEW),
   validate(ReportRangeSchema, 'query'),
   reportExportGuard,
   reportsController.walletRecharge,
 );
-
 router.get(
   '/admin/cashback-write-offs',
   authenticate,
-  authorize(PERMISSIONS.ANALYTICS_VIEW, PERMISSIONS.COMMISSION_VIEW),
+  authorize(PERMISSIONS.COMMISSION_VIEW),
   validate(WriteOffReportSchema, 'query'),
   reportExportGuard,
   reportsController.cashbackWriteOff,
+);
+router.get(
+  '/vendor/:vendorId/summary',
+  authenticate,
+  authorize(PERMISSIONS.PAYOUT_VIEW),
+  validate(ReportRangeSchema, 'query'),
+  reportExportGuard,
+  reportsController.vendorSummary,
 );
 
 export default router;

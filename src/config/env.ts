@@ -102,26 +102,9 @@ const envSchema = z.object({
   REPORT_MAX_RANGE_DAYS: z.coerce.number().int().positive().default(366),
   REPORT_EXPORT_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(1),
   REPORT_EXPORT_RATE_LIMIT_PER_MIN: z.coerce.number().int().positive().default(5),
-  REPORT_EXPORT_MAX_PENDING_PER_USER: z.coerce.number().int().positive().default(2),
-  /** Dedup window — defaults to artifact TTL (7 days). */
-  REPORT_EXPORT_CACHE_TTL_MIN: z.coerce.number().int().positive().default(10_080),
-  REPORT_EXPORT_ARTIFACT_TTL_DAYS: z.coerce.number().int().positive().default(7),
   REPORT_EXPORT_CHUNK_SIZE: z.coerce.number().int().positive().default(2000),
-  REPORT_EXPORT_STALE_PROCESSING_MIN: z.coerce.number().int().positive().default(30),
-  REPORT_EXPORT_PENDING_STALE_MIN: z.coerce.number().int().positive().default(15),
-  REPORT_EXPORT_FAILED_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
-  /** Hard cap on rows streamed per export job (0 = unlimited). */
+  /** Hard cap on rows streamed per export (0 = unlimited). */
   REPORT_EXPORT_MAX_ROWS: z.coerce.number().int().nonnegative().default(500_000),
-  REPORT_EXPORT_INLINE_DEV: z
-    .union([z.boolean(), z.string()])
-    .optional()
-    .transform((v) => {
-      if (v === undefined) return process.env.NODE_ENV !== 'production';
-      if (typeof v === 'boolean') return v;
-      return v === 'true' || v === '1';
-    }),
-  /** Where completed export files are stored: `local` (disk) or `s3`. Unset → local in dev, s3 in prod when AWS is configured. */
-  REPORT_EXPORT_STORAGE: z.enum(['local', 's3']).optional(),
   /** When false, run `npm run worker` in a separate process (recommended in production). */
   START_WORKERS_IN_API: z
     .union([z.boolean(), z.string()])

@@ -1,11 +1,5 @@
-import { Op } from 'sequelize';
-import { WalletLedger } from '@database/models/walletLedger.model';
 import { reportEngine, type ReportActor } from '@modules/reports/engine/reportEngine';
 import type { ReportExportFormat } from '@modules/reports/engine/csvExporter';
-import type { AsyncExportResult } from '@modules/reports/engine/reportEngine';
-import { dateBetween } from '@modules/reports/engine/queryHelpers';
-import { reportExportConfig } from '@modules/reports/reportExportConfig';
-import { areQueuesReady } from '@config/queue';
 import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { roleNameOf } from '@utils/userRole';
 import type { PermissionKey } from '@core/permissions/permissionKeys';
@@ -17,73 +11,29 @@ type StatementActorUser = {
   role?: { name?: string } | null;
 };
 
-async function countWalletStatementRows(
-  userId: string,
-  from: Date,
-  to: Date,
-): Promise<number> {
-  return WalletLedger.count({
-    where: {
-      userId,
-      createdAt: dateBetween(from, to),
-    },
-  });
-}
-
-export async function exportWalletStatement(input: {
-  actor: ReportActor;
-  from: Date;
-  to: Date;
-  format: ReportExportFormat;
-}): Promise<AsyncExportResult> {
-  const rowCount = await countWalletStatementRows(input.actor.id, input.from, input.to);
-  // Only run inline when BullMQ is unavailable (no Redis). When queues are ready, enqueue
-  // so the worker handles export off the HTTP thread — inline PDF would block the API.
-  const processInline =
-    !reportExportConfig.isProduction &&
-    reportExportConfig.inlineDev &&
-    rowCount <= reportExportConfig.walletStatementFastPathMaxRows &&
-    !areQueuesReady();
-
-  const result = await reportEngine.runExport(
-    input.actor,
-    'customer-wallet-statement',
-    {
-      from: input.from,
-      to: input.to,
-      userId: input.actor.id,
-    },
-    input.format,
-    processInline ? { processInline: true } : {},
-  );
-
-  if (result.rowCountKnown) return result;
-
-  return {
-    ...result,
-    rowCount,
-    rowCountKnown: true,
-  };
-}
-
-export async function exportWalletStatementForUser(
+export async function exportWalletStatementDirect(
   user: StatementActorUser,
   query: { from: Date; to: Date; format: ReportExportFormat },
-): Promise<AsyncExportResult> {
+): Promise<{ buffer: Buffer; filename: string; contentType: string; rowCount: number }> {
   const roleName = user.role?.name ?? roleNameOf(user as Parameters<typeof roleNameOf>[0]);
   const permissions = (await resolvePermissionsForUser({
     roleId: user.roleId,
     role: { name: roleName },
   })) as PermissionKey[];
-  return exportWalletStatement({
-    actor: {
-      id: user.id,
-      vendorId: user.vendorId ?? null,
-      roleName,
-      permissions,
+  const actor: ReportActor = {
+    id: user.id,
+    vendorId: user.vendorId ?? null,
+    roleName,
+    permissions,
+  };
+  return reportEngine.runExportDirect(
+    actor,
+    'customer-wallet-statement',
+    {
+      from: query.from,
+      to: query.to,
+      userId: actor.id,
     },
-    from: query.from,
-    to: query.to,
-    format: query.format,
-  });
+    query.format,
+  );
 }

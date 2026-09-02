@@ -7,7 +7,7 @@ import {
   CreateWalletRechargeSchema,
   VerifyWalletRechargeSchema,
 } from './walletRecharge.dto';
-import { exportWalletStatementForUser } from './walletStatement.service';
+import { exportWalletStatementDirect } from './walletStatement.service';
 import { WalletStatementSchema } from './walletStatement.dto';
 import { ListTransactionsSchema } from './wallet.dto';
 
@@ -63,10 +63,12 @@ export const listTransactions = asyncHandler(async (req: Request, res: Response)
 
 export const exportStatement = asyncHandler(async (req: Request, res: Response) => {
   const query = WalletStatementSchema.parse(req.query);
-  const exported = await exportWalletStatementForUser(req.user!, {
+  const result = await exportWalletStatementDirect(req.user!, {
     from: query.from,
     to: query.to,
     format: query.format,
   });
-  res.json(ok({ ...exported, async: true }));
+  res.setHeader('Content-Type', result.contentType);
+  res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+  res.send(result.buffer);
 });

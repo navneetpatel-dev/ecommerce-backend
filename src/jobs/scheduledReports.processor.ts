@@ -3,9 +3,12 @@ import { ROLES } from '@core/constants/statuses';
 import { User } from '@database/models/user.model';
 import { Role } from '@database/models/role.model';
 import { areQueuesReady, queues } from '@config/queue';
+import { sendEmail } from '@config/mail';
 import { reportEngine, type ReportActor } from '@modules/reports/engine/reportEngine';
-import { reportExportConfig } from '@modules/reports/reportExportConfig';
-import { env } from '@config/env';
+
+export type ScheduledReportsDeps = {
+  sendMail?: typeof sendEmail;
+};
 
 export const SCHEDULED_REPORTS_JOB = 'scheduled-weekly-reports';
 const SCHEDULED_REPORTS_JOB_ID = 'scheduled-weekly-reports-monday';
@@ -19,14 +22,17 @@ async function adminRecipients(): Promise<User[]> {
   });
 }
 
-export async function runScheduledWeeklyReports(): Promise<number> {
-  if (env.NODE_ENV === 'test') return 0;
+export async function runScheduledWeeklyReports(
+  deps: ScheduledReportsDeps = {},
+): Promise<number> {
+  const deliver = deps.sendMail ?? sendEmail;
   const to = new Date();
   const from = new Date(to.getTime() - 7 * 24 * 60 * 60 * 1000);
   const admins = await adminRecipients();
-  let queued = 0;
+  let sent = 0;
 
   for (const admin of admins) {
+    if (!admin.email) continue;
     const actor: ReportActor = {
       id: admin.id,
       vendorId: admin.vendorId ?? null,
@@ -35,14 +41,26 @@ export async function runScheduledWeeklyReports(): Promise<number> {
     };
     for (const reportType of WEEKLY_REPORT_TYPES) {
       try {
-        const exported = await reportEngine.runExport(
+        const exported = await reportEngine.runExportDirect(
           actor,
           reportType,
           { from, to },
           'xlsx',
-          { priority: reportExportConfig.scheduledExportPriority },
         );
-        if (exported.async) queued += 1;
+        await deliver({
+          to: admin.email,
+          subject: `Weekly report: ${reportType}`,
+          html: `<p>Your weekly ${reportType} report for the past 7 days is attached.</p>`,
+          text: `Your weekly ${reportType} report for the past 7 days is attached.`,
+          attachments: [
+            {
+              filename: exported.filename,
+              content: exported.buffer,
+              contentType: exported.contentType,
+            },
+          ],
+        });
+        sent += 1;
       } catch (err) {
         logger.warn('Scheduled report export skipped', {
           reportType,
@@ -52,7 +70,7 @@ export async function runScheduledWeeklyReports(): Promise<number> {
       }
     }
   }
-  return queued;
+  return sent;
 }
 
 export async function scheduleWeeklyReportsJob(): Promise<void> {

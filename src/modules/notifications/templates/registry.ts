@@ -26,7 +26,9 @@ function greeting(data: EmailTemplateData): string {
 }
 
 function subjectFor(type: NotificationType, data: EmailTemplateData): string {
-  return formatEmailCopy(EMAIL_COPY.subjects[type], {
+  const template =
+    EMAIL_COPY.subjects[type] ?? `Notification from ${EMAIL_COPY.brandName}`;
+  return formatEmailCopy(template, {
     orderNumber: str(data, 'orderNumber', str(data, 'orderId', '')),
     productName: str(data, 'productName'),
     code: str(data, 'code'),
@@ -38,7 +40,10 @@ function subjectFor(type: NotificationType, data: EmailTemplateData): string {
 }
 
 function bodyFor(type: NotificationType, data: EmailTemplateData): string {
-  return formatEmailCopy(EMAIL_COPY.bodies[type], {
+  const template =
+    EMAIL_COPY.bodies[type] ??
+    'You have a new notification from {brand}. Sign in to your account for details.';
+  return formatEmailCopy(template, {
     brand: EMAIL_COPY.brandName,
     orderNumber: str(data, 'orderNumber', str(data, 'orderId')),
     total: str(data, 'total'),
@@ -123,11 +128,6 @@ function defaultCta(type: NotificationType, data: EmailTemplateData): { label?: 
       };
     case 'COUPON_OFFER_EXPIRING':
       return { label: EMAIL_COPY.ctaViewCart, url: str(data, 'actionUrl', `${base}/cart`) };
-    case 'REPORT_EXPORT_READY':
-      return {
-        label: EMAIL_COPY.ctaDownloadReport,
-        url: str(data, 'actionUrl', `${base}/admin/reports`),
-      };
     case 'TICKET_CREATED':
     case 'TICKET_REPLIED':
     case 'TICKET_RESOLVED':

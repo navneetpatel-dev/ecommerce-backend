@@ -23,12 +23,11 @@ async function bootstrap() {
   if (!areQueuesReady()) {
     throw new Error('BullMQ queues failed to connect');
   }
-  const scope = env.START_WORKERS_IN_API ? 'report-export-only' : 'full';
-  await startBackgroundWorkers(scope);
-  logger.info('Background worker process ready', { scope });
+  await startBackgroundWorkers();
+  logger.info('Background worker process ready');
 
   let couponAlertTimer: ReturnType<typeof setInterval> | undefined;
-  if (scope === 'full') {
+  if (!env.START_WORKERS_IN_API) {
     const runCouponAlerts = () => {
       void couponsService.notifyExpiringAndNearLimit().then(
         (result) => {

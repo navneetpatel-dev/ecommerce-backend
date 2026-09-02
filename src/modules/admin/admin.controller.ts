@@ -46,6 +46,8 @@ export const exportPlatformAnalytics = asyncHandler(async (req: Request, res: Re
   const from = fromParam ?? new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
   assertReportRange({ from, to });
   const actor = await analyticsActor(req);
-  const exported = await reportEngine.runExport(actor, 'platform-analytics', { from, to }, format);
-  res.json(ok({ ...exported, async: true }));
+  const result = await reportEngine.runExportDirect(actor, 'platform-analytics', { from, to }, format);
+  res.setHeader('Content-Type', result.contentType);
+  res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+  res.send(result.buffer);
 });

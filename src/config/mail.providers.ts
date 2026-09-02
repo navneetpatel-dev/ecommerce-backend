@@ -1,4 +1,4 @@
-import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
+import { SESClient, SendEmailCommand, SendRawEmailCommand } from '@aws-sdk/client-ses';
 import { randomUUID } from 'crypto';
 import nodemailer from 'nodemailer';
 import { env } from '@config/env';
@@ -23,6 +23,11 @@ export function createConsoleMailProvider(): MailProvider {
         to: message.to,
         subject: message.subject,
         textPreview: message.text.slice(0, 240),
+        attachments: message.attachments?.map((a) => ({
+          filename: a.filename,
+          bytes: a.content.length,
+          contentType: a.contentType,
+        })),
       });
       return { messageId, provider: 'console' };
     },
@@ -47,6 +52,31 @@ export function createSesMailProvider(): MailProvider {
     async send(message): Promise<MailSendResult> {
       if (!client) {
         throw new Error('SES mail provider is not configured (missing AWS credentials)');
+      }
+
+      if (message.attachments?.length) {
+        const transporter = nodemailer.createTransport({ streamTransport: true, newline: 'unix' });
+        const info = await transporter.sendMail({
+          from: formatMailFrom(message),
+          to: message.to,
+          subject: message.subject,
+          text: message.text,
+          html: message.html,
+          ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+          attachments: message.attachments.map((a) => ({
+            filename: a.filename,
+            content: a.content,
+            contentType: a.contentType,
+          })),
+        });
+        const raw = info.message.toString();
+        const result = await client.send(
+          new SendRawEmailCommand({ RawMessage: { Data: Buffer.from(raw) } }),
+        );
+        return {
+          messageId: result.MessageId ?? randomUUID(),
+          provider: 'ses',
+        };
       }
 
       const configurationSet =
@@ -107,6 +137,15 @@ export function createSmtpMailProvider(): MailProvider {
         text: message.text,
         html: message.html,
         ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+        ...(message.attachments?.length
+          ? {
+              attachments: message.attachments.map((a) => ({
+                filename: a.filename,
+                content: a.content,
+                contentType: a.contentType,
+              })),
+            }
+          : {}),
       });
 
       return {

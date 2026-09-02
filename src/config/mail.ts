@@ -7,6 +7,12 @@ import {
 
 export type MailDriver = 'auto' | 'console' | 'ses' | 'smtp';
 
+export type MailAttachment = {
+  filename: string;
+  content: Buffer;
+  contentType?: string;
+};
+
 export type MailMessage = {
   to: string;
   subject: string;
@@ -14,6 +20,7 @@ export type MailMessage = {
   text: string;
   from?: string;
   replyTo?: string;
+  attachments?: MailAttachment[];
   /** Provider-specific options (e.g. `{ configurationSet }` for SES). */
   meta?: Record<string, unknown>;
 };

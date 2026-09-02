@@ -32,7 +32,7 @@ export function pipePdfDocument(
     dest.once('finish', () => resolve());
     dest.once('error', reject);
     doc.once('error', reject);
-    if (!doc.writableEnded) {
+    if (!(doc as unknown as { writableEnded?: boolean }).writableEnded) {
       doc.end();
     }
   });

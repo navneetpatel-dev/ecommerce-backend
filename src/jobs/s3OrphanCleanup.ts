@@ -10,7 +10,6 @@ import { Category } from '@database/models/category.model';
 import { User } from '@database/models/user.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { PromoBanner } from '@database/models/promoBanner.model';
-import { ReportExportLog } from '@database/models/reportExportLog.model';
 import { TicketAttachment } from '@database/models/ticketAttachment.model';
 import { BugReportAttachment } from '@database/models/bugReportAttachment.model';
 
@@ -39,7 +38,6 @@ async function loadReferencedKeys(): Promise<Set<string>> {
     users,
     returns,
     banners,
-    exports,
     ticketAttachments,
     bugAttachments,
   ] = await Promise.all([
@@ -56,7 +54,6 @@ async function loadReferencedKeys(): Promise<Set<string>> {
     User.findAll({ attributes: ['avatarUrl'] }),
     ReturnRequest.findAll({ attributes: ['photoUrls'] }),
     PromoBanner.findAll({ attributes: ['imageUrl'] }),
-    ReportExportLog.findAll({ attributes: ['fileKey', 'fileUrl'] }),
     TicketAttachment.findAll({ attributes: ['url'] }),
     BugReportAttachment.findAll({ attributes: ['url'] }),
   ]);
@@ -89,10 +86,6 @@ async function loadReferencedKeys(): Promise<Set<string>> {
     banners.map((b) => b.imageUrl),
     keys,
   );
-  for (const row of exports) {
-    if (row.fileKey) keys.add(row.fileKey);
-    collectKeysFromUrls([row.fileUrl], keys);
-  }
   collectKeysFromUrls(
     ticketAttachments.map((a) => a.url),
     keys,

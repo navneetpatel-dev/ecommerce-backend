@@ -19,16 +19,7 @@ async function redisIncrWithTtl(key: string, ttlSec: number): Promise<number | n
 export async function assertReportExportRateLimit(userId: string): Promise<void> {
   const rateKey = `${RATE_KEY_PREFIX}${userId}`;
   const count = await redisIncrWithTtl(rateKey, 60);
-  if (count == null) {
-    if (reportExportConfig.isProduction) {
-      throw new AppError(
-        ERROR_MESSAGES.REPORT_EXPORT_QUEUE_UNAVAILABLE,
-        503,
-        ERROR_CODES.REPORT_EXPORT_QUEUE_UNAVAILABLE,
-      );
-    }
-    return;
-  }
+  if (count == null) return;
   if (count > reportExportConfig.rateLimitPerMin) {
     throw new AppError(
       ERROR_MESSAGES.REPORT_EXPORT_RATE_LIMITED,
@@ -39,7 +30,7 @@ export async function assertReportExportRateLimit(userId: string): Promise<void>
   }
 }
 
-/** Rate-limit export-capable routes. Concurrent pending cap is applied after dedup in runExport. */
+/** Rate-limit export-capable routes (non-json format). */
 export const reportExportGuard = asyncHandler(
   async (req: Request, _res: Response, next: NextFunction) => {
     if (!req.user?.id) {

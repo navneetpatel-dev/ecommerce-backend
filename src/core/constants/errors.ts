@@ -57,8 +57,6 @@ export const ERROR_CODES = {
   VENDOR_NOT_LINKED: 'VENDOR_NOT_LINKED',
   REPORT_NOT_FOUND: 'REPORT_NOT_FOUND',
   REPORT_FORBIDDEN: 'REPORT_FORBIDDEN',
-  REPORT_EXPORT_NOT_READY: 'REPORT_EXPORT_NOT_READY',
-  REPORT_EXPORT_QUEUE_UNAVAILABLE: 'REPORT_EXPORT_QUEUE_UNAVAILABLE',
   S3_NOT_CONFIGURED: 'S3_NOT_CONFIGURED',
   S3_ACCESS_DENIED: 'S3_ACCESS_DENIED',
   UPLOAD_FAILED: 'UPLOAD_FAILED',
@@ -118,7 +116,6 @@ export const ERROR_CODES = {
   NOT_YOUR_VENDOR_PAYOUTS: 'NOT_YOUR_VENDOR_PAYOUTS',
   CREDIT_NOTE_FORBIDDEN: 'CREDIT_NOTE_FORBIDDEN',
   DEBIT_NOTE_FORBIDDEN: 'DEBIT_NOTE_FORBIDDEN',
-  REPORT_EXPORT_RETRY_FAILED_ONLY: 'REPORT_EXPORT_RETRY_FAILED_ONLY',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -215,10 +212,7 @@ export const ERROR_MESSAGES = {
   REPORT_RECONCILIATION_MISMATCH: 'Settlement reconciliation does not balance for the selected period',
   REPORT_NOT_FOUND: 'Report type not found',
   REPORT_FORBIDDEN: 'You do not have access to this report',
-  REPORT_EXPORT_NOT_READY: 'Report export is not ready yet',
-  REPORT_EXPORT_QUEUE_UNAVAILABLE: 'Report export service is temporarily unavailable',
   REPORT_EXPORT_RATE_LIMITED: 'Too many export requests — please wait and try again',
-  REPORT_EXPORT_TOO_MANY_PENDING: 'You already have exports in progress — wait for them to finish',
   REPORT_RANGE_TOO_WIDE: 'Report date range exceeds the maximum allowed window',
   S3_NOT_CONFIGURED:
     'File upload is not available right now. Please try again later.',
@@ -287,5 +281,4 @@ export const ERROR_MESSAGES = {
   NOT_YOUR_VENDOR_PAYOUTS: 'You do not have access to these payouts',
   CREDIT_NOTE_FORBIDDEN: 'You do not have access to this credit note',
   DEBIT_NOTE_FORBIDDEN: 'You do not have access to this debit note',
-  REPORT_EXPORT_RETRY_FAILED_ONLY: 'Only failed exports can be retried',
 } as const;

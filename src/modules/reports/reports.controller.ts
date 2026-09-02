@@ -13,12 +13,7 @@ import {
   EngineReportQuerySchema,
   CustomerOrderHistorySchema,
 } from './reports.dto';
-import { buildReportFilename } from './engine/excelExporter';
-import {
-  contentTypeForFormat,
-  extensionForFormat,
-  type ReportExportFormat,
-} from './engine/csvExporter';
+import { type ReportExportFormat } from './engine/csvExporter';
 import { reportEngine, type ReportActor } from './engine/reportEngine';
 import type { ReportFilters } from './engine/types';
 import type { PermissionKey } from '@core/permissions/permissionKeys';
@@ -47,56 +42,29 @@ async function actorFromReq(req: Request): Promise<ReportActor> {
   };
 }
 
-function actorFromReqLite(req: Request): ReportActor {
-  const user = req.user!;
-  const roleName = user.role?.name ?? roleNameOf(user as any);
-  return {
-    id: user.id,
-    vendorId: user.vendorId ?? null,
-    roleName,
-    permissions: [],
-  };
-}
-
 function panelExportFormat(format: string): ReportExportFormat {
   if (format === 'csv' || format === 'pdf' || format === 'xlsx') return format;
   throw new ValidationError(`Unsupported export format: ${format}`);
 }
 
-async function enqueuePanelExport(
+async function sendExportFile(
   res: Response,
   actor: ReportActor,
   reportType: string,
   filters: ReportFilters,
   format: ReportExportFormat,
-  options?: { bornBy?: string | null },
 ) {
-  const exported = await reportEngine.runExport(
-    actor,
-    reportType,
-    filters,
-    format,
-    options?.bornBy ? { bornBy: options.bornBy } : {},
-  );
-  res.json(
-    ok({
-      async: true,
-      exportId: exported.exportId,
-      status: exported.status,
-      format: exported.format,
-      rowCount: exported.rowCount,
-      rowCountKnown: exported.rowCountKnown,
-      cached: exported.cached ?? false,
-      deduped: exported.deduped ?? false,
-    }),
-  );
+  const result = await reportEngine.runExportDirect(actor, reportType, filters, format);
+  res.setHeader('Content-Type', result.contentType);
+  res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+  res.send(result.buffer);
 }
 
 export const adminSummary = asyncHandler(async (req: Request, res: Response) => {
   const query = rangeFromQuery(req);
   if (query.format !== 'json') {
     const actor = await actorFromReq(req);
-    await enqueuePanelExport(
+    await sendExportFile(
       res,
       actor,
       'admin-dashboard-summary',
@@ -113,10 +81,13 @@ export const adminVendors = asyncHandler(async (req: Request, res: Response) => 
   const query = rangeFromQuery(req);
   if (query.format !== 'json') {
     const actor = await actorFromReq(req);
-    await enqueuePanelExport(res, actor, 'vendor-settlement', {
-      from: query.from,
-      to: query.to,
-    }, panelExportFormat(query.format));
+    await sendExportFile(
+      res,
+      actor,
+      'vendor-settlement',
+      { from: query.from, to: query.to },
+      panelExportFormat(query.format),
+    );
     return;
   }
   const data = await reportsService.adminVendorSettlements(query);
@@ -127,10 +98,13 @@ export const adminReconciliation = asyncHandler(async (req: Request, res: Respon
   const query = rangeFromQuery(req);
   if (query.format !== 'json') {
     const actor = await actorFromReq(req);
-    await enqueuePanelExport(res, actor, 'reconciliation', {
-      from: query.from,
-      to: query.to,
-    }, panelExportFormat(query.format));
+    await sendExportFile(
+      res,
+      actor,
+      'reconciliation',
+      { from: query.from, to: query.to },
+      panelExportFormat(query.format),
+    );
     return;
   }
   const data = await reportsService.adminReconciliation(query);
@@ -142,11 +116,13 @@ export const vendorSummary = asyncHandler(async (req: Request, res: Response) =>
   const vendorId = req.params.vendorId!;
   if (query.format !== 'json') {
     const actor = await actorFromReq(req);
-    await enqueuePanelExport(res, actor, 'vendor-summary', {
-      from: query.from,
-      to: query.to,
-      vendorId,
-    }, panelExportFormat(query.format));
+    await sendExportFile(
+      res,
+      actor,
+      'vendor-summary',
+      { from: query.from, to: query.to, vendorId },
+      panelExportFormat(query.format),
+    );
     return;
   }
   const data = await reportsService.vendorSummary(vendorId, query, req.user?.vendorId ?? null);
@@ -157,10 +133,13 @@ export const walletLiability = asyncHandler(async (req: Request, res: Response) 
   const query = rangeFromQuery(req);
   if (query.format !== 'json') {
     const actor = await actorFromReq(req);
-    await enqueuePanelExport(res, actor, 'wallet-liability', {
-      from: query.from,
-      to: query.to,
-    }, panelExportFormat(query.format));
+    await sendExportFile(
+      res,
+      actor,
+      'wallet-liability',
+      { from: query.from, to: query.to },
+      panelExportFormat(query.format),
+    );
     return;
   }
   const data = await reportsService.walletLiabilityReport({
@@ -175,10 +154,13 @@ export const walletRecharge = asyncHandler(async (req: Request, res: Response) =
   const query = rangeFromQuery(req);
   if (query.format !== 'json') {
     const actor = await actorFromReq(req);
-    await enqueuePanelExport(res, actor, 'wallet-recharge', {
-      from: query.from,
-      to: query.to,
-    }, panelExportFormat(query.format));
+    await sendExportFile(
+      res,
+      actor,
+      'wallet-recharge',
+      { from: query.from, to: query.to },
+      panelExportFormat(query.format),
+    );
     return;
   }
   const data = await reportsService.walletRechargeReport({
@@ -193,7 +175,7 @@ export const cashbackWriteOff = asyncHandler(async (req: Request, res: Response)
   const query = WriteOffReportSchema.parse(req.query);
   const actor = await actorFromReq(req);
   if (query.format !== 'json') {
-    await enqueuePanelExport(
+    await sendExportFile(
       res,
       actor,
       'cashback-write-offs',
@@ -203,7 +185,6 @@ export const cashbackWriteOff = asyncHandler(async (req: Request, res: Response)
         bornBy: query.bornBy ?? null,
       },
       panelExportFormat(query.format),
-      { bornBy: query.bornBy ?? null },
     );
     return;
   }
@@ -257,82 +238,12 @@ export const runReport = asyncHandler(async (req: Request, res: Response) => {
   };
 
   if (query.format === 'xlsx' || query.format === 'csv' || query.format === 'pdf') {
-    const exported = await reportEngine.runExport(actor, reportType, filters, query.format);
-    res.json(
-      ok({
-        async: true,
-        exportId: exported.exportId,
-        status: exported.status,
-        format: exported.format,
-        rowCount: exported.rowCount,
-        rowCountKnown: exported.rowCountKnown,
-        cached: exported.cached ?? false,
-        deduped: exported.deduped ?? false,
-      }),
-    );
+    await sendExportFile(res, actor, reportType, filters, query.format);
     return;
   }
 
   const data = await reportEngine.runJson(actor, reportType, filters);
   res.json(ok(data));
-});
-
-export const downloadExport = asyncHandler(async (req: Request, res: Response) => {
-  const actor = actorFromReqLite(req);
-  const result = await reportEngine.getExportForDownload(actor, req.params.id!);
-  if (result.mode === 'presigned' || result.mode === 'redirect') {
-    res.redirect(result.url);
-    return;
-  }
-  const filters = result.log.filtersUsed as Record<string, unknown>;
-  const exportFormat = (result.log.format as ReportExportFormat) || 'xlsx';
-  const name = buildReportFilename(
-    result.log.reportType,
-    new Date(String(filters.from)),
-    new Date(String(filters.to)),
-    extensionForFormat(exportFormat),
-  );
-  res.setHeader('Content-Type', contentTypeForFormat(exportFormat));
-  res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
-  res.send(result.buffer);
-});
-
-export const exportStatus = asyncHandler(async (req: Request, res: Response) => {
-  const actor = actorFromReqLite(req);
-  const ifNoneMatch = req.header('if-none-match') ?? null;
-  const data = await reportEngine.getExportStatus(actor, req.params.id!, ifNoneMatch);
-  if ('notModified' in data) {
-    res.status(304).end();
-    return;
-  }
-  res.setHeader('ETag', data.etag);
-  res.json(ok(data));
-});
-
-export const listAdminExports = asyncHandler(async (req: Request, res: Response) => {
-  await actorFromReq(req);
-  const status = typeof req.query.status === 'string' ? req.query.status : undefined;
-  const reportType = typeof req.query.reportType === 'string' ? req.query.reportType : undefined;
-  const offset =
-    typeof req.query.offset === 'string' ? Math.max(0, Number(req.query.offset) || 0) : 0;
-  const limit =
-    typeof req.query.limit === 'string' ? Math.min(500, Math.max(1, Number(req.query.limit) || 100)) : 100;
-  const rows = await reportEngine.listRecentExports(limit, { status, reportType, offset });
-  const { readReportExportQueueDepth } = await import('./reportExportMetrics');
-  const queue = await readReportExportQueueDepth();
-  res.json(ok({ rows, queue }));
-});
-
-export const retryAdminExport = asyncHandler(async (req: Request, res: Response) => {
-  const actor = await actorFromReq(req);
-  const exported = await reportEngine.retryExport(actor, req.params.id!, { asOriginalUser: true });
-  res.json(ok({ ...exported, async: true }));
-});
-
-export const retryExport = asyncHandler(async (req: Request, res: Response) => {
-  const actor = await actorFromReq(req);
-  const exported = await reportEngine.retryExport(actor, req.params.id!);
-  res.json(ok({ ...exported, async: true }));
 });
 
 export const customerOrderHistory = asyncHandler(async (req: Request, res: Response) => {
@@ -346,13 +257,7 @@ export const customerOrderHistory = asyncHandler(async (req: Request, res: Respo
     userId: actor.id,
   };
   if (query.format === 'xlsx' || query.format === 'csv' || query.format === 'pdf') {
-    const exported = await reportEngine.runExport(
-      actor,
-      'customer-order-history',
-      filters,
-      query.format,
-    );
-    res.json(ok({ ...exported, async: true }));
+    await sendExportFile(res, actor, 'customer-order-history', filters, query.format);
     return;
   }
   const data = await reportEngine.runJson(actor, 'customer-order-history', filters);

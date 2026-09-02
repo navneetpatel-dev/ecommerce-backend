@@ -3,10 +3,6 @@ import { areQueuesReady, getQueueConnection, queues } from '@config/queue';
 import { logger } from '@core/logger';
 import { runS3OrphanCleanup, S3_ORPHAN_CLEANUP_JOB } from './s3OrphanCleanup';
 import {
-  REPORT_EXPORT_CLEANUP_JOB,
-  runReportExportCleanup,
-} from './reportExportCleanup.processor';
-import {
   WALLET_RECHARGE_EXPIRY_JOB,
   runWalletRechargeExpiry,
 } from './walletRechargeExpiry.processor';
@@ -14,7 +10,6 @@ import { REFUND_RETRY_JOB, runRefundRetry } from './refundRetry.processor';
 import { PROMO_POINTS_EXPIRY_JOB, runPromoPointsExpiry } from './promoPointsExpiry.processor';
 
 const REPEAT_JOB_ID = 's3-orphan-cleanup-daily';
-const EXPORT_CLEANUP_JOB_ID = 'report-export-cleanup-daily';
 const WALLET_RECHARGE_EXPIRY_JOB_ID = 'wallet-recharge-expiry-hourly';
 const REFUND_RETRY_JOB_ID = 'refund-retry-hourly';
 const PROMO_POINTS_EXPIRY_JOB_ID = 'promo-points-expiry-daily';
@@ -26,10 +21,6 @@ export function startS3OrphanCleanupWorker(): Worker {
       if (job.name === S3_ORPHAN_CLEANUP_JOB) {
         const dryRun = Boolean(job.data?.dryRun);
         await runS3OrphanCleanup({ dryRun });
-        return;
-      }
-      if (job.name === REPORT_EXPORT_CLEANUP_JOB) {
-        await runReportExportCleanup();
         return;
       }
       if (job.name === WALLET_RECHARGE_EXPIRY_JOB) {
@@ -74,18 +65,6 @@ export async function scheduleS3OrphanCleanupJob(): Promise<void> {
   );
 
   logger.info('S3 orphan cleanup scheduled', { cron: '0 3 * * *' });
-
-  await queues.s3OrphanCleanup.add(
-    REPORT_EXPORT_CLEANUP_JOB,
-    {},
-    {
-      jobId: EXPORT_CLEANUP_JOB_ID,
-      repeat: { pattern: '15 3 * * *' },
-      removeOnComplete: 50,
-      removeOnFail: 100,
-    },
-  );
-  logger.info('Report export cleanup scheduled', { cron: '15 3 * * *' });
 
   await queues.s3OrphanCleanup.add(
     WALLET_RECHARGE_EXPIRY_JOB,

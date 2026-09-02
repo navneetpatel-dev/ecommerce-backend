@@ -14,7 +14,6 @@ export const EMAIL_COPY = {
   ctaLeaveReview: 'Leave a review',
   ctaViewCart: 'Return to cart',
   ctaVendorDashboard: 'Open vendor dashboard',
-  ctaDownloadReport: 'Download report',
   ctaViewTicket: 'View ticket',
   ctaViewBugReport: 'View bug report',
 
@@ -51,7 +50,6 @@ export const EMAIL_COPY = {
     COUPON_USAGE_LIMIT: 'Coupon nearing usage limit — {code}',
     COUPON_EXPIRING: 'Coupon expiring soon — {code}',
     COUPON_OFFER_EXPIRING: 'Offer expiring soon — {code}',
-    REPORT_EXPORT_READY: 'Your report export is ready — {reportType}',
     TICKET_CREATED: 'New support ticket — {ticketNumber}',
     TICKET_REPLIED: 'New reply on ticket — {ticketNumber}',
     TICKET_RESOLVED: 'Ticket resolved — {ticketNumber}',
@@ -107,8 +105,6 @@ export const EMAIL_COPY = {
     COUPON_USAGE_LIMIT: 'Coupon {code} has used {usedCount} of {usageLimit} redemptions.',
     COUPON_EXPIRING: 'Coupon {code} expires on {expiresAt}.',
     COUPON_OFFER_EXPIRING: 'Your offer {code} expires on {expiresAt}. Apply it before it ends.',
-    REPORT_EXPORT_READY:
-      'Your {reportType} export ({rowCount} rows) is ready. Use the button below to download the Excel file from your account session.',
     TICKET_CREATED: 'A new support ticket {ticketNumber} was created: {subject}.',
     TICKET_REPLIED: 'There is a new reply on support ticket {ticketNumber} ({subject}).',
     TICKET_RESOLVED: 'Your support ticket {ticketNumber} ({subject}) has been resolved.',

@@ -480,16 +480,6 @@ export class NotificationsService {
     });
   }
 
-  sendReportExportReady(userId: string, exportId: string, templateData: EmailTemplateData = {}) {
-    return this.enqueue({
-      userId,
-      type: 'REPORT_EXPORT_READY',
-      referenceType: 'ReportExportLog',
-      referenceId: exportId,
-      templateData: { ...templateData, exportId },
-    });
-  }
-
   sendAbandonedCart(userId: string, cartId: string, templateData: EmailTemplateData = {}) {
     return this.enqueue({
       userId,
