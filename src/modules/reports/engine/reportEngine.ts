@@ -309,6 +309,10 @@ async function failUserVisibleStaleExports(exportKey: string): Promise<void> {
   );
 }
 
+function exportHeartbeatStaleMs(): number {
+  return reportExportConfig.isProduction ? 60_000 : 15_000;
+}
+
 async function requeuePendingExportIfNeeded(
   log: ReportExportLog,
   processJob?: (exportLogId: string) => Promise<void>,
@@ -729,6 +733,59 @@ export class ReportEngine {
     );
   }
 
+  /** Re-queue exports whose BullMQ job finished but DB row is still PENDING/PROCESSING. */
+  private async ensureExportJobQueued(log: ReportExportLog): Promise<void> {
+    if (log.status !== 'PENDING' && log.status !== 'PROCESSING') return;
+
+    const heartbeatCutoff = new Date(Date.now() - exportHeartbeatStaleMs());
+    const needsRecovery =
+      log.status === 'PENDING' ||
+      (log.status === 'PROCESSING' && log.updatedAt < heartbeatCutoff);
+    if (!needsRecovery) return;
+
+    let jobState: string | null = null;
+    if (areQueuesReady()) {
+      try {
+        const job = await queues.reportExport.getJob(log.id);
+        if (job) jobState = await job.getState();
+      } catch (err) {
+        logger.warn('Export job queue lookup failed', {
+          exportLogId: log.id,
+          error: err instanceof Error ? err.message : err,
+        });
+      }
+      if (jobState === 'active' || jobState === 'waiting' || jobState === 'delayed') {
+        return;
+      }
+    }
+
+    if (log.status === 'PROCESSING') {
+      const [reset] = await ReportExportLog.update(
+        { status: 'PENDING', errorMessage: null },
+        { where: { id: log.id, status: 'PROCESSING' } },
+      );
+      if (reset === 0) return;
+      await purgeExportRedisCaches(log.id);
+      logger.warn('Recovered orphaned report export', {
+        exportLogId: log.id,
+        priorJobState: jobState,
+      });
+    }
+
+    if (areQueuesReady() && (jobState === 'completed' || jobState === 'failed')) {
+      try {
+        const job = await queues.reportExport.getJob(log.id);
+        if (job) await job.remove();
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const fresh = await ReportExportLog.findByPk(log.id);
+    if (!fresh || fresh.status !== 'PENDING') return;
+    await requeuePendingExportIfNeeded(fresh, this.processExportJob.bind(this));
+  }
+
   async processExportJob(exportLogId: string) {
     const log = await ReportExportLog.findByPk(exportLogId);
     if (!log || log.status === 'READY') return;
@@ -858,6 +915,11 @@ export class ReportEngine {
       });
       if (!finalized) {
         await deleteExportArtifact({ fileKey: stored.fileKey, fileUrl: stored.fileUrl });
+        await failExportIfProcessing(
+          exportLogId,
+          sanitizeExportErrorMessage(new Error('Export could not be finalized')),
+        );
+        await invalidateExportStatusCache(log.id);
         return;
       }
 
@@ -922,10 +984,15 @@ export class ReportEngine {
         etag: string;
       }
   > {
-    const log = await ReportExportLog.findByPk(exportId);
+    let log = await ReportExportLog.findByPk(exportId);
     if (!log) throw new NotFoundError('ReportExportLog');
     if (log.userId !== actor.id && actor.roleName !== ROLES.SUPER_ADMIN) {
       throw new ForbiddenError(ERROR_MESSAGES.REPORT_FORBIDDEN);
+    }
+
+    if (log.status === 'PENDING' || log.status === 'PROCESSING') {
+      await this.ensureExportJobQueued(log);
+      log = (await ReportExportLog.findByPk(exportId)) ?? log;
     }
 
     const etag = statusEtag(log);
