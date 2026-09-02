@@ -6,9 +6,7 @@ import { type UnavailableReason } from '@core/constants/statuses';
 import { resolveItemAvailability } from '@core/catalog/customerVisibility';
 import { combinedDiscount, lineSubtotal } from '@modules/pricing/displayMoney';
 import { roundMoney } from '@modules/pricing/money';
-import {
-  computeVendorShippingWeightsByVendor,
-} from '@modules/shipping/shippingWeight';
+import { computeVendorShippingWeightsByVendor } from '@modules/shipping/shippingWeight';
 import { resolveShippingDisplayKey } from '@modules/checkout/checkoutOrderTotals';
 import { cartRepository } from './cart.repository';
 import { MAX_CART_LINE_QUANTITY } from './cart.constants';
@@ -24,6 +22,12 @@ export type CartViewItem = {
   id: string;
   variantId: string;
   quantity: number;
+  /**
+   * Server-decided cap for this line (stock vs the cart policy cap).
+   * The API silently clamps to it, so the client must not offer more —
+   * otherwise the stepper counts past stock and snaps back on the response.
+   */
+  maxQuantity: number;
   lineSubtotal: number;
   isAvailable: boolean;
   unavailableReason: UnavailableReason | null;
@@ -91,8 +95,7 @@ function mapCartItem(item: CartItem & { variant?: ProductVariant & { product?: a
   const variant = item.variant;
   const product = variant?.product;
   const images = product?.images ?? [];
-  const primaryImage =
-    images.find((img: any) => img.isPrimary)?.url || images[0]?.url || '';
+  const primaryImage = images.find((img: any) => img.isPrimary)?.url || images[0]?.url || '';
   const vendor = product?.vendor ?? product?.Vendor ?? null;
   const quantity = Number(item.quantity);
   const price = roundMoney(variant?.price ?? product?.basePrice ?? 0);
@@ -108,6 +111,7 @@ function mapCartItem(item: CartItem & { variant?: ProductVariant & { product?: a
     id: String(item.id),
     variantId: String(item.variantId),
     quantity,
+    maxQuantity: clampQuantity(MAX_CART_LINE_QUANTITY, stock),
     lineSubtotal: lineSubtotal(price, quantity),
     isAvailable,
     unavailableReason,
@@ -157,7 +161,7 @@ export class CartService {
     }
 
     // Unscoped Product/Vendor include — hidden items stay visible with isAvailable=false.
-    const items = await CartItem.findAll({
+    const items = (await CartItem.findAll({
       where: { cartId: cart.id },
       order: [
         ['createdAt', 'ASC'],
@@ -176,13 +180,11 @@ export class CartService {
           ],
         },
       ],
-    }) as (CartItem & { variant: ProductVariant & { product: any } })[];
+    })) as (CartItem & { variant: ProductVariant & { product: any } })[];
 
     const mappedItems = items.map(mapCartItem);
     const available = mappedItems.filter((item) => item.isAvailable);
-    const merchandiseSubtotal = roundMoney(
-      available.reduce((sum, item) => sum + item.lineSubtotal, 0),
-    );
+    const merchandiseSubtotal = roundMoney(available.reduce((sum, item) => sum + item.lineSubtotal, 0));
 
     let appliedCoupon: CartView['appliedCoupon'] = null;
     let appliedCoupons: CartView['appliedCoupons'] = [];
@@ -197,8 +199,7 @@ export class CartService {
       appliedCoupons = revalidated.appliedCoupons;
       removedCouponReason = revalidated.removed ? revalidated.reason : null;
       vendorDiscountShares = revalidated.appliedCoupon?.vendorDiscountShares ?? {};
-      vendorShippingDiscountShares =
-        revalidated.appliedCoupon?.vendorShippingDiscountShares ?? {};
+      vendorShippingDiscountShares = revalidated.appliedCoupon?.vendorShippingDiscountShares ?? {};
       vendorBorneDiscountShares = revalidated.appliedCoupon?.vendorBorneDiscountShares ?? {};
     }
 
@@ -247,10 +248,7 @@ export class CartService {
     vendorBorneDiscountShares: Record<string, number>;
     merchandiseDiscountTotal: number;
   }): Promise<NonNullable<CartView['pricingPreview']>> {
-    const merchandiseSubtotal = input.items.reduce(
-      (sum, item) => sum + item.lineSubtotal,
-      0,
-    );
+    const merchandiseSubtotal = input.items.reduce((sum, item) => sum + item.lineSubtotal, 0);
     if (input.items.length === 0) {
       return {
         merchandiseSubtotal: 0,
@@ -265,9 +263,7 @@ export class CartService {
 
     const { settingsService } = await import('@modules/settings/settings.service');
     // Dynamic import: checkout imports cart, so a static edge here would close the cycle.
-    const { buildVendorPricingRows, priceVendorRows, PLATFORM_VENDOR_ID } = await import(
-      '@modules/checkout/vendorPricingPlan'
-    );
+    const { buildVendorPricingRows, priceVendorRows, PLATFORM_VENDOR_ID } = await import('@modules/checkout/vendorPricingPlan');
     const { Address } = await import('@database/models/address.model');
 
     const settings = await settingsService.getPlatformSettings();
@@ -297,9 +293,7 @@ export class CartService {
           attributes: ['id', 'categoryId'],
         })
       : [];
-    const categoryByProduct = new Map(
-      products.map((product) => [String(product.id), product.categoryId ?? null]),
-    );
+    const categoryByProduct = new Map(products.map((product) => [String(product.id), product.categoryId ?? null]));
 
     const plan = await buildVendorPricingRows({
       lines: input.items.map((item) => ({
@@ -353,11 +347,7 @@ export class CartService {
       grandTotal: roundMoney(grandTotal),
       // Report the weakest link: a missing rate makes the shipping figure a
       // placeholder, which is less certain than merely guessing the address.
-      basisKey: !shippingAddress
-        ? 'NO_ADDRESS'
-        : plan.hasEstimatedShipping
-          ? 'NO_SHIPPING_RATE'
-          : 'DEFAULT_ADDRESS',
+      basisKey: !shippingAddress ? 'NO_ADDRESS' : plan.hasEstimatedShipping ? 'NO_SHIPPING_RATE' : 'DEFAULT_ADDRESS',
     };
   }
 
@@ -374,11 +364,7 @@ export class CartService {
     return this.mergeGuestCartIntoUserCart(sessionId, userId);
   }
 
-  async addToCart(
-    userId: string | null,
-    sessionId: string | null,
-    data: AddToCartRequest,
-  ): Promise<CartView> {
+  async addToCart(userId: string | null, sessionId: string | null, data: AddToCartRequest): Promise<CartView> {
     await sequelize.transaction(async (t) => {
       const variant = await ProductVariant.findByPk(data.variantId, {
         include: [{ model: Product, as: 'product', include: [{ model: Vendor, as: 'vendor' }] }],
@@ -439,12 +425,7 @@ export class CartService {
     return this.getCart(userId, sessionId);
   }
 
-  async updateCartItem(
-    userId: string | null,
-    sessionId: string | null,
-    itemId: string,
-    data: UpdateCartItemRequest,
-  ): Promise<CartView> {
+  async updateCartItem(userId: string | null, sessionId: string | null, itemId: string, data: UpdateCartItemRequest): Promise<CartView> {
     await sequelize.transaction(async (t) => {
       // Postgres rejects FOR UPDATE on the nullable side of an OUTER JOIN.
       // Lock the cart line alone, then load the variant without a lock.
@@ -468,11 +449,7 @@ export class CartService {
     return this.getCart(userId, sessionId);
   }
 
-  async removeFromCart(
-    userId: string | null,
-    sessionId: string | null,
-    itemId: string,
-  ): Promise<CartView> {
+  async removeFromCart(userId: string | null, sessionId: string | null, itemId: string): Promise<CartView> {
     const item = await CartItem.findByPk(itemId);
     if (!item) throw new NotFoundError('CartItem');
 
@@ -494,10 +471,7 @@ export class CartService {
     await CartItem.destroy({ where: { cartId: cart.id } });
   }
 
-  async mergeGuestCartIntoUserCart(
-    sessionId: string,
-    userId: string,
-  ): Promise<{ merged: boolean }> {
+  async mergeGuestCartIntoUserCart(sessionId: string, userId: string): Promise<{ merged: boolean }> {
     return sequelize.transaction(async (t) => {
       const guestCart = await Cart.findOne({
         where: { sessionId },
@@ -576,21 +550,14 @@ export class CartService {
    * Restores order lines into the user cart (used by payment-cancel paths).
    * Caller must hold an order row lock / claim so this runs at most once per order.
    */
-  async restoreItemsToUserCart(
-    userId: string,
-    lines: Array<{ variantId: string; quantity: number }>,
-    transaction: Transaction,
-  ) {
+  async restoreItemsToUserCart(userId: string, lines: Array<{ variantId: string; quantity: number }>, transaction: Transaction) {
     if (lines.length === 0) return;
 
     const cart = await cartRepository.findOrCreateByUser(userId, transaction);
 
     const qtyByVariant = new Map<string, number>();
     for (const line of lines) {
-      qtyByVariant.set(
-        line.variantId,
-        (qtyByVariant.get(line.variantId) ?? 0) + line.quantity,
-      );
+      qtyByVariant.set(line.variantId, (qtyByVariant.get(line.variantId) ?? 0) + line.quantity);
     }
 
     const variantIds = [...qtyByVariant.keys()];
@@ -618,10 +585,7 @@ export class CartService {
       } else {
         const quantity = clampQuantity(restoreQty, stock);
         if (quantity > 0) {
-          await CartItem.create(
-            { cartId: cart.id, variantId, quantity },
-            { transaction },
-          );
+          await CartItem.create({ cartId: cart.id, variantId, quantity }, { transaction });
         }
       }
     }
