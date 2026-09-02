@@ -383,10 +383,22 @@ async function paymentGatewayReconciliation(filters: ReportFilters) {
       COALESCE(o."razorpayAmountPaid", 0)::float AS "razorpayAmount",
       COALESCE(o."totalAmount", 0)::float AS "orderTotal",
       COALESCE(o."walletAmountUsed", 0)::float AS "walletUsed",
+      -- Keep in sync with resolvePaymentGatewayReconStatus
       CASE
         WHEN o."paymentMethod" <> '${PAYMENT_METHOD.RAZORPAY}' THEN 'NOT_APPLICABLE'
         WHEN o."paymentStatus" = '${PAYMENT_STATUS.PAID}' AND o."razorpayPaymentId" IS NOT NULL THEN 'MATCHED'
-        WHEN o."paymentStatus" = '${PAYMENT_STATUS.PAID}' AND o."razorpayPaymentId" IS NULL THEN 'MISSING_PG_REF'
+        WHEN o."paymentStatus" = '${PAYMENT_STATUS.PAID}'
+          AND o."razorpayPaymentId" IS NULL
+          AND COALESCE(o."walletAmountUsed", 0) > 0
+          AND (
+            COALESCE(o."razorpayAmountPaid", 0) = 0
+            OR COALESCE(o."walletAmountUsed", 0) >= COALESCE(o."totalAmount", 0)
+          )
+          THEN 'WALLET_SETTLED'
+        WHEN o."paymentStatus" = '${PAYMENT_STATUS.PAID}'
+          AND o."razorpayPaymentId" IS NULL
+          AND COALESCE(o."razorpayAmountPaid", 0) > 0
+          THEN 'MISSING_PG_REF'
         WHEN o."paymentStatus" = '${PAYMENT_STATUS.PENDING}' THEN 'PENDING'
         WHEN o."paymentStatus" = '${PAYMENT_STATUS.FAILED}' THEN 'FAILED'
         WHEN o."paymentStatus" = '${PAYMENT_STATUS.REFUNDED}' THEN 'REFUNDED'

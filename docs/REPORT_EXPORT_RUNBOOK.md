@@ -56,3 +56,13 @@ User exports do **not** require a separate export worker.
 ## Metrics
 
 Structured logs via `emitReportExportMetric`: `report_export_completed`, `report_export_failed` with `reportType`, `format`, `rowCount`, `durationMs`, `byteSize`.
+
+## Finance GMV vs cash collected
+
+Finance reconciliation / GMV-style `customerPayments` are **order consideration** (full taxable + shipping totals on paid orders), not bank deposits.
+
+- **Cash at payment gateway** ≈ sum of non-zero `orders.razorpayAmountPaid` (online remainder after wallet).
+- **Wallet redemption** is tracked via `orders.walletAmountUsed` (and surfaced as `walletPointsRedeemedAtCheckout` on the reconciliation report). Wallet redeem is **not** part of the PG cash balance equation.
+- Full-wallet checkouts use payment method `RAZORPAY` with `razorpayAmountPaid = 0` and no `razorpayPaymentId`; payment-gateway reconciliation reports these as `WALLET_SETTLED`, not `MISSING_PG_REF`.
+
+GST / TCS / commission bases stay on the full consideration; wallet is a post-pricing funding split only.

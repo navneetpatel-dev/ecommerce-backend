@@ -27,8 +27,13 @@ import {
   type CartLineForCoupon,
 } from '@modules/coupons/couponEngine';
 import { pricingService } from '@modules/pricing/pricing.service';
-import { fromPaise, roundMoney } from '@modules/pricing/money';
+import { fromPaise, roundMoney, toPaise } from '@modules/pricing/money';
 import { checkoutAmountDue, lineSubtotal, lineTotal } from '@modules/pricing/displayMoney';
+import {
+  clampWalletApply,
+  settleSubMinRazorpayRemainder,
+} from './razorpayWalletRemainder';
+import { RAZORPAY_MIN_AMOUNT_PAISE } from '@core/constants/http';
 import { nextVendorTaxInvoiceNumber } from '@modules/pricing/vendorInvoiceSequence';
 import { resolveItemAvailability } from '@core/catalog/customerVisibility';
 import type {
@@ -426,12 +431,22 @@ export class CheckoutService {
       vendorBreakdowns.reduce((sum, row) => sum + row.total, 0),
     );
     const walletBalance = await walletService.getBalance(userId);
-    const walletAmountToUse = Math.min(
-      Math.max(0, Number(data.walletAmountToUse ?? 0)),
+    let walletAmountToUse = clampWalletApply(
+      Number(data.walletAmountToUse ?? 0),
       walletBalance,
       grandTotal,
     );
-    const amountDue = checkoutAmountDue(grandTotal, walletAmountToUse);
+    let amountDue = checkoutAmountDue(grandTotal, walletAmountToUse);
+    // Mirror place-order sub-min absorb so checkout UI matches settlement.
+    const quoteSettled = settleSubMinRazorpayRemainder(
+      grandTotal,
+      walletAmountToUse,
+      walletBalance,
+    );
+    if (!('reject' in quoteSettled)) {
+      walletAmountToUse = quoteSettled.walletAmountUsed;
+      amountDue = quoteSettled.amountDue;
+    }
     const maxWalletApplicable = Math.min(walletBalance, grandTotal);
     const codAvailable = await resolveCodForCatalogItems(
       catalogItemsForCod(quoteCart.items),
@@ -618,16 +633,40 @@ export class CheckoutService {
       }
       const requestedWallet = Math.max(0, Number(data.walletAmountToUse ?? 0));
       let walletAmountUsed = 0;
+      let walletBalance: number | null = null;
       if (requestedWallet > 0) {
         if (data.paymentMethod === PAYMENT_METHOD.COD) {
           throw new ValidationError(ERROR_MESSAGES.WALLET_INVALID_AMOUNT);
         }
-        const balance = await walletService.getBalance(userId, t);
-        walletAmountUsed = roundMoney(
-          Math.min(requestedWallet, balance, orderTotalRupees),
+        walletBalance = await walletService.getBalance(userId, t);
+        walletAmountUsed = clampWalletApply(
+          requestedWallet,
+          walletBalance,
+          orderTotalRupees,
         );
       }
-      const amountDue = checkoutAmountDue(orderTotalRupees, walletAmountUsed);
+      let amountDue = checkoutAmountDue(orderTotalRupees, walletAmountUsed);
+
+      // Absorb sub-₹1 Razorpay remainder into full wallet when possible; else reject
+      // before order create / wallet debit (avoids debit-then-fail at PG create).
+      if (data.paymentMethod === PAYMENT_METHOD.RAZORPAY) {
+        const duePaise = toPaise(amountDue);
+        if (duePaise > 0 && duePaise < RAZORPAY_MIN_AMOUNT_PAISE) {
+          if (walletBalance == null) {
+            walletBalance = await walletService.getBalance(userId, t);
+          }
+          const settled = settleSubMinRazorpayRemainder(
+            orderTotalRupees,
+            walletAmountUsed,
+            walletBalance,
+          );
+          if ('reject' in settled) {
+            throw new ValidationError(ERROR_MESSAGES.ORDER_AMOUNT_BELOW_RAZORPAY_MIN);
+          }
+          walletAmountUsed = settled.walletAmountUsed;
+          amountDue = settled.amountDue;
+        }
+      }
 
       const orderRow = await Order.create({
         userId,

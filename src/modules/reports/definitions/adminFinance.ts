@@ -490,6 +490,9 @@ async function reconciliation(filters: ReportFilters) {
     error: balanced ? null : ERROR_MESSAGES.REPORT_RECONCILIATION_MISMATCH,
     from: filters.from,
     to: filters.to,
+    /** Order consideration GMV; PG cash ≈ razorpayAmountPaid; wallet redeem is separate. */
+    note:
+      'customerPayments is order consideration (not PG cash). walletPointsRedeemedAtCheckout is funding, not part of the cash balance equation.',
   };
   return { rows: [row], total: 1, meta };
 }

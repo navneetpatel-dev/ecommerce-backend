@@ -4,6 +4,7 @@ import {
   formatInrAmount,
   formatInvoiceDate,
   formatInvoiceMoney,
+  invoiceFundingMethodLabel,
   paymentMethodLabel,
   paymentStatusLabel,
   renderTaxInvoicePdf,
@@ -28,6 +29,36 @@ describe('taxInvoicePdf formatters', () => {
     assert.equal(paymentMethodLabel(null), '--');
     assert.equal(paymentStatusLabel('PENDING'), 'Pending');
     assert.equal(paymentStatusLabel('PAID'), 'Paid');
+  });
+
+  it('maps invoice funding method from wallet split', () => {
+    assert.equal(
+      invoiceFundingMethodLabel({
+        paymentMethod: 'RAZORPAY',
+        walletAmountUsed: 250,
+        razorpayAmountPaid: 0,
+        totalAmount: 250,
+      }),
+      'Wallet',
+    );
+    assert.equal(
+      invoiceFundingMethodLabel({
+        paymentMethod: 'RAZORPAY',
+        walletAmountUsed: 50,
+        razorpayAmountPaid: 200,
+        totalAmount: 250,
+      }),
+      'Wallet + Razorpay',
+    );
+    assert.equal(
+      invoiceFundingMethodLabel({
+        paymentMethod: 'RAZORPAY',
+        walletAmountUsed: 0,
+        razorpayAmountPaid: 250,
+        totalAmount: 250,
+      }),
+      'Razorpay',
+    );
   });
 
   it('converts amounts to Indian-system words', () => {
@@ -70,6 +101,40 @@ describe('renderTaxInvoicePdf', () => {
             cgst: 0,
             sgst: 0,
             igst: 13568.56,
+          },
+        ],
+      },
+    });
+    assert.ok(pdf.length > 1000);
+    assert.equal(pdf.subarray(0, 5).toString(), '%PDF-');
+  });
+
+  it('renders wallet funding meta without shrinking grand total', async () => {
+    const pdf = await renderTaxInvoicePdf({
+      invoiceNo: 'TW/2526/00000009',
+      orderId: 'wallet-order-1',
+      invoiceDate: new Date('2026-08-31T00:00:00.000Z'),
+      paymentMethod: 'RAZORPAY',
+      paymentStatus: 'PAID',
+      walletAmountUsed: 100,
+      razorpayAmountPaid: 150,
+      totalAmount: 250,
+      buyerName: 'Ada Lovelace',
+      seller: {
+        businessName: 'TechWorld',
+        gstNumber: '29AABC0000N1Z1',
+        state: 'Karnataka',
+        items: [
+          {
+            productName: 'Gadget',
+            sku: 'G-1',
+            hsn: '8517',
+            quantity: 1,
+            unitPrice: 211.86,
+            taxable: 211.86,
+            cgst: 0,
+            sgst: 0,
+            igst: 38.14,
           },
         ],
       },
@@ -125,6 +190,46 @@ describe('toTaxInvoiceSourceFromSubOrder', () => {
     assert.equal(source.buyerName, 'Ada Lovelace');
     assert.equal(source.totalAmount, 284939.86);
     assert.equal(source.seller.items[0]?.hsn, 'HSN00001234');
+  });
+
+  it('threads walletAmountUsed and razorpayAmountPaid from the order', () => {
+    const source = toTaxInvoiceSourceFromSubOrder(
+      {
+        id: 'wallet-order',
+        createdAt: new Date('2026-08-31T00:00:00.000Z'),
+        paymentMethod: 'RAZORPAY',
+        paymentStatus: 'PAID',
+        walletAmountUsed: 100,
+        razorpayAmountPaid: 184.86,
+        user: { name: 'Ada Lovelace' },
+      },
+      {
+        id: 'sub-wallet',
+        taxInvoiceNumber: 'TW/2526/00000010',
+        taxInvoiceIssuedAt: new Date('2026-08-31T00:00:00.000Z'),
+        customerTotal: 284.86,
+        vendor: {
+          businessName: 'TechWorld',
+          gstNumber: '29AABC0000N1Z1',
+          state: 'Karnataka',
+        },
+        items: [
+          {
+            productName: 'Gadget',
+            quantity: 1,
+            unitPrice: 241.41,
+            taxableAmount: 241.41,
+            taxBreakdown: { cgst: 0, sgst: 0, igst: 43.45 },
+            variant: { sku: 'G-1', product: { categoryId: 'cat-a' } },
+          },
+        ],
+      },
+      new Map([['cat-a', '8517']]),
+    );
+
+    assert.equal(source.walletAmountUsed, 100);
+    assert.equal(source.razorpayAmountPaid, 184.86);
+    assert.equal(source.totalAmount, 284.86);
   });
 
   it('preserves DECIMAL strings on unit price and tax', () => {

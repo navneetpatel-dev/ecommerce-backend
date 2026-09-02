@@ -59,6 +59,10 @@ export type TaxInvoiceSource = {
   invoiceDate: Date;
   paymentMethod: string | null;
   paymentStatus: string;
+  /** Points applied toward this order (order-level; shown for funding clarity). */
+  walletAmountUsed?: number;
+  /** Online remainder charged via Razorpay (order-level). */
+  razorpayAmountPaid?: number;
   /** Vendor slice grand total (customerTotal). */
   totalAmount: number;
   buyerName?: string | null;
@@ -98,6 +102,8 @@ export type TaxInvoiceOrderInput = {
   createdAt: Date;
   paymentMethod?: string | null;
   paymentStatus: string;
+  walletAmountUsed?: number | null;
+  razorpayAmountPaid?: number | null;
   user?: { name?: string | null } | null;
   shippingAddress?: TaxInvoiceAddress | null;
 };
@@ -111,6 +117,29 @@ export { formatInrAmount, rupeesInWords };
 export function paymentMethodLabel(method: string | null): string {
   if (!method) return COPY.emptyValue;
   return COPY.paymentMethodLabels[method] ?? method;
+}
+
+/** Payment method line on tax invoice — reflects wallet funding, not only DB enum. */
+export function invoiceFundingMethodLabel(source: {
+  paymentMethod: string | null;
+  walletAmountUsed?: number;
+  razorpayAmountPaid?: number;
+  totalAmount: number;
+}): string {
+  const walletUsed = roundMoney(source.walletAmountUsed ?? 0);
+  const total = roundMoney(source.totalAmount);
+  const online = roundMoney(source.razorpayAmountPaid ?? 0);
+
+  if (walletUsed > 0 && walletUsed >= total) {
+    return COPY.paymentMethodLabels.WALLET ?? 'Wallet';
+  }
+  if (walletUsed > 0 && online > 0) {
+    return COPY.paymentMethodLabels.WALLET_PLUS_RAZORPAY ?? 'Wallet + Razorpay';
+  }
+  if (walletUsed > 0) {
+    return COPY.paymentMethodLabels.WALLET ?? 'Wallet';
+  }
+  return paymentMethodLabel(source.paymentMethod);
 }
 
 export function paymentStatusLabel(status: string): string {
@@ -187,6 +216,8 @@ export function toTaxInvoiceSourceFromSubOrder(
     invoiceDate: subOrder.taxInvoiceIssuedAt ?? order.createdAt,
     paymentMethod: order.paymentMethod ?? null,
     paymentStatus: order.paymentStatus,
+    walletAmountUsed: roundMoney(order.walletAmountUsed ?? 0),
+    razorpayAmountPaid: roundMoney(order.razorpayAmountPaid ?? 0),
     totalAmount,
     buyerName: order.user?.name ?? null,
     shippingAddress: order.shippingAddress ?? null,
@@ -350,7 +381,7 @@ function paintTaxInvoice(doc: PDFKit.PDFDocument, source: TaxInvoiceSource) {
   layout.startPage(true);
 
   const payment = [
-    paymentMethodLabel(source.paymentMethod),
+    invoiceFundingMethodLabel(source),
     paymentStatusLabel(source.paymentStatus),
   ].join('  ·  ');
 
@@ -360,6 +391,22 @@ function paintTaxInvoice(doc: PDFKit.PDFDocument, source: TaxInvoiceSource) {
     { label: COPY.orderId, value: source.orderId, tone: 'muted' },
     { label: COPY.payment, value: payment, tone: 'status' },
   ];
+  const walletUsed = roundMoney(source.walletAmountUsed ?? 0);
+  if (walletUsed > 0) {
+    metaLeft.push({
+      label: COPY.walletApplied,
+      value: formatInvoiceMoney(walletUsed),
+      tone: 'muted',
+    });
+    const online = roundMoney(source.razorpayAmountPaid ?? 0);
+    if (online > 0) {
+      metaLeft.push({
+        label: COPY.onlinePaid,
+        value: formatInvoiceMoney(online),
+        tone: 'muted',
+      });
+    }
+  }
 
   const addr = source.shippingAddress;
   const metaRight: PdfMetaRow[] = [
