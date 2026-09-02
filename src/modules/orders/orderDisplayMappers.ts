@@ -8,10 +8,16 @@ import {
   shippingCharged,
   subOrderCustomerTotal,
 } from '@modules/pricing/displayMoney';
-import {
-  resolveShippingDisplayKey,
-  resolveTaxDisplayKey,
-} from '@modules/checkout/checkoutOrderTotals';
+import { resolveShippingDisplayKey, resolveTaxDisplayKey } from '@modules/checkout/checkoutOrderTotals';
+
+/** Primary image for an order line, resolved live from the product catalogue. */
+function orderItemImageUrl(item: Record<string, unknown>): string | null {
+  const product = (item.variant as Record<string, unknown> | undefined)?.product as Record<string, unknown> | undefined;
+  const images = (product?.images as Array<Record<string, unknown>> | undefined) ?? [];
+  const primary = images.find((image) => image.isPrimary) ?? images[0];
+  const url = primary?.url;
+  return typeof url === 'string' && url ? url : null;
+}
 
 export function mapOrderItem(item: Record<string, unknown>) {
   const unitPrice = roundMoney(item.unitPrice);
@@ -22,6 +28,9 @@ export function mapOrderItem(item: Record<string, unknown>) {
     id: item.id,
     variantId: item.variantId,
     productName: item.productName,
+    imageUrl: orderItemImageUrl(item),
+    variantAttributes: ((item.variant as Record<string, unknown> | undefined)?.attributes as Record<string, string> | undefined) ?? null,
+    productSlug: ((item.variant as Record<string, unknown> | undefined)?.product as Record<string, unknown> | undefined)?.slug ?? null,
     quantity,
     unitPrice,
     discountAmount: roundMoney(item.discountAmount),
@@ -104,15 +113,14 @@ function sumTaxFromSubOrders(subOrders: Record<string, unknown>[]) {
 }
 
 export function mapOrderResponse(order: Record<string, unknown>) {
-  const plain = typeof (order as { get?: () => unknown }).get === 'function'
-    ? ((order as { get: (opts: { plain: boolean }) => Record<string, unknown> }).get({ plain: true }))
-    : order;
+  const plain =
+    typeof (order as { get?: () => unknown }).get === 'function'
+      ? (order as { get: (opts: { plain: boolean }) => Record<string, unknown> }).get({ plain: true })
+      : order;
   const totalAmount = roundMoney(plain.totalAmount);
   const walletAmountUsed = roundMoney(plain.walletAmountUsed);
   const originalTotalAmount = roundMoney(plain.originalTotalAmount ?? totalAmount);
-  const razorpayAmountPaid = roundMoney(
-    plain.razorpayAmountPaid ?? Math.max(0, originalTotalAmount - walletAmountUsed),
-  );
+  const razorpayAmountPaid = roundMoney(plain.razorpayAmountPaid ?? Math.max(0, originalTotalAmount - walletAmountUsed));
   const rawSubOrders = (plain.subOrders as Record<string, unknown>[]) ?? [];
   const subOrders = rawSubOrders.map(mapSubOrder);
   const aggregates = recomputeOrderDisplayFields({

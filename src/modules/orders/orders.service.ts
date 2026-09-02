@@ -7,6 +7,8 @@ import { sequelize } from '@database/models';
 import { OrderItem } from '@database/models/orderItem.model';
 import { Vendor } from '@database/models/vendor.model';
 import { Shipment } from '@database/models/shipment.model';
+import { ProductVariant } from '@database/models/productVariant.model';
+import { Product } from '@database/models/product.model';
 import { mapOrderResponse } from './orderDisplayMappers';
 import { cancelPaidOrder } from './ordersCancel.service';
 import type { CreateOrderRequest, GetOrdersQuery } from './orders.dto';
@@ -20,7 +22,27 @@ const orderDetailInclude = [
     association: 'subOrders',
     include: [
       { model: Vendor, as: 'vendor' },
-      { model: OrderItem, as: 'items' },
+      {
+        model: OrderItem,
+        as: 'items',
+        // Product name/price are frozen on the line; the image is looked up live
+        // so order views can show a thumbnail without storing a stale URL.
+        include: [
+          {
+            model: ProductVariant,
+            as: 'variant',
+            required: false,
+            include: [
+              {
+                model: Product,
+                as: 'product',
+                required: false,
+                include: ['images'],
+              },
+            ],
+          },
+        ],
+      },
       { model: Shipment, as: 'shipment' },
     ],
   },
@@ -65,9 +87,7 @@ export class OrdersService {
     const mapped = mapOrderResponse(order as unknown as Record<string, unknown>);
     return {
       ...mapped,
-      ...(await this.orderReturnSummary(
-        mapped.subOrders as unknown as Array<{ id: string }>,
-      )),
+      ...(await this.orderReturnSummary(mapped.subOrders as unknown as Array<{ id: string }>)),
     };
   }
 
@@ -92,10 +112,7 @@ export class OrdersService {
     ]);
     const openReturnCount = rows.filter((row) => openStatuses.has(row.status)).length;
     const returnRefundAlerts = rows
-      .filter(
-        (row) =>
-          row.refundStatus === REFUND_STATUS.INITIATED || row.refundStatus === REFUND_STATUS.FAILED,
-      )
+      .filter((row) => row.refundStatus === REFUND_STATUS.INITIATED || row.refundStatus === REFUND_STATUS.FAILED)
       .map((row) => ({ id: row.id, refundStatus: String(row.refundStatus) }));
     return { openReturnCount, returnRefundAlerts };
   }
