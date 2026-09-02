@@ -279,10 +279,12 @@ async function failStaleInflightForKey(exportKey: string): Promise<void> {
 }
 
 /** Matches FE export poll window so a retry can start a fresh job. */
-const USER_EXPORT_STALE_MS = 5 * 60 * 1000;
+function userExportStaleMs(): number {
+  return reportExportConfig.isProduction ? 5 * 60 * 1000 : 90 * 1000;
+}
 
 async function failUserVisibleStaleExports(exportKey: string): Promise<void> {
-  const cutoff = new Date(Date.now() - USER_EXPORT_STALE_MS);
+  const cutoff = new Date(Date.now() - userExportStaleMs());
   const stale = await ReportExportLog.findAll({
     where: {
       exportKey,
@@ -546,17 +548,6 @@ export class ReportEngine {
             deduped: true,
           };
         }
-        if (pending.status === 'PROCESSING') {
-          return {
-            async: true,
-            exportId: pending.id,
-            status: 'PROCESSING',
-            format: (pending.format as ReportExportFormat) || exportFormat,
-            rowCount: pending.rowCount,
-            rowCountKnown: pending.rowCount > 0,
-            deduped: true,
-          };
-        }
         return this.finishInlineExport(pending.id, exportFormat, { deduped: true });
       }
       await requeuePendingExportIfNeeded(pending, this.processExportJob.bind(this));
@@ -690,21 +681,46 @@ export class ReportEngine {
   ): Promise<AsyncExportResult> {
     await this.processExportJob(exportLogId);
     const log = await ReportExportLog.findByPk(exportLogId);
-    if (!log || log.status !== 'READY') {
+    if (!log) {
+      throw new AppError(
+        ERROR_MESSAGES.REPORT_EXPORT_NOT_READY,
+        500,
+        ERROR_CODES.REPORT_EXPORT_NOT_READY,
+      );
+    }
+    if (log.status === 'READY') {
+      return {
+        async: true,
+        exportId: log.id,
+        status: 'READY',
+        format: (log.format as ReportExportFormat) || formatHint,
+        rowCount: log.rowCount,
+        rowCountKnown: true,
+        ...(extra?.deduped ? { deduped: true } : {}),
+      };
+    }
+    if (log.status === 'FAILED') {
       const message =
-        log?.errorMessage?.trim() ||
+        log.errorMessage?.trim() ||
         sanitizeExportErrorMessage(new Error(ERROR_MESSAGES.REPORT_EXPORT_NOT_READY));
       throw new AppError(message, 500, ERROR_CODES.REPORT_EXPORT_NOT_READY);
     }
-    return {
-      async: true,
-      exportId: log.id,
-      status: 'READY',
-      format: (log.format as ReportExportFormat) || formatHint,
-      rowCount: log.rowCount,
-      rowCountKnown: true,
-      ...(extra?.deduped ? { deduped: true } : {}),
-    };
+    if (log.status === 'PENDING' || log.status === 'PROCESSING') {
+      return {
+        async: true,
+        exportId: log.id,
+        status: log.status,
+        format: (log.format as ReportExportFormat) || formatHint,
+        rowCount: log.rowCount,
+        rowCountKnown: log.rowCount > 0,
+        ...(extra?.deduped ? { deduped: true } : {}),
+      };
+    }
+    throw new AppError(
+      ERROR_MESSAGES.REPORT_EXPORT_NOT_READY,
+      500,
+      ERROR_CODES.REPORT_EXPORT_NOT_READY,
+    );
   }
 
   async processExportJob(exportLogId: string) {
@@ -730,7 +746,7 @@ export class ReportEngine {
       const current = await ReportExportLog.findByPk(exportLogId);
       if (
         current?.status === 'PROCESSING' &&
-        current.updatedAt < new Date(Date.now() - USER_EXPORT_STALE_MS)
+        current.updatedAt < new Date(Date.now() - userExportStaleMs())
       ) {
         await failExportIfProcessing(exportLogId, 'Export timed out');
       }

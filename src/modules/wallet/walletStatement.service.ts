@@ -38,14 +38,12 @@ export async function exportWalletStatement(input: {
   format: ReportExportFormat;
 }): Promise<AsyncExportResult> {
   const rowCount = await countWalletStatementRows(input.actor.id, input.from, input.to);
-  const inlineCapableFormat = input.format === 'xlsx' || input.format === 'csv';
   const processInline =
-    inlineCapableFormat &&
     !reportExportConfig.isProduction &&
     rowCount <= reportExportConfig.walletStatementFastPathMaxRows &&
     (!areQueuesReady() || env.START_WORKERS_IN_API);
 
-  return reportEngine.runExport(
+  const result = await reportEngine.runExport(
     input.actor,
     'customer-wallet-statement',
     {
@@ -56,6 +54,14 @@ export async function exportWalletStatement(input: {
     input.format,
     processInline ? { processInline: true } : {},
   );
+
+  if (result.rowCountKnown) return result;
+
+  return {
+    ...result,
+    rowCount,
+    rowCountKnown: true,
+  };
 }
 
 export async function exportWalletStatementForUser(
