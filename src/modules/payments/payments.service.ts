@@ -237,7 +237,7 @@ export class PaymentsService {
    */
   async handleRazorpayWebhook(rawBody: Buffer | string, signature: string | undefined) {
     if (!env.RAZORPAY_WEBHOOK_SECRET) {
-      throw new AppError('Razorpay webhook secret is not configured', 503, ERROR_CODES.RAZORPAY_NOT_CONFIGURED);
+      throw new AppError(ERROR_MESSAGES.RAZORPAY_NOT_CONFIGURED, 503, ERROR_CODES.RAZORPAY_NOT_CONFIGURED);
     }
     if (!signature) {
       throw new AppError(ERROR_MESSAGES.INVALID_SIGNATURE, 400, ERROR_CODES.INVALID_SIGNATURE);

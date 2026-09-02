@@ -5,8 +5,9 @@ import { User } from '@database/models/user.model';
 import { Role } from '@database/models/role.model';
 import { BEARER_PREFIX } from '@core/constants/http';
 import { USER_STATUS } from '@core/constants/statuses';
-import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
-import { publicErrorMessage } from '@core/http/publicError';
+import { ERROR_CODES, ERROR_MESSAGES, type ErrorCode } from '@core/constants/errors';
+import { AppError } from '@core/errors/AppError';
+import { sendApiError } from '@core/http/sendApiError';
 import { roleNameOf } from '@utils/userRole';
 
 interface JwtPayload {
@@ -16,11 +17,8 @@ interface JwtPayload {
   vendorId: string | null;
 }
 
-function unauthorized(res: Response, code: string, message: string) {
-  res.status(401).json({
-    success: false,
-    error: { code, message: publicErrorMessage(code, message) },
-  });
+function unauthorized(res: Response, code: ErrorCode, message: string) {
+  sendApiError(res, new AppError(message, 401, code));
 }
 
 async function loadUserFromBearer(authHeader: string) {
