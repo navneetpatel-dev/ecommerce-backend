@@ -1,4 +1,5 @@
 import { env } from '@config/env';
+import { reportExportStorageBackend } from './engine/export/reportExportStorage';
 
 export const reportExportConfig = {
   maxRangeDays: env.REPORT_MAX_RANGE_DAYS,
@@ -19,4 +20,5 @@ export const reportExportConfig = {
   userExportPriority: 1,
   scheduledExportPriority: 5,
   isProduction: env.NODE_ENV === 'production',
+  storageBackend: reportExportStorageBackend,
 } as const;

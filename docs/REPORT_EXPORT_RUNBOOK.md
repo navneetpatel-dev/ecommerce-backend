@@ -62,7 +62,7 @@ cd backend && npm run db:migrate
 ## Local dev
 
 - Set `REPORT_EXPORT_INLINE_DEV=true` to process exports in-process when queue is unavailable (non-production only).
-- Artifacts land under `backend/storage/report-exports/` when S3 is not configured.
+- Artifacts land under `backend/storage/report-exports/` when `REPORT_EXPORT_STORAGE=local` (default in development), or in S3 when `REPORT_EXPORT_STORAGE=s3`.
 
 ## Key env vars
 

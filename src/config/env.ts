@@ -120,6 +120,8 @@ const envSchema = z.object({
       if (typeof v === 'boolean') return v;
       return v === 'true' || v === '1';
     }),
+  /** Where completed export files are stored: `local` (disk) or `s3`. Unset → local in dev, s3 in prod when AWS is configured. */
+  REPORT_EXPORT_STORAGE: z.enum(['local', 's3']).optional(),
   /** When false, run `npm run worker` in a separate process (recommended in production). */
   START_WORKERS_IN_API: z
     .union([z.boolean(), z.string()])

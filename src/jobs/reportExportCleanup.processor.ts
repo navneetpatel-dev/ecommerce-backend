@@ -3,13 +3,14 @@ import path from 'node:path';
 import { Op } from 'sequelize';
 import { logger } from '@core/logger';
 import { ReportExportLog } from '@database/models/reportExportLog.model';
-import { deleteObject, extractS3KeyFromUrl, isS3Configured } from '@config/s3';
+import { deleteObject, extractS3KeyFromUrl } from '@config/s3';
+import { isReportExportOnS3, REPORT_EXPORT_LOCAL_DIR } from '@modules/reports/engine/export/reportExportStorage';
 import { reportExportConfig } from '@modules/reports/reportExportConfig';
 import { purgeExportRedisCaches } from '@modules/reports/engine/export/purgeExportRedisCaches';
 
 export const REPORT_EXPORT_CLEANUP_JOB = 'report-export-cleanup';
 
-const LOCAL_EXPORT_DIR = path.join(process.cwd(), 'storage', 'report-exports');
+const LOCAL_EXPORT_DIR = REPORT_EXPORT_LOCAL_DIR;
 
 async function failStaleExports(
   where: Record<string, unknown>,
@@ -107,7 +108,7 @@ export async function runReportExportCleanup(): Promise<{
           deletedKeys += 1;
         }
       } else if (log.fileKey) {
-        if (isS3Configured()) {
+        if (isReportExportOnS3(log)) {
           await deleteObject(log.fileKey).catch(() => undefined);
           deletedKeys += 1;
         } else {

@@ -1,16 +1,15 @@
 import { redisClient, withRedis } from '@config/redis';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import {
-  extractS3KeyFromUrl,
-  isS3Configured,
-  objectExists,
-} from '@config/s3';
+import { extractS3KeyFromUrl, objectExists } from '@config/s3';
 import type { ReportExportLog } from '@database/models/reportExportLog.model';
+import {
+  isReportExportOnS3,
+  REPORT_EXPORT_LOCAL_DIR,
+} from './reportExportStorage';
 
 const ARTIFACT_CACHE_PREFIX = 'report-export:artifact:';
 const ARTIFACT_CACHE_TTL_SEC = 300;
-const LOCAL_EXPORT_DIR = path.join(process.cwd(), 'storage', 'report-exports');
 
 async function readArtifactCache(exportId: string): Promise<boolean | null> {
   const raw = await withRedis(() => redisClient.get(`${ARTIFACT_CACHE_PREFIX}${exportId}`));
@@ -39,12 +38,12 @@ export async function invalidateArtifactCache(exportId: string): Promise<void> {
 
 async function probeArtifact(log: ReportExportLog): Promise<boolean> {
   if (!log.fileKey) return false;
-  if (isS3Configured()) {
+  if (isReportExportOnS3(log)) {
     const s3Key = log.fileUrl ? extractS3KeyFromUrl(log.fileUrl) ?? log.fileKey : log.fileKey;
     return objectExists(s3Key);
   }
   try {
-    await fsp.access(path.join(LOCAL_EXPORT_DIR, log.fileKey));
+    await fsp.access(path.join(REPORT_EXPORT_LOCAL_DIR, log.fileKey));
     return true;
   } catch {
     return false;

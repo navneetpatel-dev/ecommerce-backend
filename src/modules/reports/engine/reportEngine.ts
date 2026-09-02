@@ -14,7 +14,6 @@ import { ReportExportLog } from '@database/models/reportExportLog.model';
 import { buildPaginationMeta } from '@core/http/pagination';
 import { areQueuesReady, queues, DEFAULT_TRANSACTIONAL_JOB_OPTIONS } from '@config/queue';
 import {
-  isS3Configured,
   signedGetObjectUrl,
   uploadObjectStream,
   extractS3KeyFromUrl,
@@ -53,6 +52,12 @@ import {
 } from './export/exportJobLifecycle';
 import { deleteExportArtifact } from './export/deleteExportArtifact';
 import {
+  isReportExportOnS3,
+  readLocalReportExport,
+  reportExportUsesS3,
+  REPORT_EXPORT_LOCAL_DIR,
+} from './export/reportExportStorage';
+import {
   presignedCacheKey,
   statusCacheKey,
 } from './export/exportCacheKeys';
@@ -61,7 +66,7 @@ import { emitReportExportMetric } from '../reportExportMetrics';
 
 export const REPORT_EXPORT_JOB = 'report-export';
 
-const LOCAL_EXPORT_DIR = path.join(process.cwd(), 'storage', 'report-exports');
+const LOCAL_EXPORT_DIR = REPORT_EXPORT_LOCAL_DIR;
 
 export type ReportActor = {
   id: string;
@@ -415,7 +420,7 @@ async function persistExportStream(
 ): Promise<{ fileKey: string; fileUrl: string | null; byteSize: number }> {
   const stat = await fsp.stat(tempPath);
   const safeName = downloadFilename.replace(/["\r\n]/g, '_');
-  if (isS3Configured()) {
+  if (reportExportUsesS3()) {
     const stream = fs.createReadStream(tempPath);
     const fileUrl = await uploadObjectStream({
       key,
@@ -434,8 +439,7 @@ async function persistExportStream(
 }
 
 export async function readLocalExport(fileKey: string): Promise<Buffer> {
-  const full = path.join(LOCAL_EXPORT_DIR, fileKey);
-  return fsp.readFile(full);
+  return readLocalReportExport(fileKey);
 }
 
 export type AdminExportListRow = {
@@ -1030,7 +1034,7 @@ export class ReportEngine {
       status: log.status,
       rowCount: log.rowCount,
       rowCountKnown: log.status === 'READY' || log.status === 'SYNC' || log.rowCount > 0,
-      fileUrl: isS3Configured() ? null : log.fileUrl,
+      fileUrl: reportExportUsesS3() ? null : log.fileUrl,
       downloadUrl: null,
       expiresIn: null,
       errorMessage: log.errorMessage
@@ -1063,7 +1067,7 @@ export class ReportEngine {
     }
     await log.reload();
 
-    if (isS3Configured() && log.fileKey) {
+    if (isReportExportOnS3(log) && log.fileKey) {
       const s3Key = log.fileUrl ? extractS3KeyFromUrl(log.fileUrl) ?? log.fileKey : log.fileKey;
       let url = await readCachedPresignedUrl(exportId);
       if (!url) {
