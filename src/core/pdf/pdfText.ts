@@ -50,12 +50,34 @@ export function measureColWidth(
   return Math.min(maxW, Math.max(minW, Math.ceil(w)));
 }
 
+/** Minimum printable column width — below this PDFKit text layout can hang. */
+const MIN_COL_WIDTH = 28;
+
 export function assertColumnsFit(contentWidth: number, cols: PdfColumn[]): void {
-  const sum = cols.reduce((acc, col) => acc + col.width, 0);
+  if (cols.length === 0) return;
+
+  let sum = cols.reduce((acc, col) => acc + col.width, 0);
+
+  if (sum > contentWidth + 0.5) {
+    const scale = contentWidth / sum;
+    for (const col of cols) {
+      col.width = Math.max(MIN_COL_WIDTH, Math.floor(col.width * scale));
+    }
+    sum = cols.reduce((acc, col) => acc + col.width, 0);
+    while (sum > contentWidth + 0.5) {
+      const shrinkable = cols
+        .filter((col) => col.width > MIN_COL_WIDTH)
+        .sort((a, b) => b.width - a.width)[0];
+      if (!shrinkable) break;
+      shrinkable.width -= 1;
+      sum -= 1;
+    }
+  }
+
   const delta = contentWidth - sum;
   if (Math.abs(delta) > 0.5) {
     const last = cols[cols.length - 1];
-    if (last) last.width += delta;
+    if (last) last.width = Math.max(MIN_COL_WIDTH, last.width + delta);
   }
 }
 

@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import { finished } from 'node:stream/promises';
 
 export type BrandedPdfMeta = {
   title: string;
@@ -19,23 +20,16 @@ export function createBrandedPdfDocument(meta: BrandedPdfMeta): PDFKit.PDFDocume
   });
 }
 
-export function pipePdfDocument(
+export async function pipePdfDocument(
   doc: PDFKit.PDFDocument,
   dest: NodeJS.WritableStream,
 ): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const writable = dest as NodeJS.WritableStream & { writableFinished?: boolean };
-    if (writable.writableFinished) {
-      resolve();
-      return;
-    }
-    dest.once('finish', () => resolve());
-    dest.once('error', reject);
-    doc.once('error', reject);
-    if (!(doc as unknown as { writableEnded?: boolean }).writableEnded) {
-      doc.end();
-    }
-  });
+  const writable = dest as NodeJS.WritableStream & { writableFinished?: boolean };
+  if (writable.writableFinished) return;
+  if (!(doc as unknown as { writableEnded?: boolean }).writableEnded) {
+    doc.end();
+  }
+  await finished(dest);
 }
 
 export function finalizePdfDocument(doc: PDFKit.PDFDocument): Promise<Buffer> {
