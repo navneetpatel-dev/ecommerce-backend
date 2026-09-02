@@ -10,10 +10,16 @@ import { Op } from 'sequelize';
 import type { CreateZoneRequest, UpdateZoneRequest, CreateRateRequest, GetShippingRatesRequest } from './shipping.dto';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { settingsService } from '@modules/settings/settings.service';
+import {
+  DEFAULT_VARIANT_WEIGHT_GRAMS,
+  resolveCartVendorWeightGrams,
+} from './shippingWeight';
+import { resolveShippingDisplayKey } from '@modules/checkout/checkoutOrderTotals';
 
 export type ShippingQuoteRate = {
   method: 'STANDARD' | 'EXPRESS';
   cost: number;
+  shippingDisplayKey: 'FREE' | 'PAID';
   estimatedDays: number;
   freeShippingThreshold: number | null;
   zoneId: string;
@@ -104,6 +110,7 @@ export const shippingService = {
         cheapestByMethod.set(rate.method, {
           method: rate.method,
           cost: Number(rate.price),
+          shippingDisplayKey: resolveShippingDisplayKey(Number(rate.price)),
           estimatedDays: Number(rate.estimatedDays),
           freeShippingThreshold:
             rate.freeShippingThreshold == null ? null : Number(rate.freeShippingThreshold),
@@ -114,9 +121,12 @@ export const shippingService = {
     return [...cheapestByMethod.values()];
   },
 
-  async quotePublicRates(query: GetShippingRatesRequest): Promise<ShippingQuoteRate[]> {
+  async quotePublicRates(
+    query: GetShippingRatesRequest,
+    cartContext?: { userId: string | null; sessionId: string | null },
+  ): Promise<ShippingQuoteRate[]> {
     let vendorId = query.vendorId ?? null;
-    let weightGrams = query.weight ?? 500;
+    let weightGrams = query.weight ?? DEFAULT_VARIANT_WEIGHT_GRAMS;
     let productPrice: number | null = null;
 
     if (query.productId) {
@@ -130,8 +140,14 @@ export const shippingService = {
         ? variants.find((row) => row.id === query.variantId) ?? null
         : variants[0] ?? null;
       if (query.variantId && !variant) throw new NotFoundError('ProductVariant');
-      weightGrams = query.weight ?? Number(variant?.weightGrams ?? 500);
+      weightGrams = Number(variant?.weightGrams ?? DEFAULT_VARIANT_WEIGHT_GRAMS);
       productPrice = Number(variant?.price ?? product.basePrice ?? 0);
+    } else if (query.vendorId) {
+      weightGrams = await resolveCartVendorWeightGrams({
+        userId: cartContext?.userId ?? null,
+        sessionId: cartContext?.sessionId ?? null,
+        vendorId: query.vendorId,
+      });
     }
 
     const rates = await shippingService.getRatesForQuote({
@@ -148,9 +164,11 @@ export const shippingService = {
     return rates.map((rate) => {
       const threshold =
         rate.freeShippingThreshold ?? Number(settings.freeShippingThreshold ?? 0);
+      const cost = productPrice >= threshold ? 0 : rate.cost;
       return {
         ...rate,
-        cost: productPrice >= threshold ? 0 : rate.cost,
+        cost,
+        shippingDisplayKey: resolveShippingDisplayKey(cost),
       };
     });
   },

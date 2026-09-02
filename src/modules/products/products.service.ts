@@ -26,8 +26,8 @@ import { findVendorOwnerUserId } from '@modules/notifications/orderNotifications
 import { vendorsService } from '@modules/vendors/vendors.service';
 import { shippingService } from '@modules/shipping/shipping.service';
 import type { Transaction } from 'sequelize';
-import { resolvePdpPolicy } from './pdpPolicy';
-import { productDiscountPercent, taxInclusivePrice } from '@modules/pricing/displayMoney';
+import { resolvePdpPolicy, resolveCodEligibleAtPrice } from './pdpPolicy';
+import { productDiscountPercent, productShowMrp, taxInclusivePrice } from '@modules/pricing/displayMoney';
 import { roundMoney } from '@modules/pricing/money';
 import type {
   CreateProductRequest,
@@ -76,6 +76,7 @@ function mapProductResponse(product: Product, reviewCount = 0) {
     basePrice,
     compareAtPrice,
     discountPercent: productDiscountPercent(basePrice, compareAtPrice),
+    showMrp: productShowMrp(basePrice, compareAtPrice),
     specs: plain.specs && typeof plain.specs === 'object' ? plain.specs : {},
     highlights: Array.isArray(plain.highlights) ? plain.highlights : [],
     brand: plain.brand ?? null,
@@ -106,8 +107,23 @@ async function mapDetailResponse(product: Product, reviewCount = 0) {
         performanceScore: policy.vendorPerformanceScore,
       }
     : mapped.vendor;
+  const catalogProduct = {
+    categoryId: mapped.categoryId ?? product.categoryId ?? null,
+    codEnabled: product.codEnabled ?? null,
+    vendor,
+  };
+  const variants = await Promise.all(
+    mapped.variants.map(async (variant: { id: string; price: number; stock: number }) => ({
+      ...variant,
+      codEligibleAtUnitPrice: policy.codEnabled
+        ? await resolveCodEligibleAtPrice(catalogProduct, variant.price)
+        : false,
+    })),
+  );
+  const defaultVariant = variants[0];
   return {
     ...mapped,
+    variants,
     vendor,
     vendorFreeShippingThreshold,
     returnsAllowed: policy.returnsAllowed,
@@ -117,6 +133,12 @@ async function mapDetailResponse(product: Product, reviewCount = 0) {
     displayHsnCode: policy.hsnCode,
     taxInclusive: policy.taxInclusive,
     codAvailable: policy.codEnabled,
+    /** Unit price meets COD min/max — checkout `codAvailable` uses cart grand total instead. */
+    codEligibleAtUnitPrice: defaultVariant
+      ? defaultVariant.codEligibleAtUnitPrice
+      : policy.codEnabled
+        ? await resolveCodEligibleAtPrice(catalogProduct, mapped.basePrice)
+        : false,
     codMinOrderValue: policy.codMinOrderValue,
     codMaxOrderValue: policy.codMaxOrderValue,
     displayWarrantyMonths: policy.warrantyMonths,

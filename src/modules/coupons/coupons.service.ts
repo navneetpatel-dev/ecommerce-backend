@@ -24,6 +24,11 @@ import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { resolveItemAvailability, isProductCustomerVisible } from '@core/catalog/customerVisibility';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { coerceRupees, roundMoney } from '@modules/pricing/money';
+import {
+  resolveCartShippingPreviewForCoupon,
+  resolveProductShippingPreviewForCoupon,
+  type CouponShippingPreview,
+} from '@modules/cart/cartShippingPreview';
 import { logAudit } from '@modules/audit/audit.service';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import {
@@ -41,12 +46,30 @@ import type {
   CouponStatusRequest,
 } from './coupons.dto';
 
-async function previewShippingTotal(): Promise<number> {
+async function previewShippingTotal(
+  userId: string | null,
+  lines: CartLineForCoupon[],
+  productId?: string,
+): Promise<CouponShippingPreview> {
+  if (productId) {
+    const productShipping = await resolveProductShippingPreviewForCoupon(
+      userId,
+      productId,
+      lines[0]?.variantId,
+      lines[0]?.vendorId ?? null,
+    );
+    if (productShipping != null) return productShipping;
+  }
+  if (userId && lines.length > 0) {
+    return resolveCartShippingPreviewForCoupon(userId, lines);
+  }
   const cheapest = await ShippingRate.findOne({
     order: [['price', 'ASC']],
     attributes: ['price'],
   });
-  return Number(cheapest?.price ?? 0);
+  const total = Number(cheapest?.price ?? 0);
+  const vendorId = lines[0]?.vendorId ?? 'platform';
+  return { total, byVendor: lines.length > 0 ? { [vendorId]: total } : {} };
 }
 
 async function loadCartLines(userId: string): Promise<{
@@ -98,10 +121,12 @@ async function loadCartLines(userId: string): Promise<{
     });
     return {
       productId: String(product?.id ?? ''),
+      variantId: String(item.variant?.id ?? item.variantId ?? ''),
       categoryId: product?.categoryId ? String(product.categoryId) : null,
       vendorId: product?.vendorId ? String(product.vendorId) : null,
       unitPrice: Number(item.variant?.price ?? 0),
       quantity: Number(item.quantity ?? 0),
+      weightGrams: Number(item.variant?.weightGrams ?? 500),
       isCustomerVisible: availability.isAvailable,
     };
   });
@@ -138,10 +163,12 @@ async function loadProductPreviewLines(productId: string): Promise<CartLineForCo
   return [
     {
       productId: String(product.id),
+      variantId: String(variant.id),
       categoryId: product.categoryId ? String(product.categoryId) : null,
       vendorId: product.vendorId ? String(product.vendorId) : null,
       unitPrice: Number(variant.price ?? product.basePrice ?? 0),
       quantity,
+      weightGrams: Number(variant.weightGrams ?? 500),
       isCustomerVisible: true,
     },
   ];
@@ -660,7 +687,7 @@ export class CouponsService {
       throw new ValidationError(ERROR_MESSAGES.CART_EMPTY);
     }
 
-    const shippingTotal = await previewShippingTotal();
+    const shipping = await previewShippingTotal(userId, lines);
     const existingCodes = resolveCartCouponCodes(cart);
     const nextCode = code.trim().toUpperCase();
     const nextCodes = existingCodes.includes(nextCode)
@@ -671,7 +698,8 @@ export class CouponsService {
       codes: nextCodes,
       userId,
       lines,
-      shippingTotal,
+      shippingTotal: shipping.total,
+      shippingByVendor: shipping.byVendor,
     });
 
     if (!result.valid || result.coupons.length === 0) {
@@ -684,6 +712,11 @@ export class CouponsService {
       couponCodes: codes,
     });
 
+    const { cartService } = await import('@modules/cart/cart.service');
+    const cartView = await cartService.getCart(userId, null);
+    const payNowGrandTotal =
+      cartView.pricingPreview?.grandTotal ?? cartView.total ?? undefined;
+
     return {
       code: result.primaryCoupon?.code ?? codes[0]!,
       codes,
@@ -691,6 +724,7 @@ export class CouponsService {
       cashbackAmount: result.cashbackAmount,
       type: result.primaryCoupon?.type ?? result.coupons[0]!.type,
       vendorDiscountShares: result.vendorDiscountShares,
+      payNowGrandTotal,
     };
   }
 
@@ -733,12 +767,13 @@ export class CouponsService {
       };
     }
 
-    const shippingTotal = await previewShippingTotal();
+    const shipping = await previewShippingTotal(userId, lines);
     const result = await validateCouponSet({
       codes,
       userId,
       lines,
-      shippingTotal,
+      shippingTotal: shipping.total,
+      shippingByVendor: shipping.byVendor,
     });
 
     if (!result.valid || result.coupons.length === 0) {
@@ -800,7 +835,7 @@ export class CouponsService {
         : [];
     if (lines.length === 0) return [];
 
-    const shippingTotal = await previewShippingTotal();
+    const shipping = await previewShippingTotal(userId, lines, opts.productId);
     const now = new Date();
     const candidates = await Coupon.findAll({
       where: {
@@ -827,7 +862,8 @@ export class CouponsService {
         coupon,
         userId,
         lines,
-        shippingTotal,
+        shippingTotal: shipping.total,
+        shippingByVendor: shipping.byVendor,
       });
       if (result.valid) {
         eligible.push({

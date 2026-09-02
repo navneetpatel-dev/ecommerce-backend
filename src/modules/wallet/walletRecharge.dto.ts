@@ -57,3 +57,9 @@ export const VerifyWalletRechargeSchema = z
   );
 
 export type CreateWalletRechargeRequest = z.infer<typeof CreateWalletRechargeSchema>;
+
+export const WalletRechargePreviewSchema = z.object({
+  amountInr: z.coerce
+    .number({ invalid_type_error: 'Recharge amount must be a number' })
+    .finite('Recharge amount must be a valid number'),
+});

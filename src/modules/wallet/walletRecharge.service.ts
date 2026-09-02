@@ -110,6 +110,54 @@ export class WalletRechargeService {
     return { amount, pointsToCredit, settings };
   }
 
+  async previewRechargeAmount(userId: string, amountInr: number) {
+    const settings = await settingsService.getPlatformSettings();
+    if (!settings.walletRechargeEnabled) {
+      return {
+        amountInr: 0,
+        pointsToCredit: 0,
+        validationCode: 'disabled' as const,
+      };
+    }
+
+    const amount = roundMoney(amountInr);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return {
+        amountInr: amount,
+        pointsToCredit: 0,
+        validationCode: 'below-min' as const,
+      };
+    }
+
+    const rangeError = checkWalletRechargeAmountRange(amount, {
+      minInr: settings.walletMinRechargeInr,
+      maxInr: settings.walletMaxRechargeInr,
+    });
+    if (rangeError === 'below-min' || rangeError === 'above-max') {
+      return {
+        amountInr: amount,
+        pointsToCredit: 0,
+        validationCode: rangeError,
+      };
+    }
+
+    const pointsToCredit = roundMoney(amount * settings.pointsPerRupee);
+    const balance = await walletService.getBalance(userId);
+    if (balance + pointsToCredit > settings.walletMaxBalancePoints) {
+      return {
+        amountInr: amount,
+        pointsToCredit,
+        validationCode: 'max-balance' as const,
+      };
+    }
+
+    return {
+      amountInr: amount,
+      pointsToCredit,
+      validationCode: 'ok' as const,
+    };
+  }
+
   async createRecharge(
     userId: string,
     amountInr: number,

@@ -9,6 +9,8 @@ import { Cart } from '@database/models/cart.model';
 import { sequelize } from '@database/models';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { resolveItemAvailability, isProductCustomerVisible } from '@core/catalog/customerVisibility';
+import { productDiscountPercent, productShowMrp } from '@modules/pricing/displayMoney';
+import { roundMoney } from '@modules/pricing/money';
 
 function mapWishlistProduct(product: Product | null | undefined) {
   if (!product) return null;
@@ -23,6 +25,8 @@ function mapWishlistProduct(product: Product | null | undefined) {
   const stockFromVariants = variants.reduce((sum: number, variant: { stock: number }) => sum + variant.stock, 0);
   const vendor = plain.vendor ?? plain.Vendor ?? null;
   const stock = Number(plain.stock ?? stockFromVariants);
+  const basePrice = roundMoney(plain.basePrice);
+  const compareAtPrice = plain.compareAtPrice == null ? null : roundMoney(plain.compareAtPrice);
   const { isAvailable, unavailableReason } = resolveItemAvailability({
     product: plain,
     vendor,
@@ -33,7 +37,10 @@ function mapWishlistProduct(product: Product | null | undefined) {
   return {
     ...plain,
     variants,
-    basePrice: Number(plain.basePrice ?? 0),
+    basePrice,
+    compareAtPrice,
+    discountPercent: productDiscountPercent(basePrice, compareAtPrice),
+    showMrp: productShowMrp(basePrice, compareAtPrice),
     avgRating: Number(plain.avgRating ?? 0),
     stock,
     imageUrl: primaryImage,

@@ -79,6 +79,25 @@ describe('WalletRechargeService.validateRechargeAmount', () => {
   });
 });
 
+describe('WalletRechargeService.previewRechargeAmount', () => {
+  afterEach(() => mock.restoreAll());
+
+  it('returns preview points and ok validation for valid amount', async () => {
+    mock.method(settingsService, 'getPlatformSettings', async () => defaultSettings);
+    mock.method(walletService, 'getBalance', async () => 0);
+    const preview = await walletRechargeService.previewRechargeAmount('user-1', 500);
+    assert.equal(preview.validationCode, 'ok');
+    assert.equal(preview.pointsToCredit, 1000);
+  });
+
+  it('returns max-balance without throwing', async () => {
+    mock.method(settingsService, 'getPlatformSettings', async () => defaultSettings);
+    mock.method(walletService, 'getBalance', async () => 49900);
+    const preview = await walletRechargeService.previewRechargeAmount('user-1', 100);
+    assert.equal(preview.validationCode, 'max-balance');
+  });
+});
+
 describe('WalletRechargeService.handlePaymentFailed', () => {
   afterEach(() => mock.restoreAll());
 

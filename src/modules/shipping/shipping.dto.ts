@@ -17,7 +17,7 @@ export const GetShippingRatesSchema = z
     vendorId: z.string().uuid().optional(),
   })
   .superRefine((value, ctx) => {
-    if (!value.productId && value.weight == null) {
+    if (!value.productId && !value.vendorId && value.weight == null) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['weight'],

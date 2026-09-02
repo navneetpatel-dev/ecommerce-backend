@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { buildCheckoutOrderTotals } from '../checkoutOrderTotals';
+import {
+  buildCheckoutOrderTotals,
+  resolveShippingDisplayKey,
+  resolveTaxDisplayKey,
+  resolveVendorIdForShippingRates,
+} from '../checkoutOrderTotals';
 
 describe('buildCheckoutOrderTotals', () => {
   it('aggregates vendor breakdown amounts on the server', () => {
@@ -21,8 +26,53 @@ describe('buildCheckoutOrderTotals', () => {
 
     assert.equal(totals.merchandiseSubtotal, 1500);
     assert.equal(totals.shippingTotal, 50);
+    assert.equal(totals.shippingDisplayKey, 'PAID');
     assert.equal(totals.taxTotal, 189);
     assert.equal(totals.discountTotal, 10);
-    assert.equal(totals.taxDisplayKey, 'CGST_SGST');
+    assert.equal(totals.taxDisplayKey, 'GST');
+  });
+});
+
+describe('resolveTaxDisplayKey', () => {
+  it('returns IGST when only igst is present', () => {
+    assert.equal(
+      resolveTaxDisplayKey({ cgst: 0, sgst: 0, igst: 18 }),
+      'IGST',
+    );
+  });
+
+  it('returns GST when igst and cgst/sgst are both present', () => {
+    assert.equal(
+      resolveTaxDisplayKey({ cgst: 45, sgst: 45, igst: 99 }),
+      'GST',
+    );
+  });
+
+  it('returns CGST_SGST when only intrastate tax is present', () => {
+    assert.equal(
+      resolveTaxDisplayKey({ cgst: 45, sgst: 45, igst: 0 }),
+      'CGST_SGST',
+    );
+  });
+});
+
+describe('resolveShippingDisplayKey', () => {
+  it('returns FREE when shipping is zero', () => {
+    assert.equal(resolveShippingDisplayKey(0), 'FREE');
+  });
+
+  it('returns PAID when shipping is positive', () => {
+    assert.equal(resolveShippingDisplayKey(50), 'PAID');
+  });
+});
+
+describe('resolveVendorIdForShippingRates', () => {
+  it('maps platform vendor to null for rate scoping', () => {
+    assert.equal(resolveVendorIdForShippingRates('platform'), null);
+  });
+
+  it('passes through real vendor ids for rate scoping', () => {
+    const vendorId = '11111111-1111-1111-1111-111111111111';
+    assert.equal(resolveVendorIdForShippingRates(vendorId), vendorId);
   });
 });

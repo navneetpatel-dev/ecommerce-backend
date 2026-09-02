@@ -15,7 +15,7 @@ import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
 import { paymentsService } from '@modules/payments/payments.service';
 import { cartService } from '@modules/cart/cart.service';
-import { getRatesForQuote } from '@modules/shipping/shipping.service';
+import { resolveVendorShippingQuote } from '@modules/shipping/vendorShippingQuote';
 import { taxService } from '@modules/tax/tax.service';
 import { settingsService } from '@modules/settings/settings.service';
 import { categoriesService } from '@modules/categories/categories.service';
@@ -28,7 +28,7 @@ import {
 } from '@modules/coupons/couponEngine';
 import { pricingService } from '@modules/pricing/pricing.service';
 import { fromPaise, roundMoney, toPaise } from '@modules/pricing/money';
-import { checkoutAmountDue, lineSubtotal, lineTotal } from '@modules/pricing/displayMoney';
+import { checkoutAmountDue, lineTotal } from '@modules/pricing/displayMoney';
 import {
   clampWalletApply,
   settleSubMinRazorpayRemainder,
@@ -58,7 +58,7 @@ import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { resolveCodForCatalogItems } from '@modules/products/pdpPolicy';
 import { notifyOrderConfirmed } from '@modules/notifications/orderNotifications';
 import { notificationsService } from '@modules/notifications/notifications.service';
-import { buildCheckoutOrderTotals } from './checkoutOrderTotals';
+import { buildCheckoutOrderTotals, resolveShippingDisplayKey, resolveTaxDisplayKey } from './checkoutOrderTotals';
 
 function groupBy<T>(array: T[], keyFn: (item: T) => string): Record<string, T[]> {
   return array.reduce((acc, item) => {
@@ -143,10 +143,6 @@ function requestedMethod(method?: string): 'STANDARD' | 'EXPRESS' {
   return normalized;
 }
 
-function lineWeightGrams(item: CartItem & { variant: ProductVariant & { product: any } }) {
-  return item.quantity * Number(item.variant.weightGrams ?? 500);
-}
-
 function vendorOriginState(vendor: Vendor | undefined): string {
   return String(vendor?.state ?? '').trim();
 }
@@ -171,10 +167,12 @@ function toCouponLines(
     const product = item.variant.product;
     return {
       productId: String(product.id),
+      variantId: String(item.variantId),
       categoryId: product.categoryId ? String(product.categoryId) : null,
       vendorId: product.vendorId ? String(product.vendorId) : null,
       unitPrice: Number(item.variant.price),
       quantity: Number(item.quantity),
+      weightGrams: Number(item.variant.weightGrams ?? 500),
       isCustomerVisible: true,
     };
   });
@@ -295,24 +293,23 @@ export class CheckoutService {
     }> = [];
 
     for (const [vendorId, items] of Object.entries(itemsByVendor)) {
-      const subtotal = items.reduce(
-        (sum, item) => sum + lineSubtotal(item.variant.price, item.quantity),
-        0,
-      );
       const vendor = vendorMap[vendorId];
       const method = requestedMethod(data.shippingMethodByVendor[vendorId]);
-      const rates = await getRatesForQuote({
-        pincode: shippingAddress.pincode,
-        state: shippingAddress.state,
-        weightGrams: items.reduce((sum, item) => sum + lineWeightGrams(item), 0),
+      const shipping = await resolveVendorShippingQuote({
+        destination: {
+          pincode: shippingAddress.pincode,
+          state: shippingAddress.state,
+        },
+        vendorId: vendorId !== 'platform' ? vendorId : null,
         method,
+        lines: items.map((item) => ({
+          unitPrice: Number(item.variant.price),
+          quantity: Number(item.quantity),
+          weightGrams: item.variant.weightGrams,
+        })),
       });
-      const rate = rates.find((candidate) => candidate.method === method);
-      if (!rate) throw new ValidationError(ERROR_MESSAGES.SHIPPING_RATE_UNAVAILABLE);
-      const shippingCost =
-        rate.freeShippingThreshold != null && subtotal >= rate.freeShippingThreshold
-          ? 0
-          : rate.cost;
+      if (!shipping.rate) throw new ValidationError(ERROR_MESSAGES.SHIPPING_RATE_UNAVAILABLE);
+      const shippingCost = shipping.shippingCost;
       shippingByVendor[vendorId] = shippingCost;
       const resolved = await resolveItemLineRates(items, vendor, settings.defaultCommissionRate);
       baseVendorRows.push({
@@ -415,12 +412,14 @@ export class CheckoutService {
         }),
         subtotal: r.subtotal,
         shippingCost: r.shippingCharged,
+        shippingDisplayKey: resolveShippingDisplayKey(r.shippingCharged),
         tax: {
           cgst: r.tax.cgst,
           sgst: r.tax.sgst,
           igst: r.tax.igst,
           total: r.tax.total,
         },
+        taxDisplayKey: resolveTaxDisplayKey(r.tax),
         discount: r.merchandiseDiscount + r.shippingDiscount,
         tcsAmount: r.tcsAmount,
         commissionAmount: r.commissionAmount,
@@ -508,22 +507,21 @@ export class CheckoutService {
 
       for (const [vendorId, items] of Object.entries(itemsByVendor)) {
         const method = requestedMethod(data.shippingMethodByVendor[vendorId]);
-        const vendorSubtotal = items.reduce(
-          (sum, item) => sum + lineSubtotal(item.variant.price, item.quantity),
-          0,
-        );
-        const rates = await getRatesForQuote({
-          pincode: shippingAddress.pincode,
-          state: shippingAddress.state,
-          weightGrams: items.reduce((sum, item) => sum + lineWeightGrams(item), 0),
+        const shipping = await resolveVendorShippingQuote({
+          destination: {
+            pincode: shippingAddress.pincode,
+            state: shippingAddress.state,
+          },
+          vendorId: vendorId !== 'platform' ? vendorId : null,
           method,
+          lines: items.map((item) => ({
+            unitPrice: Number(item.variant.price),
+            quantity: Number(item.quantity),
+            weightGrams: item.variant.weightGrams,
+          })),
         });
-        const rate = rates.find((candidate) => candidate.method === method);
-        if (!rate) throw new ValidationError(ERROR_MESSAGES.SHIPPING_RATE_UNAVAILABLE);
-        const shippingCost =
-          rate.freeShippingThreshold != null && vendorSubtotal >= rate.freeShippingThreshold
-            ? 0
-            : rate.cost;
+        if (!shipping.rate) throw new ValidationError(ERROR_MESSAGES.SHIPPING_RATE_UNAVAILABLE);
+        const shippingCost = shipping.shippingCost;
         const vendor = vendorMap[vendorId];
         const resolved = await resolveItemLineRates(items, vendor, settings.defaultCommissionRate);
         shippingByVendor[vendorId] = shippingCost;

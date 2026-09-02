@@ -6,7 +6,11 @@ import { type UnavailableReason } from '@core/constants/statuses';
 import { resolveItemAvailability } from '@core/catalog/customerVisibility';
 import { lineSubtotal } from '@modules/pricing/displayMoney';
 import { roundMoney } from '@modules/pricing/money';
-import { getRatesForQuote } from '@modules/shipping/shipping.service';
+import {
+  computeVendorShippingWeightsByVendor,
+} from '@modules/shipping/shippingWeight';
+import { resolveVendorShippingQuote } from '@modules/shipping/vendorShippingQuote';
+import { resolveShippingDisplayKey } from '@modules/checkout/checkoutOrderTotals';
 import { cartRepository } from './cart.repository';
 import { MAX_CART_LINE_QUANTITY } from './cart.constants';
 import { Cart } from '@database/models/cart.model';
@@ -56,11 +60,23 @@ export type CartView = {
     discount: number;
     taxTotal: number;
     shippingTotal: number;
+    shippingDisplayKey: 'FREE' | 'PAID';
     grandTotal: number;
   };
-  appliedCoupon?: { code: string; discount: number; cashbackAmount: number; type: string } | null;
+  appliedCoupon?: {
+    code: string;
+    discount: number;
+    cashbackAmount: number;
+    type: string;
+    vendorDiscountShares?: Record<string, number>;
+    vendorShippingDiscountShares?: Record<string, number>;
+    vendorBorneDiscountShares?: Record<string, number>;
+    payNowGrandTotal?: number;
+  } | null;
   appliedCoupons?: Array<{ code: string; discount: number; cashbackAmount: number; type: string }>;
   removedCouponReason?: string | null;
+  /** Diagnostic/read-only weights; shipping APIs always recompute them server-side. */
+  vendorShippingWeights?: Record<string, number>;
 };
 
 function mapCartItem(item: CartItem & { variant?: ProductVariant & { product?: any } }): CartViewItem {
@@ -187,12 +203,28 @@ export class CartService {
       merchandiseDiscountTotal: appliedCoupon?.discount ?? 0,
     });
 
+    if (appliedCoupon && appliedCoupon.cashbackAmount > 0) {
+      appliedCoupon = {
+        ...appliedCoupon,
+        payNowGrandTotal: pricingPreview.grandTotal,
+      };
+    }
+
+    const vendorShippingWeights = computeVendorShippingWeightsByVendor(
+      available.map((item) => ({
+        vendorId: item.product.vendor.id,
+        quantity: item.quantity,
+        variant: item.variant,
+      })),
+    );
+
     return {
       id: String(cart.id),
       items: mappedItems,
       merchandiseSubtotal,
       total: pricingPreview.grandTotal,
       pricingPreview,
+      vendorShippingWeights,
       appliedCoupon,
       appliedCoupons,
       removedCouponReason,
@@ -217,6 +249,7 @@ export class CartService {
         discount: 0,
         taxTotal: 0,
         shippingTotal: 0,
+        shippingDisplayKey: 'FREE',
         grandTotal: 0,
       };
     }
@@ -292,32 +325,17 @@ export class CartService {
       }
       const fallback = lineMeta[0];
       const merchandiseDiscount = input.vendorDiscountShares[vendorId] ?? 0;
-      const vendorSubtotal = vendorItems.reduce(
-        (sum, item) => sum + item.lineSubtotal,
-        0,
-      );
-      const weightGrams = vendorItems.reduce(
-        (sum, item) => sum + item.quantity * Number(item.variant.weightGrams ?? 500),
-        0,
-      );
-
-      let shippingCost = 0;
-      if (shippingAddress) {
-        const rates = await getRatesForQuote({
-          pincode: shippingAddress.pincode,
-          state: shippingAddress.state,
-          weightGrams,
-          method: 'STANDARD',
-          vendorId: vendorId !== 'platform' ? vendorId : null,
-        });
-        const rate = rates.find((candidate) => candidate.method === 'STANDARD') ?? rates[0];
-        if (rate) {
-          shippingCost =
-            rate.freeShippingThreshold != null && vendorSubtotal >= rate.freeShippingThreshold
-              ? 0
-              : rate.cost;
-        }
-      }
+      const shipping = await resolveVendorShippingQuote({
+        destination: shippingAddress,
+        vendorId: vendorId !== 'platform' ? vendorId : null,
+        method: 'STANDARD',
+        lines: vendorItems.map((item) => ({
+          unitPrice: item.product.price,
+          quantity: item.quantity,
+          weightGrams: item.variant.weightGrams,
+        })),
+      });
+      const shippingCost = shipping.shippingCost;
 
       const shippingDiscount = Math.min(
         shippingCost,
@@ -352,6 +370,7 @@ export class CartService {
       discount: roundMoney(discount),
       taxTotal: roundMoney(taxTotal),
       shippingTotal: roundMoney(shippingTotal),
+      shippingDisplayKey: resolveShippingDisplayKey(shippingTotal),
       grandTotal: roundMoney(grandTotal),
     };
   }

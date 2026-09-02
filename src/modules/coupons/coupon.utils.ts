@@ -3,10 +3,12 @@ import { allocateProportionally, fromPaise, toPaise, roundMoney } from '@modules
 
 export type CartLineForCoupon = {
   productId: string;
+  variantId?: string;
   categoryId: string | null;
   vendorId: string | null;
   unitPrice: number;
   quantity: number;
+  weightGrams?: number | null;
   /** When false, line is excluded from coupon eligibility (customerVisible gate). */
   isCustomerVisible?: boolean;
 };

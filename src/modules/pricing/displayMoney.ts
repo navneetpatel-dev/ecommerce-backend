@@ -189,6 +189,13 @@ export function checkoutAmountDue(
   return roundMoney(Math.max(0, roundMoney(totalAmount) - roundMoney(walletAmountUsed)));
 }
 
+export function productShowMrp(basePrice: unknown, compareAtPrice: unknown): boolean {
+  const price = roundMoney(basePrice);
+  const compare =
+    compareAtPrice != null && compareAtPrice !== '' ? roundMoney(compareAtPrice) : null;
+  return compare != null && compare > price;
+}
+
 export function productDiscountPercent(
   basePrice: unknown,
   compareAtPrice: unknown,

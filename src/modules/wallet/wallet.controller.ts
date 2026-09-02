@@ -6,6 +6,7 @@ import { walletRechargeService } from './walletRecharge.service';
 import {
   CreateWalletRechargeSchema,
   VerifyWalletRechargeSchema,
+  WalletRechargePreviewSchema,
 } from './walletRecharge.dto';
 import { exportWalletStatementDirect } from './walletStatement.service';
 import { WalletStatementSchema } from './walletStatement.dto';
@@ -24,6 +25,15 @@ export const createRecharge = asyncHandler(async (req: Request, res: Response) =
     body.idempotencyKey,
   );
   res.json(ok(checkout));
+});
+
+export const previewRecharge = asyncHandler(async (req: Request, res: Response) => {
+  const query = WalletRechargePreviewSchema.parse(req.query);
+  const preview = await walletRechargeService.previewRechargeAmount(
+    req.user!.id,
+    query.amountInr,
+  );
+  res.json(ok(preview));
 });
 
 export const verifyRecharge = asyncHandler(async (req: Request, res: Response) => {

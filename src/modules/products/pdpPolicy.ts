@@ -167,3 +167,23 @@ export async function resolveCodForCatalogItems(
   }
   return true;
 }
+
+export async function resolveCodEligibleAtPrice(
+  product: {
+    categoryId?: string | null;
+    codEnabled?: boolean | null;
+    vendor?: { codEnabled?: boolean | null } | null;
+  },
+  unitPrice: number,
+): Promise<boolean> {
+  return resolveCodForCatalogItems(
+    [
+      {
+        categoryId: product.categoryId ?? null,
+        codEnabled: product.codEnabled ?? null,
+        vendor: product.vendor ?? null,
+      },
+    ],
+    unitPrice,
+  );
+}

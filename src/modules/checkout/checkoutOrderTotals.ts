@@ -1,6 +1,9 @@
+export type ShippingDisplayKey = 'FREE' | 'PAID';
+
 export type CheckoutOrderTotals = {
   merchandiseSubtotal: number;
   shippingTotal: number;
+  shippingDisplayKey: ShippingDisplayKey;
   taxTotal: number;
   cgst: number;
   sgst: number;
@@ -16,6 +19,31 @@ type VendorBreakdownRow = {
   tax: { cgst: number; sgst: number; igst: number; total: number };
   discount: number;
 };
+
+export function resolveVendorIdForShippingRates(vendorId: string): string | null {
+  return vendorId !== 'platform' ? vendorId : null;
+}
+
+export function resolveShippingDisplayKey(shippingCost: number): ShippingDisplayKey {
+  return shippingCost === 0 ? 'FREE' : 'PAID';
+}
+
+export function resolveTaxDisplayKey(tax: {
+  cgst: number;
+  sgst: number;
+  igst: number;
+}): CheckoutOrderTotals['taxDisplayKey'] {
+  if (tax.igst > 0 && (tax.cgst > 0 || tax.sgst > 0)) {
+    return 'GST';
+  }
+  if (tax.igst > 0) {
+    return 'IGST';
+  }
+  if (tax.cgst > 0 || tax.sgst > 0) {
+    return 'CGST_SGST';
+  }
+  return 'GST';
+}
 
 export function buildCheckoutOrderTotals(
   vendorBreakdowns: VendorBreakdownRow[],
@@ -36,16 +64,16 @@ export function buildCheckoutOrderTotals(
     discountTotal += row.discount;
   }
 
-  let taxDisplayKey: CheckoutOrderTotals['taxDisplayKey'] = 'GST';
-  if (igst > 0 && cgst === 0 && sgst === 0) {
-    taxDisplayKey = 'IGST';
-  } else if (cgst > 0 || sgst > 0) {
-    taxDisplayKey = 'CGST_SGST';
-  }
+  let taxDisplayKey: CheckoutOrderTotals['taxDisplayKey'] = resolveTaxDisplayKey({
+    cgst,
+    sgst,
+    igst,
+  });
 
   return {
     merchandiseSubtotal,
     shippingTotal,
+    shippingDisplayKey: resolveShippingDisplayKey(shippingTotal),
     taxTotal: cgst + sgst + igst,
     cgst,
     sgst,

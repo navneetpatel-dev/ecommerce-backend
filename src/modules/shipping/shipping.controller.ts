@@ -2,12 +2,15 @@ import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { pageLimitQuerySchema } from '@core/http/pagination';
+import { COOKIES } from '@core/constants/http';
 import { shippingService } from './shipping.service';
 import { WebhookPayloadSchema, GetShippingRatesSchema } from './shipping.dto';
 
 export const getRates = asyncHandler(async (req: Request, res: Response) => {
   const query = GetShippingRatesSchema.parse(req.query);
-  const rates = await shippingService.quotePublicRates(query);
+  const userId = req.user?.id ?? null;
+  const sessionId = (req.cookies?.[COOKIES.SESSION_ID] as string | undefined) ?? null;
+  const rates = await shippingService.quotePublicRates(query, { userId, sessionId });
   res.json(ok(rates));
 });
 

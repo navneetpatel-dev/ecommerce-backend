@@ -4,7 +4,7 @@ import { validate } from '@middleware/validate.middleware';
 import { validateCreateWalletRecharge } from '@middleware/validateWalletRecharge.middleware';
 import { reportExportGuard } from '@modules/reports/reportExportGuard';
 import * as walletController from './wallet.controller';
-import { VerifyWalletRechargeSchema } from './walletRecharge.dto';
+import { VerifyWalletRechargeSchema, WalletRechargePreviewSchema } from './walletRecharge.dto';
 import { WalletStatementSchema } from './walletStatement.dto';
 import { ListTransactionsSchema } from './wallet.dto';
 
@@ -17,6 +17,13 @@ router.post(
   authenticate,
   validateCreateWalletRecharge,
   walletController.createRecharge,
+);
+
+router.get(
+  '/recharge/preview',
+  authenticate,
+  validate(WalletRechargePreviewSchema, 'query'),
+  walletController.previewRecharge,
 );
 
 router.post(

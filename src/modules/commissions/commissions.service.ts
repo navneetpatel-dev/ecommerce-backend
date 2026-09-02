@@ -1,3 +1,4 @@
+import { fromPaise } from '@modules/pricing/money';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { CommissionInvoice } from '@database/models/commissionInvoice.model';
 import { Vendor } from '@database/models/vendor.model';
@@ -9,12 +10,16 @@ import { renderCommissionInvoicePdf } from './commissionInvoice.service';
 
 function serializeCommission(row: CommissionLedger) {
   const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
-  const { Vendor: vendorAssoc, ...rest } = plain;
+  const { Vendor: vendorAssoc } = plain;
   return {
-    ...rest,
+    id: plain.id,
+    vendorId: plain.vendorId,
+    subOrderId: plain.subOrderId,
     saleAmount: Number(plain.saleAmount),
     commissionRate: Number(plain.commissionRate),
     commissionAmount: Number(plain.commissionAmount),
+    status: plain.status,
+    createdAt: plain.createdAt,
     vendorName: vendorAssoc?.businessName ?? null,
   };
 }
@@ -109,9 +114,9 @@ export class CommissionsService {
           vendorId: plain.vendorId,
           payoutId: plain.payoutId,
           vendorName: plain.vendor?.businessName ?? null,
-          taxablePaise: Number(plain.taxablePaise),
-          gstPaise: Number(plain.gstPaise),
-          totalPaise: Number(plain.totalPaise),
+          taxableAmount: fromPaise(Number(plain.taxablePaise)),
+          gstAmount: fromPaise(Number(plain.gstPaise)),
+          totalAmount: fromPaise(Number(plain.totalPaise)),
           issuedAt: plain.issuedAt,
         };
       }),

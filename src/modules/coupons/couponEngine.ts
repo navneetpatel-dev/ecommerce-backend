@@ -172,6 +172,19 @@ export async function validateCoupon(input: ValidateCouponInput): Promise<Valida
 
   const eligibleSubtotal = eligibleLines.reduce((sum, line) => sum + lineAmount(line), 0);
   const eligibleQty = eligibleLines.reduce((sum, line) => sum + Number(line.quantity), 0);
+  const eligibleVendorIds = new Set(
+    eligibleLines.map((line) => line.vendorId ?? 'platform'),
+  );
+  const eligibleShippingByVendor = input.shippingByVendor
+    ? Object.fromEntries(
+        Object.entries(input.shippingByVendor).filter(([vendorId]) =>
+          eligibleVendorIds.has(vendorId),
+        ),
+      )
+    : undefined;
+  const eligibleShippingTotal = eligibleShippingByVendor
+    ? Object.values(eligibleShippingByVendor).reduce((sum, amount) => sum + amount, 0)
+    : shippingTotal;
 
   if (coupon.minOrderValue != null && eligibleSubtotal < Number(coupon.minOrderValue)) {
     return fail(ERROR_MESSAGES.COUPON_MIN_ORDER, ERROR_CODES.COUPON_MIN_ORDER);
@@ -241,7 +254,7 @@ export async function validateCoupon(input: ValidateCouponInput): Promise<Valida
   const { discount, cashbackAmount, freeShipping, configInvalid } = computeTypeDiscount(
     coupon,
     eligibleLines,
-    shippingTotal,
+    eligibleShippingTotal,
   );
 
   if (configInvalid) {
@@ -254,8 +267,8 @@ export async function validateCoupon(input: ValidateCouponInput): Promise<Valida
   }
 
   let vendorDiscountShares: Record<string, number> = {};
-  if (freeShipping && input.shippingByVendor) {
-    vendorDiscountShares = { ...input.shippingByVendor };
+  if (freeShipping && eligibleShippingByVendor) {
+    vendorDiscountShares = { ...eligibleShippingByVendor };
     const shippingSum = Object.values(vendorDiscountShares).reduce((s, n) => s + n, 0);
     if (shippingSum > 0 && Math.abs(shippingSum - discount) > 0.01) {
       vendorDiscountShares = prorateDiscount(discount, vendorDiscountShares);

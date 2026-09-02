@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authenticate } from '@middleware/auth.middleware';
+import { authenticate, optionalAuthenticate } from '@middleware/auth.middleware';
 import { authorize } from '@middleware/rbac.middleware';
 import { validate } from '@middleware/validate.middleware';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
@@ -13,7 +13,12 @@ import * as shippingController from './shipping.controller';
 
 const router = Router();
 
-router.get('/rates', validate(GetShippingRatesSchema, 'query'), shippingController.getRates);
+router.get(
+  '/rates',
+  optionalAuthenticate,
+  validate(GetShippingRatesSchema, 'query'),
+  shippingController.getRates,
+);
 
 router.get('/tracking/:trackingNumber', shippingController.getShipmentByTracking);
 
