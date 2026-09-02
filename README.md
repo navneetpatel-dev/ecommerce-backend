@@ -183,8 +183,7 @@ ecommerce/
 │   └── seeders/         # Initial data
 ├── logs/                # Log files (auto-created)
 ├── dist/                # Compiled output
-├── docker-compose.yml   # Postgres + Redis (dev)
-└── Dockerfile           # Optional production API image
+└── docker-compose.yml   # Postgres + Redis (dev)
 ```
 
 ## Environment Variables
@@ -194,7 +193,7 @@ Key environment variables (see `.env.example` for full list):
 ```bash
 # Server
 NODE_ENV=development
-PORT=3000
+PORT=9000
 
 # Database
 DB_HOST=localhost
@@ -293,12 +292,9 @@ docker compose -f docker-compose.prod.yml up -d
 npm run db:migrate
 ```
 
-2. **Optional — build an API image**:
-```bash
-docker build -t ecommerce-backend:latest .
-```
-
-Or deploy to your container orchestration platform (Kubernetes, ECS, etc.)
+2. **Deploy the API** as a Node process (`npm run build && npm start`), with
+   `START_WORKERS_IN_API=false` and a separate `npm run start:worker` for background jobs.
+   Point `DB_HOST` and `REDIS_URL` at the hosts above.
 
 ## Troubleshooting
 

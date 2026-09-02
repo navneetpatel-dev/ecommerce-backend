@@ -82,12 +82,6 @@ docker compose -f docker-compose.prod.yml up -d
 npm run db:migrate
 ```
 
-To build an API image without Compose:
-
-```bash
-docker build -t ecommerce-backend:latest .
-```
-
 ## Troubleshooting
 
 ### Port Already in Use
