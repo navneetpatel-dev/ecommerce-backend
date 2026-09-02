@@ -5,6 +5,8 @@ import type { ReportExportFormat } from '@modules/reports/engine/csvExporter';
 import type { AsyncExportResult } from '@modules/reports/engine/reportEngine';
 import { dateBetween } from '@modules/reports/engine/queryHelpers';
 import { reportExportConfig } from '@modules/reports/reportExportConfig';
+import { areQueuesReady } from '@config/queue';
+import { env } from '@config/env';
 import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { roleNameOf } from '@utils/userRole';
 import type { PermissionKey } from '@core/permissions/permissionKeys';
@@ -36,9 +38,12 @@ export async function exportWalletStatement(input: {
   format: ReportExportFormat;
 }): Promise<AsyncExportResult> {
   const rowCount = await countWalletStatementRows(input.actor.id, input.from, input.to);
+  const inlineCapableFormat = input.format === 'xlsx' || input.format === 'csv';
   const processInline =
+    inlineCapableFormat &&
     !reportExportConfig.isProduction &&
-    rowCount <= reportExportConfig.walletStatementFastPathMaxRows;
+    rowCount <= reportExportConfig.walletStatementFastPathMaxRows &&
+    (!areQueuesReady() || env.START_WORKERS_IN_API);
 
   return reportEngine.runExport(
     input.actor,

@@ -535,6 +535,28 @@ export class ReportEngine {
     const pending = await findPendingExport(exportKey);
     if (pending) {
       if (options.processInline) {
+        if (pending.status === 'READY') {
+          return {
+            async: true,
+            exportId: pending.id,
+            status: 'READY',
+            format: (pending.format as ReportExportFormat) || exportFormat,
+            rowCount: pending.rowCount,
+            rowCountKnown: true,
+            deduped: true,
+          };
+        }
+        if (pending.status === 'PROCESSING') {
+          return {
+            async: true,
+            exportId: pending.id,
+            status: 'PROCESSING',
+            format: (pending.format as ReportExportFormat) || exportFormat,
+            rowCount: pending.rowCount,
+            rowCountKnown: pending.rowCount > 0,
+            deduped: true,
+          };
+        }
         return this.finishInlineExport(pending.id, exportFormat, { deduped: true });
       }
       await requeuePendingExportIfNeeded(pending, this.processExportJob.bind(this));
