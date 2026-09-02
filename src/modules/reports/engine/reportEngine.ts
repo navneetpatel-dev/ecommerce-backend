@@ -991,8 +991,12 @@ export class ReportEngine {
     }
 
     if (log.status === 'PENDING' || log.status === 'PROCESSING') {
-      await this.ensureExportJobQueued(log);
-      log = (await ReportExportLog.findByPk(exportId)) ?? log;
+      void this.ensureExportJobQueued(log).catch((err) =>
+        logger.warn('Export recovery skipped', {
+          exportLogId: log.id,
+          error: err instanceof Error ? err.message : err,
+        }),
+      );
     }
 
     const etag = statusEtag(log);

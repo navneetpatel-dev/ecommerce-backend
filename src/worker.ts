@@ -6,6 +6,7 @@ import { connectDatabase } from '@config/db';
 import { connectRedis } from '@config/redis';
 import { connectQueues, closeQueues, areQueuesReady } from '@config/queue';
 import { logger } from '@core/logger';
+import { env } from '@config/env';
 import { couponsService } from '@modules/coupons/coupons.service';
 import { startBackgroundWorkers, stopBackgroundWorkers } from '@jobs/index';
 import '@database/models';
@@ -22,29 +23,33 @@ async function bootstrap() {
   if (!areQueuesReady()) {
     throw new Error('BullMQ queues failed to connect');
   }
-  await startBackgroundWorkers();
-  logger.info('Background worker process ready');
+  const scope = env.START_WORKERS_IN_API ? 'report-export-only' : 'full';
+  await startBackgroundWorkers(scope);
+  logger.info('Background worker process ready', { scope });
 
-  const runCouponAlerts = () => {
-    void couponsService.notifyExpiringAndNearLimit().then(
-      (result) => {
-        if (result.notified > 0) {
-          logger.info('Coupon alert job completed', result);
-        }
-      },
-      (error) => {
-        logger.warn('Coupon alert job failed', {
-          error: error instanceof Error ? error.message : error,
-        });
-      },
-    );
-  };
-  runCouponAlerts();
-  const couponAlertTimer = setInterval(runCouponAlerts, COUPON_ALERT_INTERVAL_MS);
+  let couponAlertTimer: ReturnType<typeof setInterval> | undefined;
+  if (scope === 'full') {
+    const runCouponAlerts = () => {
+      void couponsService.notifyExpiringAndNearLimit().then(
+        (result) => {
+          if (result.notified > 0) {
+            logger.info('Coupon alert job completed', result);
+          }
+        },
+        (error) => {
+          logger.warn('Coupon alert job failed', {
+            error: error instanceof Error ? error.message : error,
+          });
+        },
+      );
+    };
+    runCouponAlerts();
+    couponAlertTimer = setInterval(runCouponAlerts, COUPON_ALERT_INTERVAL_MS);
+  }
 
   const shutdown = async (signal: string) => {
     logger.info(`${signal} received — stopping workers`);
-    clearInterval(couponAlertTimer);
+    if (couponAlertTimer) clearInterval(couponAlertTimer);
     await stopBackgroundWorkers();
     await closeQueues();
     process.exit(0);

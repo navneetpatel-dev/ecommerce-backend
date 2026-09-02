@@ -12,28 +12,43 @@ import {
 import { runReportExportCleanup } from './reportExportCleanup.processor';
 import { scheduleWeeklyReportsJob } from './scheduledReports.processor';
 
+export type BackgroundWorkerScope = 'full' | 'api' | 'report-export-only';
+
 let emailWorkers: Worker[] = [];
 let reportExportWorker: Worker | null = null;
 let s3OrphanCleanupWorker: Worker | null = null;
 let workersStarted = false;
 
-export async function startBackgroundWorkers(): Promise<void> {
+/** Report-export jobs run PDF generation and must not share the API event loop. */
+export async function startBackgroundWorkers(
+  scope: BackgroundWorkerScope = 'full',
+): Promise<void> {
   if (workersStarted) return;
-  emailWorkers = startEmailWorkers();
-  reportExportWorker = startReportExportWorker();
-  s3OrphanCleanupWorker = startS3OrphanCleanupWorker();
-  await scheduleS3OrphanCleanupJob();
-  await scheduleWeeklyReportsJob();
-  if (areQueuesReady()) {
-    void runReportExportCleanup().catch((err) =>
-      logger.warn('Report export cleanup on startup skipped', {
-        error: err instanceof Error ? err.message : err,
-      }),
-    );
+
+  const includeApiWorkers = scope === 'full' || scope === 'api';
+  const includeReportExport = scope === 'full' || scope === 'report-export-only';
+
+  if (includeApiWorkers) {
+    emailWorkers = startEmailWorkers();
+    s3OrphanCleanupWorker = startS3OrphanCleanupWorker();
+    await scheduleS3OrphanCleanupJob();
+    await scheduleWeeklyReportsJob();
+    startNotificationScheduler();
   }
-  startNotificationScheduler();
+
+  if (includeReportExport) {
+    reportExportWorker = startReportExportWorker();
+    if (areQueuesReady()) {
+      void runReportExportCleanup().catch((err) =>
+        logger.warn('Report export cleanup on startup skipped', {
+          error: err instanceof Error ? err.message : err,
+        }),
+      );
+    }
+  }
+
   workersStarted = true;
-  logger.info('Background workers ready');
+  logger.info('Background workers ready', { scope });
 }
 
 export async function stopBackgroundWorkers(): Promise<void> {

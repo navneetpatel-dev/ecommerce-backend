@@ -19,7 +19,10 @@ async function bootstrap() {
     try {
       await connectQueues();
       if (areQueuesReady() && env.START_WORKERS_IN_API) {
-        await startBackgroundWorkers();
+        await startBackgroundWorkers('api');
+        logger.info(
+          'Report exports run in a separate process — start `npm run worker:dev` in another terminal',
+        );
       } else if (areQueuesReady() && !env.START_WORKERS_IN_API) {
         logger.info(
           'Background workers skipped in API process — run `npm run worker` separately',
