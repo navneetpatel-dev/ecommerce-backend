@@ -58,6 +58,7 @@ import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { resolveCodForCatalogItems } from '@modules/products/pdpPolicy';
 import { notifyOrderConfirmed } from '@modules/notifications/orderNotifications';
 import { notificationsService } from '@modules/notifications/notifications.service';
+import { buildCheckoutOrderTotals } from './checkoutOrderTotals';
 
 function groupBy<T>(array: T[], keyFn: (item: T) => string): Record<string, T[]> {
   return array.reduce((acc, item) => {
@@ -250,6 +251,7 @@ export class CheckoutService {
     appliedCoupon: { code: string; discount: number; cashbackAmount?: number } | null;
     appliedCoupons: Array<{ code: string; discount: number; cashbackAmount?: number }>;
     codAvailable: boolean;
+    orderTotals: ReturnType<typeof buildCheckoutOrderTotals>;
   }> {
     const cart = await loadUserCart(userId);
 
@@ -456,6 +458,7 @@ export class CheckoutService {
     return {
       vendorBreakdowns,
       grandTotal,
+      orderTotals: buildCheckoutOrderTotals(vendorBreakdowns),
       cashbackAmount,
       walletBalance,
       walletAmountToUse,
