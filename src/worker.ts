@@ -6,8 +6,11 @@ import { connectDatabase } from '@config/db';
 import { connectRedis } from '@config/redis';
 import { connectQueues, closeQueues, areQueuesReady } from '@config/queue';
 import { logger } from '@core/logger';
+import { couponsService } from '@modules/coupons/coupons.service';
 import { startBackgroundWorkers, stopBackgroundWorkers } from '@jobs/index';
 import '@database/models';
+
+const COUPON_ALERT_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 async function bootstrap() {
   await connectDatabase();
@@ -20,10 +23,28 @@ async function bootstrap() {
     throw new Error('BullMQ queues failed to connect');
   }
   await startBackgroundWorkers();
-  logger.info('Email worker process ready');
+  logger.info('Background worker process ready');
+
+  const runCouponAlerts = () => {
+    void couponsService.notifyExpiringAndNearLimit().then(
+      (result) => {
+        if (result.notified > 0) {
+          logger.info('Coupon alert job completed', result);
+        }
+      },
+      (error) => {
+        logger.warn('Coupon alert job failed', {
+          error: error instanceof Error ? error.message : error,
+        });
+      },
+    );
+  };
+  runCouponAlerts();
+  const couponAlertTimer = setInterval(runCouponAlerts, COUPON_ALERT_INTERVAL_MS);
 
   const shutdown = async (signal: string) => {
     logger.info(`${signal} received — stopping workers`);
+    clearInterval(couponAlertTimer);
     await stopBackgroundWorkers();
     await closeQueues();
     process.exit(0);

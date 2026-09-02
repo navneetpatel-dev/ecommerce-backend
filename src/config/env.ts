@@ -100,7 +100,7 @@ const envSchema = z.object({
 
   /** Max report date window in days (not a row cap). */
   REPORT_MAX_RANGE_DAYS: z.coerce.number().int().positive().default(366),
-  REPORT_EXPORT_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(2),
+  REPORT_EXPORT_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(1),
   REPORT_EXPORT_RATE_LIMIT_PER_MIN: z.coerce.number().int().positive().default(5),
   REPORT_EXPORT_MAX_PENDING_PER_USER: z.coerce.number().int().positive().default(2),
   /** Dedup window — defaults to artifact TTL (7 days). */
@@ -120,6 +120,18 @@ const envSchema = z.object({
       if (typeof v === 'boolean') return v;
       return v === 'true' || v === '1';
     }),
+  /** When false, run `npm run worker` in a separate process (recommended in production). */
+  START_WORKERS_IN_API: z
+    .union([z.boolean(), z.string()])
+    .optional()
+    .transform((v) => {
+      if (v === undefined) return process.env.NODE_ENV !== 'production';
+      if (typeof v === 'boolean') return v;
+      return v === 'true' || v === '1';
+    }),
+  DB_POOL_MAX: z.coerce.number().int().positive().default(20),
+  EMAIL_TRANSACTIONAL_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(3),
+  EMAIL_MARKETING_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(1),
 }).superRefine((data, ctx) => {
   if (data.MAIL_DRIVER === 'smtp') {
     if (!data.SMTP_HOST) {

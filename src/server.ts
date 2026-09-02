@@ -18,8 +18,12 @@ async function bootstrap() {
     logger.info('Redis connected');
     try {
       await connectQueues();
-      if (areQueuesReady()) {
+      if (areQueuesReady() && env.START_WORKERS_IN_API) {
         await startBackgroundWorkers();
+      } else if (areQueuesReady() && !env.START_WORKERS_IN_API) {
+        logger.info(
+          'Background workers skipped in API process — run `npm run worker` separately',
+        );
       }
     } catch (error) {
       logger.warn('BullMQ queues unavailable — continuing without background jobs', {
@@ -34,28 +38,33 @@ async function bootstrap() {
     logger.info(`Server running on port ${env.PORT}`, { env: env.NODE_ENV });
   });
 
-  const runCouponAlerts = () => {
-    void couponsService.notifyExpiringAndNearLimit().then(
-      (result) => {
-        if (result.notified > 0) {
-          logger.info('Coupon alert job completed', result);
-        }
-      },
-      (error) => {
-        logger.warn('Coupon alert job failed', {
-          error: error instanceof Error ? error.message : error,
-        });
-      },
-    );
-  };
-  runCouponAlerts();
-  const couponAlertTimer = setInterval(runCouponAlerts, COUPON_ALERT_INTERVAL_MS);
+  let couponAlertTimer: ReturnType<typeof setInterval> | undefined;
+  if (env.START_WORKERS_IN_API) {
+    const runCouponAlerts = () => {
+      void couponsService.notifyExpiringAndNearLimit().then(
+        (result) => {
+          if (result.notified > 0) {
+            logger.info('Coupon alert job completed', result);
+          }
+        },
+        (error) => {
+          logger.warn('Coupon alert job failed', {
+            error: error instanceof Error ? error.message : error,
+          });
+        },
+      );
+    };
+    runCouponAlerts();
+    couponAlertTimer = setInterval(runCouponAlerts, COUPON_ALERT_INTERVAL_MS);
+  }
 
   const shutdown = async (signal: string) => {
     logger.info(`${signal} received — shutting down gracefully`);
-    clearInterval(couponAlertTimer);
+    if (couponAlertTimer) clearInterval(couponAlertTimer);
     server.close(async () => {
-      await stopBackgroundWorkers();
+      if (env.START_WORKERS_IN_API) {
+        await stopBackgroundWorkers();
+      }
       await closeQueues();
       logger.info('HTTP server closed');
       process.exit(0);

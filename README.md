@@ -67,6 +67,8 @@ npm run dev
 
 Access the API at `http://localhost:9000`
 
+**Background workers:** Email, report exports, and schedulers run inside the API process by default in development (`START_WORKERS_IN_API=true`). In production, set `START_WORKERS_IN_API=false` and run `npm run worker` in a separate process to keep HTTP responsive.
+
 See [DOCKER.md](DOCKER.md) for detailed Docker documentation.
 
 ## Local Setup

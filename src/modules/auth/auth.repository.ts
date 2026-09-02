@@ -44,6 +44,13 @@ export class AuthRepository extends BaseRepository<User> {
     return RefreshToken.findOne({ where: { tokenHash: hash } });
   }
 
+  async findLatestRefreshTokenByFamily(family: string) {
+    return RefreshToken.findOne({
+      where: { family },
+      order: [['createdAt', 'DESC']],
+    });
+  }
+
   async createRefreshToken(data: RefreshTokenMeta) {
     return RefreshToken.create({
       userId: data.userId,

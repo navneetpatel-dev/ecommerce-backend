@@ -3,6 +3,7 @@ export interface JwtPayload {
   email: string;
   roleId: string;
   vendorId: string | null;
+  roleName?: string;
 }
 
 export interface AuthTokens {

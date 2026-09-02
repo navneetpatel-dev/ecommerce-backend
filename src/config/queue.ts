@@ -198,24 +198,32 @@ export async function checkQueuesHealth(): Promise<{
 
     await Promise.race([
       (async () => {
-        for (const name of QUEUE_NAMES) {
-          try {
-            const counts = await ensureQueue(name).getJobCounts(
-              'waiting',
-              'active',
-              'failed',
-              'delayed',
-            );
-            queueStatuses[name] = {
-              status: 'up',
-              waiting: counts.waiting ?? 0,
-              active: counts.active ?? 0,
-              failed: counts.failed ?? 0,
-              delayed: counts.delayed ?? 0,
-            };
-          } catch {
-            queueStatuses[name] = 'down';
-          }
+        const results = await Promise.all(
+          QUEUE_NAMES.map(async (name) => {
+            try {
+              const counts = await ensureQueue(name).getJobCounts(
+                'waiting',
+                'active',
+                'failed',
+                'delayed',
+              );
+              return {
+                name,
+                status: {
+                  status: 'up' as const,
+                  waiting: counts.waiting ?? 0,
+                  active: counts.active ?? 0,
+                  failed: counts.failed ?? 0,
+                  delayed: counts.delayed ?? 0,
+                },
+              };
+            } catch {
+              return { name, status: 'down' as const };
+            }
+          }),
+        );
+        for (const { name, status } of results) {
+          queueStatuses[name] = status;
         }
       })(),
       new Promise<never>((_, reject) =>

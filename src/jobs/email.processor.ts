@@ -3,6 +3,7 @@ import { NotificationLog } from '@database/models/notificationLog.model';
 import { User } from '@database/models/user.model';
 import { NOTIFICATION_STATUS } from '@core/constants/statuses';
 import { logger } from '@core/logger';
+import { env } from '@config/env';
 import { getQueueConnection } from '@config/queue';
 import { sendEmail } from '@config/mail';
 import { EMAIL_JOB_NAME, type EmailJobPayload } from '@modules/notifications/notifications.service';
@@ -98,12 +99,12 @@ export function startEmailWorkers(): Worker[] {
   const transactional = new Worker<EmailJobPayload>(
     'email-transactional',
     processEmailJob,
-    { connection, concurrency: 10 },
+    { connection, concurrency: env.EMAIL_TRANSACTIONAL_WORKER_CONCURRENCY },
   );
   const marketing = new Worker<EmailJobPayload>(
     'email-marketing',
     processEmailJob,
-    { connection, concurrency: 3 },
+    { connection, concurrency: env.EMAIL_MARKETING_WORKER_CONCURRENCY },
   );
 
   for (const worker of [transactional, marketing]) {

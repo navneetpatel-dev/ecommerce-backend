@@ -21,7 +21,7 @@ import {
 } from '@config/s3';
 import { buildS3Key, S3_ENTITY_TYPES, S3_PURPOSES } from '@core/s3';
 import { logger } from '@core/logger';
-import { redisClient } from '@config/redis';
+import { redisClient, withRedis } from '@config/redis';
 import { env } from '@config/env';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { User } from '@database/models/user.model';
@@ -154,26 +154,6 @@ export function resolveFiltersForActor(
     filters.vendorId = filters.vendorId ?? null;
   }
   return filters;
-}
-
-const REDIS_OP_TIMEOUT_MS = 1_500;
-
-async function withRedis<T>(fn: () => Promise<T>): Promise<T | null> {
-  try {
-    return await Promise.race([
-      (async () => {
-        if (redisClient.status === 'wait' || redisClient.status === 'end') {
-          await redisClient.connect();
-        }
-        return fn();
-      })(),
-      new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Redis operation timeout')), REDIS_OP_TIMEOUT_MS);
-      }),
-    ]);
-  } catch {
-    return null;
-  }
 }
 
 async function cacheExportStatus(exportId: string, payload: Record<string, unknown>): Promise<void> {

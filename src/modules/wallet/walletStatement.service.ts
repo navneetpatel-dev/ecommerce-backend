@@ -36,7 +36,9 @@ export async function exportWalletStatement(input: {
   format: ReportExportFormat;
 }): Promise<AsyncExportResult> {
   const rowCount = await countWalletStatementRows(input.actor.id, input.from, input.to);
-  const processInline = rowCount <= reportExportConfig.walletStatementFastPathMaxRows;
+  const processInline =
+    !reportExportConfig.isProduction &&
+    rowCount <= reportExportConfig.walletStatementFastPathMaxRows;
 
   return reportEngine.runExport(
     input.actor,

@@ -38,6 +38,7 @@ export const API_MOUNTS = {
 } as const;
 
 export const HEALTH_PATH = '/health';
+export const HEALTH_LIVE_PATH = '/health/live';
 
 export const AUTH_COOKIE_PATH = `${API_PREFIX}${API_MOUNTS.auth}`;
 export const WEBHOOKS_RAW_PATH = `${API_PREFIX}${API_MOUNTS.webhooks}`;

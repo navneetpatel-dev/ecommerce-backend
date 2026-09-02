@@ -35,3 +35,24 @@ export async function connectRedis(): Promise<boolean> {
     return false;
   }
 }
+
+const REDIS_OP_TIMEOUT_MS = 1_500;
+
+/** Race Redis connect + command against a timeout; returns null on failure. */
+export async function withRedis<T>(fn: () => Promise<T>): Promise<T | null> {
+  try {
+    return await Promise.race([
+      (async () => {
+        if (redisClient.status === 'wait' || redisClient.status === 'end') {
+          await redisClient.connect();
+        }
+        return fn();
+      })(),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('Redis operation timeout')), REDIS_OP_TIMEOUT_MS);
+      }),
+    ]);
+  } catch {
+    return null;
+  }
+}

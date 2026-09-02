@@ -2,22 +2,18 @@ import type { Request, Response, NextFunction } from 'express';
 import { AppError } from '@core/errors';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { asyncHandler } from '@core/http/asyncHandler';
-import { redisClient } from '@config/redis';
+import { redisClient, withRedis } from '@config/redis';
 import { reportExportConfig } from './reportExportConfig';
 
 const RATE_KEY_PREFIX = 'report-export:rate:';
 
 async function redisIncrWithTtl(key: string, ttlSec: number): Promise<number | null> {
-  try {
-    if (redisClient.status === 'wait' || redisClient.status === 'end') {
-      await redisClient.connect();
-    }
-    const count = await redisClient.incr(key);
-    if (count === 1) await redisClient.expire(key, ttlSec);
-    return count;
-  } catch {
-    return null;
-  }
+  const count = await withRedis(async () => {
+    const value = await redisClient.incr(key);
+    if (value === 1) await redisClient.expire(key, ttlSec);
+    return value;
+  });
+  return count;
 }
 
 export async function assertReportExportRateLimit(userId: string): Promise<void> {

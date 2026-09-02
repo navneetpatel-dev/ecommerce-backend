@@ -9,16 +9,26 @@ import { ERROR_CODES, ERROR_MESSAGES, type ErrorCode } from '@core/constants/err
 import { AppError } from '@core/errors/AppError';
 import { sendApiError } from '@core/http/sendApiError';
 import { roleNameOf } from '@utils/userRole';
+import type { JwtPayload } from '@modules/auth/auth.types';
 
-interface JwtPayload {
-  sub: string;
-  email: string;
-  roleId: string;
-  vendorId: string | null;
-}
+const BLOCKED_USER_CACHE_TTL_MS = 60_000;
+const blockedUserCache = new Map<string, { blocked: boolean; expiresAt: number }>();
 
 function unauthorized(res: Response, code: ErrorCode, message: string) {
   sendApiError(res, new AppError(message, 401, code));
+}
+
+async function isUserBlocked(userId: string): Promise<boolean> {
+  const cached = blockedUserCache.get(userId);
+  if (cached && cached.expiresAt > Date.now()) return cached.blocked;
+
+  const user = await User.findByPk(userId, { attributes: ['status'] });
+  const blocked = !user || user.status === USER_STATUS.BLOCKED;
+  blockedUserCache.set(userId, {
+    blocked,
+    expiresAt: Date.now() + BLOCKED_USER_CACHE_TTL_MS,
+  });
+  return blocked;
 }
 
 async function loadUserFromBearer(authHeader: string) {
@@ -29,8 +39,8 @@ async function loadUserFromBearer(authHeader: string) {
 
   try {
     const decoded = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
-    const user = await User.findByPk(decoded.sub, { include: [{ model: Role, as: 'role' }] });
-    if (!user || user.status === USER_STATUS.BLOCKED) {
+
+    if (await isUserBlocked(decoded.sub)) {
       return {
         error: {
           code: ERROR_CODES.UNAUTHORIZED,
@@ -39,13 +49,30 @@ async function loadUserFromBearer(authHeader: string) {
       };
     }
 
+    let roleName = decoded.roleName;
+    if (!roleName) {
+      const user = await User.findByPk(decoded.sub, {
+        include: [{ model: Role, as: 'role' }],
+        attributes: ['id', 'email', 'roleId', 'vendorId', 'status'],
+      });
+      if (!user) {
+        return {
+          error: {
+            code: ERROR_CODES.UNAUTHORIZED,
+            message: ERROR_MESSAGES.USER_NOT_FOUND_OR_BLOCKED,
+          } as const,
+        };
+      }
+      roleName = roleNameOf(user);
+    }
+
     return {
       user: {
-        id: user.id,
-        email: user.email,
-        roleId: user.roleId,
-        vendorId: user.vendorId,
-        role: { name: roleNameOf(user) },
+        id: decoded.sub,
+        email: decoded.email,
+        roleId: decoded.roleId,
+        vendorId: decoded.vendorId,
+        role: { name: roleName },
       },
     };
   } catch (err) {

@@ -11,6 +11,7 @@ import { RegisterRequest, LoginRequest } from './auth.dto';
 import { AppError, NotFoundError, ValidationError, ForbiddenError } from '@core/errors';
 import { logger } from '@core/logger';
 import { clearPermissionCache, resolvePermissionsForUser } from '@middleware/rbac.middleware';
+import { redisClient, withRedis } from '@config/redis';
 import { EMAIL_VERIFY_EXPIRY, PASSWORD_RESET_EXPIRY, REFRESH_TOKEN_TTL_MS } from '@core/constants/http';
 import { ROLES, USER_STATUS } from '@core/constants/statuses';
 import { ERROR_MESSAGES, ERROR_CODES } from '@core/constants/errors';
@@ -71,7 +72,21 @@ function toUserPayload(user: User): JwtPayload {
     email: user.email,
     roleId: user.roleId,
     vendorId: user.vendorId,
+    roleName: roleNameOf(user),
   };
+}
+
+const REFRESH_GRACE_PREFIX = 'auth:refresh-grace:';
+const REFRESH_GRACE_SEC = 30;
+
+async function markRefreshGrace(tokenHash: string, family: string): Promise<void> {
+  await withRedis(() =>
+    redisClient.setex(`${REFRESH_GRACE_PREFIX}${tokenHash}`, REFRESH_GRACE_SEC, family),
+  );
+}
+
+async function readRefreshGraceFamily(tokenHash: string): Promise<string | null> {
+  return withRedis(() => redisClient.get(`${REFRESH_GRACE_PREFIX}${tokenHash}`));
 }
 
 async function generateTokens(user: User, meta: SessionDeviceMeta = {}): Promise<AuthTokens> {
@@ -257,7 +272,14 @@ export class AuthService {
 
   async refreshToken(rawToken: string, meta: SessionDeviceMeta = {}) {
     const tokenHash = hashToken(rawToken);
-    const token = await repo.findRefreshToken(tokenHash);
+    let token = await repo.findRefreshToken(tokenHash);
+
+    if (!token) {
+      const graceFamily = await readRefreshGraceFamily(tokenHash);
+      if (graceFamily) {
+        token = await repo.findLatestRefreshTokenByFamily(graceFamily);
+      }
+    }
 
     if (!token) {
       throw new AppError(ERROR_MESSAGES.INVALID_TOKEN, 401, ERROR_CODES.INVALID_REFRESH_TOKEN);
@@ -267,14 +289,16 @@ export class AuthService {
       throw new AppError('Refresh token expired', 401, ERROR_CODES.REFRESH_TOKEN_EXPIRED);
     }
 
+    await markRefreshGrace(tokenHash, token.family);
     await repo.deleteRefreshToken(tokenHash);
 
-    const user = await repo.findById(token.userId);
+    const user = await User.findByPk(token.userId, {
+      include: [{ model: Role, as: 'role' }],
+    });
     if (!user || user.status === USER_STATUS.BLOCKED) {
       throw new AppError(ERROR_MESSAGES.USER_NOT_FOUND_OR_BLOCKED, 401, ERROR_CODES.UNAUTHORIZED);
     }
 
-    clearPermissionCache();
     return generateTokens(user, {
       family: token.family,
       userAgent: meta.userAgent ?? token.userAgent,
