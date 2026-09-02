@@ -6,7 +6,6 @@ import type { AsyncExportResult } from '@modules/reports/engine/reportEngine';
 import { dateBetween } from '@modules/reports/engine/queryHelpers';
 import { reportExportConfig } from '@modules/reports/reportExportConfig';
 import { areQueuesReady } from '@config/queue';
-import { env } from '@config/env';
 import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { roleNameOf } from '@utils/userRole';
 import type { PermissionKey } from '@core/permissions/permissionKeys';
@@ -38,10 +37,13 @@ export async function exportWalletStatement(input: {
   format: ReportExportFormat;
 }): Promise<AsyncExportResult> {
   const rowCount = await countWalletStatementRows(input.actor.id, input.from, input.to);
+  // Only run inline when BullMQ is unavailable (no Redis). When queues are ready, enqueue
+  // so the worker handles export off the HTTP thread — inline PDF would block the API.
   const processInline =
     !reportExportConfig.isProduction &&
+    reportExportConfig.inlineDev &&
     rowCount <= reportExportConfig.walletStatementFastPathMaxRows &&
-    (!areQueuesReady() || env.START_WORKERS_IN_API);
+    !areQueuesReady();
 
   const result = await reportEngine.runExport(
     input.actor,

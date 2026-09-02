@@ -703,6 +703,12 @@ export class ReportEngine {
       const message =
         log.errorMessage?.trim() ||
         sanitizeExportErrorMessage(new Error(ERROR_MESSAGES.REPORT_EXPORT_NOT_READY));
+      logger.error('Inline report export failed', {
+        exportLogId,
+        reportType: log.reportType,
+        format: log.format,
+        errorMessage: log.errorMessage,
+      });
       throw new AppError(message, 500, ERROR_CODES.REPORT_EXPORT_NOT_READY);
     }
     if (log.status === 'PENDING' || log.status === 'PROCESSING') {
