@@ -116,7 +116,7 @@ const envSchema = z.object({
     .union([z.boolean(), z.string()])
     .optional()
     .transform((v) => {
-      if (v === undefined) return false;
+      if (v === undefined) return process.env.NODE_ENV !== 'production';
       if (typeof v === 'boolean') return v;
       return v === 'true' || v === '1';
     }),

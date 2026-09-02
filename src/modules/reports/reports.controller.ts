@@ -47,6 +47,17 @@ async function actorFromReq(req: Request): Promise<ReportActor> {
   };
 }
 
+function actorFromReqLite(req: Request): ReportActor {
+  const user = req.user!;
+  const roleName = user.role?.name ?? roleNameOf(user as any);
+  return {
+    id: user.id,
+    vendorId: user.vendorId ?? null,
+    roleName,
+    permissions: [],
+  };
+}
+
 function panelExportFormat(format: string): ReportExportFormat {
   if (format === 'csv' || format === 'pdf' || format === 'xlsx') return format;
   throw new ValidationError(`Unsupported export format: ${format}`);
@@ -267,7 +278,7 @@ export const runReport = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const downloadExport = asyncHandler(async (req: Request, res: Response) => {
-  const actor = await actorFromReq(req);
+  const actor = actorFromReqLite(req);
   const result = await reportEngine.getExportForDownload(actor, req.params.id!);
   if (result.mode === 'presigned' || result.mode === 'redirect') {
     res.redirect(result.url);
@@ -287,7 +298,7 @@ export const downloadExport = asyncHandler(async (req: Request, res: Response) =
 });
 
 export const exportStatus = asyncHandler(async (req: Request, res: Response) => {
-  const actor = await actorFromReq(req);
+  const actor = actorFromReqLite(req);
   const ifNoneMatch = req.header('if-none-match') ?? null;
   const data = await reportEngine.getExportStatus(actor, req.params.id!, ifNoneMatch);
   if ('notModified' in data) {

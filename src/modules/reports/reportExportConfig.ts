@@ -13,6 +13,7 @@ export const reportExportConfig = {
   pendingStaleMin: env.REPORT_EXPORT_PENDING_STALE_MIN,
   failedRetentionDays: env.REPORT_EXPORT_FAILED_RETENTION_DAYS,
   maxRows: env.REPORT_EXPORT_MAX_ROWS,
+  walletStatementFastPathMaxRows: 1_000,
   statusCacheTtlSec: 5,
   presignedExpiresSec: 15 * 60,
   userExportPriority: 1,

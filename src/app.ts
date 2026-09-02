@@ -78,7 +78,12 @@ app.get(HEALTH_PATH, async (req, res) => {
 
   // check redis
   try {
-    const pong = await redisClient.ping();
+    const pong = await Promise.race([
+      redisClient.ping(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Redis ping timeout')), 1_500),
+      ),
+    ]);
     health.services.redis = { 
       status: pong === 'PONG' ? 'up' : 'down', 
       message: pong === 'PONG' ? 'Connected' : 'Unexpected response' 

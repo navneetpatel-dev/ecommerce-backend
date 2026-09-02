@@ -73,6 +73,8 @@ export type ReportActor = {
 export type RunExportOptions = {
   priority?: number;
   bornBy?: string | null;
+  /** Generate the artifact in-request (skips queue). Used for small wallet statements. */
+  processInline?: boolean;
 };
 
 export const REPORT_EXPORT_JOB_OPTIONS = {
@@ -154,55 +156,52 @@ export function resolveFiltersForActor(
   return filters;
 }
 
-async function cacheExportStatus(exportId: string, payload: Record<string, unknown>): Promise<void> {
+const REDIS_OP_TIMEOUT_MS = 1_500;
+
+async function withRedis<T>(fn: () => Promise<T>): Promise<T | null> {
   try {
-    if (redisClient.status === 'wait' || redisClient.status === 'end') await redisClient.connect();
-    await redisClient.setex(
+    return await Promise.race([
+      (async () => {
+        if (redisClient.status === 'wait' || redisClient.status === 'end') {
+          await redisClient.connect();
+        }
+        return fn();
+      })(),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('Redis operation timeout')), REDIS_OP_TIMEOUT_MS);
+      }),
+    ]);
+  } catch {
+    return null;
+  }
+}
+
+async function cacheExportStatus(exportId: string, payload: Record<string, unknown>): Promise<void> {
+  await withRedis(() =>
+    redisClient.setex(
       statusCacheKey(exportId),
       reportExportConfig.statusCacheTtlSec,
       JSON.stringify(payload),
-    );
-  } catch {
-    /* optional cache */
-  }
+    ),
+  );
 }
 
 async function readCachedExportStatus(exportId: string): Promise<Record<string, unknown> | null> {
-  try {
-    if (redisClient.status === 'wait' || redisClient.status === 'end') await redisClient.connect();
-    const raw = await redisClient.get(statusCacheKey(exportId));
-    return raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
+  const raw = await withRedis(() => redisClient.get(statusCacheKey(exportId)));
+  return raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
 }
 
 async function invalidateExportStatusCache(exportId: string): Promise<void> {
-  try {
-    if (redisClient.status === 'wait' || redisClient.status === 'end') await redisClient.connect();
-    await redisClient.del(statusCacheKey(exportId), presignedCacheKey(exportId));
-  } catch {
-    /* optional */
-  }
+  await withRedis(() => redisClient.del(statusCacheKey(exportId), presignedCacheKey(exportId)));
 }
 
 async function readCachedPresignedUrl(exportId: string): Promise<string | null> {
-  try {
-    if (redisClient.status === 'wait' || redisClient.status === 'end') await redisClient.connect();
-    return redisClient.get(presignedCacheKey(exportId));
-  } catch {
-    return null;
-  }
+  return withRedis(() => redisClient.get(presignedCacheKey(exportId)));
 }
 
 async function cachePresignedUrl(exportId: string, url: string, ttlSec: number): Promise<void> {
-  try {
-    if (redisClient.status === 'wait' || redisClient.status === 'end') await redisClient.connect();
-    const cacheTtl = Math.max(60, ttlSec - 60);
-    await redisClient.setex(presignedCacheKey(exportId), cacheTtl, url);
-  } catch {
-    /* optional */
-  }
+  const cacheTtl = Math.max(60, ttlSec - 60);
+  await withRedis(() => redisClient.setex(presignedCacheKey(exportId), cacheTtl, url));
 }
 
 function buildFiltersUsed(
@@ -555,6 +554,9 @@ export class ReportEngine {
 
     const pending = await findPendingExport(exportKey);
     if (pending) {
+      if (options.processInline) {
+        return this.finishInlineExport(pending.id, exportFormat, { deduped: true });
+      }
       await requeuePendingExportIfNeeded(pending, this.processExportJob.bind(this));
       const reportStatus =
         pending.status === 'READY' || pending.status === 'PROCESSING'
@@ -630,6 +632,10 @@ export class ReportEngine {
       throw err;
     }
 
+    if (options.processInline) {
+      return this.finishInlineExport(log.id, exportFormat);
+    }
+
     const priority = options.priority ?? reportExportConfig.userExportPriority;
 
     if (areQueuesReady()) {
@@ -672,6 +678,30 @@ export class ReportEngine {
       format: exportFormat,
       rowCount,
       rowCountKnown: false,
+    };
+  }
+
+  private async finishInlineExport(
+    exportLogId: string,
+    formatHint: ReportExportFormat,
+    extra?: { deduped?: boolean },
+  ): Promise<AsyncExportResult> {
+    await this.processExportJob(exportLogId);
+    const log = await ReportExportLog.findByPk(exportLogId);
+    if (!log || log.status !== 'READY') {
+      const message =
+        log?.errorMessage?.trim() ||
+        sanitizeExportErrorMessage(new Error(ERROR_MESSAGES.REPORT_EXPORT_NOT_READY));
+      throw new AppError(message, 500, ERROR_CODES.REPORT_EXPORT_NOT_READY);
+    }
+    return {
+      async: true,
+      exportId: log.id,
+      status: 'READY',
+      format: (log.format as ReportExportFormat) || formatHint,
+      rowCount: log.rowCount,
+      rowCountKnown: true,
+      ...(extra?.deduped ? { deduped: true } : {}),
     };
   }
 
@@ -824,7 +854,7 @@ export class ReportEngine {
       const reportsPath =
         typeof f.reportsPath === 'string' && f.reportsPath.startsWith('/')
           ? f.reportsPath
-          : '/admin/reports';
+          : reportsHubPath(actor);
       void notificationsService.sendReportExportReady(log.userId, log.id, {
         reportType: log.reportType,
         rowCount: actualRowCount,
@@ -896,30 +926,6 @@ export class ReportEngine {
       return cached as Awaited<ReturnType<ReportEngine['getExportStatus']>>;
     }
 
-    let downloadUrl: string | null = null;
-    let expiresIn: number | null = null;
-    if (log.status === 'READY' && log.fileKey && isS3Configured()) {
-      downloadUrl = await readCachedPresignedUrl(exportId);
-      if (!downloadUrl) {
-        const s3Key = log.fileUrl ? extractS3KeyFromUrl(log.fileUrl) ?? log.fileKey : log.fileKey;
-        if (s3Key) {
-          expiresIn = reportExportConfig.presignedExpiresSec;
-          downloadUrl = await signedGetObjectUrl(s3Key, expiresIn);
-          if (downloadUrl) {
-            await cachePresignedUrl(exportId, downloadUrl, expiresIn);
-          }
-        }
-      } else {
-        try {
-          if (redisClient.status === 'wait' || redisClient.status === 'end') await redisClient.connect();
-          const ttl = await redisClient.ttl(presignedCacheKey(exportId));
-          expiresIn = ttl > 0 ? ttl : reportExportConfig.presignedExpiresSec;
-        } catch {
-          expiresIn = reportExportConfig.presignedExpiresSec;
-        }
-      }
-    }
-
     const filtersUsed = log.filtersUsed as Record<string, unknown>;
     const currentEtag = statusEtag(log);
     const payload = {
@@ -930,8 +936,8 @@ export class ReportEngine {
       rowCount: log.rowCount,
       rowCountKnown: log.status === 'READY' || log.status === 'SYNC' || log.rowCount > 0,
       fileUrl: isS3Configured() ? null : log.fileUrl,
-      downloadUrl,
-      expiresIn,
+      downloadUrl: null,
+      expiresIn: null,
       errorMessage: log.errorMessage
         ? sanitizeExportErrorMessage(new Error(log.errorMessage))
         : null,
@@ -964,7 +970,13 @@ export class ReportEngine {
 
     if (isS3Configured() && log.fileKey) {
       const s3Key = log.fileUrl ? extractS3KeyFromUrl(log.fileUrl) ?? log.fileKey : log.fileKey;
-      const url = await signedGetObjectUrl(s3Key!, reportExportConfig.presignedExpiresSec);
+      let url = await readCachedPresignedUrl(exportId);
+      if (!url) {
+        url = await signedGetObjectUrl(s3Key!, reportExportConfig.presignedExpiresSec);
+        if (url) {
+          await cachePresignedUrl(exportId, url, reportExportConfig.presignedExpiresSec);
+        }
+      }
       return {
         mode: 'presigned' as const,
         url,

@@ -74,11 +74,17 @@ export async function signedGetObjectUrl(
   if (!s3Client) {
     return publicObjectUrl(key);
   }
-  return getSignedUrl(
+  const signPromise = getSignedUrl(
     s3Client,
     new GetObjectCommand({ Bucket: S3_BUCKET, Key: key }),
     { expiresIn: expiresInSeconds },
   );
+  return Promise.race([
+    signPromise,
+    new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('S3 presign timed out')), 10_000);
+    }),
+  ]);
 }
 
 /**
@@ -209,6 +215,8 @@ export async function uploadObject(params: {
   return publicObjectUrl(params.key);
 }
 
+const S3_UPLOAD_TIMEOUT_MS = 60_000;
+
 /** Multipart upload from a readable stream (report exports). */
 export async function uploadObjectStream(params: {
   key: string;
@@ -237,7 +245,12 @@ export async function uploadObjectStream(params: {
     },
   });
 
-  await upload.done().catch(rethrowS3Error);
+  await Promise.race([
+    upload.done().catch(rethrowS3Error),
+    new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('S3 upload timed out')), S3_UPLOAD_TIMEOUT_MS);
+    }),
+  ]);
   return publicObjectUrl(params.key);
 }
 
