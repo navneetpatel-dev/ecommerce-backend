@@ -9,6 +9,8 @@ if (process.env.NODE_ENV !== 'production') {
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().default(3000),
+  /** Number of trusted reverse-proxy hops in front of the API (0 = direct). */
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
 
   DB_HOST: z.string().default('localhost'),
   DB_PORT: z.coerce.number().default(5432),

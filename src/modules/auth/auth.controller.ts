@@ -38,10 +38,16 @@ const OAUTH_STATE_COOKIE_OPTIONS = {
   maxAge: 10 * 60 * 1000,
 };
 
+function normalizeIpAddress(value: string | undefined): string | null {
+  if (!value) return null;
+  if (value === '::1') return '127.0.0.1';
+  return value.startsWith('::ffff:') ? value.slice(7) : value;
+}
+
 function deviceMeta(req: Request): SessionDeviceMeta {
   return {
     userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 512) : null,
-    ipAddress: req.ip || (req.socket?.remoteAddress ?? null),
+    ipAddress: normalizeIpAddress(req.ip || req.socket?.remoteAddress),
   };
 }
 

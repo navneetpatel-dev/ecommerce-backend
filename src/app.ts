@@ -34,6 +34,8 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): 
 
 export const app = express();
 
+app.set('trust proxy', env.TRUST_PROXY_HOPS);
+
 app.use(requestIdMiddleware);
 
 app.use(
