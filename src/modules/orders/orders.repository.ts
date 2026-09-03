@@ -36,7 +36,7 @@ export class OrdersRepository extends BaseRepository<Order> {
         },
         {
           association: 'subOrders',
-          include: ['items', 'vendor'],
+          include: ['items', 'vendor', 'shipment'],
         },
       ],
       order: [['createdAt', 'DESC']],

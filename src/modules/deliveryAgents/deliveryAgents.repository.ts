@@ -8,6 +8,7 @@ import { Order } from '@database/models/order.model';
 import { Address } from '@database/models/address.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { OrderItem } from '@database/models/orderItem.model';
+import { Vendor } from '@database/models/vendor.model';
 
 const deliveryAgentUserAttributes = ['id', 'email', 'name', 'phone', 'status'] as const;
 
@@ -116,6 +117,28 @@ export class DeliveryAgentsRepository extends BaseRepository<DeliveryAgent> {
       Shipment.count({ where: { deliveryAgentId, status: { [Op.notIn]: ['DELIVERED', 'FAILED'] } } }),
       ReturnRequest.count({ where: { deliveryAgentId, status: 'PICKUP_SCHEDULED' } }),
     ]);
+  }
+
+  /** Shipments an admin can actually dispatch — the picker behind "manual dispatch". */
+  async unassignedShipments() {
+    return Shipment.findAll({
+      where: {
+        deliveryAgentId: { [Op.is]: null },
+        status: { [Op.notIn]: ['DELIVERED', 'FAILED'] },
+      },
+      include: [{
+        model: SubOrder,
+        as: 'subOrder',
+        include: [
+          { model: Order, as: 'order', attributes: ['id'] },
+          { model: Vendor, as: 'vendor', attributes: ['id', 'businessName'] },
+        ],
+      }],
+      order: [['createdAt', 'ASC']],
+      // Oldest-first, so whatever's waited longest surfaces first in the
+      // picker; capped so the dropdown stays usable at any real backlog size.
+      limit: 50,
+    });
   }
 }
 

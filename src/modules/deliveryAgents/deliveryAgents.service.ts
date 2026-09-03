@@ -136,6 +136,31 @@ export class DeliveryAgentsService {
     return { agents, pagination: buildPaginationMeta(count, filters.page, filters.limit) };
   }
 
+  /** Feeds the admin dispatch picker — no more hunting for a shipment UUID elsewhere. */
+  async unassignedShipments(): Promise<Array<{
+    id: string;
+    trackingNumber: string;
+    status: string;
+    createdAt: Date;
+    orderId: string | null;
+    vendorName: string | null;
+  }>> {
+    const shipments = await repo.unassignedShipments();
+    return shipments.map((shipment) => {
+      const plain = shipment.get({ plain: true }) as Record<string, unknown> & {
+        subOrder?: { order?: { id: string }; vendor?: { businessName: string } };
+      };
+      return {
+        id: String(plain.id),
+        trackingNumber: String(plain.trackingNumber),
+        status: String(plain.status),
+        createdAt: plain.createdAt as Date,
+        orderId: plain.subOrder?.order?.id ?? null,
+        vendorName: plain.subOrder?.vendor?.businessName ?? null,
+      };
+    });
+  }
+
   async taskCounts(id: string) {
     const agent = await repo.findById(id);
     if (!agent) throw new NotFoundError('DeliveryAgent');

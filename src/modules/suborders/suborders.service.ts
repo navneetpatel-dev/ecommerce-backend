@@ -1,14 +1,51 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
+import { ValidationError } from '@core/errors';
 import { SubOrder } from '@database/models/subOrder.model';
 import { Vendor } from '@database/models/vendor.model';
 import { Order } from '@database/models/order.model';
 import { OrderItem } from '@database/models/orderItem.model';
 import { Shipment } from '@database/models/shipment.model';
+import { DeliveryAgent } from '@database/models/deliveryAgent.model';
 import { sequelize } from '@database/models';
 import { ORDER_STATUS } from '@core/constants/statuses';
 import { roundMoney } from '@modules/pricing/money';
 import { mapSubOrder } from '@modules/orders/orderDisplayMappers';
 import { notificationsService } from '@modules/notifications/notifications.service';
+import { shippingService } from '@modules/shipping/shipping.service';
+
+/**
+ * Transitions reachable through this manual, vendor/admin-facing endpoint.
+ * DELIVERED is deliberately absent from every entry — that transition is
+ * only reachable through the delivery agent's OTP-gated confirmation
+ * (`deliveryAgents.service.ts`'s `confirmDelivery`), never a plain status
+ * PATCH, so an order can't be marked delivered without proof the customer
+ * actually received it. RETURNED is likewise not settable here — the
+ * returns module owns that lifecycle via `ReturnRequest.status`.
+ */
+const SUBORDER_MANUAL_TRANSITIONS: Record<string, readonly string[]> = {
+  [ORDER_STATUS.PENDING]: [ORDER_STATUS.CONFIRMED, ORDER_STATUS.SHIPPED, ORDER_STATUS.CANCELLED],
+  [ORDER_STATUS.CONFIRMED]: [ORDER_STATUS.SHIPPED, ORDER_STATUS.CANCELLED],
+};
+
+/** Vendor/admin need to see who's delivering an order, not every internal column. */
+const shipmentInclude = {
+  model: Shipment,
+  as: 'shipment' as const,
+  include: [
+    {
+      model: DeliveryAgent,
+      as: 'deliveryAgent' as const,
+      attributes: ['id', 'fullName', 'phone'],
+    },
+  ],
+};
+
+function assertSubOrderTransition(from: string, to: string) {
+  if (from === to) return;
+  if (!SUBORDER_MANUAL_TRANSITIONS[from]?.includes(to)) {
+    throw new ValidationError({ status: [`Cannot move an order from ${from} to ${to} here`] });
+  }
+}
 
 function mapSubOrderRow(row: SubOrder) {
   const plain = (typeof row.get === 'function'
@@ -38,6 +75,7 @@ export class SubordersService {
         { model: OrderItem, as: 'items' },
         { model: Order, as: 'order' },
         { model: Vendor, as: 'vendor' },
+        shipmentInclude,
       ],
       order: [['createdAt', 'DESC']],
     });
@@ -46,20 +84,35 @@ export class SubordersService {
 
   async updateStatus(id: string, status: SubOrder['status'], trackingId: string | undefined, updatedBy: string) {
     const suborder = await sequelize.transaction(async (transaction) => {
-      const row = await SubOrder.findByPk(id, { transaction });
+      const row = await SubOrder.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
       if (!row) throw new NotFoundError('SubOrder');
+      assertSubOrderTransition(row.status, status);
+
       await row.update({ status, trackingId: trackingId ?? row.trackingId, updatedBy }, { transaction });
       if (status === ORDER_STATUS.SHIPPED && trackingId) {
-        await Shipment.findOrCreate({
+        const [shipment, created] = await Shipment.findOrCreate({
           where: { subOrderId: id },
           defaults: { subOrderId: id, carrier: 'MANUAL', trackingNumber: trackingId, status: 'IN_TRANSIT', shippedAt: new Date() } as never,
           transaction,
         });
+        if (!created) {
+          await shippingService.applyShipmentStatus(
+            shipment,
+            'IN_TRANSIT',
+            { trackingNumber: trackingId, carrier: shipment.carrier ?? 'MANUAL' },
+            transaction,
+          );
+        }
       }
       return row.reload({
         include: [
           { model: Order, as: 'order' },
           { model: OrderItem, as: 'items' },
+          {
+            model: Shipment,
+            as: 'shipment',
+            include: [{ model: DeliveryAgent, as: 'deliveryAgent' }],
+          },
         ],
         transaction,
       });

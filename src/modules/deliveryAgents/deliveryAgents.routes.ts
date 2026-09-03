@@ -23,6 +23,7 @@ const manage = authorize(PERMISSIONS.DELIVERY_AGENT_MANAGE);
 
 router.get('/', authenticate, manage, validate(ListDeliveryAgentsSchema, 'query'), controller.list);
 router.post('/', authenticate, manage, validate(CreateDeliveryAgentSchema), controller.create);
+router.get('/unassigned-shipments', authenticate, manage, controller.unassignedShipments);
 router.post('/shipments/:shipmentId/assign', authenticate, manage, validate(AssignAgentSchema), controller.assignShipment);
 router.post('/shipments/:shipmentId/force-confirm', authenticate, manage, validate(ForceConfirmSchema), controller.forceConfirmDelivery);
 router.post('/returns/:returnId/assign', authenticate, manage, validate(AssignAgentSchema), controller.assignPickup);

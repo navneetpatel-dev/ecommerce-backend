@@ -7,6 +7,7 @@ import { sequelize } from '@database/models';
 import { OrderItem } from '@database/models/orderItem.model';
 import { Vendor } from '@database/models/vendor.model';
 import { Shipment } from '@database/models/shipment.model';
+import { DeliveryAgent } from '@database/models/deliveryAgent.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { Product } from '@database/models/product.model';
 import { mapOrderResponse } from './orderDisplayMappers';
@@ -43,7 +44,17 @@ const orderDetailInclude = [
           },
         ],
       },
-      { model: Shipment, as: 'shipment' },
+      {
+        model: Shipment,
+        as: 'shipment',
+        include: [
+          {
+            model: DeliveryAgent,
+            as: 'deliveryAgent',
+            attributes: ['id', 'fullName', 'phone'],
+          },
+        ],
+      },
     ],
   },
   { association: 'shippingAddress' },

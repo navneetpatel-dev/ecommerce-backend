@@ -8,6 +8,11 @@ export const list = asyncHandler(async (req: Request, res: Response) => {
   res.json(ok(result.agents, { pagination: result.pagination }));
 });
 
+export const unassignedShipments = asyncHandler(async (_req: Request, res: Response) => {
+  const shipments = await deliveryAgentsService.unassignedShipments();
+  res.json(ok(shipments));
+});
+
 export const create = asyncHandler(async (req: Request, res: Response) => {
   const agent = await deliveryAgentsService.create(req.body, req.user!.id);
   res.status(201).json(ok(agent));

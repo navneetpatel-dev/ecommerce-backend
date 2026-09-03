@@ -224,6 +224,135 @@ async function refundReturn(filters: ReportFilters) {
   };
 }
 
+/**
+ * Live operational snapshot, not a date-ranged history — this query
+ * deliberately ignores `filters.from`/`filters.to` and checks fixed
+ * staleness thresholds instead ("what's stuck right now" isn't a lookback
+ * window). Note: `ReportEngine.runJson` still enforces `assertReportRange`
+ * on every report type before dispatch, so the UI's date picker must be
+ * given some valid (non-too-wide) range to pass that check — it just has
+ * no effect on which rows come back here. Left as-is rather than special-
+ * casing the shared engine for one report; not worth the regression risk.
+ */
+const STUCK_AWAITING_SHIPMENT_HOURS = 48;
+const STUCK_IN_TRANSIT_HOURS = 72;
+const STUCK_OUT_FOR_DELIVERY_HOURS = 24;
+const STUCK_PICKUP_OVERDUE_HOURS = 48;
+
+async function stuckOrders(filters: ReportFilters) {
+  const vendorId = resolveVendorId(filters);
+  const vendorClauseSub = vendorId ? 'AND so."vendorId" = :vendorId' : '';
+  const replacements: Record<string, unknown> = {
+    awaitingShipmentHours: STUCK_AWAITING_SHIPMENT_HOURS,
+    inTransitHours: STUCK_IN_TRANSIT_HOURS,
+    outForDeliveryHours: STUCK_OUT_FOR_DELIVERY_HOURS,
+    pickupOverdueHours: STUCK_PICKUP_OVERDUE_HOURS,
+  };
+  if (vendorId) replacements.vendorId = vendorId;
+
+  const awaitingShipmentSelect = `
+    SELECT
+      'AWAITING_SHIPMENT'::text AS reason,
+      so."orderId" AS "orderId",
+      so.id AS "subOrderId",
+      NULL::uuid AS "returnId",
+      so."vendorId" AS "vendorId",
+      v."businessName" AS "vendorName",
+      so.status::text AS status,
+      so."updatedAt" AS "stuckSince",
+      ROUND(EXTRACT(EPOCH FROM (now() - so."updatedAt")) / 3600.0)::int AS "hoursStuck"
+    FROM sub_orders so
+    LEFT JOIN vendors v ON v.id = so."vendorId" AND v."deletedAt" IS NULL
+    WHERE so.status = '${ORDER_STATUS.CONFIRMED}'
+      AND so."deletedAt" IS NULL
+      AND NOT EXISTS (SELECT 1 FROM shipments sh WHERE sh."subOrderId" = so.id)
+      AND so."updatedAt" < now() - (:awaitingShipmentHours || ' hours')::interval
+      ${vendorClauseSub}
+  `;
+
+  const inTransitSelect = `
+    SELECT
+      'IN_TRANSIT_TOO_LONG'::text AS reason,
+      so."orderId" AS "orderId",
+      so.id AS "subOrderId",
+      NULL::uuid AS "returnId",
+      so."vendorId" AS "vendorId",
+      v."businessName" AS "vendorName",
+      sh.status::text AS status,
+      sh."updatedAt" AS "stuckSince",
+      ROUND(EXTRACT(EPOCH FROM (now() - sh."updatedAt")) / 3600.0)::int AS "hoursStuck"
+    FROM shipments sh
+    JOIN sub_orders so ON so.id = sh."subOrderId" AND so."deletedAt" IS NULL
+    LEFT JOIN vendors v ON v.id = so."vendorId" AND v."deletedAt" IS NULL
+    WHERE sh.status IN ('PICKED_UP', 'IN_TRANSIT')
+      AND sh."updatedAt" < now() - (:inTransitHours || ' hours')::interval
+      ${vendorClauseSub}
+  `;
+
+  const outForDeliverySelect = `
+    SELECT
+      'DELIVERY_NOT_CONFIRMED'::text AS reason,
+      so."orderId" AS "orderId",
+      so.id AS "subOrderId",
+      NULL::uuid AS "returnId",
+      so."vendorId" AS "vendorId",
+      v."businessName" AS "vendorName",
+      sh.status::text AS status,
+      sh."updatedAt" AS "stuckSince",
+      ROUND(EXTRACT(EPOCH FROM (now() - sh."updatedAt")) / 3600.0)::int AS "hoursStuck"
+    FROM shipments sh
+    JOIN sub_orders so ON so.id = sh."subOrderId" AND so."deletedAt" IS NULL
+    LEFT JOIN vendors v ON v.id = so."vendorId" AND v."deletedAt" IS NULL
+    WHERE sh.status = 'OUT_FOR_DELIVERY'
+      AND sh."updatedAt" < now() - (:outForDeliveryHours || ' hours')::interval
+      ${vendorClauseSub}
+  `;
+
+  const pickupOverdueSelect = `
+    SELECT
+      'PICKUP_OVERDUE'::text AS reason,
+      so."orderId" AS "orderId",
+      rr."subOrderId" AS "subOrderId",
+      rr.id AS "returnId",
+      so."vendorId" AS "vendorId",
+      v."businessName" AS "vendorName",
+      rr.status::text AS status,
+      rr."updatedAt" AS "stuckSince",
+      ROUND(EXTRACT(EPOCH FROM (now() - rr."updatedAt")) / 3600.0)::int AS "hoursStuck"
+    FROM return_requests rr
+    JOIN sub_orders so ON so.id = rr."subOrderId" AND so."deletedAt" IS NULL
+    LEFT JOIN vendors v ON v.id = so."vendorId" AND v."deletedAt" IS NULL
+    WHERE rr.status = 'PICKUP_SCHEDULED'
+      AND rr."updatedAt" < now() - (:pickupOverdueHours || ' hours')::interval
+      ${vendorClauseSub}
+  `;
+
+  const selectSql = [
+    awaitingShipmentSelect,
+    inTransitSelect,
+    outForDeliverySelect,
+    pickupOverdueSelect,
+  ].join(' UNION ALL ');
+
+  return pagedSqlQuery({
+    selectSql,
+    orderBySql: '"hoursStuck" DESC',
+    replacements,
+    filters,
+    mapRow: (row) => ({
+      reason: row.reason,
+      orderId: row.orderId,
+      subOrderId: row.subOrderId,
+      returnId: row.returnId,
+      vendorId: row.vendorId,
+      vendorName: row.vendorName ?? row.vendorId,
+      status: row.status,
+      stuckSince: row.stuckSince,
+      hoursStuck: Number(row.hoursStuck ?? 0),
+    }),
+  });
+}
+
 export const adminOpsReports: ReportDefinition[] = [
   {
     type: 'order-sla',
@@ -285,5 +414,26 @@ export const adminOpsReports: ReportDefinition[] = [
     ],
     query: refundReturn,
     exportQuery: createOffsetExportQuery(refundReturn),
+  },
+  {
+    type: 'stuck-orders',
+    labelKey: 'reportStuckOrders',
+    audience: 'admin_ops',
+    permissions: [PERMISSIONS.ORDER_MANAGE],
+    vendorScoped: false,
+    financial: false,
+    columns: [
+      { key: 'reason', labelKey: 'reason' },
+      { key: 'orderId', labelKey: 'orderId' },
+      { key: 'subOrderId', labelKey: 'subOrderId' },
+      { key: 'returnId', labelKey: 'returnId' },
+      { key: 'vendorId', labelKey: 'vendorId' },
+      { key: 'vendorName', labelKey: 'vendorName' },
+      { key: 'status', labelKey: 'status' },
+      { key: 'stuckSince', labelKey: 'stuckSince', format: 'date' },
+      { key: 'hoursStuck', labelKey: 'hoursStuck', format: 'number' },
+    ],
+    query: stuckOrders,
+    exportQuery: createOffsetExportQuery(stuckOrders),
   },
 ];
