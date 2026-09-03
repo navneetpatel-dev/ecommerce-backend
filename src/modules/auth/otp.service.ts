@@ -71,7 +71,9 @@ export class OtpService {
 
   async requestLoginCode(email: string): Promise<void> {
     const user = await authRepository.findByEmail(email);
-    if (!user || user.status === USER_STATUS.BLOCKED) return;
+    if (!user || user.status === USER_STATUS.BLOCKED) {
+      throw new ValidationError({ email: [ERROR_MESSAGES.OTP_EMAIL_NOT_REGISTERED] });
+    }
 
     const otp = await sequelize.transaction((transaction) =>
       this.issueCodeForUser(user.id, 'LOGIN', transaction),

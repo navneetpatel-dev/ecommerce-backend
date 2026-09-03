@@ -19,15 +19,22 @@ export class AuthRepository extends BaseRepository<User> {
     super(User);
   }
 
-  /** Email is globally unique (one account / role per email). */
+  /**
+   * Email is globally unique (one account / role per email) and stored
+   * lowercase — normalize here too, as a safety net independent of whether
+   * the caller's input already went through a normalized DTO.
+   */
   async findByEmail(email: string) {
-    return User.findOne({ where: { email }, include: [{ model: Role, as: 'role' }] });
+    return User.findOne({
+      where: { email: email.trim().toLowerCase() },
+      include: [{ model: Role, as: 'role' }],
+    });
   }
 
   /** Includes soft-deleted rows (for register-time reactivation). */
   async findByEmailIncludingDeleted(email: string) {
     return User.findOne({
-      where: { email },
+      where: { email: email.trim().toLowerCase() },
       include: [{ model: Role, as: 'role' }],
       paranoid: false,
     });

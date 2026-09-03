@@ -10,7 +10,7 @@ export const ListDeliveryAgentsSchema = pageLimitQuerySchema.extend({
 });
 
 export const CreateDeliveryAgentSchema = z.object({
-  email: z.string().trim().email(),
+  email: z.string().trim().email().toLowerCase(),
   password: z.string().min(8),
   fullName: z.string().trim().min(1).max(120),
   phone: z.string().trim().min(6).max(20),

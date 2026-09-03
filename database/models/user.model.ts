@@ -66,6 +66,16 @@ export const initUserModel = (sequelize: Sequelize) => {
       tableName: 'users',
       timestamps: true,
       paranoid: true,
+      hooks: {
+        // Emails are stored lowercase everywhere — this is the last line of
+        // defense for any write path that reaches the model directly instead
+        // of through a normalized DTO (see auth.dto.ts's `emailSchema`).
+        beforeValidate: (user) => {
+          if (typeof user.email === 'string') {
+            user.email = user.email.trim().toLowerCase();
+          }
+        },
+      },
       indexes: [
         {
           unique: true,

@@ -280,6 +280,7 @@ export const ERROR_MESSAGES = {
   INVALID_WEBHOOK_PAYLOAD: 'Invalid webhook payload',
   OTP_INVALID_OR_EXPIRED: 'The code you entered is invalid or has expired',
   OTP_TOO_MANY_ATTEMPTS: 'Too many incorrect attempts. Request a new code',
+  OTP_EMAIL_NOT_REGISTERED: 'No account found with this email',
   PUSH_NOT_CONFIGURED: 'Browser notifications are not configured',
   NOT_YOUR_COMMISSION_INVOICE: 'You do not have access to this commission invoice',
   NOT_YOUR_VENDOR_PAYOUTS: 'You do not have access to these payouts',

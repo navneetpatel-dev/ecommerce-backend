@@ -1,19 +1,26 @@
 import { z } from 'zod';
 
+/**
+ * Emails are stored and looked up lowercase everywhere (see `User` model's
+ * `beforeValidate` hook) — normalize at the validation boundary too, so a
+ * differently-cased login/OTP/reset request still matches the stored account.
+ */
+const emailSchema = z.string().trim().email().toLowerCase();
+
 export const RegisterSchema = z.object({
-  email: z.string().email(),
+  email: emailSchema,
   password: z.string().min(8),
   name: z.string().min(1),
   phone: z.string().optional(),
 });
 
 export const LoginSchema = z.object({
-  email: z.string().email(),
+  email: emailSchema,
   password: z.string(),
 });
 
 export const RequestOtpSchema = z.object({
-  email: z.string().trim().email(),
+  email: emailSchema,
 });
 
 export const VerifyOtpSchema = RequestOtpSchema.extend({
@@ -25,7 +32,7 @@ export const RefreshSchema = z.object({
 });
 
 export const ForgotPasswordSchema = z.object({
-  email: z.string().email(),
+  email: emailSchema,
 });
 
 export const ResetPasswordSchema = z.object({
