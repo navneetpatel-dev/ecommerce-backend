@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { validate } from '@middleware/validate.middleware';
 import { authenticate } from '@middleware/auth.middleware';
 import { authRateLimiter, otpRequestRateLimiter } from '@middleware/rateLimiter.middleware';
-import { RegisterSchema, LoginSchema, RequestOtpSchema, VerifyOtpSchema, ForgotPasswordSchema, ResetPasswordSchema, ChangePasswordSchema, VerifyEmailSchema } from './auth.dto';
+import { RegisterSchema, LoginSchema, RequestOtpSchema, VerifyOtpSchema, ForgotPasswordSchema, ResetPasswordSchema, ChangePasswordSchema, VerifyEmailSchema, ResendVerificationByEmailSchema } from './auth.dto';
 import * as controller from './auth.controller';
 
 const router = Router();
@@ -19,6 +19,7 @@ router.post('/logout', authenticate, controller.logout);
 router.post('/forgot-password', validate(ForgotPasswordSchema), authRateLimiter, controller.forgotPassword);
 router.post('/reset-password', validate(ResetPasswordSchema), controller.resetPassword);
 router.post('/verify-email', validate(VerifyEmailSchema), authRateLimiter, controller.verifyEmail);
+router.post('/verify-email/resend', validate(ResendVerificationByEmailSchema), otpRequestRateLimiter, controller.resendVerificationByEmail);
 router.post('/resend-verification', authenticate, authRateLimiter, controller.resendVerification);
 router.post('/change-password', authenticate, validate(ChangePasswordSchema), controller.changePassword);
 router.get('/me', authenticate, controller.me);

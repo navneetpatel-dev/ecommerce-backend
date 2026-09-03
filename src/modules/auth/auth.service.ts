@@ -41,6 +41,16 @@ export type LoginSuccess = {
   refreshToken: string;
 };
 
+/**
+ * Registration no longer issues a session (Rule: unverified accounts cannot
+ * log in, so there's nothing valid to hand back yet) — just enough for the
+ * UI to show "check your email" with the right name/address.
+ */
+export type RegisterResult = {
+  user: { id: string; email: string; name: string };
+  requiresVerification: true;
+};
+
 function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
@@ -130,7 +140,7 @@ function serializeSession(
 }
 
 export class AuthService {
-  async register(dto: RegisterRequest, meta: SessionDeviceMeta = {}): Promise<LoginSuccess> {
+  async register(dto: RegisterRequest): Promise<RegisterResult> {
     const existing = await repo.findByEmailIncludingDeleted(dto.email);
 
     if (existing && !existing.deletedAt) {
@@ -138,7 +148,7 @@ export class AuthService {
     }
 
     if (existing?.deletedAt) {
-      return this.reactivateDeletedAccount(existing, dto, meta);
+      return this.reactivateDeletedAccount(existing, dto);
     }
 
     const customerRole = await Role.findOne({ where: { name: ROLES.CUSTOMER } });
@@ -162,35 +172,25 @@ export class AuthService {
       avatarUrl: null,
     });
 
-    const tokens = await generateTokens(user, meta);
-
     void notificationsService.sendEmailVerification(user.id, {
       actionUrl: emailVerifyActionUrl(user.id),
     });
 
     return {
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: ROLES.CUSTOMER,
-        vendorId: user.vendorId,
-        deliveryAgentId: user.deliveryAgentId,
-        permissions: [],
-      },
-      ...tokens,
+      user: { id: user.id, email: user.email, name: user.name },
+      requiresVerification: true,
     };
   }
 
   /**
    * Soft-deleted email registering again → restore the same row (keep role/vendor),
-   * set a new password, drop old sessions. Blocked accounts stay blocked.
+   * set a new password, drop old sessions, require re-verification. Blocked
+   * accounts stay blocked.
    */
   private async reactivateDeletedAccount(
     deleted: User,
     dto: RegisterRequest,
-    meta: SessionDeviceMeta,
-  ): Promise<LoginSuccess> {
+  ): Promise<RegisterResult> {
     if (deleted.status === USER_STATUS.BLOCKED) {
       throw new ForbiddenError(ERROR_MESSAGES.ACCOUNT_BLOCKED);
     }
@@ -224,17 +224,33 @@ export class AuthService {
       role: roleNameOf(user),
     });
 
-    return this.issueSession(user, meta);
+    void notificationsService.sendEmailVerification(user.id, {
+      actionUrl: emailVerifyActionUrl(user.id),
+    });
+
+    return {
+      user: { id: user.id, email: user.email, name: user.name },
+      requiresVerification: true,
+    };
   }
 
   async login(dto: LoginRequest, meta: SessionDeviceMeta = {}): Promise<LoginSuccess> {
     const user = await repo.findByEmail(dto.email);
     if (!user) {
-      throw new ValidationError({ email: [ERROR_MESSAGES.INVALID_CREDENTIALS] });
+      // Deliberately NOT field-keyed (unlike most ValidationErrors here): this
+      // fires for both "no such account" and "wrong password", and keying it
+      // to `email` would let an attacker distinguish which one was wrong by
+      // watching which field lights up. Same generic message, same status,
+      // same (lack of a) field either way — rendered as one form-level notice.
+      throw new AppError(ERROR_MESSAGES.INVALID_CREDENTIALS, 422, ERROR_CODES.INVALID_CREDENTIALS);
     }
 
     if (user.status === USER_STATUS.BLOCKED) {
       throw new ForbiddenError(ERROR_MESSAGES.ACCOUNT_BLOCKED);
+    }
+
+    if (!user.emailVerified) {
+      throw new AppError(ERROR_MESSAGES.EMAIL_NOT_VERIFIED, 403, ERROR_CODES.EMAIL_NOT_VERIFIED);
     }
 
     if (!user.passwordHash) {
@@ -243,7 +259,12 @@ export class AuthService {
 
     const valid = await bcrypt.compare(dto.password, user.passwordHash);
     if (!valid) {
-      throw new ValidationError({ email: [ERROR_MESSAGES.INVALID_CREDENTIALS] });
+      // Deliberately NOT field-keyed (unlike most ValidationErrors here): this
+      // fires for both "no such account" and "wrong password", and keying it
+      // to `email` would let an attacker distinguish which one was wrong by
+      // watching which field lights up. Same generic message, same status,
+      // same (lack of a) field either way — rendered as one form-level notice.
+      throw new AppError(ERROR_MESSAGES.INVALID_CREDENTIALS, 422, ERROR_CODES.INVALID_CREDENTIALS);
     }
 
     return this.issueSession(user, meta);
@@ -377,6 +398,12 @@ export class AuthService {
     logger.info('Password reset requested', { email: user.email, role: roleNameOf(user) });
   }
 
+  /**
+   * Click-only by design: the signed, time-limited token IS the proof of
+   * mailbox ownership — it doesn't need an active session behind it too.
+   * Someone can (and often will) verify from a different device/browser
+   * than the one they registered on.
+   */
   async verifyEmail(token: string): Promise<{ verified: boolean }> {
     let decoded: { sub: string; purpose: string };
     try {
@@ -402,6 +429,28 @@ export class AuthService {
   async resendEmailVerification(userId: string): Promise<{ sent: boolean; alreadyVerified: boolean }> {
     const user = await repo.findById(userId);
     if (!user) throw new NotFoundError('User');
+
+    if (user.emailVerified) {
+      return { sent: false, alreadyVerified: true };
+    }
+
+    void notificationsService.sendEmailVerification(user.id, {
+      actionUrl: emailVerifyActionUrl(user.id),
+    });
+    return { sent: true, alreadyVerified: false };
+  }
+
+  /**
+   * Unauthenticated counterpart of `resendEmailVerification` — a user who
+   * can't log in yet (email not verified) has no session to call the
+   * authenticated version with, so they need an email-only path to get a
+   * fresh link.
+   */
+  async resendEmailVerificationByEmail(email: string): Promise<{ sent: boolean; alreadyVerified: boolean }> {
+    const user = await repo.findByEmail(email);
+    if (!user || user.status === USER_STATUS.BLOCKED) {
+      throw new ValidationError({ email: [ERROR_MESSAGES.OTP_EMAIL_NOT_REGISTERED] });
+    }
 
     if (user.emailVerified) {
       return { sent: false, alreadyVerified: true };

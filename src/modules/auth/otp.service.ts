@@ -5,8 +5,8 @@ import { sequelize } from '@database/models';
 import { OtpCode } from '@database/models/otpCode.model';
 import type { OtpPurpose } from '@database/models/otpCode.model';
 import { USER_STATUS } from '@core/constants/statuses';
-import { ERROR_MESSAGES } from '@core/constants/errors';
-import { ValidationError } from '@core/errors';
+import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
+import { AppError, ValidationError } from '@core/errors';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { authRepository } from './auth.repository';
 
@@ -73,6 +73,9 @@ export class OtpService {
     const user = await authRepository.findByEmail(email);
     if (!user || user.status === USER_STATUS.BLOCKED) {
       throw new ValidationError({ email: [ERROR_MESSAGES.OTP_EMAIL_NOT_REGISTERED] });
+    }
+    if (!user.emailVerified) {
+      throw new AppError(ERROR_MESSAGES.EMAIL_NOT_VERIFIED, 403, ERROR_CODES.EMAIL_NOT_VERIFIED);
     }
 
     const otp = await sequelize.transaction((transaction) =>

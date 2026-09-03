@@ -49,6 +49,10 @@ export const VerifyEmailSchema = z.object({
   token: z.string().min(1),
 });
 
+export const ResendVerificationByEmailSchema = z.object({
+  email: emailSchema,
+});
+
 export type RegisterRequest = z.infer<typeof RegisterSchema>;
 export type LoginRequest = z.infer<typeof LoginSchema>;
 export type RequestOtpRequest = z.infer<typeof RequestOtpSchema>;
@@ -58,3 +62,4 @@ export type ForgotPasswordRequest = z.infer<typeof ForgotPasswordSchema>;
 export type ResetPasswordRequest = z.infer<typeof ResetPasswordSchema>;
 export type ChangePasswordRequest = z.infer<typeof ChangePasswordSchema>;
 export type VerifyEmailRequest = z.infer<typeof VerifyEmailSchema>;
+export type ResendVerificationByEmailRequest = z.infer<typeof ResendVerificationByEmailSchema>;

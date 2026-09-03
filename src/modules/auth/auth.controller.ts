@@ -148,9 +148,8 @@ export const googleCallback = asyncHandler(async (req: Request, res: Response) =
 });
 
 export const register = asyncHandler(async (req: Request, res: Response) => {
-  const result = await authService.register(req.body as any, deviceMeta(req));
-  res.cookie(COOKIES.REFRESH_TOKEN, result.refreshToken, COOKIE_OPTIONS);
-  res.status(201).json(ok({ user: result.user, accessToken: result.accessToken }));
+  const result = await authService.register(req.body as any);
+  res.status(201).json(ok(result));
 });
 
 export const login = asyncHandler(async (req: Request, res: Response) => {
@@ -205,6 +204,11 @@ export const resetPassword = asyncHandler(async (req: Request, res: Response) =>
 
 export const verifyEmail = asyncHandler(async (req: Request, res: Response) => {
   const result = await authService.verifyEmail(req.body.token);
+  res.status(200).json(ok(result));
+});
+
+export const resendVerificationByEmail = asyncHandler(async (req: Request, res: Response) => {
+  const result = await authService.resendEmailVerificationByEmail(req.body.email);
   res.status(200).json(ok(result));
 });
 
