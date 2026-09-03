@@ -20,7 +20,7 @@ router.get(
   shippingController.getRates,
 );
 
-router.get('/tracking/:trackingNumber', shippingController.getShipmentByTracking);
+router.get('/tracking/:trackingNumber', authenticate, shippingController.getShipmentByTracking);
 
 router.get('/zones', authenticate, authorize(PERMISSIONS.SHIPPING_MANAGE), shippingController.listZones);
 router.post('/zones', authenticate, authorize(PERMISSIONS.SHIPPING_MANAGE), validate(CreateZoneSchema), shippingController.createZone);

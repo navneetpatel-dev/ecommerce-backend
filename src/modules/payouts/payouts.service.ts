@@ -5,6 +5,8 @@ import { TdsLedger } from '@database/models/tdsLedger.model';
 import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
+import { NotFoundError } from '@core/errors/NotFoundError';
+import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { COMMISSION_STATUS, PAYOUT_STATUS } from '@core/constants/statuses';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
@@ -21,6 +23,8 @@ import {
   computeCommissionGstPaise,
   createCommissionInvoiceForPayout,
 } from '@modules/commissions/commissionInvoice.service';
+import { logAudit } from '@modules/audit/audit.service';
+import type { MarkPayoutFailedRequest, MarkPayoutPaidRequest } from './payouts.dto';
 
 async function notifyPayoutFailed(params: {
   vendorId: string;
@@ -189,7 +193,8 @@ export class PayoutsService {
               amount,
               periodStart: group.start,
               periodEnd: group.end,
-              status: PAYOUT_STATUS.PAID,
+              status: PAYOUT_STATUS.PENDING,
+              preparedAt: new Date(),
               createdBy: actorId,
             },
             { transaction },
@@ -251,6 +256,7 @@ export class PayoutsService {
           periodStart: group.start,
           periodEnd: group.end,
           status: PAYOUT_STATUS.FAILED,
+          failureReason: reason,
           createdBy: actorId,
         });
         const vendor = await Vendor.findByPk(vendorId, { attributes: ['businessName'] });
@@ -265,6 +271,125 @@ export class PayoutsService {
     }
 
     return created;
+  }
+
+  async markPaid(payoutId: string, actorId: string, input: MarkPayoutPaidRequest) {
+    const updated = await sequelize.transaction(async (transaction) => {
+      const payout = await Payout.findByPk(payoutId, {
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (!payout) throw new NotFoundError('Payout');
+      if (payout.status !== PAYOUT_STATUS.PENDING) {
+        throw new ValidationError(ERROR_MESSAGES.PAYOUT_INVALID_TRANSITION);
+      }
+
+      await payout.update(
+        {
+          status: PAYOUT_STATUS.PAID,
+          paymentMethod: input.paymentMethod,
+          paymentReferenceNumber: input.paymentReferenceNumber,
+          proofOfPaymentUrl: input.proofOfPaymentUrl ?? null,
+          remarks: input.remarks ?? null,
+          failureReason: null,
+          paidByAdminId: actorId,
+          paidAt: input.paidAt ?? new Date(),
+          updatedBy: actorId,
+        },
+        { transaction },
+      );
+      await logAudit({
+        actorId,
+        action: 'PAYOUT_MARKED_PAID',
+        entityType: 'Payout',
+        entityId: payout.id,
+        metadata: {
+          vendorId: payout.vendorId,
+          amount: Number(payout.amount),
+          paymentMethod: input.paymentMethod,
+          paymentReferenceNumber: input.paymentReferenceNumber,
+        },
+        transaction,
+      });
+      return payout;
+    });
+
+    const ownerId = await findVendorOwnerUserId(updated.vendorId);
+    if (ownerId) {
+      void notificationsService.sendPayoutPaid(ownerId, updated.id, {
+        amount: Number(updated.amount),
+        paymentMethod: updated.paymentMethod,
+        paymentReferenceNumber: updated.paymentReferenceNumber,
+        paidAt: updated.paidAt,
+      });
+    }
+    return serializePayout(updated);
+  }
+
+  async markFailed(payoutId: string, actorId: string, input: MarkPayoutFailedRequest) {
+    const updated = await sequelize.transaction(async (transaction) => {
+      const payout = await Payout.findByPk(payoutId, {
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (!payout) throw new NotFoundError('Payout');
+      if (payout.status !== PAYOUT_STATUS.PENDING) {
+        throw new ValidationError(ERROR_MESSAGES.PAYOUT_INVALID_TRANSITION);
+      }
+      await payout.update(
+        { status: PAYOUT_STATUS.FAILED, failureReason: input.reason, updatedBy: actorId },
+        { transaction },
+      );
+      await logAudit({
+        actorId,
+        action: 'PAYOUT_MARKED_FAILED',
+        entityType: 'Payout',
+        entityId: payout.id,
+        metadata: { vendorId: payout.vendorId, amount: Number(payout.amount), reason: input.reason },
+        transaction,
+      });
+      return payout;
+    });
+
+    const vendor = await Vendor.findByPk(updated.vendorId, { attributes: ['businessName'] });
+    void notifyPayoutFailed({
+      vendorId: updated.vendorId,
+      payoutId: updated.id,
+      amount: Number(updated.amount),
+      reason: input.reason,
+      businessName: vendor?.businessName,
+    });
+    return serializePayout(updated);
+  }
+
+  async retry(payoutId: string, actorId: string) {
+    return sequelize.transaction(async (transaction) => {
+      const payout = await Payout.findByPk(payoutId, {
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (!payout) throw new NotFoundError('Payout');
+      if (payout.status !== PAYOUT_STATUS.FAILED) {
+        throw new ValidationError(ERROR_MESSAGES.PAYOUT_INVALID_TRANSITION);
+      }
+      if (!payout.preparedAt) {
+        throw new ValidationError(ERROR_MESSAGES.PAYOUT_INVALID_TRANSITION);
+      }
+      const previousFailureReason = payout.failureReason;
+      await payout.update(
+        { status: PAYOUT_STATUS.PENDING, failureReason: null, updatedBy: actorId },
+        { transaction },
+      );
+      await logAudit({
+        actorId,
+        action: 'PAYOUT_RETRIED',
+        entityType: 'Payout',
+        entityId: payout.id,
+        metadata: { previousFailureReason },
+        transaction,
+      });
+      return serializePayout(payout);
+    });
   }
 }
 

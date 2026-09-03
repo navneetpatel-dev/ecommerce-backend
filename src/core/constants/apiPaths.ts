@@ -24,8 +24,8 @@ export const API_MOUNTS = {
   search: '/search',
   notifications: '/notifications',
   inventory: '/inventory',
-  help: '/help',
   newsletter: '/newsletter',
+  webVitals: '/web-vitals',
   audit: '/audit',
   settings: '/settings',
   homepage: '/homepage',
@@ -35,6 +35,7 @@ export const API_MOUNTS = {
   uploads: '/uploads',
   supportTickets: '/support-tickets',
   bugReports: '/bug-reports',
+  deliveryAgents: '/delivery-agents',
 } as const;
 
 export const HEALTH_PATH = '/health';
@@ -42,3 +43,4 @@ export const HEALTH_LIVE_PATH = '/health/live';
 
 export const AUTH_COOKIE_PATH = `${API_PREFIX}${API_MOUNTS.auth}`;
 export const WEBHOOKS_RAW_PATH = `${API_PREFIX}${API_MOUNTS.webhooks}`;
+export const SHIPPING_WEBHOOKS_RAW_PATH = `${API_PREFIX}${API_MOUNTS.shipping}/webhooks`;

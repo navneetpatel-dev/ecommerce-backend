@@ -22,7 +22,6 @@ import searchRoutes from '@modules/search/search.routes';
 import notificationsRoutes from '@modules/notifications/notifications.routes';
 import inventoryRoutes from '@modules/inventory/inventory.routes';
 import webhooksRoutes from '@modules/webhooks/webhooks.routes';
-import helpRoutes from '@modules/help/help.routes';
 import newsletterRoutes from '@modules/newsletter/newsletter.routes';
 import auditRoutes from '@modules/audit/audit.routes';
 import settingsRoutes from '@modules/settings/settings.routes';
@@ -33,6 +32,8 @@ import walletAdminRoutes from '@modules/wallet/wallet.admin.routes';
 import uploadsRoutes from '@modules/uploads/uploads.routes';
 import supportTicketsRoutes from '@modules/supportTickets/supportTickets.routes';
 import bugReportsRoutes from '@modules/bugReports/bugReports.routes';
+import deliveryAgentsRoutes from '@modules/deliveryAgents/deliveryAgents.routes';
+import webVitalsRoutes from '@modules/webVitals/webVitals.routes';
 
 const router = Router();
 
@@ -58,7 +59,6 @@ router.use(API_MOUNTS.wishlist, wishlistRoutes);
 router.use(API_MOUNTS.search, searchRoutes);
 router.use(API_MOUNTS.notifications, notificationsRoutes);
 router.use(API_MOUNTS.inventory, inventoryRoutes);
-router.use(API_MOUNTS.help, helpRoutes);
 router.use(API_MOUNTS.newsletter, newsletterRoutes);
 router.use(API_MOUNTS.audit, auditRoutes);
 router.use(API_MOUNTS.settings, settingsRoutes);
@@ -69,5 +69,7 @@ router.use(API_MOUNTS.adminWallet, walletAdminRoutes);
 router.use(API_MOUNTS.uploads, uploadsRoutes);
 router.use(API_MOUNTS.supportTickets, supportTicketsRoutes);
 router.use(API_MOUNTS.bugReports, bugReportsRoutes);
+router.use(API_MOUNTS.deliveryAgents, deliveryAgentsRoutes);
+router.use(API_MOUNTS.webVitals, webVitalsRoutes);
 
 export { router as routes };

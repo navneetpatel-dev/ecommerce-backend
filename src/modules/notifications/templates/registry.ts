@@ -32,6 +32,7 @@ function subjectFor(type: NotificationType, data: EmailTemplateData): string {
     orderNumber: str(data, 'orderNumber', str(data, 'orderId', '')),
     productName: str(data, 'productName'),
     code: str(data, 'code'),
+    expiresInMinutes: str(data, 'expiresInMinutes', '5'),
     brand: EMAIL_COPY.brandName,
     reportType: str(data, 'reportType'),
     ticketNumber: str(data, 'ticketNumber'),
@@ -49,6 +50,8 @@ function bodyFor(type: NotificationType, data: EmailTemplateData): string {
     total: str(data, 'total'),
     subtotal: str(data, 'subtotal'),
     amount: str(data, 'amount'),
+    paymentMethod: str(data, 'paymentMethod'),
+    paymentReferenceNumber: str(data, 'paymentReferenceNumber'),
     status: str(data, 'status'),
     reason: str(data, 'reason', '—'),
     businessName: str(data, 'businessName'),
@@ -66,6 +69,7 @@ function bodyFor(type: NotificationType, data: EmailTemplateData): string {
     trackingSuffix: str(data, 'trackingId')
       ? ` (tracking: ${str(data, 'trackingId')})`
       : '',
+    trackingNumber: str(data, 'trackingNumber'),
     reportType: str(data, 'reportType'),
     rowCount: str(data, 'rowCount'),
     ticketNumber: str(data, 'ticketNumber'),
@@ -91,6 +95,8 @@ function defaultCta(type: NotificationType, data: EmailTemplateData): { label?: 
         label: EMAIL_COPY.ctaResetPassword,
         url: str(data, 'actionUrl', `${base}/reset-password`),
       };
+    case 'LOGIN_OTP':
+      return { label: 'Enter sign-in code', url: str(data, 'actionUrl', `${base}/otp`) };
     case 'ORDER_CONFIRMATION':
     case 'PAYMENT_RECEIPT':
     case 'PAYMENT_FAILED':
@@ -117,6 +123,7 @@ function defaultCta(type: NotificationType, data: EmailTemplateData): { label?: 
     case 'VENDOR_NEW_ORDER':
     case 'LOW_STOCK_ALERT':
     case 'PAYOUT_PROCESSED':
+    case 'PAYOUT_PAID':
     case 'PAYOUT_FAILED':
     case 'PRODUCT_APPROVED':
     case 'PRODUCT_REJECTED':
@@ -158,6 +165,12 @@ function defaultCta(type: NotificationType, data: EmailTemplateData): { label?: 
         url: str(data, 'actionUrl', fallback),
       };
     }
+    case 'DELIVERY_ASSIGNED':
+    case 'PICKUP_ASSIGNED':
+      return { label: 'Open delivery dashboard', url: str(data, 'actionUrl', `${base}/delivery/dashboard/today`) };
+    case 'DELIVERY_OTP':
+    case 'RETURN_PICKUP_OTP':
+      return { label: EMAIL_COPY.ctaViewOrder, url: str(data, 'actionUrl', `${base}/orders`) };
     default:
       return { label: EMAIL_COPY.ctaOpenStore, url: base };
   }

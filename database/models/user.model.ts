@@ -1,6 +1,7 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional, NonAttribute } from 'sequelize';
 import type { Role } from './role.model';
 import type { Vendor } from './vendor.model';
+import type { DeliveryAgent } from './deliveryAgent.model';
 
 export class User extends Model<InferAttributes<User>, InferCreationAttributes<User>> {
   declare id: CreationOptional<string>;
@@ -12,6 +13,7 @@ export class User extends Model<InferAttributes<User>, InferCreationAttributes<U
   declare status: 'ACTIVE' | 'BLOCKED';
   declare roleId: string;
   declare vendorId: string | null;
+  declare deliveryAgentId: string | null;
   declare emailVerified: CreationOptional<boolean>;
   declare emailMarketingConsent: CreationOptional<boolean>;
   declare emailSuppressed: CreationOptional<boolean>;
@@ -25,10 +27,12 @@ export class User extends Model<InferAttributes<User>, InferCreationAttributes<U
 
   declare role?: NonAttribute<Role>;
   declare vendor?: NonAttribute<Vendor>;
+  declare deliveryAgent?: NonAttribute<DeliveryAgent>;
 
   static associate(models: Record<string, any>) {
     User.belongsTo(models.Role, { foreignKey: 'roleId', as: 'role' });
     User.belongsTo(models.Vendor, { foreignKey: 'vendorId', as: 'vendor' });
+    User.belongsTo(models.DeliveryAgent, { foreignKey: 'deliveryAgentId', as: 'deliveryAgent' });
     User.hasMany(models.Address, { foreignKey: 'userId' });
   }
 }
@@ -45,6 +49,7 @@ export const initUserModel = (sequelize: Sequelize) => {
       status: { type: DataTypes.ENUM('ACTIVE', 'BLOCKED'), defaultValue: 'ACTIVE' },
       roleId: { type: DataTypes.UUID, allowNull: false },
       vendorId: { type: DataTypes.UUID, allowNull: true },
+      deliveryAgentId: { type: DataTypes.UUID, allowNull: true },
       emailVerified: { type: DataTypes.BOOLEAN, defaultValue: false },
       emailMarketingConsent: { type: DataTypes.BOOLEAN, defaultValue: false },
       emailSuppressed: { type: DataTypes.BOOLEAN, defaultValue: false },

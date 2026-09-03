@@ -1,10 +1,11 @@
 import { z } from 'zod';
-import { RETURN_REASON_VALUES, RETURN_STATUS_VALUES } from '@core/constants/statuses';
+import { RETURN_REASON_VALUES, RETURN_STATUS_VALUES, RETURN_TYPE_VALUES } from '@core/constants/statuses';
 
 export const CreateReturnRequestSchema = z.object({
   orderItemId: z.string().uuid(),
   reasonCode: z.enum(RETURN_REASON_VALUES),
   reason: z.string().min(1),
+  type: z.enum(RETURN_TYPE_VALUES).default('REFUND'),
   /** Units to return; omit for full line quantity. */
   returnQuantity: z.number().int().min(1).optional(),
   /** Phase 2 attach — URLs from POST /api/uploads or /bulk (returns/photos). */

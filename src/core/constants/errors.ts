@@ -75,7 +75,6 @@ export const ERROR_CODES = {
   TICKET_MUST_REOPEN: 'TICKET_MUST_REOPEN',
   TICKET_VENDOR_REQUIRED: 'TICKET_VENDOR_REQUIRED',
   TICKET_VENDOR_INVALID: 'TICKET_VENDOR_INVALID',
-  HELP_LEGACY_REPLACED: 'HELP_LEGACY_REPLACED',
   BUG_INVALID_TRANSITION: 'BUG_INVALID_TRANSITION',
   BUG_ATTACHMENT_LIMIT: 'BUG_ATTACHMENT_LIMIT',
   BUG_VIDEO_TOO_LONG: 'BUG_VIDEO_TOO_LONG',
@@ -108,6 +107,7 @@ export const ERROR_CODES = {
   NOT_YOUR_ORDER: 'NOT_YOUR_ORDER',
   NOT_YOUR_PRODUCT_REVIEW: 'NOT_YOUR_PRODUCT_REVIEW',
   AUTH_RATE_LIMITED: 'AUTH_RATE_LIMITED',
+  OTP_REQUEST_RATE_LIMITED: 'OTP_REQUEST_RATE_LIMITED',
   COUPON_APPLY_RATE_LIMITED: 'COUPON_APPLY_RATE_LIMITED',
   SHIPPING_STATUS_UNSUPPORTED: 'SHIPPING_STATUS_UNSUPPORTED',
   ORDER_AMOUNT_BELOW_RAZORPAY_MIN: 'ORDER_AMOUNT_BELOW_RAZORPAY_MIN',
@@ -116,6 +116,7 @@ export const ERROR_CODES = {
   NOT_YOUR_VENDOR_PAYOUTS: 'NOT_YOUR_VENDOR_PAYOUTS',
   CREDIT_NOTE_FORBIDDEN: 'CREDIT_NOTE_FORBIDDEN',
   DEBIT_NOTE_FORBIDDEN: 'DEBIT_NOTE_FORBIDDEN',
+  PAYOUT_INVALID_TRANSITION: 'PAYOUT_INVALID_TRANSITION',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -237,8 +238,6 @@ export const ERROR_MESSAGES = {
   TICKET_MUST_REOPEN: 'This ticket must be reopened before you can reply',
   TICKET_VENDOR_REQUIRED: 'Select the related vendor for this ticket',
   TICKET_VENDOR_INVALID: 'The selected vendor is not valid for this ticket',
-  HELP_LEGACY_REPLACED:
-    'The legacy help contact form has been replaced. Please open a support ticket instead.',
   BUG_INVALID_TRANSITION: 'This bug report status transition is not allowed',
   BUG_ATTACHMENT_LIMIT: 'Attachment limit exceeded for this bug report',
   BUG_VIDEO_TOO_LONG: 'Screen recording must be 120 seconds or less',
@@ -273,12 +272,18 @@ export const ERROR_MESSAGES = {
   WALLET_RECHARGE_RAZORPAY_MIN: 'Recharge amount is below the minimum allowed for online payment',
   NOT_YOUR_PRODUCT_REVIEW: 'You do not have access to this product review',
   AUTH_RATE_LIMITED: 'Too many login attempts. Please wait a few minutes and try again.',
+  OTP_REQUEST_RATE_LIMITED: 'Too many code requests. Please wait a few minutes and try again.',
   COUPON_APPLY_RATE_LIMITED: 'Too many coupon attempts. Please try again shortly.',
   SHIPPING_STATUS_UNSUPPORTED: 'This shipment status is not supported',
+  SHIPPING_WEBHOOK_NOT_CONFIGURED: 'Shipping webhook processing is not configured',
   ORDER_AMOUNT_BELOW_RAZORPAY_MIN: 'Order amount is below the minimum allowed for online payment',
   INVALID_WEBHOOK_PAYLOAD: 'Invalid webhook payload',
+  OTP_INVALID_OR_EXPIRED: 'The code you entered is invalid or has expired',
+  OTP_TOO_MANY_ATTEMPTS: 'Too many incorrect attempts. Request a new code',
+  PUSH_NOT_CONFIGURED: 'Browser notifications are not configured',
   NOT_YOUR_COMMISSION_INVOICE: 'You do not have access to this commission invoice',
   NOT_YOUR_VENDOR_PAYOUTS: 'You do not have access to these payouts',
   CREDIT_NOTE_FORBIDDEN: 'You do not have access to this credit note',
   DEBIT_NOTE_FORBIDDEN: 'You do not have access to this debit note',
+  PAYOUT_INVALID_TRANSITION: 'This payout status transition is not allowed',
 } as const;

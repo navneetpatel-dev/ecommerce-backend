@@ -557,7 +557,7 @@ module.exports = {
           periodStart: new Date(startDate.getTime() - 30 * 24 * 60 * 60 * 1000),
           periodEnd: startDate,
           status: randomElement(['PENDING', 'PROCESSING', 'PAID', 'PAID']),
-          razorpayPayoutId: daysAgo > 30 ? `pout_${uuidv4().replace(/-/g, '').slice(0, 14)}` : null,
+          paymentReferenceNumber: daysAgo > 30 ? `pout_${uuidv4().replace(/-/g, '').slice(0, 14)}` : null,
           paidAt: daysAgo > 30 ? new Date(startDate.getTime() + 3 * 24 * 60 * 60 * 1000) : null,
           createdAt: startDate, updatedAt: startDate,
         });

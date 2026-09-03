@@ -139,7 +139,7 @@ export const REPORT_COLUMN_LABELS: Record<string, string> = {
   periodStart: 'Period Start',
   periodEnd: 'Period End',
   paidAt: 'Paid At',
-  razorpayPayoutId: 'Razorpay Payout ID',
+  paymentReferenceNumber: 'Payment Reference Number',
   saleAmount: 'Sale Amount',
   commissionRate: 'Commission Rate',
   commissionAmount: 'Commission Amount',

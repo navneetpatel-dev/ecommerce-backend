@@ -159,6 +159,17 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
   res.status(200).json(ok({ user: result.user, accessToken: result.accessToken }));
 });
 
+export const requestOtp = asyncHandler(async (req: Request, res: Response) => {
+  await authService.requestLoginOtp(req.body.email);
+  res.status(200).json(ok({ message: 'If that email exists, a sign-in code has been sent' }));
+});
+
+export const verifyOtp = asyncHandler(async (req: Request, res: Response) => {
+  const result = await authService.loginWithOtp(req.body.email, req.body.code, deviceMeta(req));
+  res.cookie(COOKIES.REFRESH_TOKEN, result.refreshToken, COOKIE_OPTIONS);
+  res.status(200).json(ok({ user: result.user, accessToken: result.accessToken }));
+});
+
 export const refresh = asyncHandler(async (req: Request, res: Response) => {
   const token = req.cookies?.[COOKIES.REFRESH_TOKEN] || req.body?.refreshToken;
   if (!token) {
@@ -246,6 +257,7 @@ export const me = asyncHandler(async (req: Request, res: Response) => {
     phone: user.phone,
     role: roleName,
     vendorId: user.vendorId,
+    deliveryAgentId: user.deliveryAgentId,
     emailVerified: user.emailVerified,
     emailMarketingConsent: user.emailMarketingConsent,
     avatarUrl: user.avatarUrl,

@@ -17,6 +17,7 @@ import {
   API_PREFIX,
   HEALTH_LIVE_PATH,
   HEALTH_PATH,
+  SHIPPING_WEBHOOKS_RAW_PATH,
   WEBHOOKS_RAW_PATH,
 } from '@core/constants/apiPaths';
 import '@database/models';
@@ -60,6 +61,7 @@ app.use(
 app.use(compression());
 
 app.use(WEBHOOKS_RAW_PATH, express.raw({ type: 'application/json' }));
+app.use(SHIPPING_WEBHOOKS_RAW_PATH, express.raw({ type: 'application/json' }));
 
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());

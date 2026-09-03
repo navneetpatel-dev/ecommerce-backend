@@ -10,6 +10,7 @@ import {
   REFUND_METHOD,
   REFUND_STATUS,
   RETURN_STATUS,
+  RETURN_TYPE,
   WALLET_REFERENCE_TYPE,
   WALLET_POINT_SOURCE,
   type ReturnReason,
@@ -79,6 +80,7 @@ type CreateReturnInput = {
   orderItemId: string;
   reasonCode: ReturnReason;
   reason: string;
+  type: 'REFUND' | 'EXCHANGE';
   returnQuantity?: number;
   photoUrls?: string[];
 };
@@ -163,6 +165,12 @@ function serializeReturn(
     reasonCode: plain.reasonCode,
     returnQuantity: plain.returnQuantity != null ? Number(plain.returnQuantity) : null,
     status: plain.status,
+    type: plain.type ?? RETURN_TYPE.REFUND,
+    deliveryAgentId: plain.deliveryAgentId ?? null,
+    pickupOtpVerifiedAt: plain.pickupOtpVerifiedAt ?? null,
+    pickupFailureReason: plain.pickupFailureReason ?? null,
+    replacementDeliveredAt: plain.replacementDeliveredAt ?? null,
+    replacementProofUrl: plain.replacementProofUrl ?? null,
     photoUrls: Array.isArray(plain.photoUrls) ? plain.photoUrls : [],
     refundMethod: plain.refundMethod ?? null,
     refundStatus: plain.refundStatus ?? REFUND_STATUS.NONE,
@@ -345,6 +353,7 @@ export class ReturnsService {
           userId,
           reason: data.reason,
           reasonCode: data.reasonCode,
+          type: data.type,
           returnQuantity,
           photoUrls: data.photoUrls ?? [],
           status: RETURN_STATUS.REQUESTED,
@@ -1019,7 +1028,11 @@ export class ReturnsService {
         patch.receivedAt = new Date();
       }
 
-      if (status === RETURN_STATUS.APPROVED && row.refundAmount == null) {
+      if (
+        status === RETURN_STATUS.APPROVED &&
+        row.type !== RETURN_TYPE.EXCHANGE &&
+        row.refundAmount == null
+      ) {
         const { reversal, order } = await this.freezeVendorAccountingOnApprove(row, actorId, t);
         const customerRefund = fromPaise(reversal.customerRefundPaise);
         const split = await this.splitRefundAmounts(order, customerRefund, t);
@@ -1087,6 +1100,9 @@ export class ReturnsService {
 
       // Manual REFUNDED transition is only for wallet-complete path / admin; Razorpay waits webhook.
       if (status === RETURN_STATUS.REFUNDED) {
+        if (row.type === RETURN_TYPE.EXCHANGE) {
+          throw new ValidationError(ERROR_MESSAGES.RETURN_INVALID_TRANSITION);
+        }
         const refundStatus = String(row.refundStatus ?? REFUND_STATUS.NONE);
         if (
           Number(row.razorpayRefundAmount ?? 0) > 0 &&

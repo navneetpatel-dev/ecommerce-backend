@@ -784,12 +784,12 @@ async function vendorPayoutReconciliation(filters: ReportFilters) {
       p.status::text AS status,
       p."periodStart" AS "periodStart",
       p."periodEnd" AS "periodEnd",
-      COALESCE(p."razorpayPayoutId", '') AS "razorpayPayoutId",
+      COALESCE(p."paymentReferenceNumber", '') AS "paymentReferenceNumber",
       p."paidAt" AS "paidAt",
       p."createdAt" AS "createdAt",
       CASE
-        WHEN p.status = 'PAID' AND p."razorpayPayoutId" IS NOT NULL THEN 'MATCHED'
-        WHEN p.status = 'PAID' AND p."razorpayPayoutId" IS NULL THEN 'MISSING_PG_REF'
+        WHEN p.status = 'PAID' AND p."paymentReferenceNumber" IS NOT NULL THEN 'MATCHED'
+        WHEN p.status = 'PAID' AND p."paymentReferenceNumber" IS NULL THEN 'MISSING_PAYMENT_REF'
         WHEN p.status = 'PROCESSING' THEN 'IN_FLIGHT'
         WHEN p.status = 'FAILED' THEN 'FAILED'
         WHEN p.status = 'PENDING' THEN 'PENDING'
@@ -814,7 +814,7 @@ async function vendorPayoutReconciliation(filters: ReportFilters) {
       status: row.status,
       periodStart: row.periodStart,
       periodEnd: row.periodEnd,
-      razorpayPayoutId: row.razorpayPayoutId,
+      paymentReferenceNumber: row.paymentReferenceNumber,
       paidAt: row.paidAt,
       createdAt: row.createdAt,
       reconStatus: row.reconStatus,
@@ -1004,7 +1004,7 @@ export const adminFinanceGapReports: ReportDefinition[] = [
       { key: 'status', labelKey: 'payoutStatus' },
       { key: 'periodStart', labelKey: 'periodStart', format: 'date' },
       { key: 'periodEnd', labelKey: 'periodEnd', format: 'date' },
-      { key: 'razorpayPayoutId', labelKey: 'razorpayPayoutId' },
+      { key: 'paymentReferenceNumber', labelKey: 'paymentReferenceNumber' },
       { key: 'paidAt', labelKey: 'paidAt', format: 'date' },
       { key: 'createdAt', labelKey: 'createdAt', format: 'date' },
       { key: 'reconStatus', labelKey: 'reconStatus' },

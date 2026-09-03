@@ -4,7 +4,7 @@ import { ok } from '@core/http/ApiResponse';
 import { pageLimitQuerySchema } from '@core/http/pagination';
 import { COOKIES } from '@core/constants/http';
 import { shippingService } from './shipping.service';
-import { WebhookPayloadSchema, GetShippingRatesSchema } from './shipping.dto';
+import { GetShippingRatesSchema } from './shipping.dto';
 
 export const getRates = asyncHandler(async (req: Request, res: Response) => {
   const query = GetShippingRatesSchema.parse(req.query);
@@ -15,7 +15,10 @@ export const getRates = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const getShipmentByTracking = asyncHandler(async (req: Request, res: Response) => {
-  const shipment = await shippingService.getShipmentByTracking(req.params.trackingNumber!);
+  const shipment = await shippingService.getShipmentByTracking(
+    req.params.trackingNumber!,
+    req.user!,
+  );
   res.json(ok(shipment));
 });
 
@@ -50,7 +53,11 @@ export const createRate = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const processWebhook = asyncHandler(async (req: Request, res: Response) => {
-  const { trackingNumber, status } = WebhookPayloadSchema.parse(req.body);
-  const shipment = await shippingService.processWebhook(trackingNumber, status);
-  res.json(ok({ received: true, shipment }));
+  const result = await shippingService.handleWebhook(
+    req.params.carrier!,
+    req.body as Buffer | string,
+    req.header('x-shipping-signature'),
+    req.header('x-shipping-event-id'),
+  );
+  res.json(ok(result));
 });

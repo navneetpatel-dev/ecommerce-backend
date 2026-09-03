@@ -1,12 +1,21 @@
+import crypto from 'crypto';
+import { env } from '@config/env';
 import { ShippingRate } from '@database/models/shippingRate.model';
 import { ShippingZone } from '@database/models/shippingZone.model';
 import { Shipment } from '@database/models/shipment.model';
 import { Product } from '@database/models/product.model';
 import { ProductVariant } from '@database/models/productVariant.model';
+import { SubOrder } from '@database/models/subOrder.model';
+import { Order } from '@database/models/order.model';
+import { WebhookEvent } from '@database/models/webhookEvent.model';
+import { AppError } from '@core/errors/AppError';
+import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
-import { ERROR_MESSAGES } from '@core/constants/errors';
-import { Op } from 'sequelize';
+import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
+import { ADMIN_ROLES, ROLES } from '@core/constants/statuses';
+import { Op, type Transaction } from 'sequelize';
+import { sequelize } from '@database/models';
 import type { CreateZoneRequest, UpdateZoneRequest, CreateRateRequest, GetShippingRatesRequest } from './shipping.dto';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { settingsService } from '@modules/settings/settings.service';
@@ -15,6 +24,7 @@ import {
   resolveCartVendorWeightGrams,
 } from './shippingWeight';
 import { resolveShippingDisplayKey } from '@modules/checkout/checkoutOrderTotals';
+import { WebhookPayloadSchema } from './shipping.dto';
 
 export type ShippingQuoteRate = {
   method: 'STANDARD' | 'EXPRESS';
@@ -37,6 +47,22 @@ const WEBHOOK_STATUS_MAP: Record<string, string> = {
   CANCELLED: 'FAILED',
   CANCELED: 'FAILED',
 };
+
+type TrackingActor = {
+  id: string;
+  vendorId: string | null;
+  role: { name: string };
+};
+
+function normalizeCarrier(carrier: string): string {
+  return carrier.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+}
+
+function safeTimingEqual(expected: string, actual: string): boolean {
+  const expectedBuffer = Buffer.from(expected);
+  const actualBuffer = Buffer.from(actual);
+  return expectedBuffer.length === actualBuffer.length && crypto.timingSafeEqual(expectedBuffer, actualBuffer);
+}
 
 export const shippingService = {
   async resolveZonesForPincode(pincode: string, state?: string) {
@@ -229,28 +255,134 @@ export const shippingService = {
     });
   },
 
-  async getShipmentByTracking(trackingNumber: string) {
-    const shipment = await Shipment.findOne({ where: { trackingNumber } });
+  async getShipmentByTracking(trackingNumber: string, actor: TrackingActor) {
+    const shipment = await Shipment.findOne({
+      where: { trackingNumber },
+      include: [{
+        model: SubOrder,
+        as: 'subOrder',
+        include: [{ model: Order, as: 'order', attributes: ['userId'] }],
+        attributes: ['vendorId'],
+      }],
+    });
     if (!shipment) throw new NotFoundError('Shipment');
+
+    const shipmentWithOrder = shipment as Shipment & {
+      subOrder?: SubOrder & { order?: Order };
+    };
+    const subOrder = shipmentWithOrder.subOrder;
+    const isAdmin = (ADMIN_ROLES as readonly string[]).includes(actor.role.name);
+    const isCustomerOwner = actor.role.name === ROLES.CUSTOMER && subOrder?.order?.userId === actor.id;
+    const isVendorOwner = actor.vendorId != null && subOrder?.vendorId === actor.vendorId;
+    if (!isAdmin && !isCustomerOwner && !isVendorOwner) {
+      throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_ORDER);
+    }
     return shipment;
   },
 
-  async processWebhook(trackingNumber: string, status: string) {
+  async handleWebhook(
+    carrier: string,
+    rawBody: Buffer | string,
+    signature: string | undefined,
+    suppliedEventId?: string,
+  ) {
+    const normalizedCarrier = normalizeCarrier(carrier);
+    const secret = env.SHIPPING_WEBHOOK_SECRETS[normalizedCarrier];
+    if (!secret) {
+      throw new AppError(ERROR_MESSAGES.SHIPPING_WEBHOOK_NOT_CONFIGURED, 503, ERROR_CODES.CONFIG_ERROR);
+    }
+    if (!signature) {
+      throw new AppError(ERROR_MESSAGES.INVALID_SIGNATURE, 400, ERROR_CODES.INVALID_SIGNATURE);
+    }
+
+    const bodyString = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : String(rawBody);
+    const expected = crypto.createHmac('sha256', secret).update(bodyString).digest('hex');
+    if (!safeTimingEqual(expected, signature)) {
+      throw new AppError(ERROR_MESSAGES.INVALID_SIGNATURE, 400, ERROR_CODES.INVALID_SIGNATURE);
+    }
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(bodyString);
+    } catch {
+      throw new ValidationError(ERROR_MESSAGES.INVALID_WEBHOOK_PAYLOAD);
+    }
+    const { trackingNumber, status } = WebhookPayloadSchema.parse(payload);
+    const eventId = suppliedEventId?.trim() || crypto.createHash('sha256').update(bodyString).digest('hex');
+    if (!normalizedCarrier || eventId.length > 191) {
+      throw new ValidationError(ERROR_MESSAGES.INVALID_WEBHOOK_PAYLOAD);
+    }
+
+    return sequelize.transaction(async (transaction) => {
+      const [, created] = await WebhookEvent.findOrCreate({
+        where: { provider: `shipping:${normalizedCarrier}`, eventId },
+        defaults: {
+          provider: `shipping:${normalizedCarrier}`,
+          eventId,
+          payload: payload as Record<string, unknown>,
+        },
+        transaction,
+      });
+      if (!created) return { received: true, duplicate: true };
+
+      const shipment = await shippingService.processWebhook(
+        trackingNumber,
+        status,
+        transaction,
+      );
+      return { received: true, duplicate: false, shipment };
+    });
+  },
+
+  async processWebhook(
+    trackingNumber: string,
+    status: string,
+    transaction?: Transaction,
+  ) {
     const normalizedStatus = String(status).toUpperCase().replace(/[\s-]+/g, '_');
     const mappedStatus = WEBHOOK_STATUS_MAP[normalizedStatus];
     if (!mappedStatus) throw new ValidationError(ERROR_MESSAGES.SHIPPING_STATUS_UNSUPPORTED);
 
-    const shipment = await Shipment.findOne({ where: { trackingNumber } });
+    const shipment = await Shipment.findOne({
+      where: { trackingNumber },
+      transaction,
+      lock: transaction?.LOCK.UPDATE,
+    });
     if (!shipment) throw new NotFoundError('Shipment');
 
-    await shipment.update({
-      status: mappedStatus as any,
-      shippedAt: mappedStatus === 'PICKED_UP' ? new Date() : shipment.shippedAt,
-      deliveredAt: mappedStatus === 'DELIVERED' ? new Date() : shipment.deliveredAt,
-      updatedBy: null,
-    });
+    return shippingService.applyShipmentStatus(
+      shipment,
+      mappedStatus,
+      { updatedBy: null },
+      transaction,
+    );
+  },
 
-    return shipment;
+  async applyShipmentStatus(
+    shipment: Shipment,
+    status: string,
+    extra: Partial<Shipment> = {},
+    existingTransaction?: Transaction,
+  ) {
+    const apply = async (transaction: Transaction) => {
+      await shipment.update(
+        {
+          status: status as Shipment['status'],
+          shippedAt: status === 'PICKED_UP' ? new Date() : shipment.shippedAt,
+          deliveredAt: status === 'DELIVERED' ? new Date() : shipment.deliveredAt,
+          ...extra,
+        },
+        { transaction },
+      );
+      if (status === 'DELIVERED') {
+        await SubOrder.update(
+          { status: 'DELIVERED' },
+          { where: { id: shipment.subOrderId }, transaction },
+        );
+      }
+      return shipment;
+    };
+    return existingTransaction ? apply(existingTransaction) : sequelize.transaction(apply);
   },
 
   async getVendorFreeShippingThreshold(vendorId: string): Promise<number | null> {

@@ -6,10 +6,13 @@ import {
   RETURN_REASON_VALUES,
   RETURN_STATUS,
   RETURN_STATUS_VALUES,
+  RETURN_TYPE,
+  RETURN_TYPE_VALUES,
   type RefundMethod,
   type RefundStatus,
   type ReturnReason,
   type ReturnStatus,
+  type ReturnType,
 } from '@core/constants/statuses';
 
 export class ReturnRequest extends Model<InferAttributes<ReturnRequest>, InferCreationAttributes<ReturnRequest>> {
@@ -38,6 +41,12 @@ export class ReturnRequest extends Model<InferAttributes<ReturnRequest>, InferCr
   declare lastRefundAttemptAt: CreationOptional<Date | null>;
   declare refundFailureReason: CreationOptional<string | null>;
   declare receivedAt: CreationOptional<Date | null>;
+  declare deliveryAgentId: CreationOptional<string | null>;
+  declare pickupOtpVerifiedAt: CreationOptional<Date | null>;
+  declare pickupFailureReason: CreationOptional<string | null>;
+  declare type: CreationOptional<ReturnType>;
+  declare replacementDeliveredAt: CreationOptional<Date | null>;
+  declare replacementProofUrl: CreationOptional<string | null>;
   declare resolvedById: string | null;
   declare resolvedAt: Date | null;
   declare createdBy: string | null;
@@ -51,6 +60,7 @@ export class ReturnRequest extends Model<InferAttributes<ReturnRequest>, InferCr
     ReturnRequest.belongsTo(models.SubOrder, { foreignKey: 'subOrderId', as: 'subOrder' });
     ReturnRequest.belongsTo(models.OrderItem, { foreignKey: 'orderItemId', as: 'orderItem' });
     ReturnRequest.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
+    ReturnRequest.belongsTo(models.DeliveryAgent, { foreignKey: 'deliveryAgentId', as: 'deliveryAgent' });
     ReturnRequest.hasOne(models.CreditNote, { foreignKey: 'returnRequestId', as: 'creditNote' });
     ReturnRequest.hasOne(models.DebitNote, { foreignKey: 'returnRequestId', as: 'debitNote' });
   }
@@ -98,6 +108,12 @@ export const initReturnRequestModel = (sequelize: Sequelize) => {
       lastRefundAttemptAt: { type: DataTypes.DATE, allowNull: true },
       refundFailureReason: { type: DataTypes.STRING(255), allowNull: true },
       receivedAt: { type: DataTypes.DATE, allowNull: true },
+      deliveryAgentId: { type: DataTypes.UUID, allowNull: true },
+      pickupOtpVerifiedAt: { type: DataTypes.DATE, allowNull: true },
+      pickupFailureReason: { type: DataTypes.TEXT, allowNull: true },
+      type: { type: DataTypes.ENUM(...RETURN_TYPE_VALUES), allowNull: false, defaultValue: RETURN_TYPE.REFUND },
+      replacementDeliveredAt: { type: DataTypes.DATE, allowNull: true },
+      replacementProofUrl: { type: DataTypes.STRING, allowNull: true },
       resolvedById: { type: DataTypes.UUID, allowNull: true },
       resolvedAt: { type: DataTypes.DATE, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },

@@ -177,6 +177,13 @@ export const REFUND_METHOD = {
 export type RefundMethod = (typeof REFUND_METHOD)[keyof typeof REFUND_METHOD];
 export const REFUND_METHOD_VALUES = Object.values(REFUND_METHOD) as [RefundMethod, ...RefundMethod[]];
 
+export const RETURN_TYPE = {
+  REFUND: 'REFUND',
+  EXCHANGE: 'EXCHANGE',
+} as const;
+export type ReturnType = (typeof RETURN_TYPE)[keyof typeof RETURN_TYPE];
+export const RETURN_TYPE_VALUES = Object.values(RETURN_TYPE) as [ReturnType, ...ReturnType[]];
+
 /** Parallel refund-track status (independent of logistics status). */
 export const REFUND_STATUS = {
   NONE: 'NONE',
@@ -459,6 +466,7 @@ export const ROLES = {
   ADMIN_CATALOG_MANAGER: 'ADMIN_CATALOG_MANAGER',
   VENDOR_OWNER: 'VENDOR_OWNER',
   VENDOR_STAFF: 'VENDOR_STAFF',
+  DELIVERY_AGENT: 'DELIVERY_AGENT',
   CUSTOMER: 'CUSTOMER',
 } as const;
 export type RoleName = (typeof ROLES)[keyof typeof ROLES];
@@ -471,6 +479,7 @@ export const ROLE_LABELS: Record<RoleName, string> = {
   [ROLES.ADMIN_CATALOG_MANAGER]: 'Catalog Manager',
   [ROLES.VENDOR_OWNER]: 'Vendor Owner',
   [ROLES.VENDOR_STAFF]: 'Vendor Staff',
+  [ROLES.DELIVERY_AGENT]: 'Delivery Agent',
   [ROLES.CUSTOMER]: 'Customer',
 };
 
@@ -481,3 +490,4 @@ export const ADMIN_ROLES = [
 ] as const;
 
 export const VENDOR_ROLES = [ROLES.VENDOR_OWNER, ROLES.VENDOR_STAFF] as const;
+export const DELIVERY_ROLES = [ROLES.DELIVERY_AGENT] as const;

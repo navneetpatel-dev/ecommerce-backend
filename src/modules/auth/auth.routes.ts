@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { validate } from '@middleware/validate.middleware';
 import { authenticate } from '@middleware/auth.middleware';
-import { authRateLimiter } from '@middleware/rateLimiter.middleware';
-import { RegisterSchema, LoginSchema, ForgotPasswordSchema, ResetPasswordSchema, ChangePasswordSchema, VerifyEmailSchema } from './auth.dto';
+import { authRateLimiter, otpRequestRateLimiter } from '@middleware/rateLimiter.middleware';
+import { RegisterSchema, LoginSchema, RequestOtpSchema, VerifyOtpSchema, ForgotPasswordSchema, ResetPasswordSchema, ChangePasswordSchema, VerifyEmailSchema } from './auth.dto';
 import * as controller from './auth.controller';
 
 const router = Router();
@@ -12,6 +12,8 @@ router.get('/google/callback', controller.googleCallback);
 
 router.post('/register', validate(RegisterSchema), authRateLimiter, controller.register);
 router.post('/login', validate(LoginSchema), authRateLimiter, controller.login);
+router.post('/otp/request', validate(RequestOtpSchema), otpRequestRateLimiter, controller.requestOtp);
+router.post('/otp/verify', validate(VerifyOtpSchema), authRateLimiter, controller.verifyOtp);
 router.post('/refresh', controller.refresh);
 router.post('/logout', authenticate, controller.logout);
 router.post('/forgot-password', validate(ForgotPasswordSchema), authRateLimiter, controller.forgotPassword);

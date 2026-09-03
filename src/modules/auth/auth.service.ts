@@ -17,6 +17,7 @@ import { ROLES, USER_STATUS } from '@core/constants/statuses';
 import { ERROR_MESSAGES, ERROR_CODES } from '@core/constants/errors';
 import { roleNameOf } from '@utils/userRole';
 import { notificationsService } from '@modules/notifications/notifications.service';
+import { otpService } from './otp.service';
 
 export type SessionDeviceMeta = {
   userAgent?: string | null;
@@ -30,6 +31,7 @@ export type AuthUserPayload = {
   name: string;
   role: string;
   vendorId: string | null;
+  deliveryAgentId: string | null;
   permissions: string[];
 };
 
@@ -72,6 +74,7 @@ function toUserPayload(user: User): JwtPayload {
     email: user.email,
     roleId: user.roleId,
     vendorId: user.vendorId,
+    deliveryAgentId: user.deliveryAgentId,
     roleName: roleNameOf(user),
   };
 }
@@ -172,6 +175,7 @@ export class AuthService {
         name: user.name,
         role: ROLES.CUSTOMER,
         vendorId: user.vendorId,
+        deliveryAgentId: user.deliveryAgentId,
         permissions: [],
       },
       ...tokens,
@@ -245,6 +249,15 @@ export class AuthService {
     return this.issueSession(user, meta);
   }
 
+  async requestLoginOtp(email: string): Promise<void> {
+    await otpService.requestLoginCode(email);
+  }
+
+  async loginWithOtp(email: string, code: string, meta: SessionDeviceMeta = {}): Promise<LoginSuccess> {
+    const user = await otpService.verifyLoginCode(email, code);
+    return this.issueSession(user, meta);
+  }
+
   /** Used by Google OAuth after resolving the user row. */
   async issueSessionFromUser(user: User, meta: SessionDeviceMeta = {}): Promise<LoginSuccess> {
     return this.issueSession(user, meta);
@@ -264,6 +277,7 @@ export class AuthService {
         name: user.name,
         role: roleName,
         vendorId: user.vendorId,
+        deliveryAgentId: user.deliveryAgentId,
         permissions,
       },
       ...tokens,

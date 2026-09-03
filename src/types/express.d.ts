@@ -6,6 +6,7 @@ declare global {
         email: string;
         roleId: string;
         vendorId: string | null;
+        deliveryAgentId: string | null;
         role: { name: string };
       };
       requestId: string;

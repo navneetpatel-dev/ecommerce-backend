@@ -12,6 +12,7 @@ import {
 } from '@config/queue';
 import { isMarketingNotification, type EmailTemplateData } from './templates/registry';
 import { EMAIL_COPY, NOTIFICATION_SYSTEM_MESSAGES } from './emailCopy';
+import { pushService } from './push.service';
 
 export const EMAIL_JOB_NAME = 'notification-delivery';
 
@@ -42,7 +43,11 @@ function todayBucket(): string {
 
 export class NotificationsService {
   async listLogs() {
-    return NotificationLog.findAll({ limit: 100, order: [['createdAt', 'DESC']] });
+    return NotificationLog.findAll({
+      limit: 100,
+      include: [{ model: User, as: 'user', attributes: ['email'] }],
+      order: [['createdAt', 'DESC']],
+    });
   }
 
   /**
@@ -82,6 +87,7 @@ export class NotificationsService {
 
     const alreadySent = await NotificationLog.findOne({
       where: {
+        userId: params.userId,
         type: params.type,
         referenceId: params.referenceId,
         status: NOTIFICATION_STATUS.SENT,
@@ -139,6 +145,22 @@ export class NotificationsService {
       templateData,
       urgency,
     });
+
+    void pushService
+      .sendForNotification({
+        userId: params.userId,
+        type: params.type,
+        referenceType: params.referenceType,
+        referenceId: params.referenceId,
+        templateData,
+      })
+      .catch((error) => {
+        logger.warn('Browser push dispatch failed', {
+          userId: params.userId,
+          type: params.type,
+          error: error instanceof Error ? error.message : error,
+        });
+      });
 
     return log;
   }
@@ -214,6 +236,16 @@ export class NotificationsService {
       type: 'PASSWORD_RESET',
       referenceType: 'User',
       referenceId: randomUUID(),
+      templateData,
+    });
+  }
+
+  sendLoginOtp(userId: string, otpId: string, templateData: EmailTemplateData) {
+    return this.enqueue({
+      userId,
+      type: 'LOGIN_OTP',
+      referenceType: 'OtpCode',
+      referenceId: otpId,
       templateData,
     });
   }
@@ -468,6 +500,32 @@ export class NotificationsService {
       referenceId: `${payoutId}:${userId}`,
       templateData,
     });
+  }
+
+  sendPayoutPaid(userId: string, payoutId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({
+      userId,
+      type: 'PAYOUT_PAID',
+      referenceType: 'Payout',
+      referenceId: payoutId,
+      templateData,
+    });
+  }
+
+  sendDeliveryAssigned(userId: string, shipmentId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({ userId, type: 'DELIVERY_ASSIGNED', referenceType: 'Shipment', referenceId: shipmentId, templateData });
+  }
+
+  sendPickupAssigned(userId: string, returnId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({ userId, type: 'PICKUP_ASSIGNED', referenceType: 'ReturnRequest', referenceId: returnId, templateData });
+  }
+
+  sendDeliveryOtp(userId: string, otpId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({ userId, type: 'DELIVERY_OTP', referenceType: 'OtpCode', referenceId: otpId, templateData });
+  }
+
+  sendReturnPickupOtp(userId: string, otpId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({ userId, type: 'RETURN_PICKUP_OTP', referenceType: 'OtpCode', referenceId: otpId, templateData });
   }
 
   sendPayoutFailed(userId: string, payoutId: string, templateData: EmailTemplateData = {}) {

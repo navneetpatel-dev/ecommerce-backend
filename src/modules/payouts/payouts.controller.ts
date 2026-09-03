@@ -19,3 +19,18 @@ export const listByVendor = asyncHandler(async (req: Request, res: Response) => 
   const rows = await payoutsService.listByVendor(req.params.vendorId!, req.user!.vendorId);
   res.json(ok(rows));
 });
+
+export const markPaid = asyncHandler(async (req: Request, res: Response) => {
+  const payout = await payoutsService.markPaid(req.params.id!, req.user!.id, req.body);
+  res.json(ok(payout));
+});
+
+export const markFailed = asyncHandler(async (req: Request, res: Response) => {
+  const payout = await payoutsService.markFailed(req.params.id!, req.user!.id, req.body);
+  res.json(ok(payout));
+});
+
+export const retry = asyncHandler(async (req: Request, res: Response) => {
+  const payout = await payoutsService.retry(req.params.id!, req.user!.id);
+  res.json(ok(payout));
+});

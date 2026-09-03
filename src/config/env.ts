@@ -38,6 +38,22 @@ const envSchema = z.object({
   /** Optional Dashboard checkout configuration (Test/Live each has its own ID). */
   RAZORPAY_CHECKOUT_CONFIG_ID: z.string().optional(),
 
+  /** JSON object mapping normalized carrier names to their webhook HMAC secrets. */
+  SHIPPING_WEBHOOK_SECRETS: z
+    .preprocess((value) => {
+      if (typeof value !== 'string') return value;
+      try {
+        return JSON.parse(value);
+      } catch {
+        return value;
+      }
+    }, z.record(z.string(), z.string().min(16)))
+    .default({}),
+
+  VAPID_PUBLIC_KEY: z.string().min(1).optional(),
+  VAPID_PRIVATE_KEY: z.string().min(1).optional(),
+  VAPID_SUBJECT: z.string().min(1).optional(),
+
   /**
    * Mail driver. Add a MailProvider in mail.providers.ts + register it in mail.ts
    * when introducing another email system. `auto` resolves: ses → smtp → console.
@@ -138,6 +154,15 @@ const envSchema = z.object({
         message: 'AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are required when MAIL_DRIVER=ses',
       });
     }
+  }
+
+  const vapidValues = [data.VAPID_PUBLIC_KEY, data.VAPID_PRIVATE_KEY, data.VAPID_SUBJECT];
+  if (vapidValues.some(Boolean) && !vapidValues.every(Boolean)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['VAPID_PUBLIC_KEY'],
+      message: 'VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, and VAPID_SUBJECT must be configured together',
+    });
   }
 });
 

@@ -12,6 +12,14 @@ export const LoginSchema = z.object({
   password: z.string(),
 });
 
+export const RequestOtpSchema = z.object({
+  email: z.string().trim().email(),
+});
+
+export const VerifyOtpSchema = RequestOtpSchema.extend({
+  code: z.string().regex(/^\d{6}$/),
+});
+
 export const RefreshSchema = z.object({
   refreshToken: z.string(),
 });
@@ -36,6 +44,8 @@ export const VerifyEmailSchema = z.object({
 
 export type RegisterRequest = z.infer<typeof RegisterSchema>;
 export type LoginRequest = z.infer<typeof LoginSchema>;
+export type RequestOtpRequest = z.infer<typeof RequestOtpSchema>;
+export type VerifyOtpRequest = z.infer<typeof VerifyOtpSchema>;
 export type RefreshRequest = z.infer<typeof RefreshSchema>;
 export type ForgotPasswordRequest = z.infer<typeof ForgotPasswordSchema>;
 export type ResetPasswordRequest = z.infer<typeof ResetPasswordSchema>;

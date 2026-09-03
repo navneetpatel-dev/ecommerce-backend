@@ -10,6 +10,10 @@ export class Shipment extends Model<InferAttributes<Shipment>, InferCreationAttr
   declare estimatedDeliveryDate: Date | null;
   declare shippedAt: Date | null;
   declare deliveredAt: Date | null;
+  declare deliveryAgentId: CreationOptional<string | null>;
+  declare assignedAt: CreationOptional<Date | null>;
+  declare proofOfDeliveryUrl: CreationOptional<string | null>;
+  declare deliveryOtpVerifiedAt: CreationOptional<Date | null>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -18,7 +22,8 @@ export class Shipment extends Model<InferAttributes<Shipment>, InferCreationAttr
   declare readonly deletedAt: CreationOptional<Date>;
 
   static associate(models: Record<string, any>) {
-    Shipment.belongsTo(models.SubOrder, { foreignKey: 'subOrderId' });
+    Shipment.belongsTo(models.SubOrder, { foreignKey: 'subOrderId', as: 'subOrder' });
+    Shipment.belongsTo(models.DeliveryAgent, { foreignKey: 'deliveryAgentId', as: 'deliveryAgent' });
   }
 }
 
@@ -37,6 +42,10 @@ export const initShipmentModel = (sequelize: Sequelize) => {
       estimatedDeliveryDate: { type: DataTypes.DATE, allowNull: true },
       shippedAt: { type: DataTypes.DATE, allowNull: true },
       deliveredAt: { type: DataTypes.DATE, allowNull: true },
+      deliveryAgentId: { type: DataTypes.UUID, allowNull: true },
+      assignedAt: { type: DataTypes.DATE, allowNull: true },
+      proofOfDeliveryUrl: { type: DataTypes.STRING, allowNull: true },
+      deliveryOtpVerifiedAt: { type: DataTypes.DATE, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

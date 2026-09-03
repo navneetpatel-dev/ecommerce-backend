@@ -1,7 +1,7 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
 
 export type NotificationType =
-  | 'EMAIL_VERIFICATION' | 'PASSWORD_RESET' | 'WELCOME'
+  | 'EMAIL_VERIFICATION' | 'PASSWORD_RESET' | 'LOGIN_OTP' | 'WELCOME'
   | 'ORDER_CONFIRMATION' | 'VENDOR_NEW_ORDER' | 'PAYMENT_RECEIPT' | 'PAYMENT_FAILED'
   | 'SUBORDER_SHIPPED' | 'SUBORDER_DELIVERED' | 'REVIEW_REQUEST'
   | 'ORDER_CANCELLED' | 'ORDER_RETURNED' | 'REFUND_PROCESSED' | 'REFUND_INITIATED'
@@ -9,6 +9,8 @@ export type NotificationType =
   | 'VENDOR_APPLICATION_RECEIVED' | 'VENDOR_APPROVED' | 'VENDOR_REJECTED' | 'VENDOR_SUSPENDED'
   | 'PRODUCT_APPROVED' | 'PRODUCT_REJECTED' | 'KYC_DOCUMENT_REJECTED'
   | 'LOW_STOCK_ALERT' | 'PAYOUT_PROCESSED' | 'PAYOUT_FAILED'
+  | 'PAYOUT_PAID'
+  | 'DELIVERY_ASSIGNED' | 'PICKUP_ASSIGNED' | 'DELIVERY_OTP' | 'RETURN_PICKUP_OTP'
   | 'ABANDONED_CART' | 'PRICE_DROP_ALERT' | 'BACK_IN_STOCK' | 'ADMIN_NEW_VENDOR_PENDING'
   | 'COUPON_USAGE_LIMIT' | 'COUPON_EXPIRING' | 'COUPON_OFFER_EXPIRING'
   | 'TICKET_CREATED' | 'TICKET_REPLIED' | 'TICKET_RESOLVED' | 'TICKET_REOPENED'
@@ -31,6 +33,10 @@ export class NotificationLog extends Model<InferAttributes<NotificationLog>, Inf
   declare readonly createdAt: CreationOptional<Date>;
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
+
+  static associate(models: Record<string, any>) {
+    NotificationLog.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
+  }
 }
 
 export const initNotificationLogModel = (sequelize: Sequelize) => {

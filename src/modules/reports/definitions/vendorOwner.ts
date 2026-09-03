@@ -339,7 +339,7 @@ async function vendorPayoutStatement(filters: ReportFilters) {
       periodStart: p.periodStart,
       periodEnd: p.periodEnd,
       paidAt: p.paidAt,
-      razorpayPayoutId: p.razorpayPayoutId,
+      paymentReferenceNumber: p.paymentReferenceNumber,
       createdAt: p.createdAt,
     })),
     total,

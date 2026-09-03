@@ -65,11 +65,16 @@ import { initBugReportModel, BugReport } from './bugReport.model';
 import { initBugReportAttachmentModel, BugReportAttachment } from './bugReportAttachment.model';
 import { initBugReportCommentModel, BugReportComment } from './bugReportComment.model';
 import { initNewsletterSubscriberModel, NewsletterSubscriber } from './newsletterSubscriber.model';
+import { initOtpCodeModel, OtpCode } from './otpCode.model';
+import { initPushSubscriptionModel, PushSubscription } from './pushSubscription.model';
+import { initDeliveryAgentModel, DeliveryAgent } from './deliveryAgent.model';
+import { initWebVitalModel, WebVital } from './webVital.model';
 
 const models = {
   Role: initRoleModel(sequelize),
   Permission: initPermissionModel(sequelize),
   Vendor: initVendorModel(sequelize),
+  DeliveryAgent: initDeliveryAgentModel(sequelize),
   User: initUserModel(sequelize),
   RefreshToken: initRefreshTokenModel(sequelize),
   Address: initAddressModel(sequelize),
@@ -124,6 +129,9 @@ const models = {
   BugReportAttachment: initBugReportAttachmentModel(sequelize),
   BugReportComment: initBugReportCommentModel(sequelize),
   NewsletterSubscriber: initNewsletterSubscriberModel(sequelize),
+  OtpCode: initOtpCodeModel(sequelize),
+  PushSubscription: initPushSubscriptionModel(sequelize),
+  WebVital: initWebVitalModel(sequelize),
 };
 
 Object.values(models).forEach((model: any) => {
@@ -134,7 +142,7 @@ Object.values(models).forEach((model: any) => {
 
 export { sequelize };
 export {
-  Role, Permission, Vendor, User, RefreshToken, Address,
+  Role, Permission, Vendor, DeliveryAgent, User, RefreshToken, Address,
   VendorDocument, VendorCategory, DocumentRequirement, Category, CategoryAttribute, Product, ProductCategory, ProductVariant, ProductImage,
   Cart, CartItem, Order, SubOrder, OrderItem,
   Coupon, CouponBatch, CouponUsage, CommissionLedger, Payout,
@@ -148,4 +156,7 @@ export {
   SupportTicket, TicketMessage, TicketAttachment, TicketRead,
   BugReport, BugReportAttachment, BugReportComment,
   NewsletterSubscriber,
+  OtpCode,
+  PushSubscription,
+  WebVital,
 };

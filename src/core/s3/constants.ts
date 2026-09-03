@@ -9,6 +9,8 @@ export const S3_ENTITY_TYPE_VALUES = [
   'reports',
   'tickets',
   'bug-reports',
+  'payouts',
+  'shipments',
 ] as const;
 
 export type S3EntityType = (typeof S3_ENTITY_TYPE_VALUES)[number];
@@ -23,6 +25,8 @@ export const S3_ENTITY_TYPES = {
   REPORTS: 'reports',
   TICKETS: 'tickets',
   BUG_REPORTS: 'bug-reports',
+  PAYOUTS: 'payouts',
+  SHIPMENTS: 'shipments',
 } as const satisfies Record<string, S3EntityType>;
 
 /** Purpose segments under an entity — matches `…/{entityId}/{purpose}/{uuid}.ext`. */
@@ -38,6 +42,7 @@ export const S3_PURPOSE_VALUES = [
   'attachments',
   'video',
   'size-chart',
+  'proof',
 ] as const;
 
 export type S3Purpose = (typeof S3_PURPOSE_VALUES)[number];
@@ -54,6 +59,7 @@ export const S3_PURPOSES = {
   ATTACHMENTS: 'attachments',
   VIDEO: 'video',
   SIZE_CHART: 'size-chart',
+  PROOF: 'proof',
 } as const satisfies Record<string, S3Purpose>;
 
 /** Allowed purpose values per entity type. */
@@ -67,6 +73,8 @@ export const S3_ENTITY_PURPOSES: Record<S3EntityType, readonly S3Purpose[]> = {
   [S3_ENTITY_TYPES.REPORTS]: [S3_PURPOSES.EXPORT],
   [S3_ENTITY_TYPES.TICKETS]: [S3_PURPOSES.ATTACHMENTS],
   [S3_ENTITY_TYPES.BUG_REPORTS]: [S3_PURPOSES.ATTACHMENTS],
+  [S3_ENTITY_TYPES.PAYOUTS]: [S3_PURPOSES.ATTACHMENTS],
+  [S3_ENTITY_TYPES.SHIPMENTS]: [S3_PURPOSES.PROOF],
 };
 
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;

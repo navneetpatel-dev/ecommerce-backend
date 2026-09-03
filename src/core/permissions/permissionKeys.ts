@@ -28,6 +28,9 @@ export const PERMISSIONS = {
   TICKET_MANAGE: 'ticket.manage',
   BUG_REPORT_MANAGE: 'bug_report.manage',
   WALLET_ADJUST: 'wallet.adjust',
+  DELIVERY_AGENT_MANAGE: 'delivery_agent.manage',
+  SHIPMENT_DELIVERY_UPDATE: 'shipment.delivery_update',
+  RETURN_PICKUP_UPDATE: 'return.pickup_update',
 } as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -44,6 +47,7 @@ export const ROLE_PERMISSIONS: Record<string, readonly PermissionKey[]> = {
     PERMISSIONS.TICKET_MANAGE,
     PERMISSIONS.BUG_REPORT_MANAGE,
     PERMISSIONS.WALLET_ADJUST,
+    PERMISSIONS.DELIVERY_AGENT_MANAGE,
   ],
   [ROLES.ADMIN_CATALOG_MANAGER]: [
     PERMISSIONS.PRODUCT_MANAGE,
@@ -63,5 +67,6 @@ export const ROLE_PERMISSIONS: Record<string, readonly PermissionKey[]> = {
     PERMISSIONS.REVIEW_RESPOND,
   ],
   [ROLES.VENDOR_STAFF]: [PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.SUBORDER_MANAGE],
+  [ROLES.DELIVERY_AGENT]: [PERMISSIONS.SHIPMENT_DELIVERY_UPDATE, PERMISSIONS.RETURN_PICKUP_UPDATE],
   [ROLES.CUSTOMER]: [],
 };
