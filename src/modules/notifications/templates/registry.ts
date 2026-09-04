@@ -171,6 +171,10 @@ function defaultCta(type: NotificationType, data: EmailTemplateData): { label?: 
     case 'DELIVERY_OTP':
     case 'RETURN_PICKUP_OTP':
       return { label: EMAIL_COPY.ctaViewOrder, url: str(data, 'actionUrl', `${base}/orders`) };
+    case 'RTO_HANDOVER_OTP':
+      return { label: EMAIL_COPY.ctaVendorDashboard, url: str(data, 'actionUrl', `${base}/vendor/dashboard`) };
+    case 'DELIVERY_ATTEMPT_FAILED':
+      return { label: EMAIL_COPY.ctaTrackShipment, url: str(data, 'actionUrl', `${base}/orders/tracking`) };
     default:
       return { label: EMAIL_COPY.ctaOpenStore, url: base };
   }

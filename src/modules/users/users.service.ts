@@ -52,6 +52,7 @@ function serializeAddress(address: {
   pincode: string;
   gstin?: string | null;
   isDefault: boolean;
+  deliveryInstructions?: string | null;
 }) {
   return {
     id: address.id,
@@ -64,6 +65,7 @@ function serializeAddress(address: {
     pincode: address.pincode,
     gstin: address.gstin ?? null,
     isDefault: Boolean(address.isDefault),
+    deliveryInstructions: address.deliveryInstructions ?? null,
   };
 }
 
@@ -182,6 +184,7 @@ export class UsersService {
           pincode: data.pincode,
           gstin: data.gstin ?? null,
           isDefault: makeDefault,
+          deliveryInstructions: data.deliveryInstructions ?? null,
         } as any,
         { transaction: t },
       );
@@ -212,6 +215,9 @@ export class UsersService {
           ...(data.country !== undefined ? { country: data.country } : {}),
           ...(data.pincode !== undefined ? { pincode: data.pincode } : {}),
           ...(data.gstin !== undefined ? { gstin: data.gstin } : {}),
+          ...(data.deliveryInstructions !== undefined
+            ? { deliveryInstructions: data.deliveryInstructions }
+            : {}),
           ...(data.isDefault !== undefined ? { isDefault: nextIsDefault } : {}),
         } as any,
         { transaction: t },

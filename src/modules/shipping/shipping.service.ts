@@ -3,6 +3,7 @@ import { env } from '@config/env';
 import { ShippingRate } from '@database/models/shippingRate.model';
 import { ShippingZone } from '@database/models/shippingZone.model';
 import { Shipment } from '@database/models/shipment.model';
+import { DeliveryAgent } from '@database/models/deliveryAgent.model';
 import { Product } from '@database/models/product.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { SubOrder } from '@database/models/subOrder.model';
@@ -13,12 +14,13 @@ import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
-import { ADMIN_ROLES, ROLES } from '@core/constants/statuses';
+import { ADMIN_ROLES, ORDER_STATUS, ROLES } from '@core/constants/statuses';
 import { Op, type Transaction } from 'sequelize';
 import { sequelize } from '@database/models';
 import type { CreateZoneRequest, UpdateZoneRequest, CreateRateRequest, GetShippingRatesRequest } from './shipping.dto';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { settingsService } from '@modules/settings/settings.service';
+import { notificationsService } from '@modules/notifications/notifications.service';
 import {
   DEFAULT_VARIANT_WEIGHT_GRAMS,
   resolveCartVendorWeightGrams,
@@ -52,7 +54,7 @@ type TrackingActor = {
   id: string;
   vendorId: string | null;
   role: { name: string };
-};
+} | null;
 
 function normalizeCarrier(carrier: string): string {
   return carrier.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
@@ -62,6 +64,59 @@ function safeTimingEqual(expected: string, actual: string): boolean {
   const expectedBuffer = Buffer.from(expected);
   const actualBuffer = Buffer.from(actual);
   return expectedBuffer.length === actualBuffer.length && crypto.timingSafeEqual(expectedBuffer, actualBuffer);
+}
+
+/** After this many failed doorstep attempts, the parcel routes back to the vendor hub instead of retrying. */
+const MAX_DELIVERY_ATTEMPTS = 3;
+
+/**
+ * Once a suborder is marked DELIVERED: promote the parent Order to DELIVERED
+ * once every sibling suborder has settled (delivered/cancelled/returned), and
+ * always notify the customer for this suborder — neither happened before.
+ */
+async function cascadeOrderDeliveredAndNotify(subOrderId: string, transaction: Transaction): Promise<void> {
+  const subOrder = await SubOrder.findByPk(subOrderId, { transaction });
+  if (!subOrder) return;
+
+  const siblings = await SubOrder.findAll({ where: { orderId: subOrder.orderId }, transaction });
+  const terminal = new Set(['DELIVERED', 'CANCELLED', 'RETURNED']);
+  const allSettled = siblings.every((sibling) => terminal.has(sibling.status));
+  const anyDelivered = siblings.some((sibling) => sibling.status === 'DELIVERED');
+  if (allSettled && anyDelivered) {
+    await Order.update(
+      { status: ORDER_STATUS.DELIVERED },
+      { where: { id: subOrder.orderId }, transaction },
+    );
+  }
+
+  const order = await Order.findByPk(subOrder.orderId, { transaction, attributes: ['userId'] });
+  if (order) {
+    void notificationsService.sendSubOrderDelivered(order.userId, subOrderId, {
+      orderId: subOrder.orderId,
+      orderNumber: subOrder.orderId.slice(0, 8).toUpperCase(),
+    });
+  }
+}
+
+/** Prompts the customer to reschedule (or informs them of RTO) after a failed doorstep attempt. */
+async function notifyCustomerOfFailedAttempt(
+  shipment: Shipment,
+  resolvedStatus: string,
+  transaction: Transaction,
+): Promise<void> {
+  const subOrder = await SubOrder.findByPk(shipment.subOrderId, { transaction });
+  if (!subOrder) return;
+  const order = await Order.findByPk(subOrder.orderId, { transaction, attributes: ['userId'] });
+  if (!order) return;
+
+  void notificationsService.sendDeliveryAttemptFailed(order.userId, shipment.id, {
+    trackingNumber: shipment.trackingNumber,
+    reason:
+      resolvedStatus === 'RTO_INITIATED'
+        ? 'Delivery could not be completed after 3 attempts — the parcel is being returned to the seller.'
+        : (shipment.failureReason ?? 'Delivery attempt unsuccessful'),
+    failedAttemptCount: shipment.failedAttemptCount,
+  });
 }
 
 export const shippingService = {
@@ -255,17 +310,37 @@ export const shippingService = {
     });
   },
 
-  async getShipmentByTracking(trackingNumber: string, actor: TrackingActor) {
+  async getShipmentByTracking(trackingNumber: string, actor: TrackingActor): Promise<Record<string, unknown>> {
     const shipment = await Shipment.findOne({
       where: { trackingNumber },
-      include: [{
-        model: SubOrder,
-        as: 'subOrder',
-        include: [{ model: Order, as: 'order', attributes: ['userId'] }],
-        attributes: ['vendorId'],
-      }],
+      include: [
+        {
+          model: SubOrder,
+          as: 'subOrder',
+          include: [{ model: Order, as: 'order', attributes: ['userId'] }],
+          attributes: ['vendorId'],
+        },
+        {
+          model: DeliveryAgent,
+          as: 'deliveryAgent',
+          attributes: ['id', 'fullName', 'lastLat', 'lastLng', 'locationUpdatedAt'],
+        },
+      ],
     });
     if (!shipment) throw new NotFoundError('Shipment');
+
+    // Anonymous / guest lookup: tracking number acts as the shared secret (carrier-site
+    // convention), so only carrier-facing fields are returned — never customer PII.
+    if (!actor) {
+      return {
+        trackingNumber: shipment.trackingNumber,
+        carrier: shipment.carrier,
+        trackingUrl: shipment.trackingUrl,
+        status: shipment.status,
+        lastUpdate: shipment.updatedAt,
+        estimatedDeliveryDate: shipment.estimatedDeliveryDate,
+      };
+    }
 
     const shipmentWithOrder = shipment as Shipment & {
       subOrder?: SubOrder & { order?: Order };
@@ -274,9 +349,32 @@ export const shippingService = {
     const isAdmin = (ADMIN_ROLES as readonly string[]).includes(actor.role.name);
     const isCustomerOwner = actor.role.name === ROLES.CUSTOMER && subOrder?.order?.userId === actor.id;
     const isVendorOwner = actor.vendorId != null && subOrder?.vendorId === actor.vendorId;
-    if (!isAdmin && !isCustomerOwner && !isVendorOwner) {
+    const isDeliveryAgent = actor.role.name === ROLES.DELIVERY_AGENT;
+    if (!isAdmin && !isCustomerOwner && !isVendorOwner && !isDeliveryAgent) {
       throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_ORDER);
     }
+    const plain = shipment.get({ plain: true }) as Record<string, unknown>;
+    return { ...plain, lastUpdate: shipment.updatedAt };
+  },
+
+  /** Customer picks a redelivery window after a FAILED attempt (tracking page CTA). */
+  async rescheduleDelivery(trackingNumber: string, userId: string, slot: string): Promise<Shipment> {
+    const shipment = await Shipment.findOne({
+      where: { trackingNumber },
+      include: [{
+        model: SubOrder,
+        as: 'subOrder',
+        include: [{ model: Order, as: 'order', attributes: ['userId'] }],
+      }],
+    });
+    if (!shipment) throw new NotFoundError('Shipment');
+    const owner = (shipment as Shipment & { subOrder?: SubOrder & { order?: Order } }).subOrder?.order
+      ?.userId;
+    if (owner !== userId) throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_ORDER);
+    if (!['FAILED', 'RTO_INITIATED'].includes(shipment.status)) {
+      throw new ValidationError({ status: ['Only a failed delivery attempt can be rescheduled'] });
+    }
+    await shipment.update({ preferredRedeliverySlot: slot });
     return shipment;
   },
 
@@ -365,11 +463,22 @@ export const shippingService = {
     existingTransaction?: Transaction,
   ) {
     const apply = async (transaction: Transaction) => {
+      const isFailedAttempt = status === 'FAILED';
+      const nextFailedCount = isFailedAttempt
+        ? Number(shipment.failedAttemptCount ?? 0) + 1
+        : shipment.failedAttemptCount;
+      const resolvedStatus =
+        isFailedAttempt && nextFailedCount >= MAX_DELIVERY_ATTEMPTS
+          ? 'RTO_INITIATED'
+          : status;
+
       await shipment.update(
         {
-          status: status as Shipment['status'],
+          status: resolvedStatus as Shipment['status'],
           shippedAt: status === 'PICKED_UP' ? new Date() : shipment.shippedAt,
           deliveredAt: status === 'DELIVERED' ? new Date() : shipment.deliveredAt,
+          failedAttemptCount: isFailedAttempt ? nextFailedCount : shipment.failedAttemptCount,
+          lastFailedAttemptAt: isFailedAttempt ? new Date() : shipment.lastFailedAttemptAt,
           ...extra,
         },
         { transaction },
@@ -379,6 +488,10 @@ export const shippingService = {
           { status: 'DELIVERED' },
           { where: { id: shipment.subOrderId }, transaction },
         );
+        await cascadeOrderDeliveredAndNotify(shipment.subOrderId, transaction);
+      }
+      if (isFailedAttempt) {
+        await notifyCustomerOfFailedAttempt(shipment, resolvedStatus, transaction);
       }
       return shipment;
     };

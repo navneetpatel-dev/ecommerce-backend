@@ -8,6 +8,7 @@ import {
   CreateZoneSchema,
   UpdateZoneSchema,
   CreateRateSchema,
+  RescheduleDeliverySchema,
 } from './shipping.dto';
 import * as shippingController from './shipping.controller';
 
@@ -20,7 +21,13 @@ router.get(
   shippingController.getRates,
 );
 
-router.get('/tracking/:trackingNumber', authenticate, shippingController.getShipmentByTracking);
+router.get('/tracking/:trackingNumber', optionalAuthenticate, shippingController.getShipmentByTracking);
+router.post(
+  '/tracking/:trackingNumber/reschedule',
+  authenticate,
+  validate(RescheduleDeliverySchema),
+  shippingController.rescheduleDelivery,
+);
 
 router.get('/zones', authenticate, authorize(PERMISSIONS.SHIPPING_MANAGE), shippingController.listZones);
 router.post('/zones', authenticate, authorize(PERMISSIONS.SHIPPING_MANAGE), validate(CreateZoneSchema), shippingController.createZone);

@@ -37,6 +37,8 @@ export type PlatformSettingsPayload = {
   pointsPerRupee: number;
   promotionalPointsTtlDays: number;
   refundSlaBusinessDays: number;
+  /** Flat estimate paid per completed delivery/pickup task, for the agent shift summary. */
+  deliveryAgentPerTaskEarning: number;
 };
 
 const SETTINGS_KEY = 'platform';
@@ -70,6 +72,7 @@ const DEFAULTS: PlatformSettingsPayload = {
   pointsPerRupee: 1,
   promotionalPointsTtlDays: 0,
   refundSlaBusinessDays: 7,
+  deliveryAgentPerTaskEarning: 20,
 };
 
 export const settingsService = {

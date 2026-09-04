@@ -6,7 +6,15 @@ export class Shipment extends Model<InferAttributes<Shipment>, InferCreationAttr
   declare carrier: string;
   declare trackingNumber: string;
   declare trackingUrl: string | null;
-  declare status: 'PENDING' | 'PICKED_UP' | 'IN_TRANSIT' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'FAILED';
+  declare status:
+    | 'PENDING'
+    | 'PICKED_UP'
+    | 'IN_TRANSIT'
+    | 'OUT_FOR_DELIVERY'
+    | 'DELIVERED'
+    | 'FAILED'
+    | 'RTO_INITIATED'
+    | 'RTO_DELIVERED';
   declare estimatedDeliveryDate: Date | null;
   declare shippedAt: Date | null;
   declare deliveredAt: Date | null;
@@ -14,6 +22,20 @@ export class Shipment extends Model<InferAttributes<Shipment>, InferCreationAttr
   declare assignedAt: CreationOptional<Date | null>;
   declare proofOfDeliveryUrl: CreationOptional<string | null>;
   declare deliveryOtpVerifiedAt: CreationOptional<Date | null>;
+  /** Reason recorded on the most recent FAILED attempt. */
+  declare failureReason: CreationOptional<string | null>;
+  /** Count of FAILED attempts — 3rd auto-transitions to RTO_INITIATED. */
+  declare failedAttemptCount: CreationOptional<number>;
+  declare lastFailedAttemptAt: CreationOptional<Date | null>;
+  /** Cash due from the customer at doorstep; null when prepaid. */
+  declare codAmount: CreationOptional<number | null>;
+  declare codCollected: CreationOptional<boolean>;
+  declare codCollectedAt: CreationOptional<Date | null>;
+  /** Customer-chosen redelivery window after a failed attempt. */
+  declare preferredRedeliverySlot: CreationOptional<string | null>;
+  /** Vendor's OTP-verified acknowledgment that they received an RTO parcel back. */
+  declare rtoHandoverOtpVerifiedAt: CreationOptional<Date | null>;
+  declare rtoConfirmedAt: CreationOptional<Date | null>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -36,7 +58,16 @@ export const initShipmentModel = (sequelize: Sequelize) => {
       trackingNumber: { type: DataTypes.STRING, allowNull: false },
       trackingUrl: { type: DataTypes.STRING, allowNull: true },
       status: {
-        type: DataTypes.ENUM('PENDING', 'PICKED_UP', 'IN_TRANSIT', 'OUT_FOR_DELIVERY', 'DELIVERED', 'FAILED'),
+        type: DataTypes.ENUM(
+          'PENDING',
+          'PICKED_UP',
+          'IN_TRANSIT',
+          'OUT_FOR_DELIVERY',
+          'DELIVERED',
+          'FAILED',
+          'RTO_INITIATED',
+          'RTO_DELIVERED',
+        ),
         defaultValue: 'PENDING',
       },
       estimatedDeliveryDate: { type: DataTypes.DATE, allowNull: true },
@@ -46,6 +77,15 @@ export const initShipmentModel = (sequelize: Sequelize) => {
       assignedAt: { type: DataTypes.DATE, allowNull: true },
       proofOfDeliveryUrl: { type: DataTypes.STRING, allowNull: true },
       deliveryOtpVerifiedAt: { type: DataTypes.DATE, allowNull: true },
+      failureReason: { type: DataTypes.TEXT, allowNull: true },
+      failedAttemptCount: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+      lastFailedAttemptAt: { type: DataTypes.DATE, allowNull: true },
+      codAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+      codCollected: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+      codCollectedAt: { type: DataTypes.DATE, allowNull: true },
+      preferredRedeliverySlot: { type: DataTypes.STRING(64), allowNull: true },
+      rtoHandoverOtpVerifiedAt: { type: DataTypes.DATE, allowNull: true },
+      rtoConfirmedAt: { type: DataTypes.DATE, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

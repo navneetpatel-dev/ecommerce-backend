@@ -1,25 +1,35 @@
 import bcrypt from 'bcrypt';
+import { Op, type Transaction } from 'sequelize';
 import { sequelize } from '@database/models';
 import { User } from '@database/models/user.model';
 import { Role } from '@database/models/role.model';
 import { Shipment } from '@database/models/shipment.model';
+import { Order } from '@database/models/order.model';
+import { SubOrder } from '@database/models/subOrder.model';
+import { DeliveryCashDeposit } from '@database/models/deliveryCashDeposit.model';
+import { DeliveryAgentEarning } from '@database/models/deliveryAgentEarning.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { NotFoundError, ValidationError } from '@core/errors';
 import { ERROR_MESSAGES } from '@core/constants/errors';
-import { RETURN_STATUS, RETURN_TYPE, ROLES, USER_STATUS } from '@core/constants/statuses';
+import { PAYMENT_STATUS, RETURN_STATUS, RETURN_TYPE, ROLES, USER_STATUS } from '@core/constants/statuses';
 import { buildPaginationMeta } from '@core/http/pagination';
 import { clearPermissionCache } from '@middleware/rbac.middleware';
 import { logAudit } from '@modules/audit/audit.service';
 import { shippingService } from '@modules/shipping/shipping.service';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { OTP_TTL_MINUTES, otpService } from '@modules/auth/otp.service';
+import { settingsService } from '@modules/settings/settings.service';
+import { roundMoney } from '@modules/pricing/money';
+import { emitShipmentLocation } from '@realtime/socket';
 import type {
+  BulkAssignShipmentsRequest,
   CreateDeliveryAgentRequest,
   ListDeliveryAgentsRequest,
   UpdateDeliveryAgentRequest,
 } from './deliveryAgents.dto';
 import { deliveryAgentsRepository as repo } from './deliveryAgents.repository';
+import { deliveryAgentPayoutsService } from './deliveryAgentPayouts.service';
 
 const DELIVERY_TRANSITIONS: Record<string, readonly string[]> = {
   PENDING: ['PICKED_UP', 'FAILED'],
@@ -27,6 +37,7 @@ const DELIVERY_TRANSITIONS: Record<string, readonly string[]> = {
   IN_TRANSIT: ['OUT_FOR_DELIVERY', 'FAILED'],
   OUT_FOR_DELIVERY: ['FAILED'],
   FAILED: ['PICKED_UP', 'IN_TRANSIT', 'OUT_FOR_DELIVERY'],
+  RTO_INITIATED: ['RTO_DELIVERED'],
 };
 
 function assertDeliveryTransition(from: string, to: string) {
@@ -161,6 +172,71 @@ export class DeliveryAgentsService {
     });
   }
 
+  /** Feeds the admin dispatch picker for return pickups — mirrors unassignedShipments. */
+  async unassignedPickups(): Promise<Array<{
+    id: string;
+    type: string;
+    status: string;
+    updatedAt: Date;
+    orderId: string | null;
+    productName: string | null;
+    customerName: string | null;
+  }>> {
+    const pickups = await repo.unassignedPickups();
+    return pickups.map((pickup) => {
+      const plain = pickup.get({ plain: true }) as Record<string, unknown> & {
+        subOrder?: { orderId?: string; order?: { id: string } };
+        orderItem?: { productName?: string };
+        user?: { name?: string };
+      };
+      return {
+        id: String(plain.id),
+        type: String(plain.type),
+        status: String(plain.status),
+        updatedAt: plain.updatedAt as Date,
+        orderId: plain.subOrder?.orderId ?? plain.subOrder?.order?.id ?? null,
+        productName: plain.orderItem?.productName ?? null,
+        customerName: plain.user?.name ?? null,
+      };
+    });
+  }
+
+  async bulkAssignShipments(input: BulkAssignShipmentsRequest, actorId: string) {
+    const agent = await repo.findById(input.deliveryAgentId);
+    if (!agent) throw new NotFoundError('DeliveryAgent');
+    if (agent.status !== 'ACTIVE' || !agent.availableForAssignment) {
+      throw new ValidationError({ deliveryAgentId: ['Agent is not available for assignment'] });
+    }
+    const shipments = await repo.findShipmentsByIds(input.shipmentIds);
+    const found = new Set(shipments.map((s) => s.id));
+    const missing = input.shipmentIds.filter((id) => !found.has(id));
+    if (missing.length) throw new NotFoundError('Shipment');
+    const undeliverable = shipments.filter((s) => s.status === 'DELIVERED');
+    if (undeliverable.length) {
+      throw new ValidationError({ shipmentIds: ['Delivered shipments cannot be reassigned'] });
+    }
+
+    const assignedAt = new Date();
+    await Promise.all(
+      shipments.map((shipment) =>
+        shipment.update({ deliveryAgentId: input.deliveryAgentId, assignedAt, updatedBy: actorId }),
+      ),
+    );
+    await logAudit({
+      actorId,
+      action: 'SHIPMENT_BULK_AGENT_ASSIGNED',
+      entityType: 'Shipment',
+      entityId: input.deliveryAgentId,
+      metadata: { shipmentIds: input.shipmentIds, count: shipments.length },
+    });
+    void notificationsService.sendDeliveryAssigned(
+      agent.userId,
+      `bulk:${input.deliveryAgentId}:${assignedAt.toISOString()}`,
+      { trackingNumber: `${shipments.length} shipments` },
+    );
+    return { assigned: shipments.length };
+  }
+
   async taskCounts(id: string) {
     const agent = await repo.findById(id);
     if (!agent) throw new NotFoundError('DeliveryAgent');
@@ -239,6 +315,214 @@ export class DeliveryAgentsService {
     return repo.myDeliveries(deliveryAgentId, statuses);
   }
 
+  async delivery(shipmentId: string, deliveryAgentId: string) {
+    const shipment = await repo.shipmentById(shipmentId, deliveryAgentId);
+    if (!shipment) throw new NotFoundError('AssignedShipment');
+    return shipment;
+  }
+
+  async updateLocation(deliveryAgentId: string, lat: number, lng: number) {
+    const agent = await repo.findById(deliveryAgentId);
+    if (!agent) throw new NotFoundError('DeliveryAgent');
+    await agent.update({ lastLat: lat, lastLng: lng, locationUpdatedAt: new Date() });
+
+    const activeShipments = await Shipment.findAll({
+      where: { deliveryAgentId, status: 'OUT_FOR_DELIVERY' },
+      attributes: ['id'],
+    });
+    const updatedAt = (agent.locationUpdatedAt as Date).toISOString();
+    for (const shipment of activeShipments) {
+      emitShipmentLocation(shipment.id, { lat, lng, updatedAt });
+    }
+
+    return { lat, lng, updatedAt };
+  }
+
+  /** Daily shift card: completed counts + COD cash the agent is holding for hub deposit. */
+  async shiftSummary(deliveryAgentId: string) {
+    const dayStart = new Date();
+    dayStart.setHours(0, 0, 0, 0);
+
+    const [deliveredToday, pickupsToday, codCollectedAllTime, depositedOrPending, settings] =
+      await Promise.all([
+        Shipment.count({
+          where: { deliveryAgentId, status: 'DELIVERED', deliveredAt: { [Op.gte]: dayStart } },
+        }),
+        ReturnRequest.count({
+          where: { deliveryAgentId, status: RETURN_STATUS.RECEIVED, receivedAt: { [Op.gte]: dayStart } },
+        }),
+        Shipment.findAll({
+          where: { deliveryAgentId, status: 'DELIVERED', codCollected: true },
+          attributes: ['codAmount'],
+        }),
+        DeliveryCashDeposit.findAll({
+          where: { deliveryAgentId, status: { [Op.in]: ['PENDING', 'VERIFIED'] } },
+          attributes: ['amount'],
+        }),
+        settingsService.getPlatformSettings(),
+      ]);
+    const attemptedToday = await Shipment.count({
+      where: {
+        deliveryAgentId,
+        [Op.or]: [
+          { deliveredAt: { [Op.gte]: dayStart } },
+          { lastFailedAttemptAt: { [Op.gte]: dayStart } },
+        ],
+      },
+    });
+    const totalCodCollected = codCollectedAllTime.reduce((sum, s) => sum + Number(s.codAmount ?? 0), 0);
+    const totalDeposited = depositedOrPending.reduce((sum, d) => sum + Number(d.amount ?? 0), 0);
+    const codCashInHand = Math.max(0, Math.round((totalCodCollected - totalDeposited) * 100) / 100);
+    const onTimePercent = attemptedToday > 0 ? Math.round((deliveredToday / attemptedToday) * 100) : 0;
+    const perTaskEarning = Number(settings.deliveryAgentPerTaskEarning ?? 0);
+    const [earningsTodayRows, pendingEarningsRows, pendingDeposits] = await Promise.all([
+      DeliveryAgentEarning.findAll({
+        where: { deliveryAgentId, earnedAt: { [Op.gte]: dayStart } },
+        attributes: ['amount'],
+      }),
+      DeliveryAgentEarning.findAll({
+        where: { deliveryAgentId, status: 'PENDING' },
+        attributes: ['amount'],
+      }),
+      DeliveryCashDeposit.count({ where: { deliveryAgentId, status: 'PENDING' } }),
+    ]);
+    const earningsToday = roundMoney(earningsTodayRows.reduce((sum, r) => sum + Number(r.amount), 0));
+    const pendingEarnings = roundMoney(pendingEarningsRows.reduce((sum, r) => sum + Number(r.amount), 0));
+
+    return {
+      deliveredToday,
+      pickupsToday,
+      onTimePercent,
+      codCashInHand,
+      pendingEarnings,
+      earningsToday,
+      perTaskEarning,
+      pendingDeposits,
+    };
+  }
+
+  async closeCashShift(deliveryAgentId: string, amount: number, note: string | undefined, actorId: string) {
+    const summary = await this.shiftSummary(deliveryAgentId);
+    const deposit = await repo.createCashDeposit({
+      deliveryAgentId,
+      amount,
+      expectedAmount: summary.codCashInHand,
+      note: note ?? null,
+      createdBy: actorId,
+    });
+    await logAudit({
+      actorId,
+      action: 'CASH_DEPOSIT_SUBMITTED',
+      entityType: 'DeliveryCashDeposit',
+      entityId: deposit.id,
+      metadata: { amount, expectedAmount: summary.codCashInHand },
+    });
+    return deposit;
+  }
+
+  myCashDeposits(deliveryAgentId: string) {
+    return repo.cashDepositsForAgent(deliveryAgentId);
+  }
+
+  adminListCashDeposits(status?: string) {
+    return repo.listCashDeposits(status);
+  }
+
+  async verifyCashDeposit(
+    depositId: string,
+    actorId: string,
+    action: 'VERIFY' | 'REJECT',
+    rejectionReason?: string,
+  ) {
+    const deposit = await repo.findCashDepositById(depositId);
+    if (!deposit) throw new NotFoundError('DeliveryCashDeposit');
+    if (deposit.status !== 'PENDING') {
+      throw new ValidationError({ status: ['This deposit has already been reviewed'] });
+    }
+    await deposit.update({
+      status: action === 'VERIFY' ? 'VERIFIED' : 'REJECTED',
+      rejectionReason: action === 'REJECT' ? (rejectionReason ?? null) : null,
+      verifiedById: actorId,
+      verifiedAt: new Date(),
+      updatedBy: actorId,
+    });
+    await logAudit({
+      actorId,
+      action: action === 'VERIFY' ? 'CASH_DEPOSIT_VERIFIED' : 'CASH_DEPOSIT_REJECTED',
+      entityType: 'DeliveryCashDeposit',
+      entityId: deposit.id,
+      metadata: { rejectionReason },
+    });
+    return deposit;
+  }
+
+  /** Admin/hub visibility into shipments currently mid-RTO or handed back. */
+  async adminRtoQueue() {
+    return repo.rtoShipments();
+  }
+
+  async requestRtoHandoverCode(shipmentId: string, deliveryAgentId: string) {
+    const shipment = await repo.assignedShipment(shipmentId, deliveryAgentId);
+    if (!shipment) throw new NotFoundError('AssignedShipment');
+    if (shipment.status !== 'RTO_INITIATED') {
+      throw new ValidationError({ status: ['Shipment is not awaiting RTO handover'] });
+    }
+    const vendorId = (shipment as Shipment & { subOrder?: SubOrder }).subOrder?.vendorId;
+    if (!vendorId) throw new ValidationError({ shipmentId: ['Shipment has no linked vendor'] });
+    const vendorUser = await User.findOne({ where: { vendorId }, attributes: ['id'] });
+    if (!vendorUser) throw new ValidationError({ shipmentId: ['Vendor has no linked account'] });
+
+    const otp = await otpService.issueCodeForUser(vendorUser.id, 'RTO_HANDOVER_CONFIRMATION');
+    await notificationsService.sendRtoHandoverOtp(vendorUser.id, otp.id, {
+      code: otp.code,
+      expiresInMinutes: OTP_TTL_MINUTES,
+      trackingNumber: shipment.trackingNumber,
+    });
+    return { sent: true, expiresInMinutes: OTP_TTL_MINUTES };
+  }
+
+  async confirmRtoHandover(shipmentId: string, deliveryAgentId: string, actorId: string, otpCode: string) {
+    const result = await sequelize.transaction(async (transaction) => {
+      const shipment = await repo.assignedShipment(shipmentId, deliveryAgentId, transaction);
+      if (!shipment) throw new NotFoundError('AssignedShipment');
+      if (shipment.status !== 'RTO_INITIATED') {
+        throw new ValidationError({ status: ['Shipment is not awaiting RTO handover'] });
+      }
+      const vendorId = (shipment as Shipment & { subOrder?: SubOrder }).subOrder?.vendorId;
+      if (!vendorId) throw new ValidationError({ shipmentId: ['Shipment has no linked vendor'] });
+      const vendorUser = await User.findOne({ where: { vendorId }, attributes: ['id'], transaction });
+      if (!vendorUser) throw new ValidationError({ shipmentId: ['Vendor has no linked account'] });
+
+      const verification = await otpService.verifyCodeForUser(
+        vendorUser.id,
+        'RTO_HANDOVER_CONFIRMATION',
+        otpCode,
+        transaction,
+      );
+      if (!verification.valid) return { shipment: null, verification };
+
+      await shippingService.applyShipmentStatus(
+        shipment,
+        'RTO_DELIVERED',
+        { rtoHandoverOtpVerifiedAt: new Date(), rtoConfirmedAt: new Date(), updatedBy: actorId },
+        transaction,
+      );
+      await logAudit({
+        actorId,
+        action: 'RTO_HANDOVER_CONFIRMED',
+        entityType: 'Shipment',
+        entityId: shipment.id,
+        metadata: { vendorId },
+        transaction,
+      });
+      return { shipment, verification };
+    });
+    if (!result.verification.valid) {
+      throw new ValidationError({ otpCode: [result.verification.message] });
+    }
+    return result.shipment;
+  }
+
   async requestDeliveryCode(shipmentId: string, deliveryAgentId: string) {
     const shipment = await repo.assignedShipment(shipmentId, deliveryAgentId);
     if (!shipment) throw new NotFoundError('AssignedShipment');
@@ -262,12 +546,17 @@ export class DeliveryAgentsService {
     shipmentId: string,
     deliveryAgentId: string,
     actorId: string,
-    input: { status: 'PICKED_UP' | 'IN_TRANSIT' | 'OUT_FOR_DELIVERY' | 'FAILED'; note?: string },
+    input: {
+      status: 'PICKED_UP' | 'IN_TRANSIT' | 'OUT_FOR_DELIVERY' | 'FAILED' | 'RTO_DELIVERED';
+      note?: string;
+    },
   ) {
     const shipment = await repo.assignedShipment(shipmentId, deliveryAgentId);
     if (!shipment) throw new NotFoundError('AssignedShipment');
     assertDeliveryTransition(shipment.status, input.status);
-    const updated = await shippingService.applyShipmentStatus(shipment, input.status, { updatedBy: actorId });
+    const extra: Record<string, unknown> = { updatedBy: actorId };
+    if (input.status === 'FAILED') extra.failureReason = input.note;
+    const updated = await shippingService.applyShipmentStatus(shipment, input.status, extra);
 
     if (input.status === 'OUT_FOR_DELIVERY') {
       await this.requestDeliveryCode(shipment.id, deliveryAgentId);
@@ -275,10 +564,10 @@ export class DeliveryAgentsService {
     if (input.status === 'FAILED') {
       await logAudit({
         actorId,
-        action: 'DELIVERY_ATTEMPT_FAILED',
+        action: updated.status === 'RTO_INITIATED' ? 'DELIVERY_RTO_INITIATED' : 'DELIVERY_ATTEMPT_FAILED',
         entityType: 'Shipment',
         entityId: shipment.id,
-        metadata: { note: input.note },
+        metadata: { note: input.note, failedAttemptCount: updated.failedAttemptCount },
       });
     }
     return updated;
@@ -288,13 +577,17 @@ export class DeliveryAgentsService {
     shipmentId: string,
     deliveryAgentId: string,
     actorId: string,
-    input: { otpCode: string; proofPhotoUrl?: string },
+    input: { otpCode: string; proofPhotoUrl?: string; codCollected?: boolean },
   ) {
     const result = await sequelize.transaction(async (transaction) => {
       const shipment = await repo.assignedShipment(shipmentId, deliveryAgentId, transaction);
       if (!shipment) throw new NotFoundError('AssignedShipment');
       if (shipment.status !== 'OUT_FOR_DELIVERY') {
         throw new ValidationError({ status: ['Delivery must be out for delivery before confirmation'] });
+      }
+      const isCod = shipment.codAmount != null;
+      if (isCod && !input.codCollected) {
+        throw new ValidationError({ codCollected: ['Cash on delivery amount must be collected before confirming'] });
       }
       const customerId = customerIdFromShipment(shipment);
       if (!customerId) throw new ValidationError({ shipmentId: ['Shipment has no linked customer'] });
@@ -313,16 +606,21 @@ export class DeliveryAgentsService {
         {
           deliveryOtpVerifiedAt: new Date(),
           proofOfDeliveryUrl: input.proofPhotoUrl ?? shipment.proofOfDeliveryUrl,
+          ...(isCod ? { codCollected: true, codCollectedAt: new Date() } : {}),
           updatedBy: actorId,
         },
         transaction,
       );
+      if (isCod) {
+        await this.settleCodPaymentIfComplete(shipment.subOrderId, transaction);
+      }
+      await deliveryAgentPayoutsService.recordEarning(deliveryAgentId, 'DELIVERY', shipment.id, transaction);
       await logAudit({
         actorId,
         action: 'DELIVERY_CONFIRMED',
         entityType: 'Shipment',
         entityId: shipment.id,
-        metadata: { otpVerified: true, proofProvided: Boolean(input.proofPhotoUrl) },
+        metadata: { otpVerified: true, proofProvided: Boolean(input.proofPhotoUrl), codCollected: isCod },
         transaction,
       });
       return { shipment, verification };
@@ -331,6 +629,24 @@ export class DeliveryAgentsService {
       throw new ValidationError({ otpCode: [result.verification.message] });
     }
     return result.shipment;
+  }
+
+  /** Marks the order PAID once every COD shipment on it has had cash collected at the door. */
+  private async settleCodPaymentIfComplete(subOrderId: string, transaction: Transaction) {
+    const subOrder = await SubOrder.findByPk(subOrderId, { transaction });
+    if (!subOrder) return;
+    const order = await Order.findByPk(subOrder.orderId, { transaction });
+    if (!order || order.paymentMethod !== 'COD' || order.paymentStatus === PAYMENT_STATUS.PAID) return;
+
+    const siblingShipments = await Shipment.findAll({
+      include: [{ association: 'subOrder', where: { orderId: order.id }, attributes: [] }],
+      transaction,
+    });
+    const codShipments = siblingShipments.filter((s) => s.codAmount != null);
+    const allCollected = codShipments.length > 0 && codShipments.every((s) => s.codCollected);
+    if (allCollected) {
+      await order.update({ paymentStatus: PAYMENT_STATUS.PAID }, { transaction });
+    }
   }
 
   async forceConfirmDelivery(shipmentId: string, actorId: string, reason: string) {
@@ -353,6 +669,12 @@ export class DeliveryAgentsService {
 
   pickups(deliveryAgentId: string, statuses?: string[]) {
     return repo.myPickups(deliveryAgentId, statuses);
+  }
+
+  async pickup(returnId: string, deliveryAgentId: string) {
+    const pickup = await repo.pickupById(returnId, deliveryAgentId);
+    if (!pickup) throw new NotFoundError('AssignedReturnPickup');
+    return pickup;
   }
 
   async requestPickupCode(returnId: string, deliveryAgentId: string) {
@@ -446,6 +768,7 @@ export class DeliveryAgentsService {
         },
         { transaction },
       );
+      await deliveryAgentPayoutsService.recordEarning(deliveryAgentId, 'PICKUP', row.id, transaction);
       await logAudit({
         actorId,
         action: 'RETURN_PICKUP_CONFIRMED',

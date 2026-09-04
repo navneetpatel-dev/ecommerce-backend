@@ -12,6 +12,8 @@ export class Address extends Model<InferAttributes<Address>, InferCreationAttrib
   /** Buyer GSTIN for B2B e-invoice (optional). */
   declare gstin: CreationOptional<string | null>;
   declare isDefault: CreationOptional<boolean>;
+  /** Free-text doorstep notes for delivery agents (e.g. "Leave at front desk"). */
+  declare deliveryInstructions: CreationOptional<string | null>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -37,6 +39,7 @@ export const initAddressModel = (sequelize: Sequelize) => {
       pincode: { type: DataTypes.STRING, allowNull: false },
       gstin: { type: DataTypes.STRING(20), allowNull: true },
       isDefault: { type: DataTypes.BOOLEAN, defaultValue: false },
+      deliveryInstructions: { type: DataTypes.TEXT, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

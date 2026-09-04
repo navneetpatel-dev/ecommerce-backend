@@ -528,6 +528,22 @@ export class NotificationsService {
     return this.enqueue({ userId, type: 'RETURN_PICKUP_OTP', referenceType: 'OtpCode', referenceId: otpId, templateData });
   }
 
+  sendRtoHandoverOtp(userId: string, otpId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({ userId, type: 'RTO_HANDOVER_OTP', referenceType: 'OtpCode', referenceId: otpId, templateData });
+  }
+
+  sendDeliveryAttemptFailed(userId: string, shipmentId: string, templateData: EmailTemplateData = {}) {
+    const attemptCount = String(templateData.failedAttemptCount ?? '1');
+    return this.enqueue({
+      userId,
+      type: 'DELIVERY_ATTEMPT_FAILED',
+      referenceType: 'Shipment',
+      // Unique per attempt so a 2nd/3rd failure still notifies.
+      referenceId: `${shipmentId}:attempt:${attemptCount}`,
+      templateData,
+    });
+  }
+
   sendPayoutFailed(userId: string, payoutId: string, templateData: EmailTemplateData = {}) {
     return this.enqueue({
       userId,

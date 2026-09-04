@@ -31,7 +31,7 @@ async function isUserBlocked(userId: string): Promise<boolean> {
   return blocked;
 }
 
-async function loadUserFromBearer(authHeader: string) {
+export async function loadUserFromBearer(authHeader: string) {
   const token = authHeader.slice(BEARER_PREFIX.length).trim();
   if (!token) {
     return { error: { code: ERROR_CODES.UNAUTHORIZED, message: ERROR_MESSAGES.INVALID_TOKEN } as const };

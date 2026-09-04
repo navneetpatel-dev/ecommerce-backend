@@ -15,7 +15,8 @@
       "@utils/*": ["./src/utils/*"],
       "@core/*": ["./src/core/*"],
       "@database/*": ["./database/*"],
-      "@routes/*": ["./src/routes/*"]
+      "@routes/*": ["./src/routes/*"],
+      "@realtime/*": ["./src/realtime/*"]
     },
     "strict": true,
     "noUncheckedIndexedAccess": true,

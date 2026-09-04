@@ -7,7 +7,11 @@ import {
   CreationOptional,
 } from 'sequelize';
 
-export type OtpPurpose = 'LOGIN' | 'DELIVERY_CONFIRMATION' | 'RETURN_PICKUP_CONFIRMATION';
+export type OtpPurpose =
+  | 'LOGIN'
+  | 'DELIVERY_CONFIRMATION'
+  | 'RETURN_PICKUP_CONFIRMATION'
+  | 'RTO_HANDOVER_CONFIRMATION';
 
 export class OtpCode extends Model<InferAttributes<OtpCode>, InferCreationAttributes<OtpCode>> {
   declare id: CreationOptional<string>;
@@ -33,7 +37,12 @@ export const initOtpCodeModel = (sequelize: Sequelize) => {
       userId: { type: DataTypes.UUID, allowNull: true },
       channel: { type: DataTypes.ENUM('EMAIL'), allowNull: false, defaultValue: 'EMAIL' },
       purpose: {
-        type: DataTypes.ENUM('LOGIN', 'DELIVERY_CONFIRMATION', 'RETURN_PICKUP_CONFIRMATION'),
+        type: DataTypes.ENUM(
+          'LOGIN',
+          'DELIVERY_CONFIRMATION',
+          'RETURN_PICKUP_CONFIRMATION',
+          'RTO_HANDOVER_CONFIRMATION',
+        ),
         allowNull: false,
       },
       codeHash: { type: DataTypes.STRING, allowNull: false },

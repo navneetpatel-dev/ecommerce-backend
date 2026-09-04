@@ -17,7 +17,16 @@ export const getRates = asyncHandler(async (req: Request, res: Response) => {
 export const getShipmentByTracking = asyncHandler(async (req: Request, res: Response) => {
   const shipment = await shippingService.getShipmentByTracking(
     req.params.trackingNumber!,
-    req.user!,
+    req.user ?? null,
+  );
+  res.json(ok(shipment));
+});
+
+export const rescheduleDelivery = asyncHandler(async (req: Request, res: Response) => {
+  const shipment = await shippingService.rescheduleDelivery(
+    req.params.trackingNumber!,
+    req.user!.id,
+    req.body.slot,
   );
   res.json(ok(shipment));
 });

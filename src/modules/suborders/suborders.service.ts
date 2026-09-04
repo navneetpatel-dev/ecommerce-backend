@@ -90,9 +90,22 @@ export class SubordersService {
 
       await row.update({ status, trackingId: trackingId ?? row.trackingId, updatedBy }, { transaction });
       if (status === ORDER_STATUS.SHIPPED && trackingId) {
+        const parentOrder = await Order.findByPk(row.orderId, {
+          transaction,
+          attributes: ['paymentMethod'],
+        });
+        const codAmount =
+          parentOrder?.paymentMethod === 'COD' ? Number(row.customerTotal ?? row.subtotal) : null;
         const [shipment, created] = await Shipment.findOrCreate({
           where: { subOrderId: id },
-          defaults: { subOrderId: id, carrier: 'MANUAL', trackingNumber: trackingId, status: 'IN_TRANSIT', shippedAt: new Date() } as never,
+          defaults: {
+            subOrderId: id,
+            carrier: 'MANUAL',
+            trackingNumber: trackingId,
+            status: 'IN_TRANSIT',
+            shippedAt: new Date(),
+            codAmount,
+          } as never,
           transaction,
         });
         if (!created) {

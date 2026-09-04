@@ -68,6 +68,9 @@ import { initNewsletterSubscriberModel, NewsletterSubscriber } from './newslette
 import { initOtpCodeModel, OtpCode } from './otpCode.model';
 import { initPushSubscriptionModel, PushSubscription } from './pushSubscription.model';
 import { initDeliveryAgentModel, DeliveryAgent } from './deliveryAgent.model';
+import { initDeliveryCashDepositModel, DeliveryCashDeposit } from './deliveryCashDeposit.model';
+import { initDeliveryAgentEarningModel, DeliveryAgentEarning } from './deliveryAgentEarning.model';
+import { initDeliveryAgentPayoutModel, DeliveryAgentPayout } from './deliveryAgentPayout.model';
 import { initWebVitalModel, WebVital } from './webVital.model';
 
 const models = {
@@ -75,6 +78,9 @@ const models = {
   Permission: initPermissionModel(sequelize),
   Vendor: initVendorModel(sequelize),
   DeliveryAgent: initDeliveryAgentModel(sequelize),
+  DeliveryCashDeposit: initDeliveryCashDepositModel(sequelize),
+  DeliveryAgentPayout: initDeliveryAgentPayoutModel(sequelize),
+  DeliveryAgentEarning: initDeliveryAgentEarningModel(sequelize),
   User: initUserModel(sequelize),
   RefreshToken: initRefreshTokenModel(sequelize),
   Address: initAddressModel(sequelize),
@@ -142,7 +148,7 @@ Object.values(models).forEach((model: any) => {
 
 export { sequelize };
 export {
-  Role, Permission, Vendor, DeliveryAgent, User, RefreshToken, Address,
+  Role, Permission, Vendor, DeliveryAgent, DeliveryCashDeposit, DeliveryAgentPayout, DeliveryAgentEarning, User, RefreshToken, Address,
   VendorDocument, VendorCategory, DocumentRequirement, Category, CategoryAttribute, Product, ProductCategory, ProductVariant, ProductImage,
   Cart, CartItem, Order, SubOrder, OrderItem,
   Coupon, CouponBatch, CouponUsage, CommissionLedger, Payout,

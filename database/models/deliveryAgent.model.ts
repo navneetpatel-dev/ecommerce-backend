@@ -24,6 +24,12 @@ export class DeliveryAgent extends Model<
   declare hubOrZone: string;
   declare status: CreationOptional<DeliveryAgentStatus>;
   declare availableForAssignment: CreationOptional<boolean>;
+  /** Last-known GPS fix, posted by the agent app while a task is in flight. */
+  declare lastLat: CreationOptional<number | null>;
+  declare lastLng: CreationOptional<number | null>;
+  declare locationUpdatedAt: CreationOptional<Date | null>;
+  /** Payout destination: { accountHolderName, accountNumber, ifscCode, upiId }. */
+  declare bankDetails: CreationOptional<Record<string, unknown> | null>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -36,6 +42,9 @@ export class DeliveryAgent extends Model<
     DeliveryAgent.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
     DeliveryAgent.hasMany(models.Shipment, { foreignKey: 'deliveryAgentId', as: 'shipments' });
     DeliveryAgent.hasMany(models.ReturnRequest, { foreignKey: 'deliveryAgentId', as: 'pickups' });
+    DeliveryAgent.hasMany(models.DeliveryCashDeposit, { foreignKey: 'deliveryAgentId', as: 'cashDeposits' });
+    DeliveryAgent.hasMany(models.DeliveryAgentEarning, { foreignKey: 'deliveryAgentId', as: 'earnings' });
+    DeliveryAgent.hasMany(models.DeliveryAgentPayout, { foreignKey: 'deliveryAgentId', as: 'payouts' });
   }
 }
 
@@ -50,6 +59,10 @@ export const initDeliveryAgentModel = (sequelize: Sequelize) => {
       hubOrZone: { type: DataTypes.STRING, allowNull: false },
       status: { type: DataTypes.ENUM('ACTIVE', 'INACTIVE', 'SUSPENDED'), defaultValue: 'ACTIVE' },
       availableForAssignment: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+      lastLat: { type: DataTypes.DECIMAL(9, 6), allowNull: true },
+      lastLng: { type: DataTypes.DECIMAL(9, 6), allowNull: true },
+      locationUpdatedAt: { type: DataTypes.DATE, allowNull: true },
+      bankDetails: { type: DataTypes.JSONB, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

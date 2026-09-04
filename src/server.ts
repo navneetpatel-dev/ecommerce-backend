@@ -6,6 +6,7 @@ import { logger } from '@core/logger';
 import { env } from '@config/env';
 import { couponsService } from '@modules/coupons/coupons.service';
 import { startBackgroundWorkers, stopBackgroundWorkers } from '@jobs/index';
+import { initSocket } from '@realtime/socket';
 
 const COUPON_ALERT_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
@@ -37,6 +38,7 @@ async function bootstrap() {
   const server = app.listen(env.PORT, () => {
     logger.info(`Server running on port ${env.PORT}`, { env: env.NODE_ENV });
   });
+  initSocket(server);
 
   let couponAlertTimer: ReturnType<typeof setInterval> | undefined;
   if (env.START_WORKERS_IN_API) {

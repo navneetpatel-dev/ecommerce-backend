@@ -49,6 +49,7 @@ export const CreateAddressSchema = z.object({
     .nullable()
     .transform((v) => (v ? v.toUpperCase() : v)),
   isDefault: z.boolean().optional().default(false),
+  deliveryInstructions: z.string().trim().max(500).optional().nullable(),
 });
 
 export const UpdateAddressSchema = CreateAddressSchema.partial();

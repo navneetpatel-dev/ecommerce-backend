@@ -1,6 +1,7 @@
 import { Op, type Transaction } from 'sequelize';
 import { BaseRepository } from '@core/repository/BaseRepository';
 import { DeliveryAgent } from '@database/models/deliveryAgent.model';
+import { DeliveryCashDeposit } from '@database/models/deliveryCashDeposit.model';
 import { User } from '@database/models/user.model';
 import { Shipment } from '@database/models/shipment.model';
 import { SubOrder } from '@database/models/subOrder.model';
@@ -9,20 +10,24 @@ import { Address } from '@database/models/address.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { OrderItem } from '@database/models/orderItem.model';
 import { Vendor } from '@database/models/vendor.model';
+import { RETURN_STATUS } from '@core/constants/statuses';
 
 const deliveryAgentUserAttributes = ['id', 'email', 'name', 'phone', 'status'] as const;
 
 const orderInclude = {
   model: SubOrder,
   as: 'subOrder',
-  include: [{
-    model: Order,
-    as: 'order',
-    include: [
-      { model: Address, as: 'shippingAddress' },
-      { model: User, as: 'user', attributes: ['id', 'name', 'email', 'phone'] },
-    ],
-  }],
+  include: [
+    {
+      model: Order,
+      as: 'order',
+      include: [
+        { model: Address, as: 'shippingAddress' },
+        { model: User, as: 'user', attributes: ['id', 'name', 'email', 'phone'] },
+      ],
+    },
+    { model: OrderItem, as: 'items' },
+  ],
 };
 
 const pickupInclude = [
@@ -90,6 +95,15 @@ export class DeliveryAgentsRepository extends BaseRepository<DeliveryAgent> {
     });
   }
 
+  /** Backs the single-delivery detail route — no more loading the whole list to find one. */
+  async shipmentById(id: string, deliveryAgentId: string) {
+    return Shipment.findOne({ where: { id, deliveryAgentId }, include: [orderInclude] });
+  }
+
+  async findShipmentsByIds(ids: string[]) {
+    return Shipment.findAll({ where: { id: { [Op.in]: ids } } });
+  }
+
   async myPickups(deliveryAgentId: string, statuses?: string[]) {
     const where: any = { deliveryAgentId };
     if (statuses?.length) {
@@ -110,6 +124,11 @@ export class DeliveryAgentsRepository extends BaseRepository<DeliveryAgent> {
       transaction,
       lock: transaction?.LOCK.UPDATE,
     });
+  }
+
+  /** Backs the single-pickup detail route — no more loading the whole list to find one. */
+  async pickupById(id: string, deliveryAgentId: string) {
+    return ReturnRequest.findOne({ where: { id, deliveryAgentId }, include: pickupInclude });
   }
 
   async activeCounts(deliveryAgentId: string) {
@@ -138,6 +157,75 @@ export class DeliveryAgentsRepository extends BaseRepository<DeliveryAgent> {
       // Oldest-first, so whatever's waited longest surfaces first in the
       // picker; capped so the dropdown stays usable at any real backlog size.
       limit: 50,
+    });
+  }
+
+  /** RTO parcels an agent is holding — admin visibility into the return-to-origin queue. */
+  async rtoShipments() {
+    return Shipment.findAll({
+      where: { status: { [Op.in]: ['RTO_INITIATED', 'RTO_DELIVERED'] } },
+      include: [
+        orderInclude,
+        { model: DeliveryAgent, as: 'deliveryAgent', attributes: ['id', 'fullName', 'phone', 'hubOrZone'] },
+      ],
+      order: [['lastFailedAttemptAt', 'DESC']],
+      limit: 100,
+    });
+  }
+
+  /** Return pickups an admin can actually dispatch — the picker behind "manual dispatch". */
+  async unassignedPickups() {
+    return ReturnRequest.findAll({
+      where: {
+        deliveryAgentId: { [Op.is]: null },
+        status: RETURN_STATUS.PICKUP_SCHEDULED,
+      },
+      include: [
+        { model: User, as: 'user', attributes: ['id', 'name', 'email', 'phone'] },
+        { model: OrderItem, as: 'orderItem' },
+        {
+          model: SubOrder,
+          as: 'subOrder',
+          include: [{ model: Order, as: 'order', attributes: ['id'] }],
+        },
+      ],
+      order: [['updatedAt', 'ASC']],
+      limit: 50,
+    });
+  }
+
+  createCashDeposit(data: {
+    deliveryAgentId: string;
+    amount: number;
+    expectedAmount: number;
+    note: string | null;
+    createdBy: string;
+  }) {
+    return DeliveryCashDeposit.create({
+      ...data,
+      status: 'PENDING',
+      rejectionReason: null,
+      verifiedById: null,
+      verifiedAt: null,
+      updatedBy: null,
+      deletedBy: null,
+    });
+  }
+
+  cashDepositsForAgent(deliveryAgentId: string) {
+    return DeliveryCashDeposit.findAll({ where: { deliveryAgentId }, order: [['createdAt', 'DESC']], limit: 30 });
+  }
+
+  findCashDepositById(id: string) {
+    return DeliveryCashDeposit.findByPk(id);
+  }
+
+  listCashDeposits(status?: string) {
+    return DeliveryCashDeposit.findAll({
+      where: status ? { status } : {},
+      include: [{ model: DeliveryAgent, as: 'deliveryAgent', attributes: ['id', 'fullName', 'hubOrZone'] }],
+      order: [['createdAt', 'DESC']],
+      limit: 100,
     });
   }
 }
