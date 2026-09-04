@@ -10,6 +10,14 @@ export const list = asyncHandler(async (req: Request, res: Response) => {
   res.json(ok(result.agents, { pagination: result.pagination }));
 });
 
+export const performanceReport = asyncHandler(async (req: Request, res: Response) => {
+  const { from, to } = req.query as { from?: string; to?: string };
+  const toDate = to ? new Date(to) : new Date();
+  const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const report = await deliveryAgentsService.performanceReport({ from: fromDate, to: toDate });
+  res.json(ok(report));
+});
+
 export const unassignedShipments = asyncHandler(async (_req: Request, res: Response) => {
   const shipments = await deliveryAgentsService.unassignedShipments();
   res.json(ok(shipments));
@@ -169,9 +177,52 @@ export const myPayouts = asyncHandler(async (req: Request, res: Response) => {
   res.json(ok(payouts));
 });
 
+export const myPayoutStatement = asyncHandler(async (req: Request, res: Response) => {
+  const { buffer, filename } = await deliveryAgentPayoutsService.renderStatement(
+    req.params.payoutId!,
+    req.user!.deliveryAgentId!,
+  );
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(buffer);
+});
+
+export const adminPayoutStatement = asyncHandler(async (req: Request, res: Response) => {
+  const { buffer, filename } = await deliveryAgentPayoutsService.renderStatement(
+    req.params.payoutId!,
+  );
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(buffer);
+});
+
 export const myEarnings = asyncHandler(async (req: Request, res: Response) => {
   const earnings = await deliveryAgentPayoutsService.earningsForAgent(req.user!.deliveryAgentId!);
   res.json(ok(earnings));
+});
+
+export const submitDocument = asyncHandler(async (req: Request, res: Response) => {
+  const document = await deliveryAgentsService.submitDocument(req.user!.deliveryAgentId!, req.body);
+  res.status(201).json(ok(document));
+});
+
+export const myDocuments = asyncHandler(async (req: Request, res: Response) => {
+  const documents = await deliveryAgentsService.myDocuments(req.user!.deliveryAgentId!);
+  res.json(ok(documents));
+});
+
+export const adminListDocuments = asyncHandler(async (_req: Request, res: Response) => {
+  const documents = await deliveryAgentsService.adminListDocuments();
+  res.json(ok(documents));
+});
+
+export const reviewDocument = asyncHandler(async (req: Request, res: Response) => {
+  const document = await deliveryAgentsService.reviewDocument(
+    req.params.documentId!,
+    req.user!.id,
+    req.body,
+  );
+  res.json(ok(document));
 });
 
 export const updateMyBankDetails = asyncHandler(async (req: Request, res: Response) => {

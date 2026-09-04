@@ -48,6 +48,11 @@ export const transition = asyncHandler(async (req: Request, res: Response) => {
   res.json(ok(updated));
 });
 
+export const reschedulePickup = asyncHandler(async (req: Request, res: Response) => {
+  const updated = await returnsService.reschedulePickup(req.params.id!, req.user!.id, req.body.slot);
+  res.json(ok(updated));
+});
+
 export const retryRefund = asyncHandler(async (req: Request, res: Response) => {
   await returnsService.retryRazorpayRefund(req.params.id!, req.user!.id);
   const item = await returnsService.getById(req.params.id!, {

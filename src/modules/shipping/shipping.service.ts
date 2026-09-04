@@ -8,6 +8,7 @@ import { Product } from '@database/models/product.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { Order } from '@database/models/order.model';
+import { Address } from '@database/models/address.model';
 import { WebhookEvent } from '@database/models/webhookEvent.model';
 import { AppError } from '@core/errors/AppError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
@@ -317,7 +318,12 @@ export const shippingService = {
         {
           model: SubOrder,
           as: 'subOrder',
-          include: [{ model: Order, as: 'order', attributes: ['userId'] }],
+          include: [{
+            model: Order,
+            as: 'order',
+            attributes: ['userId'],
+            include: [{ model: Address, as: 'shippingAddress', attributes: ['lat', 'lng'] }],
+          }],
           attributes: ['vendorId'],
         },
         {
@@ -343,7 +349,7 @@ export const shippingService = {
     }
 
     const shipmentWithOrder = shipment as Shipment & {
-      subOrder?: SubOrder & { order?: Order };
+      subOrder?: SubOrder & { order?: Order & { shippingAddress?: Address | null } };
     };
     const subOrder = shipmentWithOrder.subOrder;
     const isAdmin = (ADMIN_ROLES as readonly string[]).includes(actor.role.name);
@@ -354,7 +360,17 @@ export const shippingService = {
       throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_ORDER);
     }
     const plain = shipment.get({ plain: true }) as Record<string, unknown>;
-    return { ...plain, lastUpdate: shipment.updatedAt };
+    const destinationAddress = subOrder?.order?.shippingAddress as
+      | { lat: number | null; lng: number | null }
+      | undefined;
+    return {
+      ...plain,
+      lastUpdate: shipment.updatedAt,
+      destination:
+        destinationAddress?.lat != null && destinationAddress?.lng != null
+          ? { lat: Number(destinationAddress.lat), lng: Number(destinationAddress.lng) }
+          : null,
+    };
   },
 
   /** Customer picks a redelivery window after a FAILED attempt (tracking page CTA). */

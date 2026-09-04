@@ -169,6 +169,7 @@ function serializeReturn(
     deliveryAgentId: plain.deliveryAgentId ?? null,
     pickupOtpVerifiedAt: plain.pickupOtpVerifiedAt ?? null,
     pickupFailureReason: plain.pickupFailureReason ?? null,
+    preferredRepickupSlot: plain.preferredRepickupSlot ?? null,
     replacementDeliveredAt: plain.replacementDeliveredAt ?? null,
     replacementProofUrl: plain.replacementProofUrl ?? null,
     photoUrls: Array.isArray(plain.photoUrls) ? plain.photoUrls : [],
@@ -274,6 +275,19 @@ export class ReturnsService {
     }
 
     return serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }, slaDays);
+  }
+
+  /** Customer picks a repickup window after a failed attempt — mirrors shippingService.rescheduleDelivery. */
+  async reschedulePickup(id: string, userId: string, slot: string) {
+    const row = await ReturnRequest.findByPk(id);
+    if (!row) throw new NotFoundError('ReturnRequest');
+    if (row.userId !== userId) throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_RETURN);
+    if (row.status !== RETURN_STATUS.PICKUP_SCHEDULED || !row.pickupFailureReason) {
+      throw new ValidationError({ status: ['Only a failed pickup attempt can be rescheduled'] });
+    }
+    await row.update({ preferredRepickupSlot: slot });
+    const slaDays = await refundSlaDays();
+    return serializeReturn(row, slaDays);
   }
 
   async create(userId: string, data: CreateReturnInput) {

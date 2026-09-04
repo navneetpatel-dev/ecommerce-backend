@@ -45,6 +45,8 @@ export class DeliveryAgent extends Model<
     DeliveryAgent.hasMany(models.DeliveryCashDeposit, { foreignKey: 'deliveryAgentId', as: 'cashDeposits' });
     DeliveryAgent.hasMany(models.DeliveryAgentEarning, { foreignKey: 'deliveryAgentId', as: 'earnings' });
     DeliveryAgent.hasMany(models.DeliveryAgentPayout, { foreignKey: 'deliveryAgentId', as: 'payouts' });
+    DeliveryAgent.hasMany(models.DeliveryAgentDocument, { foreignKey: 'deliveryAgentId', as: 'documents' });
+    DeliveryAgent.hasMany(models.DeliveryRating, { foreignKey: 'deliveryAgentId', as: 'ratings' });
   }
 }
 

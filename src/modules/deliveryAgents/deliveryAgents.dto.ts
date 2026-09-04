@@ -35,6 +35,8 @@ export const SetAvailabilitySchema = z.object({ availableForAssignment: z.boolea
 export const UpdateDeliveryStatusSchema = z.object({
   status: z.enum(['PICKED_UP', 'IN_TRANSIT', 'OUT_FOR_DELIVERY', 'FAILED']),
   note: z.string().trim().min(3).max(1000).optional(),
+  /** Optional evidence photo for a FAILED attempt (e.g. locked gate, wrong address). */
+  photoUrl: z.string().url().optional(),
 }).superRefine((value, context) => {
   if (value.status === 'FAILED' && !value.note) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['note'], message: 'A failed attempt reason is required' });
@@ -78,6 +80,22 @@ export const UpdateLocationSchema = z.object({
   lat: z.number().min(-90).max(90),
   lng: z.number().min(-180).max(180),
 });
+export const SubmitDocumentSchema = z.object({
+  type: z.enum(['ID_PROOF', 'DRIVING_LICENSE', 'VEHICLE_RC', 'ADDRESS_PROOF']),
+  url: z.string().url(),
+});
+export const ReviewDocumentSchema = z.object({
+  action: z.enum(['APPROVE', 'REJECT']),
+  rejectionReason: z.string().trim().min(3).max(500).optional(),
+}).superRefine((value, context) => {
+  if (value.action === 'REJECT' && !value.rejectionReason) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['rejectionReason'],
+      message: 'A reason is required to reject a document',
+    });
+  }
+});
 
 export type CreateDeliveryAgentRequest = z.infer<typeof CreateDeliveryAgentSchema>;
 export type UpdateDeliveryAgentRequest = z.infer<typeof UpdateDeliveryAgentSchema>;
@@ -86,3 +104,5 @@ export type BulkAssignShipmentsRequest = z.infer<typeof BulkAssignShipmentsSchem
 export type UpdateLocationRequest = z.infer<typeof UpdateLocationSchema>;
 export type CloseCashShiftRequest = z.infer<typeof CloseCashShiftSchema>;
 export type VerifyCashDepositRequest = z.infer<typeof VerifyCashDepositSchema>;
+export type SubmitDocumentRequest = z.infer<typeof SubmitDocumentSchema>;
+export type ReviewDocumentRequest = z.infer<typeof ReviewDocumentSchema>;

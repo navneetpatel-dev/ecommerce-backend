@@ -53,6 +53,8 @@ function serializeAddress(address: {
   gstin?: string | null;
   isDefault: boolean;
   deliveryInstructions?: string | null;
+  lat?: number | null;
+  lng?: number | null;
 }) {
   return {
     id: address.id,
@@ -66,6 +68,8 @@ function serializeAddress(address: {
     gstin: address.gstin ?? null,
     isDefault: Boolean(address.isDefault),
     deliveryInstructions: address.deliveryInstructions ?? null,
+    lat: address.lat != null ? Number(address.lat) : null,
+    lng: address.lng != null ? Number(address.lng) : null,
   };
 }
 
@@ -185,6 +189,8 @@ export class UsersService {
           gstin: data.gstin ?? null,
           isDefault: makeDefault,
           deliveryInstructions: data.deliveryInstructions ?? null,
+          lat: data.lat,
+          lng: data.lng,
         } as any,
         { transaction: t },
       );
@@ -218,6 +224,8 @@ export class UsersService {
           ...(data.deliveryInstructions !== undefined
             ? { deliveryInstructions: data.deliveryInstructions }
             : {}),
+          ...(data.lat !== undefined ? { lat: data.lat } : {}),
+          ...(data.lng !== undefined ? { lng: data.lng } : {}),
           ...(data.isDefault !== undefined ? { isDefault: nextIsDefault } : {}),
         } as any,
         { transaction: t },

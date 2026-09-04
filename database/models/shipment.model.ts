@@ -46,6 +46,7 @@ export class Shipment extends Model<InferAttributes<Shipment>, InferCreationAttr
   static associate(models: Record<string, any>) {
     Shipment.belongsTo(models.SubOrder, { foreignKey: 'subOrderId', as: 'subOrder' });
     Shipment.belongsTo(models.DeliveryAgent, { foreignKey: 'deliveryAgentId', as: 'deliveryAgent' });
+    Shipment.hasMany(models.ShipmentAttempt, { foreignKey: 'shipmentId', as: 'attempts' });
   }
 }
 

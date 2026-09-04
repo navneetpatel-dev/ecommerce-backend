@@ -1,9 +1,10 @@
 import bcrypt from 'bcrypt';
-import { Op, type Transaction } from 'sequelize';
+import { Op, QueryTypes, type Transaction } from 'sequelize';
 import { sequelize } from '@database/models';
 import { User } from '@database/models/user.model';
 import { Role } from '@database/models/role.model';
 import { Shipment } from '@database/models/shipment.model';
+import { ShipmentAttempt } from '@database/models/shipmentAttempt.model';
 import { Order } from '@database/models/order.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { DeliveryCashDeposit } from '@database/models/deliveryCashDeposit.model';
@@ -12,7 +13,14 @@ import { ReturnRequest } from '@database/models/returnRequest.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { NotFoundError, ValidationError } from '@core/errors';
 import { ERROR_MESSAGES } from '@core/constants/errors';
-import { PAYMENT_STATUS, RETURN_STATUS, RETURN_TYPE, ROLES, USER_STATUS } from '@core/constants/statuses';
+import {
+  DELIVERY_AGENT_REQUIRED_DOCUMENT_TYPES,
+  PAYMENT_STATUS,
+  RETURN_STATUS,
+  RETURN_TYPE,
+  ROLES,
+  USER_STATUS,
+} from '@core/constants/statuses';
 import { buildPaginationMeta } from '@core/http/pagination';
 import { clearPermissionCache } from '@middleware/rbac.middleware';
 import { logAudit } from '@modules/audit/audit.service';
@@ -26,10 +34,13 @@ import type {
   BulkAssignShipmentsRequest,
   CreateDeliveryAgentRequest,
   ListDeliveryAgentsRequest,
+  ReviewDocumentRequest,
+  SubmitDocumentRequest,
   UpdateDeliveryAgentRequest,
 } from './deliveryAgents.dto';
 import { deliveryAgentsRepository as repo } from './deliveryAgents.repository';
 import { deliveryAgentPayoutsService } from './deliveryAgentPayouts.service';
+import { deliveryRatingsService } from './deliveryRatings.service';
 
 const DELIVERY_TRANSITIONS: Record<string, readonly string[]> = {
   PENDING: ['PICKED_UP', 'FAILED'],
@@ -138,13 +149,101 @@ export class DeliveryAgentsService {
     const { rows, count } = await repo.list(filters);
     const agents = await Promise.all(rows.map(async (agent) => {
       const [activeDeliveries, activePickups] = await repo.activeCounts(agent.id);
+      const { average, count: ratingCount } = await deliveryRatingsService.averageForAgent(agent.id);
       return {
         ...agent.get({ plain: true }),
         activeDeliveries,
         activePickups,
+        averageRating: average,
+        ratingCount,
       };
     }));
     return { agents, pagination: buildPaginationMeta(count, filters.page, filters.limit) };
+  }
+
+  /**
+   * Per-agent delivery performance for admin ops: delivered/RTO counts and
+   * rate, failed-attempt rate (from the ShipmentAttempt ledger), average
+   * fulfillment time (pickup → delivered — Shipment has no separate
+   * "entered OUT_FOR_DELIVERY" timestamp to measure from), and average
+   * customer rating (lifetime, not window-scoped, matching the agents list).
+   */
+  async performanceReport(range: { from: Date; to: Date }): Promise<
+    Array<{
+      deliveryAgentId: string;
+      fullName: string;
+      hubOrZone: string;
+      delivered: number;
+      rto: number;
+      rtoRatePercent: number;
+      failedAttempts: number;
+      avgFulfillmentHours: number | null;
+      averageRating: number | null;
+      ratingCount: number;
+    }>
+  > {
+    const [agents, shipmentRows, attemptRows, ratingRows] = await Promise.all([
+      repo.list({ page: 1, limit: 1000 }).then((result) => result.rows),
+      sequelize.query<{
+        deliveryAgentId: string;
+        delivered: string;
+        rto: string;
+        avgFulfillmentSeconds: string | null;
+      }>(
+        `SELECT "deliveryAgentId",
+           COUNT(*) FILTER (WHERE status = 'DELIVERED') AS delivered,
+           COUNT(*) FILTER (WHERE status IN ('RTO_INITIATED', 'RTO_DELIVERED')) AS rto,
+           AVG(EXTRACT(EPOCH FROM ("deliveredAt" - "shippedAt")))
+             FILTER (WHERE status = 'DELIVERED' AND "shippedAt" IS NOT NULL) AS "avgFulfillmentSeconds"
+         FROM shipments
+         WHERE "deliveryAgentId" IS NOT NULL AND "updatedAt" BETWEEN :from AND :to
+         GROUP BY "deliveryAgentId"`,
+        { replacements: { from: range.from, to: range.to }, type: QueryTypes.SELECT },
+      ),
+      sequelize.query<{ deliveryAgentId: string; failedAttempts: string }>(
+        `SELECT s."deliveryAgentId" AS "deliveryAgentId", COUNT(sa.id) AS "failedAttempts"
+         FROM shipment_attempts sa
+         JOIN shipments s ON s.id = sa."shipmentId"
+         WHERE sa."attemptedAt" BETWEEN :from AND :to AND s."deliveryAgentId" IS NOT NULL
+         GROUP BY s."deliveryAgentId"`,
+        { replacements: { from: range.from, to: range.to }, type: QueryTypes.SELECT },
+      ),
+      sequelize.query<{ deliveryAgentId: string; avgRating: string | null; ratingCount: string }>(
+        `SELECT "deliveryAgentId", AVG(rating) AS "avgRating", COUNT(*) AS "ratingCount"
+         FROM delivery_ratings
+         GROUP BY "deliveryAgentId"`,
+        { type: QueryTypes.SELECT },
+      ),
+    ]);
+
+    const shipmentByAgent = new Map(shipmentRows.map((row) => [row.deliveryAgentId, row]));
+    const attemptsByAgent = new Map(attemptRows.map((row) => [row.deliveryAgentId, row]));
+    const ratingByAgent = new Map(ratingRows.map((row) => [row.deliveryAgentId, row]));
+
+    return agents.map((agent) => {
+      const shipmentRow = shipmentByAgent.get(agent.id);
+      const delivered = Number(shipmentRow?.delivered ?? 0);
+      const rto = Number(shipmentRow?.rto ?? 0);
+      const failedAttempts = Number(attemptsByAgent.get(agent.id)?.failedAttempts ?? 0);
+      const totalOutcomes = delivered + rto;
+      const avgFulfillmentSeconds = shipmentRow?.avgFulfillmentSeconds
+        ? Number(shipmentRow.avgFulfillmentSeconds)
+        : null;
+      const ratingRow = ratingByAgent.get(agent.id);
+
+      return {
+        deliveryAgentId: agent.id,
+        fullName: agent.fullName,
+        hubOrZone: agent.hubOrZone,
+        delivered,
+        rto,
+        rtoRatePercent: totalOutcomes > 0 ? Math.round((rto / totalOutcomes) * 1000) / 10 : 0,
+        failedAttempts,
+        avgFulfillmentHours: avgFulfillmentSeconds != null ? Math.round((avgFulfillmentSeconds / 3600) * 10) / 10 : null,
+        averageRating: ratingRow?.avgRating != null ? Math.round(Number(ratingRow.avgRating) * 10) / 10 : null,
+        ratingCount: Number(ratingRow?.ratingCount ?? 0),
+      };
+    });
   }
 
   /** Feeds the admin dispatch picker — no more hunting for a shipment UUID elsewhere. */
@@ -256,7 +355,71 @@ export class DeliveryAgentsService {
     if (agent.status !== 'ACTIVE' && availableForAssignment) {
       throw new ValidationError({ availableForAssignment: ['Only active agents can accept assignments'] });
     }
+    if (availableForAssignment) {
+      await this.assertDocumentsVerified(id);
+    }
     return agent.update({ availableForAssignment });
+  }
+
+  private async assertDocumentsVerified(deliveryAgentId: string) {
+    const documents = await repo.documentsForAgent(deliveryAgentId);
+    const missing = DELIVERY_AGENT_REQUIRED_DOCUMENT_TYPES.filter(
+      (type) => !documents.some((doc) => doc.type === type && doc.verified),
+    );
+    if (missing.length > 0) {
+      throw new ValidationError({
+        availableForAssignment: [
+          `Verification documents required before going on duty: ${missing.join(', ')}`,
+        ],
+      });
+    }
+  }
+
+  async submitDocument(deliveryAgentId: string, input: SubmitDocumentRequest) {
+    return repo.createDocument({
+      deliveryAgentId,
+      type: input.type,
+      url: input.url,
+      createdBy: deliveryAgentId,
+    });
+  }
+
+  myDocuments(deliveryAgentId: string) {
+    return repo.documentsForAgent(deliveryAgentId);
+  }
+
+  adminListDocuments() {
+    return repo.listAllDocuments();
+  }
+
+  async reviewDocument(documentId: string, actorId: string, input: ReviewDocumentRequest) {
+    const document = await repo.findDocumentById(documentId);
+    if (!document) throw new NotFoundError('DeliveryAgentDocument');
+    if (input.action === 'APPROVE') {
+      await document.update({
+        verified: true,
+        verifiedById: actorId,
+        rejectionReason: null,
+        rejectedAt: null,
+        updatedBy: actorId,
+      });
+    } else {
+      await document.update({
+        verified: false,
+        verifiedById: actorId,
+        rejectionReason: input.rejectionReason ?? null,
+        rejectedAt: new Date(),
+        updatedBy: actorId,
+      });
+    }
+    await logAudit({
+      actorId,
+      action: input.action === 'APPROVE' ? 'AGENT_DOCUMENT_APPROVED' : 'AGENT_DOCUMENT_REJECTED',
+      entityType: 'DeliveryAgentDocument',
+      entityId: document.id,
+      metadata: { deliveryAgentId: document.deliveryAgentId, type: document.type },
+    });
+    return document;
   }
 
   async assignShipment(shipmentId: string, deliveryAgentId: string, actorId: string) {
@@ -549,6 +712,7 @@ export class DeliveryAgentsService {
     input: {
       status: 'PICKED_UP' | 'IN_TRANSIT' | 'OUT_FOR_DELIVERY' | 'FAILED' | 'RTO_DELIVERED';
       note?: string;
+      photoUrl?: string;
     },
   ) {
     const shipment = await repo.assignedShipment(shipmentId, deliveryAgentId);
@@ -562,6 +726,14 @@ export class DeliveryAgentsService {
       await this.requestDeliveryCode(shipment.id, deliveryAgentId);
     }
     if (input.status === 'FAILED') {
+      await ShipmentAttempt.create({
+        shipmentId: shipment.id,
+        attemptNumber: updated.failedAttemptCount,
+        note: input.note ?? '',
+        photoUrl: input.photoUrl ?? null,
+        attemptedAt: new Date(),
+        createdBy: actorId,
+      });
       await logAudit({
         actorId,
         action: updated.status === 'RTO_INITIATED' ? 'DELIVERY_RTO_INITIATED' : 'DELIVERY_ATTEMPT_FAILED',
@@ -705,6 +877,7 @@ export class DeliveryAgentsService {
       entityId: pickup.id,
       metadata: { note },
     });
+    void notificationsService.sendPickupAttemptFailed(pickup.userId, pickup.id, { reason: note });
     return pickup;
   }
 

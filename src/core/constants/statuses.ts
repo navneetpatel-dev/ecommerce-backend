@@ -132,6 +132,24 @@ export const VENDOR_DOCUMENT_TYPE_VALUES = Object.values(VENDOR_DOCUMENT_TYPE) a
   ...VendorDocumentType[],
 ];
 
+export const DELIVERY_AGENT_DOCUMENT_TYPE = {
+  ID_PROOF: 'ID_PROOF',
+  DRIVING_LICENSE: 'DRIVING_LICENSE',
+  VEHICLE_RC: 'VEHICLE_RC',
+  ADDRESS_PROOF: 'ADDRESS_PROOF',
+} as const;
+export type DeliveryAgentDocumentType =
+  (typeof DELIVERY_AGENT_DOCUMENT_TYPE)[keyof typeof DELIVERY_AGENT_DOCUMENT_TYPE];
+export const DELIVERY_AGENT_DOCUMENT_TYPE_VALUES = Object.values(DELIVERY_AGENT_DOCUMENT_TYPE) as [
+  DeliveryAgentDocumentType,
+  ...DeliveryAgentDocumentType[],
+];
+/** Both must be APPROVED before an agent can go "available for assignment". */
+export const DELIVERY_AGENT_REQUIRED_DOCUMENT_TYPES: readonly DeliveryAgentDocumentType[] = [
+  DELIVERY_AGENT_DOCUMENT_TYPE.ID_PROOF,
+  DELIVERY_AGENT_DOCUMENT_TYPE.DRIVING_LICENSE,
+];
+
 export const USER_STATUS = {
   ACTIVE: 'ACTIVE',
   BLOCKED: 'BLOCKED',

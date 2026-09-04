@@ -544,6 +544,17 @@ export class NotificationsService {
     });
   }
 
+  sendPickupAttemptFailed(userId: string, returnId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({
+      userId,
+      type: 'PICKUP_ATTEMPT_FAILED',
+      referenceType: 'ReturnRequest',
+      // Unique per attempt (bucketed by day) so a later re-attempt failure still notifies.
+      referenceId: `${returnId}:attempt:${todayBucket()}`,
+      templateData,
+    });
+  }
+
   sendPayoutFailed(userId: string, payoutId: string, templateData: EmailTemplateData = {}) {
     return this.enqueue({
       userId,

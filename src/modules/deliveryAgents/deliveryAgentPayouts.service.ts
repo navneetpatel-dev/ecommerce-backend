@@ -11,6 +11,7 @@ import { roundMoney } from '@modules/pricing/money';
 import { settingsService } from '@modules/settings/settings.service';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { logAudit } from '@modules/audit/audit.service';
+import { renderReportTablePdf } from '@core/pdf';
 import type {
   MarkAgentPayoutFailedRequest,
   MarkAgentPayoutPaidRequest,
@@ -99,6 +100,48 @@ export class DeliveryAgentPayoutsService {
       order: [['createdAt', 'DESC']],
     });
     return rows.map(serializePayout);
+  }
+
+  /** PDF statement for one payout batch — reuses the generic report-table PDF renderer. */
+  async renderStatement(
+    payoutId: string,
+    requesterDeliveryAgentId?: string,
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    const payout = await DeliveryAgentPayout.findByPk(payoutId, { include: [agentInclude] });
+    if (!payout) throw new NotFoundError('DeliveryAgentPayout');
+    if (requesterDeliveryAgentId && payout.deliveryAgentId !== requesterDeliveryAgentId) {
+      throw new NotFoundError('DeliveryAgentPayout');
+    }
+
+    const earnings = await DeliveryAgentEarning.findAll({
+      where: { payoutId },
+      order: [['earnedAt', 'ASC']],
+    });
+    const plain = payout.get({ plain: true }) as Record<string, unknown> & {
+      deliveryAgent?: { fullName?: string };
+    };
+    const agentName = plain.deliveryAgent?.fullName ?? 'Delivery agent';
+
+    const buffer = await renderReportTablePdf({
+      title: 'Delivery Payout Statement',
+      subtitle: `${agentName} · ${new Date(payout.periodStart).toLocaleDateString()} – ${new Date(payout.periodEnd).toLocaleDateString()} · Status: ${payout.status}`,
+      columns: [
+        { key: 'taskType', label: 'Task', align: 'left' },
+        { key: 'date', label: 'Date', align: 'left' },
+        { key: 'amount', label: 'Amount (Rs.)', align: 'right' },
+      ],
+      rows: earnings.map((row) => ({
+        taskType: row.sourceType === 'DELIVERY' ? 'Delivery' : 'Return pickup',
+        date: new Date(row.earnedAt).toLocaleDateString(),
+        amount: Number(row.amount).toFixed(2),
+      })),
+      emptyMessage: 'No settled tasks on this payout.',
+    });
+
+    return {
+      buffer,
+      filename: `payout-statement-${payout.id.slice(0, 8)}.pdf`,
+    };
   }
 
   async earningsForAgent(deliveryAgentId: string) {

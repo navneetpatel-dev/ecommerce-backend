@@ -3,7 +3,7 @@ import { authenticate } from '@middleware/auth.middleware';
 import { authorize } from '@middleware/rbac.middleware';
 import { validate } from '@middleware/validate.middleware';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
-import { CreateReturnRequestSchema, TransitionReturnSchema } from './returns.dto';
+import { CreateReturnRequestSchema, RescheduleReturnPickupSchema, TransitionReturnSchema } from './returns.dto';
 import * as returnsController from './returns.controller';
 
 const router = Router();
@@ -20,6 +20,7 @@ router.get(
   returnsController.downloadDebitNote,
 );
 router.patch('/:id/transition', authenticate, authorize(PERMISSIONS.ORDER_REFUND), validate(TransitionReturnSchema), returnsController.transition);
+router.post('/:id/reschedule-pickup', authenticate, validate(RescheduleReturnPickupSchema), returnsController.reschedulePickup);
 router.post('/:id/retry-refund', authenticate, authorize(PERMISSIONS.ORDER_REFUND), returnsController.retryRefund);
 router.delete('/:id', authenticate, authorize(PERMISSIONS.ORDER_REFUND), returnsController.remove);
 

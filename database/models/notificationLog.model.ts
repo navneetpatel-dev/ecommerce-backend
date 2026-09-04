@@ -15,7 +15,7 @@ export type NotificationType =
   | 'COUPON_USAGE_LIMIT' | 'COUPON_EXPIRING' | 'COUPON_OFFER_EXPIRING'
   | 'TICKET_CREATED' | 'TICKET_REPLIED' | 'TICKET_RESOLVED' | 'TICKET_REOPENED'
   | 'BUG_REPORT_TRIAGED' | 'BUG_REPORT_FIXED' | 'BUG_REPORT_WONT_FIX' | 'BUG_REPORT_DUPLICATE'
-  | 'RTO_HANDOVER_OTP' | 'DELIVERY_ATTEMPT_FAILED';
+  | 'RTO_HANDOVER_OTP' | 'DELIVERY_ATTEMPT_FAILED' | 'PICKUP_ATTEMPT_FAILED';
 
 export class NotificationLog extends Model<InferAttributes<NotificationLog>, InferCreationAttributes<NotificationLog>> {
   declare id: CreationOptional<string>;

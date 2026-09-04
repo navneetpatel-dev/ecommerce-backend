@@ -7,6 +7,7 @@ import { sequelize } from '@database/models';
 import { OrderItem } from '@database/models/orderItem.model';
 import { Vendor } from '@database/models/vendor.model';
 import { Shipment } from '@database/models/shipment.model';
+import { ShipmentAttempt } from '@database/models/shipmentAttempt.model';
 import { DeliveryAgent } from '@database/models/deliveryAgent.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { Product } from '@database/models/product.model';
@@ -52,6 +53,12 @@ const orderDetailInclude = [
             model: DeliveryAgent,
             as: 'deliveryAgent',
             attributes: ['id', 'fullName', 'phone'],
+          },
+          {
+            model: ShipmentAttempt,
+            as: 'attempts',
+            separate: true,
+            order: [['attemptNumber', 'ASC']] as [string, string][],
           },
         ],
       },

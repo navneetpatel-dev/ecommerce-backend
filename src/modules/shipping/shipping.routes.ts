@@ -9,6 +9,7 @@ import {
   UpdateZoneSchema,
   CreateRateSchema,
   RescheduleDeliverySchema,
+  SubmitDeliveryRatingSchema,
 } from './shipping.dto';
 import * as shippingController from './shipping.controller';
 
@@ -27,6 +28,13 @@ router.post(
   authenticate,
   validate(RescheduleDeliverySchema),
   shippingController.rescheduleDelivery,
+);
+router.get('/shipments/:shipmentId/rating', authenticate, shippingController.getDeliveryRating);
+router.post(
+  '/shipments/:shipmentId/rating',
+  authenticate,
+  validate(SubmitDeliveryRatingSchema),
+  shippingController.submitDeliveryRating,
 );
 
 router.get('/zones', authenticate, authorize(PERMISSIONS.SHIPPING_MANAGE), shippingController.listZones);

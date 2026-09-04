@@ -2,8 +2,10 @@ import { Op, type Transaction } from 'sequelize';
 import { BaseRepository } from '@core/repository/BaseRepository';
 import { DeliveryAgent } from '@database/models/deliveryAgent.model';
 import { DeliveryCashDeposit } from '@database/models/deliveryCashDeposit.model';
+import { DeliveryAgentDocument } from '@database/models/deliveryAgentDocument.model';
 import { User } from '@database/models/user.model';
 import { Shipment } from '@database/models/shipment.model';
+import { ShipmentAttempt } from '@database/models/shipmentAttempt.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { Order } from '@database/models/order.model';
 import { Address } from '@database/models/address.model';
@@ -28,6 +30,13 @@ const orderInclude = {
     },
     { model: OrderItem, as: 'items' },
   ],
+};
+
+const attemptsInclude = {
+  model: ShipmentAttempt,
+  as: 'attempts' as const,
+  separate: true,
+  order: [['attemptNumber', 'ASC']] as [string, string][],
 };
 
 const pickupInclude = [
@@ -81,7 +90,7 @@ export class DeliveryAgentsRepository extends BaseRepository<DeliveryAgent> {
 
     return Shipment.findAll({
       where,
-      include: [orderInclude],
+      include: [orderInclude, attemptsInclude],
       order: [['assignedAt', 'DESC']],
     });
   }
@@ -89,7 +98,7 @@ export class DeliveryAgentsRepository extends BaseRepository<DeliveryAgent> {
   async assignedShipment(id: string, deliveryAgentId: string, transaction?: Transaction) {
     return Shipment.findOne({
       where: { id, deliveryAgentId },
-      include: [orderInclude],
+      include: [orderInclude, attemptsInclude],
       transaction,
       lock: transaction?.LOCK.UPDATE,
     });
@@ -97,7 +106,7 @@ export class DeliveryAgentsRepository extends BaseRepository<DeliveryAgent> {
 
   /** Backs the single-delivery detail route — no more loading the whole list to find one. */
   async shipmentById(id: string, deliveryAgentId: string) {
-    return Shipment.findOne({ where: { id, deliveryAgentId }, include: [orderInclude] });
+    return Shipment.findOne({ where: { id, deliveryAgentId }, include: [orderInclude, attemptsInclude] });
   }
 
   async findShipmentsByIds(ids: string[]) {
@@ -226,6 +235,40 @@ export class DeliveryAgentsRepository extends BaseRepository<DeliveryAgent> {
       include: [{ model: DeliveryAgent, as: 'deliveryAgent', attributes: ['id', 'fullName', 'hubOrZone'] }],
       order: [['createdAt', 'DESC']],
       limit: 100,
+    });
+  }
+
+  createDocument(data: {
+    deliveryAgentId: string;
+    type: string;
+    url: string;
+    createdBy: string;
+  }) {
+    return DeliveryAgentDocument.create({
+      ...data,
+      verified: false,
+      verifiedById: null,
+      rejectionReason: null,
+      rejectedAt: null,
+      updatedBy: null,
+      deletedBy: null,
+    } as any);
+  }
+
+  documentsForAgent(deliveryAgentId: string) {
+    return DeliveryAgentDocument.findAll({ where: { deliveryAgentId }, order: [['createdAt', 'DESC']] });
+  }
+
+  findDocumentById(id: string) {
+    return DeliveryAgentDocument.findByPk(id);
+  }
+
+  /** Full admin review queue — every submitted document, any state. */
+  listAllDocuments() {
+    return DeliveryAgentDocument.findAll({
+      include: [{ model: DeliveryAgent, as: 'deliveryAgent', attributes: ['id', 'fullName', 'hubOrZone'] }],
+      order: [['createdAt', 'ASC']],
+      limit: 200,
     });
   }
 }

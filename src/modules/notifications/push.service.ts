@@ -22,6 +22,7 @@ const PUSH_NOTIFICATION_TYPES = new Set<NotificationType>([
   'RETURN_PICKUP_OTP',
   'RTO_HANDOVER_OTP',
   'DELIVERY_ATTEMPT_FAILED',
+  'PICKUP_ATTEMPT_FAILED',
 ]);
 
 function isConfigured(): boolean {

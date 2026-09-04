@@ -175,6 +175,8 @@ function defaultCta(type: NotificationType, data: EmailTemplateData): { label?: 
       return { label: EMAIL_COPY.ctaVendorDashboard, url: str(data, 'actionUrl', `${base}/vendor/dashboard`) };
     case 'DELIVERY_ATTEMPT_FAILED':
       return { label: EMAIL_COPY.ctaTrackShipment, url: str(data, 'actionUrl', `${base}/orders/tracking`) };
+    case 'PICKUP_ATTEMPT_FAILED':
+      return { label: 'View return', url: str(data, 'actionUrl', `${base}/my-returns`) };
     default:
       return { label: EMAIL_COPY.ctaOpenStore, url: base };
   }

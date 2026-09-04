@@ -31,6 +31,7 @@ import { initWishlistItemModel, WishlistItem } from './wishlistItem.model';
 import { initShippingZoneModel, ShippingZone } from './shippingZone.model';
 import { initShippingRateModel, ShippingRate } from './shippingRate.model';
 import { initShipmentModel, Shipment } from './shipment.model';
+import { initShipmentAttemptModel, ShipmentAttempt } from './shipmentAttempt.model';
 import { initReturnRequestModel, ReturnRequest } from './returnRequest.model';
 import { initTaxRuleModel, TaxRule } from './taxRule.model';
 import { initNotificationLogModel, NotificationLog } from './notificationLog.model';
@@ -71,6 +72,8 @@ import { initDeliveryAgentModel, DeliveryAgent } from './deliveryAgent.model';
 import { initDeliveryCashDepositModel, DeliveryCashDeposit } from './deliveryCashDeposit.model';
 import { initDeliveryAgentEarningModel, DeliveryAgentEarning } from './deliveryAgentEarning.model';
 import { initDeliveryAgentPayoutModel, DeliveryAgentPayout } from './deliveryAgentPayout.model';
+import { initDeliveryAgentDocumentModel, DeliveryAgentDocument } from './deliveryAgentDocument.model';
+import { initDeliveryRatingModel, DeliveryRating } from './deliveryRating.model';
 import { initWebVitalModel, WebVital } from './webVital.model';
 
 const models = {
@@ -80,6 +83,8 @@ const models = {
   DeliveryAgent: initDeliveryAgentModel(sequelize),
   DeliveryCashDeposit: initDeliveryCashDepositModel(sequelize),
   DeliveryAgentPayout: initDeliveryAgentPayoutModel(sequelize),
+  DeliveryAgentDocument: initDeliveryAgentDocumentModel(sequelize),
+  DeliveryRating: initDeliveryRatingModel(sequelize),
   DeliveryAgentEarning: initDeliveryAgentEarningModel(sequelize),
   User: initUserModel(sequelize),
   RefreshToken: initRefreshTokenModel(sequelize),
@@ -110,6 +115,7 @@ const models = {
   ShippingZone: initShippingZoneModel(sequelize),
   ShippingRate: initShippingRateModel(sequelize),
   Shipment: initShipmentModel(sequelize),
+  ShipmentAttempt: initShipmentAttemptModel(sequelize),
   ReturnRequest: initReturnRequestModel(sequelize),
   TaxRule: initTaxRuleModel(sequelize),
   NotificationLog: initNotificationLogModel(sequelize),
@@ -148,12 +154,12 @@ Object.values(models).forEach((model: any) => {
 
 export { sequelize };
 export {
-  Role, Permission, Vendor, DeliveryAgent, DeliveryCashDeposit, DeliveryAgentPayout, DeliveryAgentEarning, User, RefreshToken, Address,
+  Role, Permission, Vendor, DeliveryAgent, DeliveryCashDeposit, DeliveryAgentPayout, DeliveryAgentEarning, DeliveryAgentDocument, DeliveryRating, User, RefreshToken, Address,
   VendorDocument, VendorCategory, DocumentRequirement, Category, CategoryAttribute, Product, ProductCategory, ProductVariant, ProductImage,
   Cart, CartItem, Order, SubOrder, OrderItem,
   Coupon, CouponBatch, CouponUsage, CommissionLedger, Payout,
   Review, ReviewVote, Wishlist, WishlistItem,
-  ShippingZone, ShippingRate, Shipment, ReturnRequest,
+  ShippingZone, ShippingRate, Shipment, ShipmentAttempt, ReturnRequest,
   TaxRule, NotificationLog, AuditLog, WebhookEvent,
   PlatformSetting, PromoBanner,
   TcsLedger, TdsLedger, CreditNote, DebitNote, DocumentSequence,

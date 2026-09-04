@@ -20,6 +20,8 @@ import {
   UpdateLocationSchema,
   UpdatePickupStatusSchema,
   VerifyCashDepositSchema,
+  ReviewDocumentSchema,
+  SubmitDocumentSchema,
 } from './deliveryAgents.dto';
 import {
   MarkAgentPayoutFailedSchema,
@@ -36,6 +38,7 @@ router.post('/', authenticate, manage, validate(CreateDeliveryAgentSchema), cont
 router.get('/unassigned-shipments', authenticate, manage, controller.unassignedShipments);
 router.get('/unassigned-pickups', authenticate, manage, controller.unassignedPickups);
 router.get('/rto-shipments', authenticate, manage, controller.adminRtoQueue);
+router.get('/reports/performance', authenticate, manage, controller.performanceReport);
 router.get('/cash-deposits', authenticate, manage, controller.adminListCashDeposits);
 router.patch('/cash-deposits/:depositId', authenticate, manage, validate(VerifyCashDepositSchema), controller.verifyCashDeposit);
 router.get('/payouts', authenticate, manage, controller.adminListAgentPayouts);
@@ -43,6 +46,9 @@ router.post('/payouts/process', authenticate, manage, controller.processAgentPay
 router.patch('/payouts/:payoutId/mark-paid', authenticate, manage, validate(MarkAgentPayoutPaidSchema), controller.markAgentPayoutPaid);
 router.patch('/payouts/:payoutId/mark-failed', authenticate, manage, validate(MarkAgentPayoutFailedSchema), controller.markAgentPayoutFailed);
 router.patch('/payouts/:payoutId/retry', authenticate, manage, controller.retryAgentPayout);
+router.get('/payouts/:payoutId/statement.pdf', authenticate, manage, controller.adminPayoutStatement);
+router.get('/documents', authenticate, manage, controller.adminListDocuments);
+router.patch('/documents/:documentId/review', authenticate, manage, validate(ReviewDocumentSchema), controller.reviewDocument);
 router.post('/shipments/:shipmentId/assign', authenticate, manage, validate(AssignAgentSchema), controller.assignShipment);
 router.post('/shipments/bulk-assign', authenticate, manage, validate(BulkAssignShipmentsSchema), controller.bulkAssignShipments);
 router.post('/shipments/:shipmentId/force-confirm', authenticate, manage, validate(ForceConfirmSchema), controller.forceConfirmDelivery);
@@ -54,8 +60,11 @@ router.get('/me/shift-summary', authenticate, authorize(PERMISSIONS.SHIPMENT_DEL
 router.post('/me/cash-shift/close', authenticate, authorize(PERMISSIONS.SHIPMENT_DELIVERY_UPDATE, PERMISSIONS.RETURN_PICKUP_UPDATE), validate(CloseCashShiftSchema), controller.closeCashShift);
 router.get('/me/cash-deposits', authenticate, authorize(PERMISSIONS.SHIPMENT_DELIVERY_UPDATE, PERMISSIONS.RETURN_PICKUP_UPDATE), controller.myCashDeposits);
 router.get('/me/payouts', authenticate, authorize(PERMISSIONS.SHIPMENT_DELIVERY_UPDATE, PERMISSIONS.RETURN_PICKUP_UPDATE), controller.myPayouts);
+router.get('/me/payouts/:payoutId/statement.pdf', authenticate, authorize(PERMISSIONS.SHIPMENT_DELIVERY_UPDATE, PERMISSIONS.RETURN_PICKUP_UPDATE), controller.myPayoutStatement);
 router.get('/me/earnings', authenticate, authorize(PERMISSIONS.SHIPMENT_DELIVERY_UPDATE, PERMISSIONS.RETURN_PICKUP_UPDATE), controller.myEarnings);
 router.patch('/me/bank-details', authenticate, authorize(PERMISSIONS.SHIPMENT_DELIVERY_UPDATE, PERMISSIONS.RETURN_PICKUP_UPDATE), validate(UpdateBankDetailsSchema), controller.updateMyBankDetails);
+router.post('/me/documents', authenticate, authorize(PERMISSIONS.SHIPMENT_DELIVERY_UPDATE, PERMISSIONS.RETURN_PICKUP_UPDATE), validate(SubmitDocumentSchema), controller.submitDocument);
+router.get('/me/documents', authenticate, authorize(PERMISSIONS.SHIPMENT_DELIVERY_UPDATE, PERMISSIONS.RETURN_PICKUP_UPDATE), controller.myDocuments);
 router.get('/me/deliveries', authenticate, authorize(PERMISSIONS.SHIPMENT_DELIVERY_UPDATE), controller.deliveries);
 router.get('/me/deliveries/:shipmentId', authenticate, authorize(PERMISSIONS.SHIPMENT_DELIVERY_UPDATE), controller.delivery);
 router.patch('/me/deliveries/:shipmentId/status', authenticate, authorize(PERMISSIONS.SHIPMENT_DELIVERY_UPDATE), validate(UpdateDeliveryStatusSchema), controller.updateDeliveryStatus);

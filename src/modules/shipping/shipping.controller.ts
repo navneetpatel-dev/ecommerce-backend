@@ -4,6 +4,7 @@ import { ok } from '@core/http/ApiResponse';
 import { pageLimitQuerySchema } from '@core/http/pagination';
 import { COOKIES } from '@core/constants/http';
 import { shippingService } from './shipping.service';
+import { deliveryRatingsService } from '@modules/deliveryAgents/deliveryRatings.service';
 import { GetShippingRatesSchema } from './shipping.dto';
 
 export const getRates = asyncHandler(async (req: Request, res: Response) => {
@@ -50,6 +51,21 @@ export const updateZone = asyncHandler(async (req: Request, res: Response) => {
 export const deleteZone = asyncHandler(async (req: Request, res: Response) => {
   await shippingService.deleteZone(req.params.id!);
   res.status(204).send();
+});
+
+export const submitDeliveryRating = asyncHandler(async (req: Request, res: Response) => {
+  const rating = await deliveryRatingsService.submit(
+    req.params.shipmentId!,
+    req.user!.id,
+    req.body.rating,
+    req.body.comment,
+  );
+  res.status(201).json(ok(rating));
+});
+
+export const getDeliveryRating = asyncHandler(async (req: Request, res: Response) => {
+  const rating = await deliveryRatingsService.forShipment(req.params.shipmentId!);
+  res.json(ok(rating));
 });
 
 export const listAdminRates = asyncHandler(async (_req: Request, res: Response) => {

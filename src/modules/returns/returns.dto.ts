@@ -16,5 +16,10 @@ export const TransitionReturnSchema = z.object({
   status: z.enum(RETURN_STATUS_VALUES),
 });
 
+export const RescheduleReturnPickupSchema = z.object({
+  slot: z.string().trim().min(3).max(64),
+});
+
 export type CreateReturnRequest = z.infer<typeof CreateReturnRequestSchema>;
 export type TransitionReturnRequest = z.infer<typeof TransitionReturnSchema>;
+export type RescheduleReturnPickupRequest = z.infer<typeof RescheduleReturnPickupSchema>;
