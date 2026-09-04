@@ -7,6 +7,7 @@ import { otpRequestRateLimiter } from '@middleware/rateLimiter.middleware';
 import {
   AssignAgentSchema,
   BulkAssignShipmentsSchema,
+  BulkCreateDeliveryAgentsSchema,
   CloseCashShiftSchema,
   ConfirmDeliverySchema,
   ConfirmPickupSchema,
@@ -35,10 +36,12 @@ const manage = authorize(PERMISSIONS.DELIVERY_AGENT_MANAGE);
 
 router.get('/', authenticate, manage, validate(ListDeliveryAgentsSchema, 'query'), controller.list);
 router.post('/', authenticate, manage, validate(CreateDeliveryAgentSchema), controller.create);
+router.post('/bulk', authenticate, manage, validate(BulkCreateDeliveryAgentsSchema), controller.bulkCreate);
 router.get('/unassigned-shipments', authenticate, manage, controller.unassignedShipments);
 router.get('/unassigned-pickups', authenticate, manage, controller.unassignedPickups);
 router.get('/rto-shipments', authenticate, manage, controller.adminRtoQueue);
 router.get('/reports/performance', authenticate, manage, controller.performanceReport);
+router.get('/reports/stale', authenticate, manage, controller.staleTasks);
 router.get('/cash-deposits', authenticate, manage, controller.adminListCashDeposits);
 router.patch('/cash-deposits/:depositId', authenticate, manage, validate(VerifyCashDepositSchema), controller.verifyCashDeposit);
 router.get('/payouts', authenticate, manage, controller.adminListAgentPayouts);

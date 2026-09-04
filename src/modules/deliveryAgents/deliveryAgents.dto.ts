@@ -18,6 +18,10 @@ export const CreateDeliveryAgentSchema = z.object({
   hubOrZone: z.string().trim().min(1).max(120),
 });
 
+export const BulkCreateDeliveryAgentsSchema = z.object({
+  rows: z.array(CreateDeliveryAgentSchema).min(1).max(200),
+});
+
 export const UpdateDeliveryAgentSchema = z.object({
   fullName: z.string().trim().min(1).max(120).optional(),
   phone: z.string().trim().min(6).max(20).optional(),
@@ -83,6 +87,10 @@ export const UpdateLocationSchema = z.object({
 export const SubmitDocumentSchema = z.object({
   type: z.enum(['ID_PROOF', 'DRIVING_LICENSE', 'VEHICLE_RC', 'ADDRESS_PROOF']),
   url: z.string().url(),
+  expiryDate: z.string().date().optional().refine(
+    (value) => !value || new Date(value).getTime() > Date.now(),
+    { message: 'Expiry date must be in the future' },
+  ),
 });
 export const ReviewDocumentSchema = z.object({
   action: z.enum(['APPROVE', 'REJECT']),
@@ -98,6 +106,7 @@ export const ReviewDocumentSchema = z.object({
 });
 
 export type CreateDeliveryAgentRequest = z.infer<typeof CreateDeliveryAgentSchema>;
+export type BulkCreateDeliveryAgentsRequest = z.infer<typeof BulkCreateDeliveryAgentsSchema>;
 export type UpdateDeliveryAgentRequest = z.infer<typeof UpdateDeliveryAgentSchema>;
 export type ListDeliveryAgentsRequest = z.infer<typeof ListDeliveryAgentsSchema>;
 export type BulkAssignShipmentsRequest = z.infer<typeof BulkAssignShipmentsSchema>;

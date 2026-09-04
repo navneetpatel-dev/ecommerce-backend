@@ -4,6 +4,7 @@ import { sequelize } from '@database/models';
 import { User } from '@database/models/user.model';
 import { Role } from '@database/models/role.model';
 import { Shipment } from '@database/models/shipment.model';
+import { DeliveryAgent } from '@database/models/deliveryAgent.model';
 import { ShipmentAttempt } from '@database/models/shipmentAttempt.model';
 import { Order } from '@database/models/order.model';
 import { SubOrder } from '@database/models/subOrder.model';
@@ -60,6 +61,15 @@ function assertDeliveryTransition(from: string, to: string) {
 function customerIdFromShipment(shipment: Shipment): string | null {
   return (shipment as any).subOrder?.order?.userId ?? null;
 }
+
+/** How long a shipment/pickup can sit mid-transit before it's surfaced to admins as stuck. */
+const STALE_OUT_FOR_DELIVERY_HOURS = 24;
+const STALE_IN_TRANSIT_HOURS = 72;
+const STALE_PICKUP_RETRY_HOURS = 24;
+
+/** Performance-report thresholds beyond which an agent is flagged for admin review (visibility only, no auto-suspend). */
+const FLAG_RTO_RATE_PERCENT = 15;
+const FLAG_FAILED_ATTEMPTS = 5;
 
 export class DeliveryAgentsService {
   async create(input: CreateDeliveryAgentRequest, actorId: string) {
@@ -121,6 +131,28 @@ export class DeliveryAgentsService {
     return repo.findById(agentId);
   }
 
+  /** One bad row (duplicate email, etc.) must not sink the whole CSV batch — collect per-row outcomes instead. */
+  async bulkCreate(
+    rows: CreateDeliveryAgentRequest[],
+    actorId: string,
+  ): Promise<Array<{ row: number; email: string; success: boolean; error: string | null }>> {
+    const results: Array<{ row: number; email: string; success: boolean; error: string | null }> = [];
+    for (const [i, row] of rows.entries()) {
+      try {
+        await this.create(row, actorId);
+        results.push({ row: i + 1, email: row.email, success: true, error: null });
+      } catch (error) {
+        results.push({
+          row: i + 1,
+          email: row.email,
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    }
+    return results;
+  }
+
   async update(id: string, input: UpdateDeliveryAgentRequest, actorId: string) {
     const agent = await repo.findById(id);
     if (!agent) throw new NotFoundError('DeliveryAgent');
@@ -180,6 +212,8 @@ export class DeliveryAgentsService {
       avgFulfillmentHours: number | null;
       averageRating: number | null;
       ratingCount: number;
+      flagged: boolean;
+      flagReason: string | null;
     }>
   > {
     const [agents, shipmentRows, attemptRows, ratingRows] = await Promise.all([
@@ -230,6 +264,15 @@ export class DeliveryAgentsService {
         ? Number(shipmentRow.avgFulfillmentSeconds)
         : null;
       const ratingRow = ratingByAgent.get(agent.id);
+      const rtoRatePercent = totalOutcomes > 0 ? Math.round((rto / totalOutcomes) * 1000) / 10 : 0;
+
+      const flagReasons: string[] = [];
+      if (rtoRatePercent > FLAG_RTO_RATE_PERCENT) {
+        flagReasons.push(`RTO rate ${rtoRatePercent}% exceeds ${FLAG_RTO_RATE_PERCENT}%`);
+      }
+      if (failedAttempts >= FLAG_FAILED_ATTEMPTS) {
+        flagReasons.push(`${failedAttempts} failed attempts (threshold ${FLAG_FAILED_ATTEMPTS})`);
+      }
 
       return {
         deliveryAgentId: agent.id,
@@ -237,13 +280,86 @@ export class DeliveryAgentsService {
         hubOrZone: agent.hubOrZone,
         delivered,
         rto,
-        rtoRatePercent: totalOutcomes > 0 ? Math.round((rto / totalOutcomes) * 1000) / 10 : 0,
+        rtoRatePercent,
         failedAttempts,
         avgFulfillmentHours: avgFulfillmentSeconds != null ? Math.round((avgFulfillmentSeconds / 3600) * 10) / 10 : null,
         averageRating: ratingRow?.avgRating != null ? Math.round(Number(ratingRow.avgRating) * 10) / 10 : null,
         ratingCount: Number(ratingRow?.ratingCount ?? 0),
+        flagged: flagReasons.length > 0,
+        flagReason: flagReasons.length > 0 ? flagReasons.join('; ') : null,
       };
     });
+  }
+
+  /** Shipments/pickups stuck mid-transit past a reasonable window — admin visibility, no auto-action. */
+  async staleTasks(): Promise<{
+    shipments: Array<{
+      id: string;
+      trackingNumber: string;
+      status: string;
+      updatedAt: Date;
+      deliveryAgent: { id: string; fullName: string } | null;
+    }>;
+    pickups: Array<{
+      id: string;
+      status: string;
+      updatedAt: Date;
+      pickupFailureReason: string | null;
+      deliveryAgent: { id: string; fullName: string } | null;
+    }>;
+  }> {
+    const now = Date.now();
+    const outForDeliveryCutoff = new Date(now - STALE_OUT_FOR_DELIVERY_HOURS * 60 * 60 * 1000);
+    const inTransitCutoff = new Date(now - STALE_IN_TRANSIT_HOURS * 60 * 60 * 1000);
+    const pickupCutoff = new Date(now - STALE_PICKUP_RETRY_HOURS * 60 * 60 * 1000);
+
+    const shipments = await Shipment.findAll({
+      where: {
+        deliveryAgentId: { [Op.ne]: null },
+        [Op.or]: [
+          { status: 'OUT_FOR_DELIVERY', updatedAt: { [Op.lt]: outForDeliveryCutoff } },
+          { status: 'IN_TRANSIT', updatedAt: { [Op.lt]: inTransitCutoff } },
+        ],
+      },
+      include: [{ model: DeliveryAgent, as: 'deliveryAgent', attributes: ['id', 'fullName'] }],
+      order: [['updatedAt', 'ASC']] as [string, string][],
+      limit: 100,
+    });
+
+    const pickups = await ReturnRequest.findAll({
+      where: {
+        deliveryAgentId: { [Op.ne]: null },
+        status: 'PICKUP_SCHEDULED',
+        pickupFailureReason: { [Op.ne]: null },
+        updatedAt: { [Op.lt]: pickupCutoff },
+      },
+      include: [{ model: DeliveryAgent, as: 'deliveryAgent', attributes: ['id', 'fullName'] }],
+      order: [['updatedAt', 'ASC']] as [string, string][],
+      limit: 100,
+    });
+
+    return {
+      shipments: shipments.map((shipment) => {
+        const plain = shipment.get({ plain: true }) as any;
+        return {
+          id: plain.id,
+          trackingNumber: plain.trackingNumber,
+          status: plain.status,
+          updatedAt: plain.updatedAt,
+          deliveryAgent: plain.deliveryAgent ?? null,
+        };
+      }),
+      pickups: pickups.map((pickup) => {
+        const plain = pickup.get({ plain: true }) as any;
+        return {
+          id: plain.id,
+          status: plain.status,
+          updatedAt: plain.updatedAt,
+          pickupFailureReason: plain.pickupFailureReason,
+          deliveryAgent: plain.deliveryAgent ?? null,
+        };
+      }),
+    };
   }
 
   /** Feeds the admin dispatch picker — no more hunting for a shipment UUID elsewhere. */
@@ -380,6 +496,7 @@ export class DeliveryAgentsService {
       deliveryAgentId,
       type: input.type,
       url: input.url,
+      expiryDate: input.expiryDate ?? null,
       createdBy: deliveryAgentId,
     });
   }

@@ -555,6 +555,26 @@ export class NotificationsService {
     });
   }
 
+  sendAgentDocumentExpiring(userId: string, documentId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({
+      userId,
+      type: 'DELIVERY_AGENT_DOCUMENT_EXPIRING',
+      referenceType: 'DeliveryAgentDocument',
+      referenceId: `${documentId}:expiring`,
+      templateData,
+    });
+  }
+
+  sendAgentDocumentExpired(userId: string, documentId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({
+      userId,
+      type: 'DELIVERY_AGENT_DOCUMENT_EXPIRED',
+      referenceType: 'DeliveryAgentDocument',
+      referenceId: `${documentId}:expired`,
+      templateData,
+    });
+  }
+
   sendPayoutFailed(userId: string, payoutId: string, templateData: EmailTemplateData = {}) {
     return this.enqueue({
       userId,

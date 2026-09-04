@@ -242,6 +242,7 @@ export class DeliveryAgentsRepository extends BaseRepository<DeliveryAgent> {
     deliveryAgentId: string;
     type: string;
     url: string;
+    expiryDate: string | null;
     createdBy: string;
   }) {
     return DeliveryAgentDocument.create({
@@ -250,6 +251,7 @@ export class DeliveryAgentsRepository extends BaseRepository<DeliveryAgent> {
       verifiedById: null,
       rejectionReason: null,
       rejectedAt: null,
+      expiryReminderSentAt: null,
       updatedBy: null,
       deletedBy: null,
     } as any);

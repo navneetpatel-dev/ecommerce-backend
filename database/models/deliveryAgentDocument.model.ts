@@ -17,6 +17,8 @@ export class DeliveryAgentDocument extends Model<
   declare verifiedById: string | null;
   declare rejectionReason: string | null;
   declare rejectedAt: Date | null;
+  declare expiryDate: CreationOptional<string | null>;
+  declare expiryReminderSentAt: CreationOptional<Date | null>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -41,6 +43,8 @@ export const initDeliveryAgentDocumentModel = (sequelize: Sequelize) => {
       verifiedById: { type: DataTypes.UUID, allowNull: true },
       rejectionReason: { type: DataTypes.TEXT, allowNull: true },
       rejectedAt: { type: DataTypes.DATE, allowNull: true },
+      expiryDate: { type: DataTypes.DATEONLY, allowNull: true },
+      expiryReminderSentAt: { type: DataTypes.DATE, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

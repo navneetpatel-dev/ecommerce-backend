@@ -18,6 +18,11 @@ export const performanceReport = asyncHandler(async (req: Request, res: Response
   res.json(ok(report));
 });
 
+export const staleTasks = asyncHandler(async (_req: Request, res: Response) => {
+  const result = await deliveryAgentsService.staleTasks();
+  res.json(ok(result));
+});
+
 export const unassignedShipments = asyncHandler(async (_req: Request, res: Response) => {
   const shipments = await deliveryAgentsService.unassignedShipments();
   res.json(ok(shipments));
@@ -36,6 +41,11 @@ export const bulkAssignShipments = asyncHandler(async (req: Request, res: Respon
 export const create = asyncHandler(async (req: Request, res: Response) => {
   const agent = await deliveryAgentsService.create(req.body, req.user!.id);
   res.status(201).json(ok(agent));
+});
+
+export const bulkCreate = asyncHandler(async (req: Request, res: Response) => {
+  const results = await deliveryAgentsService.bulkCreate(req.body.rows, req.user!.id);
+  res.status(201).json(ok(results));
 });
 
 export const update = asyncHandler(async (req: Request, res: Response) => {
