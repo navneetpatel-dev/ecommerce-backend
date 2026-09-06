@@ -6,6 +6,7 @@ import { Order } from '@database/models/order.model';
 import { OrderItem } from '@database/models/orderItem.model';
 import { Shipment } from '@database/models/shipment.model';
 import { DeliveryAgent } from '@database/models/deliveryAgent.model';
+import { ReturnRequest } from '@database/models/returnRequest.model';
 import { sequelize } from '@database/models';
 import { ORDER_STATUS } from '@core/constants/statuses';
 import { roundMoney } from '@modules/pricing/money';
@@ -40,6 +41,24 @@ const shipmentInclude = {
   ],
 };
 
+/**
+ * Read-only visibility into a suborder's return/exchange requests: status and
+ * the assigned pickup agent, mirroring `shipmentInclude` above. Vendors can't
+ * change return/pickup status here — that lifecycle stays owned by the
+ * returns module.
+ */
+const returnRequestInclude = {
+  model: ReturnRequest,
+  as: 'returnRequests' as const,
+  include: [
+    {
+      model: DeliveryAgent,
+      as: 'deliveryAgent' as const,
+      attributes: ['id', 'fullName', 'phone'],
+    },
+  ],
+};
+
 function assertSubOrderTransition(from: string, to: string) {
   if (from === to) return;
   if (!SUBORDER_MANUAL_TRANSITIONS[from]?.includes(to)) {
@@ -52,19 +71,21 @@ function mapSubOrderRow(row: SubOrder) {
     ? row.get({ plain: true })
     : row) as Record<string, unknown> & {
     order?: { totalAmount?: unknown; walletAmountUsed?: unknown };
+    returnRequests?: unknown[];
   };
   const mapped = mapSubOrder(plain);
+  const extra: Record<string, unknown> = {
+    // Vendor visibility only — read-only, matches the existing shipment display pattern.
+    returnRequests: plain.returnRequests ?? [],
+  };
   if (plain.order) {
-    return {
-      ...mapped,
-      order: {
-        ...plain.order,
-        totalAmount: roundMoney(plain.order.totalAmount),
-        walletAmountUsed: roundMoney(plain.order.walletAmountUsed),
-      },
+    extra.order = {
+      ...plain.order,
+      totalAmount: roundMoney(plain.order.totalAmount),
+      walletAmountUsed: roundMoney(plain.order.walletAmountUsed),
     };
   }
-  return mapped;
+  return { ...mapped, ...extra };
 }
 
 export class SubordersService {
@@ -76,6 +97,7 @@ export class SubordersService {
         { model: Order, as: 'order' },
         { model: Vendor, as: 'vendor' },
         shipmentInclude,
+        returnRequestInclude,
       ],
       order: [['createdAt', 'DESC']],
     });
@@ -126,6 +148,7 @@ export class SubordersService {
             as: 'shipment',
             include: [{ model: DeliveryAgent, as: 'deliveryAgent' }],
           },
+          returnRequestInclude,
         ],
         transaction,
       });

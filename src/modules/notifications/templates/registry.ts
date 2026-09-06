@@ -182,6 +182,11 @@ function defaultCta(type: NotificationType, data: EmailTemplateData): { label?: 
     case 'DELIVERY_AGENT_DOCUMENT_EXPIRING':
     case 'DELIVERY_AGENT_DOCUMENT_EXPIRED':
       return { label: 'Manage documents', url: str(data, 'actionUrl', `${base}/delivery/dashboard/profile`) };
+    case 'CASH_DEPOSIT_VERIFIED':
+    case 'CASH_DEPOSIT_REJECTED':
+      return { label: 'View cash deposits', url: str(data, 'actionUrl', `${base}/delivery/dashboard/profile`) };
+    case 'RTO_HANDOVER_CONFIRMED':
+      return { label: EMAIL_COPY.ctaVendorDashboard, url: str(data, 'actionUrl', `${base}/vendor/dashboard`) };
     default:
       return { label: EMAIL_COPY.ctaOpenStore, url: base };
   }

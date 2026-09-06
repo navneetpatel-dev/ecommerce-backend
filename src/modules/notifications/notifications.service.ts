@@ -639,6 +639,36 @@ export class NotificationsService {
     });
   }
 
+  sendCashDepositVerified(userId: string, depositId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({
+      userId,
+      type: 'CASH_DEPOSIT_VERIFIED',
+      referenceType: 'DeliveryCashDeposit',
+      referenceId: `${depositId}:verified`,
+      templateData,
+    });
+  }
+
+  sendCashDepositRejected(userId: string, depositId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({
+      userId,
+      type: 'CASH_DEPOSIT_REJECTED',
+      referenceType: 'DeliveryCashDeposit',
+      referenceId: `${depositId}:rejected`,
+      templateData,
+    });
+  }
+
+  sendRtoHandoverConfirmed(userId: string, shipmentId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({
+      userId,
+      type: 'RTO_HANDOVER_CONFIRMED',
+      referenceType: 'Shipment',
+      referenceId: `${shipmentId}:rto-confirmed`,
+      templateData,
+    });
+  }
+
   sendPayoutFailed(userId: string, payoutId: string, templateData: EmailTemplateData = {}) {
     return this.enqueue({
       userId,

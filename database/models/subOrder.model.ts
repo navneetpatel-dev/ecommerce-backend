@@ -45,6 +45,7 @@ export class SubOrder extends Model<InferAttributes<SubOrder>, InferCreationAttr
     SubOrder.belongsTo(models.Vendor, { as: 'vendor', foreignKey: 'vendorId' });
     SubOrder.hasMany(models.OrderItem, { foreignKey: 'subOrderId', as: 'items' });
     SubOrder.hasOne(models.Shipment, { foreignKey: 'subOrderId', as: 'shipment' });
+    SubOrder.hasMany(models.ReturnRequest, { foreignKey: 'subOrderId', as: 'returnRequests' });
     SubOrder.hasOne(models.CommissionLedger, { foreignKey: 'subOrderId' });
   }
 }

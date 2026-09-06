@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import { coerceRupees } from '@modules/pricing/money';
 
 export type CashDepositStatus = 'PENDING' | 'VERIFIED' | 'REJECTED';
 
@@ -35,8 +36,23 @@ export const initDeliveryCashDepositModel = (sequelize: Sequelize) => {
     {
       id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
       deliveryAgentId: { type: DataTypes.UUID, allowNull: false },
-      amount: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
-      expectedAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
+      amount: {
+        type: DataTypes.DECIMAL(10, 2),
+        allowNull: false,
+        // Postgres DECIMAL arrives as a string via Sequelize — coerce at the model
+        // boundary so both the admin review panel and the agent's own history card
+        // get a real number instead of crashing on `.toFixed()`.
+        get(this: DeliveryCashDeposit) {
+          return coerceRupees(this.getDataValue('amount'));
+        },
+      },
+      expectedAmount: {
+        type: DataTypes.DECIMAL(10, 2),
+        allowNull: false,
+        get(this: DeliveryCashDeposit) {
+          return coerceRupees(this.getDataValue('expectedAmount'));
+        },
+      },
       status: { type: DataTypes.ENUM('PENDING', 'VERIFIED', 'REJECTED'), allowNull: false, defaultValue: 'PENDING' },
       note: { type: DataTypes.TEXT, allowNull: true },
       rejectionReason: { type: DataTypes.TEXT, allowNull: true },

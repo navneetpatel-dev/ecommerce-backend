@@ -11,6 +11,7 @@ import { SubOrder } from '@database/models/subOrder.model';
 import { DeliveryCashDeposit } from '@database/models/deliveryCashDeposit.model';
 import { DeliveryAgentEarning } from '@database/models/deliveryAgentEarning.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
+import { DeliveryAgentDocument } from '@database/models/deliveryAgentDocument.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { NotFoundError, ValidationError } from '@core/errors';
 import { ERROR_MESSAGES } from '@core/constants/errors';
@@ -442,9 +443,14 @@ export class DeliveryAgentsService {
     }
 
     const assignedAt = new Date();
-    await Promise.all(
-      shipments.map((shipment) =>
-        shipment.update({ deliveryAgentId: input.deliveryAgentId, assignedAt, updatedBy: actorId }),
+    await sequelize.transaction((transaction) =>
+      Promise.all(
+        shipments.map((shipment) =>
+          shipment.update(
+            { deliveryAgentId: input.deliveryAgentId, assignedAt, updatedBy: actorId },
+            { transaction },
+          ),
+        ),
       ),
     );
     await logAudit({
@@ -472,7 +478,8 @@ export class DeliveryAgentsService {
   async profile(id: string) {
     const agent = await repo.findById(id);
     if (!agent) throw new NotFoundError('DeliveryAgent');
-    return agent;
+    const { average, count: ratingCount } = await deliveryRatingsService.averageForAgent(id);
+    return { ...agent.get({ plain: true }), averageRating: average, ratingCount };
   }
 
   async setAvailability(id: string, availableForAssignment: boolean) {
@@ -489,8 +496,11 @@ export class DeliveryAgentsService {
 
   private async assertDocumentsVerified(deliveryAgentId: string) {
     const documents = await repo.documentsForAgent(deliveryAgentId);
+    const today = new Date().toISOString().slice(0, 10);
+    const isLiveAndVerified = (doc: DeliveryAgentDocument) =>
+      doc.verified && (!doc.expiryDate || doc.expiryDate >= today);
     const missing = DELIVERY_AGENT_REQUIRED_DOCUMENT_TYPES.filter(
-      (type) => !documents.some((doc) => doc.type === type && doc.verified),
+      (type) => !documents.some((doc) => doc.type === type && isLiveAndVerified(doc)),
     );
     if (missing.length > 0) {
       throw new ValidationError({
@@ -743,6 +753,18 @@ export class DeliveryAgentsService {
       entityId: deposit.id,
       metadata: { rejectionReason },
     });
+    const agent = await repo.findById(deposit.deliveryAgentId);
+    if (agent) {
+      const amount = roundMoney(deposit.amount);
+      if (action === 'VERIFY') {
+        void notificationsService.sendCashDepositVerified(agent.userId, deposit.id, { amount });
+      } else {
+        void notificationsService.sendCashDepositRejected(agent.userId, deposit.id, {
+          amount,
+          reason: rejectionReason ?? 'Not specified',
+        });
+      }
+    }
     return deposit;
   }
 
@@ -805,10 +827,15 @@ export class DeliveryAgentsService {
         metadata: { vendorId },
         transaction,
       });
-      return { shipment, verification };
+      return { shipment, verification, vendorUserId: vendorUser.id };
     });
     if (!result.verification.valid) {
       throw new ValidationError({ otpCode: [result.verification.message] });
+    }
+    if (result.shipment) {
+      void notificationsService.sendRtoHandoverConfirmed(result.vendorUserId, result.shipment.id, {
+        trackingNumber: result.shipment.trackingNumber,
+      });
     }
     return result.shipment;
   }
@@ -842,19 +869,24 @@ export class DeliveryAgentsService {
       photoUrl?: string;
     },
   ) {
-    const shipment = await repo.assignedShipment(shipmentId, deliveryAgentId);
-    if (!shipment) throw new NotFoundError('AssignedShipment');
-    assertDeliveryTransition(shipment.status, input.status);
-    const extra: Record<string, unknown> = { updatedBy: actorId };
-    if (input.status === 'FAILED') extra.failureReason = input.note;
-    const updated = await shippingService.applyShipmentStatus(shipment, input.status, extra);
+    const updated = await sequelize.transaction(async (transaction) => {
+      const shipment = await repo.assignedShipment(shipmentId, deliveryAgentId, transaction);
+      if (!shipment) throw new NotFoundError('AssignedShipment');
+      assertDeliveryTransition(shipment.status, input.status);
+      const extra: Record<string, unknown> = { updatedBy: actorId };
+      if (input.status === 'FAILED') extra.failureReason = input.note;
+      // Locked within this transaction so two concurrent status updates for the
+      // same shipment (e.g. duplicate retries) can't both read the same stale
+      // failedAttemptCount and undercount it, delaying the RTO auto-transition.
+      return shippingService.applyShipmentStatus(shipment, input.status, extra, transaction);
+    });
 
     if (input.status === 'OUT_FOR_DELIVERY') {
-      await this.requestDeliveryCode(shipment.id, deliveryAgentId);
+      await this.requestDeliveryCode(updated.id, deliveryAgentId);
     }
     if (input.status === 'FAILED') {
       await ShipmentAttempt.create({
-        shipmentId: shipment.id,
+        shipmentId: updated.id,
         attemptNumber: updated.failedAttemptCount,
         note: input.note ?? '',
         photoUrl: input.photoUrl ?? null,
@@ -865,7 +897,7 @@ export class DeliveryAgentsService {
         actorId,
         action: updated.status === 'RTO_INITIATED' ? 'DELIVERY_RTO_INITIATED' : 'DELIVERY_ATTEMPT_FAILED',
         entityType: 'Shipment',
-        entityId: shipment.id,
+        entityId: updated.id,
         metadata: { note: input.note, failedAttemptCount: updated.failedAttemptCount },
       });
     }

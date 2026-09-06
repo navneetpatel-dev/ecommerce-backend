@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import { coerceRupees } from '@modules/pricing/money';
 
 export class Shipment extends Model<InferAttributes<Shipment>, InferCreationAttributes<Shipment>> {
   declare id: CreationOptional<string>;
@@ -81,7 +82,17 @@ export const initShipmentModel = (sequelize: Sequelize) => {
       failureReason: { type: DataTypes.TEXT, allowNull: true },
       failedAttemptCount: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
       lastFailedAttemptAt: { type: DataTypes.DATE, allowNull: true },
-      codAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+      codAmount: {
+        type: DataTypes.DECIMAL(10, 2),
+        allowNull: true,
+        // Postgres DECIMAL arrives as a string via Sequelize — coerce at the model
+        // boundary so every caller (agent app, customer tracking, vendor view) gets
+        // a real number instead of crashing on `.toFixed()`.
+        get(this: Shipment) {
+          const raw = this.getDataValue('codAmount');
+          return raw == null ? null : coerceRupees(raw);
+        },
+      },
       codCollected: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
       codCollectedAt: { type: DataTypes.DATE, allowNull: true },
       preferredRedeliverySlot: { type: DataTypes.STRING(64), allowNull: true },

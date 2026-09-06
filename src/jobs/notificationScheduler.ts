@@ -162,14 +162,14 @@ async function processExpiringAgentDocuments(): Promise<number> {
   return sent;
 }
 
-/** Verified KYC docs already past expiry — un-verify (re-triggers the existing availability lock) and notify. */
+/** Verified KYC docs already past expiry — un-verify, take the agent off duty, and notify. */
 async function processExpiredAgentDocuments(): Promise<number> {
   const documents = await DeliveryAgentDocument.findAll({
     where: {
       verified: true,
       expiryDate: { [Op.ne]: null, [Op.lt]: new Date() },
     },
-    include: [{ model: DeliveryAgent, as: 'deliveryAgent', attributes: ['id', 'userId'] }],
+    include: [{ model: DeliveryAgent, as: 'deliveryAgent', attributes: ['id', 'userId', 'availableForAssignment'] }],
     limit: 100,
   });
 
@@ -177,6 +177,9 @@ async function processExpiredAgentDocuments(): Promise<number> {
   for (const document of documents) {
     const agent = (document as DeliveryAgentDocument & { deliveryAgent?: DeliveryAgent }).deliveryAgent;
     await document.update({ verified: false });
+    if (agent?.availableForAssignment) {
+      await agent.update({ availableForAssignment: false });
+    }
     if (!agent?.userId) continue;
     const log = await notificationsService.sendAgentDocumentExpired(agent.userId, document.id, {
       documentType: humanizeDocumentType(document.type),
