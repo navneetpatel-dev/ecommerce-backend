@@ -5,9 +5,15 @@ import { notificationsService } from './notifications.service';
 import { pushService } from './push.service';
 import { AppError } from '@core/errors';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
+import type { ListNotificationLogsQuery, BroadcastNotificationRequest } from './notifications.dto';
 
-export const listLogs = asyncHandler(async (_req: Request, res: Response) => {
-  res.json(ok(await notificationsService.listLogs()));
+export const listLogs = asyncHandler(async (req: Request, res: Response) => {
+  res.json(ok(await notificationsService.listLogs(req.query as ListNotificationLogsQuery)));
+});
+
+export const broadcast = asyncHandler(async (req: Request, res: Response) => {
+  const result = await notificationsService.broadcast(req.user!.id, req.body as BroadcastNotificationRequest);
+  res.status(201).json(ok(result));
 });
 
 export const createTest = asyncHandler(async (req: Request, res: Response) => {

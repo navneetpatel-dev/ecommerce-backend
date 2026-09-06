@@ -3,7 +3,11 @@ import { NotFoundError } from '@core/errors/NotFoundError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import type { PermissionKey } from '@core/permissions/permissionKeys';
 import { buildPaginationMeta } from '@core/http/pagination';
-import { getReportDefinition, listReportDefinitionsForPermissions } from './reportRegistry';
+import {
+  getReportDefinition,
+  listReportDefinitionsForPermissions,
+  listSchedulableReportTypes,
+} from './reportRegistry';
 import { assertReportRange } from './queryHelpers';
 import type { ReportFilters } from './types';
 import type { ReportExportFormat } from './csvExporter';
@@ -20,6 +24,11 @@ export type { DirectExportResult };
 export { resolveFiltersForActor } from './reportEngine.helpers';
 
 export class ReportEngine {
+  /** Report types eligible for the platform-wide scheduled admin digest (settings-driven). */
+  schedulableCatalog() {
+    return listSchedulableReportTypes();
+  }
+
   catalog(actor: ReportActor) {
     const staff = isVendorStaff(actor.permissions, actor.roleName);
     return listReportDefinitionsForPermissions(actor.permissions, actor.roleName).filter((d) => {

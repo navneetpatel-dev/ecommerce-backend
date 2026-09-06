@@ -23,3 +23,13 @@ export const handleRazorpayWebhook = asyncHandler(async (req: Request, res: Resp
   const result = await paymentsService.handleRazorpayWebhook(rawBody, signature);
   res.status(200).json(result);
 });
+
+export const listSavedMethods = asyncHandler(async (req: Request, res: Response) => {
+  const methods = await paymentsService.listSavedMethods(req.user!.id);
+  res.json(ok(methods));
+});
+
+export const deleteSavedMethod = asyncHandler(async (req: Request, res: Response) => {
+  await paymentsService.deleteSavedMethod(req.user!.id, req.params.id!);
+  res.status(204).send();
+});

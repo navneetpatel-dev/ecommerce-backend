@@ -36,6 +36,10 @@ export const API_MOUNTS = {
   supportTickets: '/support-tickets',
   bugReports: '/bug-reports',
   deliveryAgents: '/delivery-agents',
+  productQna: '/product-qna',
+  giftCards: '/gift-cards',
+  payments: '/payments',
+  roles: '/roles',
 } as const;
 
 export const HEALTH_PATH = '/health';

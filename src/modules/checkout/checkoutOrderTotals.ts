@@ -13,6 +13,8 @@ export type CheckoutOrderTotals = {
   discountTotal: number;
   /** FE maps to localized tax label — not a computed amount. */
   taxDisplayKey: 'IGST' | 'CGST_SGST' | 'GST';
+  /** Flat checkout-time gift-wrap fee (0 when not selected) — not per vendor. */
+  giftWrapFeeAmount: number;
 };
 
 type VendorBreakdownRow = {
@@ -49,6 +51,7 @@ export function resolveTaxDisplayKey(tax: {
 
 export function buildCheckoutOrderTotals(
   vendorBreakdowns: VendorBreakdownRow[],
+  giftWrapFeeAmount = 0,
 ): CheckoutOrderTotals {
   let merchandiseSubtotal = 0;
   let shippingTotal = 0;
@@ -84,5 +87,6 @@ export function buildCheckoutOrderTotals(
     igst,
     discountTotal,
     taxDisplayKey: resolveTaxDisplayKey({ cgst, sgst, igst }),
+    giftWrapFeeAmount: roundMoney(giftWrapFeeAmount),
   };
 }

@@ -19,6 +19,8 @@ import { ProductImage } from '@database/models/productImage.model';
 import { Review } from '@database/models/review.model';
 import { Product } from '@database/models/product.model';
 import { ProductCategory } from '@database/models/productCategory.model';
+import { RecentlyViewedItem } from '@database/models/recentlyViewedItem.model';
+import { ProductAffinity } from '@database/models/productAffinity.model';
 import { sequelize } from '@database/models';
 import { categoriesService } from '@modules/categories/categories.service';
 import { notificationsService } from '@modules/notifications/notifications.service';
@@ -29,6 +31,7 @@ import type { Transaction } from 'sequelize';
 import { resolvePdpPolicy, resolveCodEligibleAtPrice } from './pdpPolicy';
 import { productDiscountPercent, productShowMrp, taxInclusivePrice } from '@modules/pricing/displayMoney';
 import { roundMoney } from '@modules/pricing/money';
+import { CreateProductSchema } from './products.dto';
 import type {
   CreateProductRequest,
   UpdateProductRequest,
@@ -37,7 +40,14 @@ import type {
   AddVariantRequest,
   UpdateVariantRequest,
   AddImageRequest,
+  BulkImportRowResult,
 } from './products.dto';
+
+/** Cap on how many recently-viewed products a caller can fetch at once. */
+const RECENTLY_VIEWED_LIMIT = 12;
+
+/** Matches TOP_N_RELATED in productAffinity.processor.ts — that's how many rows exist per product anyway. */
+const FREQUENTLY_BOUGHT_TOGETHER_LIMIT = 10;
 
 function generateSlug(name: string): string {
   return name
@@ -199,6 +209,42 @@ export class ProductsService {
     });
   }
 
+  /**
+   * Synchronous vendor CSV bulk import. Each row is validated against
+   * CreateProductSchema and created independently (via the same createProduct
+   * path as the single-product endpoint) so one bad row doesn't abort the batch.
+   */
+  async bulkImportProducts(
+    vendorId: string | null,
+    rows: Record<string, unknown>[],
+  ): Promise<BulkImportRowResult[]> {
+    const results: BulkImportRowResult[] = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const rowNumber = i + 2; // +1 for 0-index, +1 for the header row
+      const parsed = CreateProductSchema.safeParse(rows[i]);
+
+      if (!parsed.success) {
+        results.push({
+          row: rowNumber,
+          success: false,
+          error: parsed.error.issues.map((issue) => issue.message).join('; '),
+        });
+        continue;
+      }
+
+      try {
+        const product = await this.createProduct(vendorId, parsed.data);
+        results.push({ row: rowNumber, success: true, productId: product.id });
+      } catch (err) {
+        const message = err instanceof AppError ? err.message : 'Failed to create product';
+        results.push({ row: rowNumber, success: false, error: message });
+      }
+    }
+
+    return results;
+  }
+
   async getProducts(
     query: GetProductsQuery,
     options: {
@@ -308,6 +354,59 @@ export class ProductsService {
       where: { productId: product.id, status: REVIEW_STATUS.APPROVED },
     });
     return mapDetailResponse(product, reviewCount);
+  }
+
+  /** Upserts the caller's view of a product so a repeat view refreshes recency instead of duplicating. */
+  async trackRecentlyViewed(userId: string, productId: string) {
+    const product = await productsRepository.findVisibleById(productId);
+    if (!product) throw new NotFoundError('Product');
+
+    await RecentlyViewedItem.upsert({
+      userId,
+      productId,
+      viewedAt: new Date(),
+    });
+  }
+
+  /** Most recently viewed products for the caller, shaped like the product list response. */
+  async getRecentlyViewedProducts(userId: string, limit = RECENTLY_VIEWED_LIMIT) {
+    const rows = await RecentlyViewedItem.findAll({
+      where: { userId },
+      order: [['viewedAt', 'DESC']],
+      limit,
+    });
+    if (!rows.length) return [];
+
+    const productIds = rows.map((row) => row.productId);
+    const products = await productsRepository.findVisibleByIds(productIds);
+    const byId = new Map(products.map((product) => [product.id, product]));
+
+    return productIds
+      .map((id) => byId.get(id))
+      .filter((product): product is Product => Boolean(product))
+      .map((product) => mapProductResponse(product));
+  }
+
+  /**
+   * "Frequently bought together" — reads only the precomputed product_affinities table
+   * (refreshed nightly by productAffinity.processor.ts), no live order join. Public, no auth.
+   */
+  async getFrequentlyBoughtTogether(productId: string, limit = FREQUENTLY_BOUGHT_TOGETHER_LIMIT) {
+    const rows = await ProductAffinity.findAll({
+      where: { productId },
+      order: [['score', 'DESC']],
+      limit,
+    });
+    if (!rows.length) return [];
+
+    const relatedIds = rows.map((row) => row.relatedProductId);
+    const products = await productsRepository.findVisibleByIds(relatedIds);
+    const byId = new Map(products.map((product) => [product.id, product]));
+
+    return relatedIds
+      .map((id) => byId.get(id))
+      .filter((product): product is Product => Boolean(product))
+      .map((product) => mapProductResponse(product));
   }
 
   async updateProduct(id: string, vendorId: string | null, data: UpdateProductRequest) {

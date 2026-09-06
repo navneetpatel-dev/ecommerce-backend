@@ -370,11 +370,15 @@ export class DeliveryAgentsService {
     createdAt: Date;
     orderId: string | null;
     vendorName: string | null;
+    pincode: string | null;
   }>> {
     const shipments = await repo.unassignedShipments();
     return shipments.map((shipment) => {
       const plain = shipment.get({ plain: true }) as Record<string, unknown> & {
-        subOrder?: { order?: { id: string }; vendor?: { businessName: string } };
+        subOrder?: {
+          order?: { id: string; shippingAddress?: { pincode: string } };
+          vendor?: { businessName: string };
+        };
       };
       return {
         id: String(plain.id),
@@ -383,6 +387,7 @@ export class DeliveryAgentsService {
         createdAt: plain.createdAt as Date,
         orderId: plain.subOrder?.order?.id ?? null,
         vendorName: plain.subOrder?.vendor?.businessName ?? null,
+        pincode: plain.subOrder?.order?.shippingAddress?.pincode ?? null,
       };
     });
   }
@@ -396,11 +401,15 @@ export class DeliveryAgentsService {
     orderId: string | null;
     productName: string | null;
     customerName: string | null;
+    pincode: string | null;
   }>> {
     const pickups = await repo.unassignedPickups();
     return pickups.map((pickup) => {
       const plain = pickup.get({ plain: true }) as Record<string, unknown> & {
-        subOrder?: { orderId?: string; order?: { id: string } };
+        subOrder?: {
+          orderId?: string;
+          order?: { id: string; shippingAddress?: { pincode: string } };
+        };
         orderItem?: { productName?: string };
         user?: { name?: string };
       };
@@ -412,6 +421,7 @@ export class DeliveryAgentsService {
         orderId: plain.subOrder?.orderId ?? plain.subOrder?.order?.id ?? null,
         productName: plain.orderItem?.productName ?? null,
         customerName: plain.user?.name ?? null,
+        pincode: plain.subOrder?.order?.shippingAddress?.pincode ?? null,
       };
     });
   }

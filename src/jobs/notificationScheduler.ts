@@ -199,6 +199,7 @@ export async function runNotificationSchedulerTick(): Promise<void> {
       priceDrops,
       cashbacks,
       ticketsClosed,
+      ticketsEscalated,
       bugsVerified,
       bugsClosed,
       docsExpiring,
@@ -210,6 +211,7 @@ export async function runNotificationSchedulerTick(): Promise<void> {
         processWishlistPriceDrops(),
         processPendingCashbackCredits(),
         supportTicketsService.closeExpiredResolved(),
+        supportTicketsService.escalateOverdueTickets(),
         bugReportsService.markVerifiedIfDue(),
         bugReportsService.markClosedIfDue(),
         processExpiringAgentDocuments(),
@@ -222,6 +224,7 @@ export async function runNotificationSchedulerTick(): Promise<void> {
       priceDrops +
       cashbacks +
       ticketsClosed +
+      ticketsEscalated +
       bugsVerified +
       bugsClosed +
       docsExpiring +
@@ -234,6 +237,7 @@ export async function runNotificationSchedulerTick(): Promise<void> {
         priceDrops,
         cashbacks,
         ticketsClosed,
+        ticketsEscalated,
         bugsVerified,
         bugsClosed,
         docsExpiring,

@@ -169,6 +169,11 @@ export const ApplyCouponSchema = z.object({
   code: z.string().trim().min(1, 'Code is required'),
 });
 
+/** DELETE /coupons/remove?code=XYZ — omit `code` to clear the entire stack. */
+export const RemoveCouponQuerySchema = z.object({
+  code: z.string().trim().min(1).optional(),
+});
+
 export const StatusSchema = z.object({
   status: z.enum(['ACTIVE', 'PAUSED', 'ARCHIVED', 'DRAFT', 'REJECTED']),
 });

@@ -18,6 +18,7 @@ export class User extends Model<InferAttributes<User>, InferCreationAttributes<U
   declare emailMarketingConsent: CreationOptional<boolean>;
   declare emailSuppressed: CreationOptional<boolean>;
   declare avatarUrl: string | null;
+  declare razorpayCustomerId: string | null;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -34,6 +35,7 @@ export class User extends Model<InferAttributes<User>, InferCreationAttributes<U
     User.belongsTo(models.Vendor, { foreignKey: 'vendorId', as: 'vendor' });
     User.belongsTo(models.DeliveryAgent, { foreignKey: 'deliveryAgentId', as: 'deliveryAgent' });
     User.hasMany(models.Address, { foreignKey: 'userId' });
+    User.hasMany(models.SavedPaymentMethod, { foreignKey: 'userId', as: 'savedPaymentMethods' });
   }
 }
 
@@ -54,6 +56,7 @@ export const initUserModel = (sequelize: Sequelize) => {
       emailMarketingConsent: { type: DataTypes.BOOLEAN, defaultValue: false },
       emailSuppressed: { type: DataTypes.BOOLEAN, defaultValue: false },
       avatarUrl: { type: DataTypes.STRING, allowNull: true },
+      razorpayCustomerId: { type: DataTypes.STRING, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

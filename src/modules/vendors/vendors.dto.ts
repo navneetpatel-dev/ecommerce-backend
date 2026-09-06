@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  PAYOUT_FREQUENCY_VALUES,
   VENDOR_DOCUMENT_TYPE_VALUES,
   VENDOR_ENTITY_TYPE_VALUES,
   VENDOR_STATUS_VALUES,
@@ -35,6 +36,14 @@ export const UpdateVendorSchema = z.object({
   /** Optional override of platform returnShippingFee (rupees). Null clears override. */
   returnShippingFee: z.number().min(0).nullable().optional(),
   codEnabled: z.boolean().optional(),
+  /** Per-vendor commission rate override (%). Lets an admin change an already-approved vendor's rate later. */
+  commissionRate: z.number().min(0).max(100).optional(),
+  /**
+   * Vendor's preferred payout cadence — stored for reference only. Payout
+   * batches are still triggered manually by an admin via POST /payouts/process;
+   * this field does not drive an automated disbursement schedule.
+   */
+  payoutFrequency: z.enum(PAYOUT_FREQUENCY_VALUES).nullable().optional(),
 });
 
 export const ApproveVendorSchema = z.object({

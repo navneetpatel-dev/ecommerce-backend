@@ -3,6 +3,7 @@ import { areQueuesReady } from '@config/queue';
 import { logger } from '@core/logger';
 import { startEmailWorkers, stopEmailWorkers } from './email.processor';
 import { startNotificationScheduler, stopNotificationScheduler } from './notificationScheduler';
+import { startProductAffinityScheduler, stopProductAffinityScheduler } from './productAffinity.processor';
 import { startReportExportWorker, stopReportExportWorker } from './reportExport.processor';
 import {
   scheduleS3OrphanCleanupJob,
@@ -29,12 +30,14 @@ export async function startBackgroundWorkers(): Promise<void> {
   }
 
   startNotificationScheduler();
+  startProductAffinityScheduler();
   workersStarted = true;
   logger.info('Background workers ready');
 }
 
 export async function stopBackgroundWorkers(): Promise<void> {
   stopNotificationScheduler();
+  stopProductAffinityScheduler();
   await stopEmailWorkers(emailWorkers);
   await stopReportExportWorker(reportExportWorker);
   await stopS3OrphanCleanupWorker(s3OrphanCleanupWorker);

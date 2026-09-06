@@ -31,6 +31,10 @@ export const PERMISSIONS = {
   DELIVERY_AGENT_MANAGE: 'delivery_agent.manage',
   SHIPMENT_DELIVERY_UPDATE: 'shipment.delivery_update',
   RETURN_PICKUP_UPDATE: 'return.pickup_update',
+  /** Create/edit custom roles and their permission sets. SUPER_ADMIN only by default. */
+  ROLE_MANAGE: 'role.manage',
+  /** Start a support "log in as user" session. SUPER_ADMIN only by default. */
+  USER_IMPERSONATE: 'user.impersonate',
 } as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];

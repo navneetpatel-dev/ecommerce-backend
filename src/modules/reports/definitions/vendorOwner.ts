@@ -160,6 +160,72 @@ async function vendorSalesExport(
   return { rows: page.rows, nextCursor: page.nextCursor };
 }
 
+/**
+ * Per-order-item GST breakdown, as displayed on the `vendor-gst-sales` report.
+ * Shared with the commissions module so commission ledger rows can surface
+ * the same taxable amount / CGST / SGST / IGST / total tax figures.
+ */
+export function computeOrderItemGst(item: OrderItem): {
+  taxable: number;
+  cgst: number;
+  sgst: number;
+  igst: number;
+  tax: number;
+} {
+  const tb = (item.taxBreakdown ?? {}) as Record<string, unknown>;
+  return {
+    taxable: fromPaise(frozenPaise(item.taxableAmountPaise, item.taxableAmount)),
+    cgst: Number(tb.cgst ?? 0),
+    sgst: Number(tb.sgst ?? 0),
+    igst: Number(tb.igst ?? 0),
+    tax: fromPaise(frozenPaise(item.taxAmountPaise, item.taxAmount)),
+  };
+}
+
+export interface SubOrderGstBreakdown {
+  taxableAmount: number;
+  cgst: number;
+  sgst: number;
+  igst: number;
+  taxAmount: number;
+}
+
+/**
+ * Aggregates `computeOrderItemGst` across every order item belonging to each
+ * sub-order, keyed by subOrderId. Used by the commissions ledger so each
+ * commission row can show the GST that was charged on that sale without
+ * duplicating the report's tax-breakdown logic.
+ */
+export async function getGstBreakdownForSubOrders(
+  subOrderIds: string[],
+): Promise<Map<string, SubOrderGstBreakdown>> {
+  const map = new Map<string, SubOrderGstBreakdown>();
+  if (!subOrderIds.length) return map;
+
+  const items = await OrderItem.findAll({
+    where: { subOrderId: { [Op.in]: subOrderIds } },
+  });
+
+  for (const item of items) {
+    const g = computeOrderItemGst(item);
+    const acc = map.get(item.subOrderId) ?? {
+      taxableAmount: 0,
+      cgst: 0,
+      sgst: 0,
+      igst: 0,
+      taxAmount: 0,
+    };
+    acc.taxableAmount += g.taxable;
+    acc.cgst += g.cgst;
+    acc.sgst += g.sgst;
+    acc.igst += g.igst;
+    acc.taxAmount += g.tax;
+    map.set(item.subOrderId, acc);
+  }
+
+  return map;
+}
+
 async function vendorGstSales(filters: ReportFilters) {
   assertReportRange(filters);
 
@@ -227,7 +293,7 @@ async function vendorGstSales(filters: ReportFilters) {
         item as OrderItem & { variant?: ProductVariant & { product?: Product } }
       ).variant?.product;
       const categoryId = product?.categoryId ?? '';
-      const tb = (item.taxBreakdown ?? {}) as Record<string, unknown>;
+      const gst = computeOrderItemGst(item);
       return {
         orderId: sub?.orderId ?? null,
         subOrderId: item.subOrderId,
@@ -236,11 +302,11 @@ async function vendorGstSales(filters: ReportFilters) {
         productName: item.productName,
         hsnCode: hsnByCategory.get(categoryId) ?? 'UNKNOWN',
         qty: Number(item.quantity ?? 0),
-        taxable: fromPaise(frozenPaise(item.taxableAmountPaise, item.taxableAmount)),
-        cgst: Number(tb.cgst ?? 0),
-        sgst: Number(tb.sgst ?? 0),
-        igst: Number(tb.igst ?? 0),
-        tax: fromPaise(frozenPaise(item.taxAmountPaise, item.taxAmount)),
+        taxable: gst.taxable,
+        cgst: gst.cgst,
+        sgst: gst.sgst,
+        igst: gst.igst,
+        tax: gst.tax,
       };
     }),
     total,

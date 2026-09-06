@@ -37,6 +37,7 @@ function subjectFor(type: NotificationType, data: EmailTemplateData): string {
     reportType: str(data, 'reportType'),
     ticketNumber: str(data, 'ticketNumber'),
     reportNumber: str(data, 'reportNumber'),
+    subject: str(data, 'subject'),
   });
 }
 
@@ -79,6 +80,7 @@ function bodyFor(type: NotificationType, data: EmailTemplateData): string {
     amountInr: str(data, 'amountInr'),
     reasonMessage: str(data, 'reasonMessage'),
     slaDays: str(data, 'slaDays', '5–7'),
+    message: str(data, 'message'),
   });
 }
 

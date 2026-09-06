@@ -1,0 +1,3 @@
+export const GIFT_CARD_MIN_AMOUNT_INR = 100;
+export const GIFT_CARD_MAX_AMOUNT_INR = 10000;
+export const GIFT_CARD_VALIDITY_DAYS = 365;

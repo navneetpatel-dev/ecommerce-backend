@@ -18,6 +18,7 @@ import { ERROR_MESSAGES, ERROR_CODES } from '@core/constants/errors';
 import { roleNameOf } from '@utils/userRole';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { otpService } from './otp.service';
+import { logAudit } from '@modules/audit/audit.service';
 
 export type SessionDeviceMeta = {
   userAgent?: string | null;
@@ -33,6 +34,8 @@ export type AuthUserPayload = {
   vendorId: string | null;
   deliveryAgentId: string | null;
   permissions: string[];
+  /** Set only when this session is an admin impersonating this user. */
+  impersonatedBy?: string | null;
 };
 
 export type LoginSuccess = {
@@ -88,6 +91,14 @@ function toUserPayload(user: User): JwtPayload {
     roleName: roleNameOf(user),
   };
 }
+
+/** Short-lived and deliberately not renewable — impersonation should never silently persist. */
+const IMPERSONATION_TOKEN_EXPIRY = '30m';
+
+export type ImpersonationResult = {
+  user: AuthUserPayload;
+  accessToken: string;
+};
 
 const REFRESH_GRACE_PREFIX = 'auth:refresh-grace:';
 const REFRESH_GRACE_SEC = 30;
@@ -502,6 +513,66 @@ export class AuthService {
     const passwordHash = await bcrypt.hash(newPassword, 12);
     await repo.update(userId, { passwordHash } as any);
     await repo.deleteRefreshTokensByUser(userId);
+  }
+
+  /**
+   * Issues a short-lived, non-renewable access token impersonating `targetUserId`,
+   * for support diagnostics. No refresh token is issued — the session cannot
+   * silently outlive its 30-minute window. Every audit-logged action taken while
+   * this token is active is attributed back to `actingAdminId` via the request
+   * context (see `logAudit` in the audit module), not just this initiating call.
+   */
+  async impersonateUser(actingAdminId: string, targetUserId: string): Promise<ImpersonationResult> {
+    if (actingAdminId === targetUserId) {
+      throw new ValidationError({ userId: ['You cannot impersonate your own account'] });
+    }
+
+    const target = await User.findByPk(targetUserId, { include: [{ model: Role, as: 'role' }] });
+    if (!target) {
+      throw new NotFoundError('User');
+    }
+
+    const roleName = roleNameOf(target);
+    if (roleName === ROLES.SUPER_ADMIN) {
+      throw new ForbiddenError('Super admin accounts cannot be impersonated');
+    }
+
+    const payload: JwtPayload = {
+      sub: target.id,
+      email: target.email,
+      roleId: target.roleId,
+      vendorId: target.vendorId,
+      deliveryAgentId: target.deliveryAgentId,
+      roleName,
+      impersonatedBy: actingAdminId,
+    };
+    const accessToken = jwt.sign(payload, env.JWT_SECRET, {
+      expiresIn: IMPERSONATION_TOKEN_EXPIRY,
+    } as jwt.SignOptions);
+
+    const permissions = await resolvePermissionsForUser({ roleId: target.roleId, role: { name: roleName } });
+
+    await logAudit({
+      actorId: actingAdminId,
+      action: 'IMPERSONATION_STARTED',
+      entityType: 'User',
+      entityId: target.id,
+      metadata: { targetEmail: target.email },
+    });
+
+    return {
+      accessToken,
+      user: {
+        id: target.id,
+        email: target.email,
+        name: target.name,
+        role: roleName,
+        vendorId: target.vendorId,
+        deliveryAgentId: target.deliveryAgentId,
+        permissions,
+        impersonatedBy: actingAdminId,
+      },
+    };
   }
 }
 

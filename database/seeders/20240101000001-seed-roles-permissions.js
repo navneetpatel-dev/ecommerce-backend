@@ -28,6 +28,7 @@ const PERMISSION_KEYS = [
   'suborder.manage', 'payout.view', 'review.respond',
   'ticket.manage', 'bug_report.manage', 'wallet.adjust',
   'delivery_agent.manage', 'shipment.delivery_update', 'return.pickup_update',
+  'role.manage', 'user.impersonate',
 ];
 
 const ROLE_PERMISSIONS = {

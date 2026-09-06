@@ -169,6 +169,7 @@ function serializeReturn(
     deliveryAgentId: plain.deliveryAgentId ?? null,
     pickupOtpVerifiedAt: plain.pickupOtpVerifiedAt ?? null,
     pickupFailureReason: plain.pickupFailureReason ?? null,
+    rejectionReason: plain.rejectionReason ?? null,
     preferredRepickupSlot: plain.preferredRepickupSlot ?? null,
     replacementDeliveredAt: plain.replacementDeliveredAt ?? null,
     replacementProofUrl: plain.replacementProofUrl ?? null,
@@ -1014,7 +1015,7 @@ export class ReturnsService {
     }
   }
 
-  async transition(id: string, status: ReturnStatus, actorId: string) {
+  async transition(id: string, status: ReturnStatus, actorId: string, rejectionReason?: string) {
     const slaDays = await refundSlaDays();
     const razorpayBox: {
       refund: { returnId: string; paymentId: string; amountPaise: number } | null;
@@ -1031,11 +1032,16 @@ export class ReturnsService {
         throw new ValidationError(ERROR_MESSAGES.RETURN_NOT_RECEIVED);
       }
 
+      if (status === RETURN_STATUS.REJECTED && !rejectionReason) {
+        throw new ValidationError({ rejectionReason: ['A reason is required to reject a return request'] });
+      }
+
       const patch: Record<string, unknown> = {
         status,
         resolvedById: RESOLVED_BY_STATUSES.includes(status) ? actorId : row.resolvedById,
         resolvedAt: RESOLVED_AT_STATUSES.includes(status) ? new Date() : row.resolvedAt,
         updatedBy: actorId,
+        ...(status === RETURN_STATUS.REJECTED ? { rejectionReason } : {}),
       };
 
       if (status === RETURN_STATUS.RECEIVED) {

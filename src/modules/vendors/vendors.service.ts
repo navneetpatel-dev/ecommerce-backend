@@ -6,7 +6,7 @@ import { ROLES, VENDOR_STATUS, ORDER_STATUS, COMMISSION_STATUS } from '@core/con
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { fromPaise } from '@modules/pricing/money';
-import { sqlVendorNetPayoutPaise } from '@modules/pricing/frozenMoneySql';
+import { sqlVendorNetPayoutPaise, sqlFrozenPaise, REPORTABLE_ORDER_SQL } from '@modules/pricing/frozenMoneySql';
 import {
   deleteS3ObjectIfReplaced,
   cascadeDeleteEntityMedia,
@@ -46,6 +46,14 @@ import {
   buildKycChecklist,
   resolveRequiredDocuments,
 } from './documentRequirements';
+
+/**
+ * Hours from suborder creation to delivery counted as "on time" for the vendor
+ * analytics fulfillment SLA. No platform-wide SLA constant exists yet to reuse
+ * (see `reportVendorFulfillmentSla`, which reports raw hours-to-deliver per row
+ * without an on-time/late split) — 72h (3 days) is a reasonable e-commerce default.
+ */
+const VENDOR_FULFILLMENT_SLA_HOURS = 72;
 
 function generateSlug(businessName: string): string {
   return businessName
@@ -308,7 +316,10 @@ export class VendorsService {
     if (!userVendorId) {
       throw new ForbiddenError(ERROR_MESSAGES.VENDOR_NOT_LINKED);
     }
-    return this.updateVendor(userVendorId, data);
+    // commissionRate is admin-only (set via approval or PATCH /vendors/:id) — strip it
+    // here so a vendor owner can't self-set their own commission via PATCH /vendors/me.
+    const { commissionRate: _commissionRate, ...selfServiceData } = data;
+    return this.updateVendor(userVendorId, selfServiceData);
   }
 
   async updateVendor(vendorId: string, data: UpdateVendorRequest) {
@@ -720,6 +731,122 @@ export class VendorsService {
       monthRevenue: Number(month?.revenue ?? 0),
       pendingPayouts: fromPaise(Number(payout?.pendingPaise ?? 0)),
       performanceScore: vendor.performanceScore == null ? null : Number(vendor.performanceScore),
+    };
+  }
+
+  /**
+   * Vendor sales analytics for `VendorAnalytics` (revenue trend, top products,
+   * fulfillment SLA). Trailing `windowDays` window, defaulting to 30.
+   *
+   * "On time" delivery has no existing platform-wide SLA constant to reuse, so this
+   * defines one locally (`VENDOR_FULFILLMENT_SLA_HOURS`, 72h / 3 days from suborder
+   * creation to delivery) — the same createdAt→updatedAt "hours to deliver" measure
+   * the `vendor-fulfillment-sla` report already computes, just bucketed on/off time.
+   */
+  async getDashboardAnalytics(
+    vendorId: string,
+    windowDays = 30,
+  ): Promise<{
+    revenue: { date: string; amount: number }[];
+    topProducts: { id: string; name: string; unitsSold: number; revenue: number }[];
+    fulfillmentSLA: { onTimePercent: number; latePercent: number };
+  }> {
+    const vendor = await vendorsRepository.findById(vendorId);
+    if (!vendor) throw new NotFoundError('Vendor');
+
+    const to = new Date();
+    const from = new Date(to);
+    from.setUTCDate(from.getUTCDate() - (windowDays - 1));
+    from.setUTCHours(0, 0, 0, 0);
+
+    const subtotalPaiseExpr = sqlFrozenPaise('s', 'subtotalPaise', 'subtotal');
+
+    const revenueRows = await sequelize.query<{ day: string; revenuePaise: string }>(
+      `WITH days AS (
+         SELECT generate_series(:from::date, :to::date, interval '1 day')::date AS day
+       ),
+       daily_revenue AS (
+         SELECT date_trunc('day', o."createdAt")::date AS day,
+                SUM(${subtotalPaiseExpr}) AS "revenuePaise"
+         FROM sub_orders s
+         INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
+         WHERE s."vendorId" = :vendorId
+           AND s."deletedAt" IS NULL
+           AND o."createdAt" BETWEEN :from AND :to
+           AND ${REPORTABLE_ORDER_SQL}
+         GROUP BY 1
+       )
+       SELECT d.day::text AS day, COALESCE(r."revenuePaise", 0)::bigint AS "revenuePaise"
+       FROM days d
+       LEFT JOIN daily_revenue r ON r.day = d.day
+       ORDER BY d.day ASC`,
+      { replacements: { vendorId, from, to }, type: QueryTypes.SELECT },
+    );
+
+    const topProductRows = await sequelize.query<{
+      productId: string;
+      name: string;
+      unitsSold: string;
+      revenue: string;
+    }>(
+      `SELECT pv."productId" AS "productId",
+              (ARRAY_AGG(oi."productName" ORDER BY oi."createdAt" DESC))[1] AS "name",
+              SUM(oi.quantity)::int AS "unitsSold",
+              SUM(COALESCE(oi."lineSubtotal", oi."unitPrice" * oi.quantity))::numeric AS "revenue"
+       FROM order_items oi
+       INNER JOIN sub_orders s ON s.id = oi."subOrderId" AND s."deletedAt" IS NULL
+       INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
+       INNER JOIN product_variants pv ON pv.id = oi."variantId"
+       WHERE s."vendorId" = :vendorId
+         AND oi."deletedAt" IS NULL
+         AND o."createdAt" BETWEEN :from AND :to
+         AND ${REPORTABLE_ORDER_SQL}
+       GROUP BY pv."productId"
+       ORDER BY revenue DESC
+       LIMIT 10`,
+      { replacements: { vendorId, from, to }, type: QueryTypes.SELECT },
+    );
+
+    const [sla] = await sequelize.query<{ delivered: string; onTime: string }>(
+      `SELECT
+         COUNT(*) FILTER (WHERE status = :delivered) AS delivered,
+         COUNT(*) FILTER (
+           WHERE status = :delivered
+             AND EXTRACT(EPOCH FROM ("updatedAt" - "createdAt")) / 3600 <= :slaHours
+         ) AS "onTime"
+       FROM sub_orders
+       WHERE "vendorId" = :vendorId
+         AND "deletedAt" IS NULL
+         AND "createdAt" BETWEEN :from AND :to`,
+      {
+        replacements: {
+          vendorId,
+          from,
+          to,
+          delivered: ORDER_STATUS.DELIVERED,
+          slaHours: VENDOR_FULFILLMENT_SLA_HOURS,
+        },
+        type: QueryTypes.SELECT,
+      },
+    );
+
+    const deliveredCount = Number(sla?.delivered ?? 0);
+    const onTimeCount = Number(sla?.onTime ?? 0);
+    const onTimePercent = deliveredCount > 0 ? Math.round((onTimeCount / deliveredCount) * 10000) / 100 : 0;
+    const latePercent = deliveredCount > 0 ? Math.round(((deliveredCount - onTimeCount) / deliveredCount) * 10000) / 100 : 0;
+
+    return {
+      revenue: revenueRows.map((row) => ({
+        date: row.day,
+        amount: fromPaise(Number(row.revenuePaise ?? 0)),
+      })),
+      topProducts: topProductRows.map((row) => ({
+        id: row.productId,
+        name: row.name ?? '',
+        unitsSold: Number(row.unitsSold ?? 0),
+        revenue: Number(row.revenue ?? 0),
+      })),
+      fulfillmentSLA: { onTimePercent, latePercent },
     };
   }
 }

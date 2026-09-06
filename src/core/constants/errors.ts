@@ -1,4 +1,4 @@
-import { PRODUCT_FIELD_LIMITS } from './product';
+import { PRODUCT_FIELD_LIMITS, BULK_IMPORT_LIMITS } from './product';
 
 /**
  * Error message authoring guidelines:
@@ -119,6 +119,10 @@ export const ERROR_CODES = {
   CREDIT_NOTE_FORBIDDEN: 'CREDIT_NOTE_FORBIDDEN',
   DEBIT_NOTE_FORBIDDEN: 'DEBIT_NOTE_FORBIDDEN',
   PAYOUT_INVALID_TRANSITION: 'PAYOUT_INVALID_TRANSITION',
+  GIFT_CARD_INVALID: 'GIFT_CARD_INVALID',
+  GIFT_CARD_EXPIRED: 'GIFT_CARD_EXPIRED',
+  GIFT_CARD_ALREADY_REDEEMED: 'GIFT_CARD_ALREADY_REDEEMED',
+  GIFT_CARD_AMOUNT_RANGE: 'GIFT_CARD_AMOUNT_RANGE',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -169,6 +173,9 @@ export const ERROR_MESSAGES = {
   PRODUCT_VARIANT_INVALID: 'Variant does not belong to this product',
   PRODUCT_NOT_DRAFT: 'Product is not in DRAFT status',
   PRODUCT_NOT_PENDING_APPROVAL: 'Product is not pending approval',
+  PRODUCT_BULK_IMPORT_FILE_REQUIRED: 'A CSV file is required',
+  PRODUCT_BULK_IMPORT_EMPTY: 'CSV file has no data rows',
+  PRODUCT_BULK_IMPORT_TOO_MANY_ROWS: `CSV file has too many rows (maximum ${BULK_IMPORT_LIMITS.MAX_ROWS})`,
   CATEGORY_NAME_EXISTS: 'Category name already exists',
   CATEGORY_HAS_SUBCATEGORIES: 'Cannot delete category with subcategories',
   CATEGORY_HAS_PRODUCTS: 'Cannot delete category while products still use it',
@@ -290,4 +297,8 @@ export const ERROR_MESSAGES = {
   CREDIT_NOTE_FORBIDDEN: 'You do not have access to this credit note',
   DEBIT_NOTE_FORBIDDEN: 'You do not have access to this debit note',
   PAYOUT_INVALID_TRANSITION: 'This payout status transition is not allowed',
+  GIFT_CARD_INVALID: 'This gift card is not valid',
+  GIFT_CARD_EXPIRED: 'This gift card has expired',
+  GIFT_CARD_ALREADY_REDEEMED: 'This gift card has already been redeemed',
+  GIFT_CARD_AMOUNT_RANGE: 'Gift card amount is outside the allowed range',
 } as const;

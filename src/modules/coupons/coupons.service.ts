@@ -728,11 +728,95 @@ export class CouponsService {
     };
   }
 
-  async removeCoupon(userId: string) {
+  /**
+   * Remove coupons from the cart. With no `code`, clears the entire stack
+   * (legacy behavior). With `code`, removes only that code and recomputes
+   * totals against whatever codes remain.
+   */
+  async removeCoupon(
+    userId: string,
+    code?: string | null,
+  ): Promise<{
+    cleared: boolean;
+    appliedCoupon: {
+      code: string;
+      discount: number;
+      cashbackAmount: number;
+      type: string;
+      vendorDiscountShares: Record<string, number>;
+      vendorShippingDiscountShares: Record<string, number>;
+      vendorBorneDiscountShares: Record<string, number>;
+    } | null;
+    appliedCoupons: Array<{
+      code: string;
+      discount: number;
+      cashbackAmount: number;
+      type: string;
+    }>;
+  }> {
     const cart = await Cart.findOne({ where: { userId } });
-    if (!cart) return { cleared: false };
-    await cart.update({ couponCode: null, couponCodes: [] });
-    return { cleared: true };
+    if (!cart) return { cleared: false, appliedCoupon: null, appliedCoupons: [] };
+
+    const target = code?.trim().toUpperCase();
+    if (!target) {
+      await cart.update({ couponCode: null, couponCodes: [] });
+      return { cleared: true, appliedCoupon: null, appliedCoupons: [] };
+    }
+
+    const existingCodes = resolveCartCouponCodes(cart);
+    const nextCodes = existingCodes.filter((c) => c !== target);
+    if (nextCodes.length === 0) {
+      await cart.update({ couponCode: null, couponCodes: [] });
+      return { cleared: true, appliedCoupon: null, appliedCoupons: [] };
+    }
+    if (nextCodes.length === existingCodes.length) {
+      // Code wasn't on the cart — no-op, but report current state.
+      return this.revalidateCartCoupon(userId).then((r) => ({
+        cleared: false,
+        appliedCoupon: r.appliedCoupon,
+        appliedCoupons: r.appliedCoupons,
+      }));
+    }
+
+    const { lines } = await loadCartLines(userId);
+    const shipping = await previewShippingTotal(userId, lines);
+    const result = await validateCouponSet({
+      codes: nextCodes,
+      userId,
+      lines,
+      shippingTotal: shipping.total,
+      shippingByVendor: shipping.byVendor,
+    });
+
+    if (!result.valid || result.coupons.length === 0) {
+      await cart.update({ couponCode: null, couponCodes: [] });
+      return { cleared: true, appliedCoupon: null, appliedCoupons: [] };
+    }
+
+    const updatedCodes = result.coupons.map((c) => c.code);
+    await cart.update({
+      couponCode: result.primaryCoupon?.code ?? updatedCodes[0] ?? null,
+      couponCodes: updatedCodes,
+    });
+
+    return {
+      cleared: false,
+      appliedCoupon: {
+        code: result.primaryCoupon?.code ?? updatedCodes[0]!,
+        discount: result.discount,
+        cashbackAmount: result.cashbackAmount,
+        type: result.primaryCoupon?.type ?? result.coupons[0]!.type,
+        vendorDiscountShares: result.vendorDiscountShares,
+        vendorShippingDiscountShares: result.vendorShippingDiscountShares,
+        vendorBorneDiscountShares: result.vendorBorneDiscountShares,
+      },
+      appliedCoupons: result.perCoupon.map((entry) => ({
+        code: entry.code,
+        discount: entry.discount,
+        cashbackAmount: entry.cashbackAmount,
+        type: entry.type,
+      })),
+    };
   }
 
   async revalidateCartCoupon(userId: string): Promise<{
@@ -806,11 +890,11 @@ export class CouponsService {
         vendorShippingDiscountShares: result.vendorShippingDiscountShares,
         vendorBorneDiscountShares: result.vendorBorneDiscountShares,
       },
-      appliedCoupons: result.coupons.map((coupon) => ({
-        code: coupon.code,
-        discount: result.discount,
-        cashbackAmount: result.cashbackAmount,
-        type: coupon.type,
+      appliedCoupons: result.perCoupon.map((entry) => ({
+        code: entry.code,
+        discount: entry.discount,
+        cashbackAmount: entry.cashbackAmount,
+        type: entry.type,
       })),
     };
   }

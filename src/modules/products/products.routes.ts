@@ -1,10 +1,14 @@
-import { Router } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
+import multer from 'multer';
 import * as productsController from './products.controller';
 import { authenticate, optionalAuthenticate } from '@middleware/auth.middleware';
 import { authorize } from '@middleware/rbac.middleware';
 import { checkOwnership, checkProductImageOwnership } from '@middleware/ownership.middleware';
 import { validate } from '@middleware/validate.middleware';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
+import { BULK_IMPORT_LIMITS } from '@core/constants/product';
+import { ERROR_MESSAGES } from '@core/constants/errors';
+import { ValidationError } from '@core/errors/ValidationError';
 import {
   CreateProductSchema,
   UpdateProductSchema,
@@ -14,17 +18,55 @@ import {
   UpdateVariantSchema,
   AddImageSchema,
   ReplaceImageSchema,
+  TrackRecentlyViewedSchema,
 } from './products.dto';
 
 const router = Router();
 
+// No multer instance exists elsewhere in this codebase (uploads module transports
+// files as base64 dataUrl JSON to S3 instead) — this is a small, route-scoped
+// in-memory instance just for the bulk-import CSV, not shared/reused.
+const bulkImportUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: BULK_IMPORT_LIMITS.MAX_FILE_BYTES },
+});
+
+/** Translates multer's raw error (e.g. file-too-large) into the app's standard 422 shape. */
+function bulkImportUploadMiddleware(req: Request, res: Response, next: NextFunction) {
+  bulkImportUpload.single('file')(req, res, (err: unknown) => {
+    if (!err) return next();
+    if (err instanceof multer.MulterError) {
+      const maxMb = BULK_IMPORT_LIMITS.MAX_FILE_BYTES / (1024 * 1024);
+      return next(
+        new ValidationError(
+          err.code === 'LIMIT_FILE_SIZE'
+            ? `CSV file exceeds the ${maxMb}MB limit`
+            : ERROR_MESSAGES.PRODUCT_BULK_IMPORT_FILE_REQUIRED,
+        ),
+      );
+    }
+    return next(err);
+  });
+}
+
 // Public product browsing (optional auth so vendor/admin dashboards stay unscoped)
 router.get('/', optionalAuthenticate, validate(GetProductsQuerySchema, 'query'), productsController.getProducts);
 router.get('/slug/:slug', optionalAuthenticate, productsController.getProductBySlug);
+
+// Recently viewed (registered before `/:id` so the literal path wins the match)
+router.get('/recently-viewed', authenticate, productsController.getRecentlyViewed);
+router.post('/recently-viewed', authenticate, validate(TrackRecentlyViewedSchema), productsController.trackRecentlyViewed);
+
 router.get('/:id', optionalAuthenticate, productsController.getProductById);
+// Public, no auth — reads only the precomputed product_affinities table.
+router.get('/:id/frequently-bought-together', productsController.getFrequentlyBoughtTogether);
 
 // Vendor product management
 router.post('/', authenticate, authorize(PERMISSIONS.PRODUCT_CREATE), validate(CreateProductSchema), productsController.createProduct);
+// Vendor-self CSV bulk import — authenticate only (mirrors payouts' /vendor/:vendorId
+// self-scoping pattern); the service reads req.user.vendorId, so no separate
+// PRODUCT_CREATE permission check is layered on here.
+router.post('/bulk-import', authenticate, bulkImportUploadMiddleware, productsController.bulkImportProducts);
 router.patch('/:id', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE), checkOwnership('product'), validate(UpdateProductSchema), productsController.updateProduct);
 router.delete('/:id', authenticate, authorize(PERMISSIONS.PRODUCT_DELETE, PERMISSIONS.PRODUCT_MANAGE), checkOwnership('product'), productsController.deleteProduct);
 router.post('/:id/submit', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE), checkOwnership('product'), productsController.submitForApproval);

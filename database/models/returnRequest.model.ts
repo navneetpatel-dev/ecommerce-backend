@@ -44,6 +44,7 @@ export class ReturnRequest extends Model<InferAttributes<ReturnRequest>, InferCr
   declare deliveryAgentId: CreationOptional<string | null>;
   declare pickupOtpVerifiedAt: CreationOptional<Date | null>;
   declare pickupFailureReason: CreationOptional<string | null>;
+  declare rejectionReason: CreationOptional<string | null>;
   /** Customer-chosen repickup window after a failed attempt — mirrors Shipment.preferredRedeliverySlot. */
   declare preferredRepickupSlot: CreationOptional<string | null>;
   declare type: CreationOptional<ReturnType>;
@@ -113,6 +114,7 @@ export const initReturnRequestModel = (sequelize: Sequelize) => {
       deliveryAgentId: { type: DataTypes.UUID, allowNull: true },
       pickupOtpVerifiedAt: { type: DataTypes.DATE, allowNull: true },
       pickupFailureReason: { type: DataTypes.TEXT, allowNull: true },
+      rejectionReason: { type: DataTypes.TEXT, allowNull: true },
       preferredRepickupSlot: { type: DataTypes.STRING(64), allowNull: true },
       type: { type: DataTypes.ENUM(...RETURN_TYPE_VALUES), allowNull: false, defaultValue: RETURN_TYPE.REFUND },
       replacementDeliveredAt: { type: DataTypes.DATE, allowNull: true },

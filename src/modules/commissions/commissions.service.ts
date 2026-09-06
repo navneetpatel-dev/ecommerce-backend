@@ -1,16 +1,47 @@
+import { Op } from 'sequelize';
 import { fromPaise } from '@modules/pricing/money';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { CommissionInvoice } from '@database/models/commissionInvoice.model';
+import { TdsLedger } from '@database/models/tdsLedger.model';
 import { Vendor } from '@database/models/vendor.model';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
+import {
+  getGstBreakdownForSubOrders,
+  type SubOrderGstBreakdown,
+} from '@modules/reports/definitions/vendorOwner';
 import { renderCommissionInvoicePdf } from './commissionInvoice.service';
 
-function serializeCommission(row: CommissionLedger) {
+interface SubOrderTdsInfo {
+  tdsAmount: number;
+  tdsRatePercent: number;
+  tdsSection: string;
+}
+
+/** Batches a TDS-ledger lookup for a set of subOrderIds (TdsLedger is a separate table, not a CommissionLedger column). */
+async function getTdsBySubOrder(subOrderIds: string[]): Promise<Map<string, SubOrderTdsInfo>> {
+  const map = new Map<string, SubOrderTdsInfo>();
+  if (!subOrderIds.length) return map;
+  const rows = await TdsLedger.findAll({ where: { subOrderId: { [Op.in]: subOrderIds } } });
+  for (const row of rows) {
+    const acc = map.get(row.subOrderId) ?? { tdsAmount: 0, tdsRatePercent: Number(row.ratePercent), tdsSection: row.section };
+    acc.tdsAmount += fromPaise(Number(row.tdsAmountPaise));
+    map.set(row.subOrderId, acc);
+  }
+  return map;
+}
+
+function serializeCommission(
+  row: CommissionLedger,
+  tdsBySubOrder: Map<string, SubOrderTdsInfo>,
+  gstBySubOrder: Map<string, SubOrderGstBreakdown>,
+) {
   const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
   const { Vendor: vendorAssoc } = plain;
+  const tds = tdsBySubOrder.get(plain.subOrderId);
+  const gst = gstBySubOrder.get(plain.subOrderId);
   return {
     id: plain.id,
     vendorId: plain.vendorId,
@@ -21,6 +52,14 @@ function serializeCommission(row: CommissionLedger) {
     status: plain.status,
     createdAt: plain.createdAt,
     vendorName: vendorAssoc?.businessName ?? null,
+    tdsAmount: tds ? tds.tdsAmount : null,
+    tdsRatePercent: tds ? tds.tdsRatePercent : null,
+    tdsSection: tds ? tds.tdsSection : null,
+    gstTaxableAmount: gst ? gst.taxableAmount : null,
+    gstAmount: gst ? gst.taxAmount : null,
+    gstCgst: gst ? gst.cgst : null,
+    gstSgst: gst ? gst.sgst : null,
+    gstIgst: gst ? gst.igst : null,
   };
 }
 
@@ -41,8 +80,13 @@ export class CommissionsService {
       distinct: true,
       col: 'id',
     });
+    const subOrderIds = [...new Set(rows.map((row) => row.subOrderId))];
+    const [tdsBySubOrder, gstBySubOrder] = await Promise.all([
+      getTdsBySubOrder(subOrderIds),
+      getGstBreakdownForSubOrders(subOrderIds),
+    ]);
     return {
-      commissions: rows.map((row) => serializeCommission(row)),
+      commissions: rows.map((row) => serializeCommission(row, tdsBySubOrder, gstBySubOrder)),
       pagination: buildPaginationMeta(count, query.page, query.limit),
     };
   }
@@ -52,7 +96,12 @@ export class CommissionsService {
       where: { vendorId },
       include: [vendorInclude],
     });
-    return rows.map((row) => serializeCommission(row));
+    const subOrderIds = [...new Set(rows.map((row) => row.subOrderId))];
+    const [tdsBySubOrder, gstBySubOrder] = await Promise.all([
+      getTdsBySubOrder(subOrderIds),
+      getGstBreakdownForSubOrders(subOrderIds),
+    ]);
+    return rows.map((row) => serializeCommission(row, tdsBySubOrder, gstBySubOrder));
   }
 
   async getCommissionInvoicePdf(

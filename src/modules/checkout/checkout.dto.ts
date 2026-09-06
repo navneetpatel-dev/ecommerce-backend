@@ -15,6 +15,8 @@ export const CreateCheckoutSchema = z
     paymentMethod: PaymentMethodInput.default('RAZORPAY'),
     walletAmountToUse: z.coerce.number().min(0).optional().default(0),
     shippingMethodByVendor: z.record(z.string()).optional(),
+    giftWrap: z.boolean().optional().default(false),
+    giftMessage: z.string().trim().max(500).optional(),
   })
   .transform((body) => {
     const shippingAddressId = body.shippingAddressId ?? body.addressId;
@@ -25,6 +27,8 @@ export const CreateCheckoutSchema = z
       paymentMethod: body.paymentMethod,
       walletAmountToUse: body.walletAmountToUse ?? 0,
       shippingMethodByVendor: body.shippingMethodByVendor ?? {},
+      giftWrap: body.giftWrap ?? false,
+      giftMessage: body.giftMessage || undefined,
     };
   })
   .refine((body) => Boolean(body.shippingAddressId), {
@@ -40,6 +44,8 @@ export const CheckoutQuoteSchema = z
     couponCodes: z.array(z.string()).optional(),
     walletAmountToUse: z.coerce.number().min(0).optional().default(0),
     shippingMethodByVendor: z.record(z.string()).optional(),
+    giftWrap: z.boolean().optional().default(false),
+    giftMessage: z.string().trim().max(500).optional(),
   })
   .transform((body) => ({
     shippingAddressId: (body.shippingAddressId ?? body.addressId) as string,
@@ -47,6 +53,8 @@ export const CheckoutQuoteSchema = z
     couponCodes: body.couponCodes,
     walletAmountToUse: body.walletAmountToUse ?? 0,
     shippingMethodByVendor: body.shippingMethodByVendor ?? {},
+    giftWrap: body.giftWrap ?? false,
+    giftMessage: body.giftMessage || undefined,
   }))
   .refine((body) => Boolean(body.shippingAddressId), {
     message: 'shippingAddressId or addressId is required',

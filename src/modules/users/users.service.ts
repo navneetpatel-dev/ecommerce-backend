@@ -294,6 +294,18 @@ export class UsersService {
     });
   }
 
+  /** Roles for the admin user-list role filter dropdown. */
+  async listRoles(): Promise<Array<{ id: string; name: string }>> {
+    const roles = await Role.findAll({
+      attributes: ['id', 'name'],
+      order: [['name', 'ASC']],
+    });
+    return roles.map((role) => {
+      const plain = role.get({ plain: true }) as { id: string; name: string };
+      return { id: plain.id, name: plain.name };
+    });
+  }
+
   async getUsers(query: GetUsersQuery) {
     const offset = paginationOffset(query.page, query.limit);
     const { rows, count } = await usersRepository.findWithFilters({

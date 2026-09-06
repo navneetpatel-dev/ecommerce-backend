@@ -194,6 +194,21 @@ export class ProductsRepository extends BaseRepository<Product> {
     });
   }
 
+  /** Customer-facing lookup by id set — used to hydrate recently-viewed history. Order is not guaranteed. */
+  async findVisibleByIds(ids: string[]) {
+    if (!ids.length) return [];
+    return Product.scope('customerVisible').findAll({
+      where: { id: { [Op.in]: ids } },
+      attributes: { include: [reviewCountLiteral] },
+      include: [
+        categoryWithAncestors as any,
+        secondaryCategoriesInclude as any,
+        'variants',
+        'images',
+      ],
+    });
+  }
+
   async findLiveByVendor(vendorId: string) {
     return Product.scope('customerVisible').findAll({
       where: { vendorId },

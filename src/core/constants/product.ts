@@ -17,5 +17,11 @@ export const PRODUCT_FIELD_LIMITS = {
   WARRANTY_MONTHS_MAX: 120,
 } as const;
 
+/** Bounds for POST /products/bulk-import (synchronous, in-request processing). */
+export const BULK_IMPORT_LIMITS = {
+  MAX_ROWS: 500,
+  MAX_FILE_BYTES: 2 * 1024 * 1024,
+} as const;
+
 /** Matches `product_variants.lowStockAt` default. */
 export const VARIANT_LOW_STOCK_DEFAULT = 5;

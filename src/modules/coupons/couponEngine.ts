@@ -64,6 +64,14 @@ export type ValidateCouponSetResult = {
   /** Vendor-borne merchandise discount shares (VENDOR bearer coupons only). */
   vendorBorneDiscountShares: Record<string, number>;
   primaryCoupon: Coupon | null;
+  /** Per-coupon discount breakdown — each entry's own share, not the aggregate. */
+  perCoupon: Array<{
+    code: string;
+    type: string;
+    discount: number;
+    cashbackAmount: number;
+    freeShipping: boolean;
+  }>;
 };
 
 function fail(reason: string, reasonCode: string): ValidateCouponResult {
@@ -93,6 +101,7 @@ function failSet(reason: string, reasonCode: string): ValidateCouponSetResult {
     vendorShippingDiscountShares: {},
     vendorBorneDiscountShares: {},
     primaryCoupon: null,
+    perCoupon: [],
   };
 }
 
@@ -315,6 +324,7 @@ export async function validateCouponSet(input: {
       vendorShippingDiscountShares: {},
       vendorBorneDiscountShares: {},
       primaryCoupon: null,
+      perCoupon: [],
     };
   }
 
@@ -365,12 +375,20 @@ export async function validateCouponSet(input: {
   let cashbackAmount = 0;
   let freeShipping = false;
   const coupons: Coupon[] = [];
+  const perCoupon: ValidateCouponSetResult['perCoupon'] = [];
 
   for (const result of results) {
     const coupon = result.coupon!;
     coupons.push(coupon);
     discount += result.discount;
     cashbackAmount += result.cashbackAmount;
+    perCoupon.push({
+      code: coupon.code,
+      type: coupon.type,
+      discount: result.discount,
+      cashbackAmount: result.cashbackAmount,
+      freeShipping: result.freeShipping,
+    });
     if (result.freeShipping) freeShipping = true;
     const bearer = resolveDiscountBearer(coupon);
     for (const [vendorId, share] of Object.entries(result.vendorDiscountShares)) {
@@ -404,6 +422,7 @@ export async function validateCouponSet(input: {
     vendorShippingDiscountShares,
     vendorBorneDiscountShares,
     primaryCoupon,
+    perCoupon,
   };
 }
 

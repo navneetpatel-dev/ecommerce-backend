@@ -136,6 +136,10 @@ export function mapOrderResponse(order: Record<string, unknown>) {
     userId: plain.userId,
     totalAmount,
     discountTotal: roundMoney(plain.discountTotal),
+    giftWrap: Boolean(plain.giftWrap),
+    giftMessage: (plain.giftMessage as string | null | undefined) ?? null,
+    giftWrapFeeAmount:
+      plain.giftWrapFeeAmount != null ? roundMoney(plain.giftWrapFeeAmount) : null,
     walletAmountUsed,
     originalTotalAmount,
     razorpayAmountPaid,

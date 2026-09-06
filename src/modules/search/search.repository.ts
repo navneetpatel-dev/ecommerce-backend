@@ -3,6 +3,7 @@ import { QueryTypes } from 'sequelize';
 import {
   CATEGORY_STATUS,
   PRODUCT_STATUS,
+  REVIEW_STATUS,
   VENDOR_STATUS,
 } from '@core/constants/statuses';
 import {
@@ -30,10 +31,22 @@ export interface SearchResultRow {
   id: string;
   name: string;
   basePrice: string;
+  compareAtPrice: string | null;
+  brand: string | null;
+  categoryId: string;
   rank: number;
   slug: string;
   description: string;
   imageUrl: string;
+  avgRating: string;
+  reviewCount: number;
+  stock: number;
+  vendor: {
+    id: string;
+    businessName: string;
+    slug: string;
+    logoUrl: string | null;
+  };
 }
 
 interface ProductAutocompleteRow {
@@ -127,9 +140,32 @@ export class SearchRepository {
         p.id,
         p.name,
         p."basePrice",
+        p."compareAtPrice",
+        p.brand,
+        p."categoryId",
         p.slug,
         p.description,
+        p."avgRating",
         COALESCE(img.url, '') AS "imageUrl",
+        (
+          SELECT COUNT(*)::int
+          FROM reviews r
+          WHERE r."productId" = p.id
+            AND r.status = :reviewApprovedStatus
+            AND r."deletedAt" IS NULL
+        ) AS "reviewCount",
+        (
+          SELECT COALESCE(SUM(sv.stock), 0)::int
+          FROM product_variants sv
+          WHERE sv."productId" = p.id
+            AND sv."deletedAt" IS NULL
+        ) AS "stock",
+        json_build_object(
+          'id', v.id,
+          'businessName', v."businessName",
+          'slug', v.slug,
+          'logoUrl', v."logoUrl"
+        ) AS vendor,
         CASE
           WHEN p.search_vector @@ query THEN ts_rank_cd(p.search_vector, query)
           ELSE 0.05
@@ -153,6 +189,7 @@ export class SearchRepository {
       {
         replacements: {
           ...this.searchReplacements(params, prefixPattern),
+          reviewApprovedStatus: REVIEW_STATUS.APPROVED,
           limit: params.limit,
           offset: params.offset,
         },

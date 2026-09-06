@@ -75,6 +75,13 @@ import { initDeliveryAgentPayoutModel, DeliveryAgentPayout } from './deliveryAge
 import { initDeliveryAgentDocumentModel, DeliveryAgentDocument } from './deliveryAgentDocument.model';
 import { initDeliveryRatingModel, DeliveryRating } from './deliveryRating.model';
 import { initWebVitalModel, WebVital } from './webVital.model';
+import { initRecentlyViewedItemModel, RecentlyViewedItem } from './recentlyViewedItem.model';
+import { initSavedPaymentMethodModel, SavedPaymentMethod } from './savedPaymentMethod.model';
+import { initStockAlertModel, StockAlert } from './stockAlert.model';
+import { initProductAffinityModel, ProductAffinity } from './productAffinity.model';
+import { initGiftCardModel, GiftCard } from './giftCard.model';
+import { initProductQuestionModel, ProductQuestion } from './productQuestion.model';
+import { initProductAnswerModel, ProductAnswer } from './productAnswer.model';
 
 const models = {
   Role: initRoleModel(sequelize),
@@ -144,6 +151,13 @@ const models = {
   OtpCode: initOtpCodeModel(sequelize),
   PushSubscription: initPushSubscriptionModel(sequelize),
   WebVital: initWebVitalModel(sequelize),
+  RecentlyViewedItem: initRecentlyViewedItemModel(sequelize),
+  SavedPaymentMethod: initSavedPaymentMethodModel(sequelize),
+  StockAlert: initStockAlertModel(sequelize),
+  ProductAffinity: initProductAffinityModel(sequelize),
+  ProductQuestion: initProductQuestionModel(sequelize),
+  ProductAnswer: initProductAnswerModel(sequelize),
+  GiftCard: initGiftCardModel(sequelize),
 };
 
 Object.values(models).forEach((model: any) => {
@@ -171,4 +185,11 @@ export {
   OtpCode,
   PushSubscription,
   WebVital,
+  RecentlyViewedItem,
+  SavedPaymentMethod,
+  StockAlert,
+  ProductAffinity,
+  ProductQuestion,
+  ProductAnswer,
+  GiftCard,
 };

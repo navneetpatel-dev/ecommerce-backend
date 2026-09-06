@@ -16,6 +16,8 @@ export const GetOrdersQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(MAX_PAGE_LIMIT).default(DEFAULT_PAGE_LIMIT),
   status: z.enum(ORDER_STATUS_VALUES).optional(),
+  /** Admin-only: filter orders belonging to a specific user (e.g. admin user detail page). Ignored for non-admin callers. */
+  userId: z.string().uuid().optional(),
 });
 
 export type CreateOrderRequest = z.infer<typeof CreateOrderSchema>;

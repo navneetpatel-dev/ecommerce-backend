@@ -50,9 +50,13 @@ router.get(
   usersController.listAssignees,
 );
 
+// Roles for the admin user-list filter dropdown — before `/:id`
+router.get('/roles', authenticate, authorize(PERMISSIONS.USER_MANAGE), usersController.listRoles);
+
 // Admin user management
 router.get('/', authenticate, authorize(PERMISSIONS.USER_MANAGE), validate(GetUsersQuerySchema, 'query'), usersController.getUsers);
 router.get('/:id', authenticate, authorize(PERMISSIONS.USER_MANAGE), usersController.getUserById);
+router.get('/:id/addresses', authenticate, authorize(PERMISSIONS.USER_MANAGE), usersController.getUserAddresses);
 router.patch('/:id/status', authenticate, authorize(PERMISSIONS.USER_MANAGE), validate(UpdateUserStatusSchema), usersController.updateUserStatus);
 router.delete('/:id', authenticate, authorize(PERMISSIONS.USER_MANAGE), usersController.deleteUser);
 

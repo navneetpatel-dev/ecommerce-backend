@@ -2,8 +2,10 @@ import { Op } from 'sequelize';
 import { randomUUID } from 'crypto';
 import { NotificationLog, type NotificationType } from '@database/models/notificationLog.model';
 import { User } from '@database/models/user.model';
-import { NOTIFICATION_STATUS } from '@core/constants/statuses';
+import { Role } from '@database/models/role.model';
+import { NOTIFICATION_STATUS, type RoleName } from '@core/constants/statuses';
 import { logger } from '@core/logger';
+import type { ListNotificationLogsQuery } from './notifications.dto';
 import {
   areQueuesReady,
   queues,
@@ -42,12 +44,74 @@ function todayBucket(): string {
 }
 
 export class NotificationsService {
-  async listLogs() {
+  async listLogs(filters: ListNotificationLogsQuery = {}) {
+    const where: Record<string, unknown> = {};
+    if (filters.type) where.type = filters.type;
+    if (filters.channel) where.channel = filters.channel;
+    if (filters.status) where.status = filters.status;
+
     return NotificationLog.findAll({
+      where,
       limit: 100,
       include: [{ model: User, as: 'user', attributes: ['email'] }],
       order: [['createdAt', 'DESC']],
     });
+  }
+
+  /**
+   * Resolves broadcast targets (by role or explicit userIds) and enqueues an
+   * ADMIN_BROADCAST email to each via the same `enqueue` primitive every
+   * other trigger uses — no parallel send path.
+   */
+  async broadcast(
+    actorId: string,
+    params: { role?: RoleName; userIds?: string[]; subject: string; message: string },
+  ): Promise<{ broadcastId: string; targeted: number; queued: number }> {
+    const targets = await this.resolveBroadcastTargets(params.role, params.userIds);
+    const broadcastId = randomUUID();
+    const templateData: EmailTemplateData = { subject: params.subject, message: params.message };
+
+    const results = await Promise.allSettled(
+      targets.map((user) =>
+        this.enqueue({
+          userId: user.id,
+          type: 'ADMIN_BROADCAST',
+          referenceType: 'AdminBroadcast',
+          referenceId: broadcastId,
+          templateData,
+          actorId,
+        }),
+      ),
+    );
+
+    const queued = results.filter(
+      (result) => result.status === 'fulfilled' && result.value != null,
+    ).length;
+    results.forEach((result) => {
+      if (result.status === 'rejected') {
+        logger.warn('Broadcast notification failed for a target user', {
+          broadcastId,
+          error: result.reason instanceof Error ? result.reason.message : result.reason,
+        });
+      }
+    });
+
+    return { broadcastId, targeted: targets.length, queued };
+  }
+
+  private async resolveBroadcastTargets(
+    role: RoleName | undefined,
+    userIds: string[] | undefined,
+  ): Promise<Array<{ id: string }>> {
+    if (role) {
+      const roleRow = await Role.findOne({ where: { name: role } });
+      if (!roleRow) return [];
+      return User.findAll({ where: { roleId: roleRow.id }, attributes: ['id'] });
+    }
+    if (userIds?.length) {
+      return User.findAll({ where: { id: { [Op.in]: userIds } }, attributes: ['id'] });
+    }
+    return [];
   }
 
   /**

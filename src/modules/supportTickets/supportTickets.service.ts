@@ -1,5 +1,6 @@
 import { Op, type Transaction, type WhereOptions } from 'sequelize';
 import { AppError } from '@core/errors/AppError';
+import { logger } from '@core/logger';
 import {
   ADMIN_ROLES,
   DOCUMENT_SEQUENCE_KIND,
@@ -55,7 +56,7 @@ import type {
   UpdatePriorityRequest,
   VendorTicketListQuery,
 } from './supportTickets.dto';
-import { TICKET_ALLOWED_TRANSITIONS } from './supportTickets.lifecycle';
+import { SUPPORT_TICKET_SLA_HOURS, TICKET_ALLOWED_TRANSITIONS } from './supportTickets.lifecycle';
 
 type Actor = {
   id: string;
@@ -1123,6 +1124,51 @@ export class SupportTicketsService {
         return true;
       });
       if (updated) count += 1;
+    }
+    return count;
+  }
+
+  /**
+   * Auto-escalate OPEN, unassigned tickets past `SUPPORT_TICKET_SLA_HOURS`.
+   * Reuses `escalate()` verbatim — the exact same priority-bump + queue-reassignment
+   * logic the manual `POST /:id/escalate` endpoint uses — so this job cannot drift
+   * from that behavior. Called from the notification scheduler tick.
+   */
+  async escalateOverdueTickets(limit = 100): Promise<number> {
+    const cutoff = new Date(Date.now() - SUPPORT_TICKET_SLA_HOURS * 60 * 60 * 1000);
+    const due = await SupportTicket.findAll({
+      where: {
+        status: SUPPORT_TICKET_STATUS.OPEN,
+        assignedToId: null,
+        priority: { [Op.ne]: SUPPORT_TICKET_PRIORITY.URGENT },
+        createdAt: { [Op.lte]: cutoff },
+      },
+      limit,
+    });
+    if (due.length === 0) return 0;
+
+    const [superAdminId] = await findSuperAdminUserIds(1);
+    if (!superAdminId) return 0;
+
+    const systemActor: Actor = {
+      id: superAdminId,
+      vendorId: null,
+      roleId: '',
+      role: { name: ROLES.SUPER_ADMIN },
+    };
+
+    let count = 0;
+    for (const ticket of due) {
+      try {
+        await this.escalate(ticket.id, systemActor);
+        count += 1;
+      } catch (err) {
+        // Ticket may have changed state concurrently (picked up/resolved) — skip and continue.
+        logger.warn('Auto-escalation skipped for ticket', {
+          ticketId: ticket.id,
+          error: err instanceof Error ? err.message : err,
+        });
+      }
     }
     return count;
   }

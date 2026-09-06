@@ -10,6 +10,7 @@ import { redisClient } from '@config/redis';
 import { checkQueuesHealth } from '@config/queue';
 import { readScheduledReportQueueDepth } from '@modules/reports/reportExportMetrics';
 import { requestIdMiddleware } from '@middleware/requestId.middleware';
+import { requestContextMiddleware } from '@middleware/requestContext.middleware';
 import { globalRateLimiter } from '@middleware/rateLimiter.middleware';
 import { errorHandlerMiddleware } from '@middleware/errorHandler.middleware';
 import { routes } from '@routes/index';
@@ -38,6 +39,7 @@ export const app = express();
 app.set('trust proxy', env.TRUST_PROXY_HOPS);
 
 app.use(requestIdMiddleware);
+app.use(requestContextMiddleware);
 
 app.use(
   helmet({

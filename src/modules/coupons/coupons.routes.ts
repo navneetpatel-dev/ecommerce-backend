@@ -14,6 +14,7 @@ import {
   StatusSchema,
   EligibleCouponsQuerySchema,
   PublicEligibleCouponsQuerySchema,
+  RemoveCouponQuerySchema,
 } from './coupons.dto';
 import * as couponsController from './coupons.controller';
 
@@ -29,7 +30,12 @@ function requireVendorRole(req: Request, _res: Response, next: NextFunction) {
 
 // Customer
 router.post('/apply', authenticate, validate(ApplyCouponSchema), couponsController.applyCoupon);
-router.delete('/remove', authenticate, couponsController.removeCoupon);
+router.delete(
+  '/remove',
+  authenticate,
+  validate(RemoveCouponQuerySchema, 'query'),
+  couponsController.removeCoupon,
+);
 router.get(
   '/eligible',
   authenticate,

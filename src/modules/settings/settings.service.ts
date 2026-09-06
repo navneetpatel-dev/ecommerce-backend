@@ -39,6 +39,15 @@ export type PlatformSettingsPayload = {
   refundSlaBusinessDays: number;
   /** Flat estimate paid per completed delivery/pickup task, for the agent shift summary. */
   deliveryAgentPerTaskEarning: number;
+  /** Master switch for the automated weekly admin report email digest. */
+  scheduledReportsEnabled: boolean;
+  /** Report catalog `type` keys to include in the digest. */
+  scheduledReportsTypes: string[];
+  /** Explicit recipient email addresses (v1: no role-based fan-out). */
+  scheduledReportsRecipients: string[];
+  /** 0=Sunday..6=Saturday. */
+  scheduledReportsDayOfWeek: number;
+  scheduledReportsHourUtc: number;
 };
 
 const SETTINGS_KEY = 'platform';
@@ -73,6 +82,11 @@ const DEFAULTS: PlatformSettingsPayload = {
   promotionalPointsTtlDays: 0,
   refundSlaBusinessDays: 7,
   deliveryAgentPerTaskEarning: 20,
+  scheduledReportsEnabled: false,
+  scheduledReportsTypes: ['reconciliation', 'gmv-sales'],
+  scheduledReportsRecipients: [],
+  scheduledReportsDayOfWeek: 1,
+  scheduledReportsHourUtc: 6,
 };
 
 export const settingsService = {

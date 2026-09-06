@@ -11,3 +11,13 @@ export const RecordWebVitalSchema = z
   .strict();
 
 export type RecordWebVitalRequest = z.infer<typeof RecordWebVitalSchema>;
+
+export const WebVitalsSummarySchema = z
+  .object({
+    from: z.string().trim().min(1).optional(),
+    to: z.string().trim().min(1).optional(),
+    path: z.string().trim().min(1).max(512).optional(),
+  })
+  .strict();
+
+export type WebVitalsSummaryRequest = z.infer<typeof WebVitalsSummarySchema>;

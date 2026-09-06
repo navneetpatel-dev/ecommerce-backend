@@ -11,6 +11,9 @@ import { ProductVariant } from '@database/models/productVariant.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { Coupon } from '@database/models/coupon.model';
 import { WebhookEvent } from '@database/models/webhookEvent.model';
+import { User } from '@database/models/user.model';
+import { SavedPaymentMethod } from '@database/models/savedPaymentMethod.model';
+import { NotFoundError } from '@core/errors/NotFoundError';
 import { cartService } from '@modules/cart/cart.service';
 import {
   recordCouponUsage,
@@ -33,6 +36,13 @@ export type RazorpayCheckoutPayload = {
   currency: string;
   keyId: string;
   checkoutConfigId?: string;
+  /**
+   * Razorpay Customer ID for this shopper, when available. The frontend
+   * passes this through to Razorpay Checkout's `customer_id` option so
+   * Checkout's own UI can offer saved cards/UPI for return customers —
+   * this is a Checkout-side behavior, not something built here.
+   */
+  razorpayCustomerId?: string;
 };
 
 function safeTimingEqual(a: string, b: string): boolean {
@@ -150,6 +160,34 @@ export class PaymentsService {
     }
   }
 
+  /**
+   * Returns the shopper's Razorpay customer id, creating one via the
+   * Razorpay SDK on first use and caching it on `User.razorpayCustomerId`.
+   * Best-effort: a failure here (e.g. sandbox quirks, duplicate-customer
+   * errors) must never block checkout, so it swallows errors and returns
+   * null — the order is then created without customer context.
+   */
+  private async getOrCreateCustomerId(userId: string): Promise<string | null> {
+    const user = await User.findByPk(userId);
+    if (!user) return null;
+    if (user.razorpayCustomerId) return user.razorpayCustomerId;
+
+    try {
+      const customer = await razorpay.customers.create({
+        name: user.name,
+        email: user.email,
+        ...(user.phone ? { contact: user.phone } : {}),
+        // Fetch the existing customer instead of throwing if Razorpay
+        // already has one for this email/contact combination.
+        fail_existing: 0,
+      });
+      await user.update({ razorpayCustomerId: customer.id });
+      return customer.id;
+    } catch {
+      return null;
+    }
+  }
+
   async createRazorpayOrderForOrder(
     order: Order,
     amountOverrideRupees?: number,
@@ -165,15 +203,22 @@ export class PaymentsService {
       throw new ValidationError(ERROR_MESSAGES.ORDER_AMOUNT_BELOW_RAZORPAY_MIN);
     }
 
+    const customerId = await this.getOrCreateCustomerId(order.userId);
+
+    // `customer_id` isn't in this SDK version's Orders typings (it's
+    // documented for the Authorization-order flow), but Razorpay's REST
+    // API accepts it on regular orders to associate them with a customer
+    // for saved-instrument context — pass it defensively via a loose cast.
     const rzpOrder = await razorpay.orders.create({
       amount: amountInPaise,
       currency: 'INR',
       receipt: order.id,
       payment_capture: true,
+      ...(customerId ? { customer_id: customerId } : {}),
       ...(env.RAZORPAY_CHECKOUT_CONFIG_ID
         ? { checkout_config_id: env.RAZORPAY_CHECKOUT_CONFIG_ID }
         : {}),
-    });
+    } as Parameters<typeof razorpay.orders.create>[0]);
 
     await order.update({ razorpayOrderId: rzpOrder.id });
 
@@ -185,7 +230,79 @@ export class PaymentsService {
       ...(env.RAZORPAY_CHECKOUT_CONFIG_ID
         ? { checkoutConfigId: env.RAZORPAY_CHECKOUT_CONFIG_ID }
         : {}),
+      ...(customerId ? { razorpayCustomerId: customerId } : {}),
     };
+  }
+
+  /**
+   * List a shopper's saved cards/UPI instruments, newest first.
+   */
+  async listSavedMethods(userId: string): Promise<SavedPaymentMethod[]> {
+    return SavedPaymentMethod.findAll({
+      where: { userId },
+      order: [['createdAt', 'DESC']],
+    });
+  }
+
+  /**
+   * Remove a saved instrument. Best-effort invalidates the token on
+   * Razorpay's side too (`customers.deleteToken`) — if that call fails
+   * (e.g. already removed, sandbox limitation) the local record is still
+   * deleted so it stops showing up, but the token may persist Razorpay-side
+   * until it naturally expires.
+   */
+  async deleteSavedMethod(userId: string, id: string): Promise<void> {
+    const record = await SavedPaymentMethod.findByPk(id);
+    if (!record || record.userId !== userId) {
+      throw new NotFoundError('Saved payment method');
+    }
+
+    if (razorpayConfigured) {
+      try {
+        await razorpay.customers.deleteToken(record.razorpayCustomerId, record.razorpayTokenId);
+      } catch {
+        // Non-fatal — see method doc. Local record is removed regardless.
+      }
+    }
+
+    await record.destroy();
+  }
+
+  /**
+   * Best-effort capture of a newly-saved card/UPI token from a
+   * `payment.captured` webhook payload. Razorpay's standard webhook
+   * catalog has no dedicated `token.created` event; the payment entity
+   * itself carries `token_id` (plus `card`/`vpa`/`method`) whenever the
+   * customer opted to save the instrument during Checkout, so that's the
+   * hook point used here. This is the best documented signal available
+   * without live sandbox verification against a real saved-card flow —
+   * treat as a follow-up item to confirm once tested end-to-end.
+   */
+  private async persistSavedMethodFromPayment(
+    userId: string,
+    customerId: string | null | undefined,
+    payment: {
+      token_id?: string | null;
+      method?: string;
+      card?: { last4?: string; network?: string; type?: string } | null;
+      vpa?: string | null;
+    },
+  ): Promise<void> {
+    if (!payment.token_id || !customerId) return;
+
+    await SavedPaymentMethod.findOrCreate({
+      where: { razorpayTokenId: payment.token_id },
+      defaults: {
+        userId,
+        razorpayCustomerId: customerId,
+        razorpayTokenId: payment.token_id,
+        methodType: payment.method ?? 'unknown',
+        cardLast4: payment.card?.last4 ?? null,
+        cardNetwork: payment.card?.network ?? null,
+        vpa: payment.vpa ?? null,
+        metadata: { card: payment.card ?? null, method: payment.method ?? null },
+      },
+    });
   }
 
   /**
@@ -257,7 +374,17 @@ export class PaymentsService {
       id: string;
       event: string;
       payload?: {
-        payment?: { entity?: { id: string; order_id: string } };
+        payment?: {
+          entity?: {
+            id: string;
+            order_id: string;
+            /** Present when the customer opted to save this instrument. */
+            token_id?: string | null;
+            method?: string;
+            card?: { last4?: string; network?: string; type?: string } | null;
+            vpa?: string | null;
+          };
+        };
         refund?: {
           entity?: {
             id: string;
@@ -291,8 +418,13 @@ export class PaymentsService {
           payment.order_id,
           payment.id,
         );
-        if (!handledRecharge) {
+        const { giftCardsService } = await import('@modules/giftCards/giftCards.service');
+        const handledGiftCard = !handledRecharge
+          ? await giftCardsService.handlePaymentCaptured(payment.order_id, payment.id)
+          : false;
+        if (!handledRecharge && !handledGiftCard) {
           let confirmedOrderId: string | null = null;
+          let confirmedOrderUserId: string | null = null;
           await sequelize.transaction(async (t) => {
             const order = await Order.findOne({
               where: { razorpayOrderId: payment.order_id },
@@ -312,9 +444,19 @@ export class PaymentsService {
             );
             await this.applyCouponOnPaymentCaptured(order, t);
             confirmedOrderId = order.id;
+            confirmedOrderUserId = order.userId;
           });
           if (confirmedOrderId) {
             void notifyOrderConfirmed(confirmedOrderId);
+          }
+          if (confirmedOrderUserId && payment.token_id) {
+            const buyer = await User.findByPk(confirmedOrderUserId);
+            void this.persistSavedMethodFromPayment(confirmedOrderUserId, buyer?.razorpayCustomerId, {
+              token_id: payment.token_id,
+              method: payment.method,
+              card: payment.card,
+              vpa: payment.vpa,
+            });
           }
         }
       }
@@ -325,7 +467,11 @@ export class PaymentsService {
       if (payment?.order_id) {
         const { walletRechargeService } = await import('@modules/wallet/walletRecharge.service');
         const handledRecharge = await walletRechargeService.handlePaymentFailed(payment.order_id);
-        if (!handledRecharge) {
+        const { giftCardsService } = await import('@modules/giftCards/giftCards.service');
+        const handledGiftCard = !handledRecharge
+          ? await giftCardsService.handlePaymentFailed(payment.order_id)
+          : false;
+        if (!handledRecharge && !handledGiftCard) {
           const order = await Order.findOne({ where: { razorpayOrderId: payment.order_id } });
           if (order) {
             void notificationsService.sendPaymentFailed(order.userId, order.id, {

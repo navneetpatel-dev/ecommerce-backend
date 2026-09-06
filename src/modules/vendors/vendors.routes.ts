@@ -56,6 +56,9 @@ router.post('/register', authenticate, validate(RegisterVendorSchema), vendorsCo
 
 // Vendor dashboard
 router.get('/dashboard/summary', authenticate, vendorDashAuth, vendorsController.getDashboardSummary);
+// authenticate only — service scopes strictly to req.user.vendorId (mirrors payouts'
+// /me-style vendor scoping) and 404s when the caller has no vendor context.
+router.get('/dashboard/analytics', authenticate, vendorsController.getDashboardAnalytics);
 router.get('/me', authenticate, vendorDashAuth, vendorsController.getMyVendor);
 router.patch(
   '/me',

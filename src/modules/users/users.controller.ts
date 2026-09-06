@@ -71,9 +71,20 @@ export const listAssignees = asyncHandler(async (req: Request, res: Response) =>
   res.json(ok(result.users, { pagination: result.pagination }));
 });
 
+/** Roles for the admin user-list role filter dropdown. */
+export const listRoles = asyncHandler(async (_req: Request, res: Response) => {
+  const roles = await usersService.listRoles();
+  res.json(ok(roles));
+});
+
 export const getUserById = asyncHandler(async (req: Request, res: Response) => {
   const user = await usersService.getUserById(req.params.id!);
   res.json(ok(user));
+});
+
+export const getUserAddresses = asyncHandler(async (req: Request, res: Response) => {
+  const addresses = await usersService.listAddresses(req.params.id!);
+  res.json(ok(addresses));
 });
 
 export const updateUserStatus = asyncHandler(async (req: Request, res: Response) => {

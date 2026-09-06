@@ -44,7 +44,12 @@ export const getById = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const transition = asyncHandler(async (req: Request, res: Response) => {
-  const updated = await returnsService.transition(req.params.id!, req.body.status, req.user!.id);
+  const updated = await returnsService.transition(
+    req.params.id!,
+    req.body.status,
+    req.user!.id,
+    req.body.rejectionReason,
+  );
   res.json(ok(updated));
 });
 

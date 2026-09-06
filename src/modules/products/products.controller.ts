@@ -1,8 +1,12 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
+import { ValidationError } from '@core/errors/ValidationError';
+import { ERROR_MESSAGES } from '@core/constants/errors';
+import { BULK_IMPORT_LIMITS } from '@core/constants/product';
 import { productsService } from './products.service';
 import { ADMIN_ROLES, ROLES } from '@core/constants/statuses';
+import { parseProductsCsv } from './products.csv';
 import {
   CreateProductSchema,
   UpdateProductSchema,
@@ -12,6 +16,7 @@ import {
   UpdateVariantSchema,
   AddImageSchema,
   ReplaceImageSchema,
+  TrackRecentlyViewedSchema,
 } from './products.dto';
 
 /** Admin/vendor dashboards stay unscoped; shoppers use customerVisible. */
@@ -29,6 +34,25 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
   const dto = CreateProductSchema.parse(req.body);
   const product = await productsService.createProduct(req.user!.vendorId, dto);
   res.status(201).json(ok(product));
+});
+
+export const bulkImportProducts = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.file || req.file.buffer.length === 0) {
+    throw new ValidationError(ERROR_MESSAGES.PRODUCT_BULK_IMPORT_FILE_REQUIRED);
+  }
+
+  const text = req.file.buffer.toString('utf-8');
+  const rows = parseProductsCsv(text);
+
+  if (rows.length === 0) {
+    throw new ValidationError(ERROR_MESSAGES.PRODUCT_BULK_IMPORT_EMPTY);
+  }
+  if (rows.length > BULK_IMPORT_LIMITS.MAX_ROWS) {
+    throw new ValidationError(ERROR_MESSAGES.PRODUCT_BULK_IMPORT_TOO_MANY_ROWS);
+  }
+
+  const results = await productsService.bulkImportProducts(req.user!.vendorId, rows);
+  res.status(200).json(ok(results));
 });
 
 const PRODUCT_LIST_QUERY_KEYS = new Set([
@@ -77,6 +101,22 @@ export const getProductById = asyncHandler(async (req: Request, res: Response) =
     customerFacing: !isCatalogModerator(req),
   });
   res.json(ok(product));
+});
+
+export const trackRecentlyViewed = asyncHandler(async (req: Request, res: Response) => {
+  const dto = TrackRecentlyViewedSchema.parse(req.body);
+  await productsService.trackRecentlyViewed(req.user!.id, dto.productId);
+  res.status(204).send();
+});
+
+export const getRecentlyViewed = asyncHandler(async (req: Request, res: Response) => {
+  const products = await productsService.getRecentlyViewedProducts(req.user!.id);
+  res.json(ok(products));
+});
+
+export const getFrequentlyBoughtTogether = asyncHandler(async (req: Request, res: Response) => {
+  const products = await productsService.getFrequentlyBoughtTogether(req.params.id!);
+  res.json(ok(products));
 });
 
 export const getProductBySlug = asyncHandler(async (req: Request, res: Response) => {

@@ -8,4 +8,5 @@ export const WALLET_DESCRIPTIONS = {
   TOPUP_CREDIT: 'Points recharge',
   PROMO_EXPIRY: 'Promotional points expired',
   ADMIN_ADJUSTMENT: 'Admin adjustment',
+  GIFT_CARD_REDEMPTION: 'Gift card redeemed',
 } as const;

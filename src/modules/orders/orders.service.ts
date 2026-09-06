@@ -17,7 +17,30 @@ import type { CreateOrderRequest, GetOrdersQuery } from './orders.dto';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { Op } from 'sequelize';
 import { ERROR_MESSAGES } from '@core/constants/errors';
-import { REFUND_STATUS, RETURN_STATUS } from '@core/constants/statuses';
+import { ORDER_STATUS, REFUND_STATUS, RETURN_STATUS } from '@core/constants/statuses';
+
+/**
+ * Transitions reachable through this manual, admin-facing endpoint.
+ * DELIVERED is deliberately absent — it's only reachable through the
+ * cascade in `shippingService`'s `cascadeOrderDeliveredAndNotify`, once
+ * every sibling suborder has genuinely settled (OTP-confirmed delivery,
+ * cancellation, or return). CANCELLED is likewise absent — cancelling an
+ * order has its own dedicated flow (`POST /:id/cancel` -> `cancelPaidOrder`)
+ * that restores stock, destroys coupon usage, and processes refunds; a raw
+ * status PATCH to CANCELLED would silently skip all of that. RETURNED is
+ * owned by the returns module via `ReturnRequest.status`.
+ */
+const ORDER_MANUAL_TRANSITIONS: Record<string, readonly string[]> = {
+  [ORDER_STATUS.PENDING]: [ORDER_STATUS.CONFIRMED, ORDER_STATUS.SHIPPED],
+  [ORDER_STATUS.CONFIRMED]: [ORDER_STATUS.SHIPPED],
+};
+
+function assertOrderTransition(from: string, to: string) {
+  if (from === to) return;
+  if (!ORDER_MANUAL_TRANSITIONS[from]?.includes(to)) {
+    throw new ValidationError({ status: [`Cannot move an order from ${from} to ${to} here`] });
+  }
+}
 
 const orderDetailInclude = [
   {
@@ -140,6 +163,7 @@ export class OrdersService {
       const order = await ordersRepository.findById(id, { transaction: t });
       if (!order) throw new NotFoundError('Order');
 
+      assertOrderTransition(order.status, status);
       await ordersRepository.update(id, { status: status as never }, { transaction: t });
       return this.getOrderById(id);
     });

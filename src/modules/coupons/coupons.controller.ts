@@ -14,6 +14,7 @@ import {
   StatusSchema,
   EligibleCouponsQuerySchema,
   PublicEligibleCouponsQuerySchema,
+  RemoveCouponQuerySchema,
 } from './coupons.dto';
 
 function isVendorActor(req: Request): boolean {
@@ -93,7 +94,8 @@ export const applyCoupon = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const removeCoupon = asyncHandler(async (req: Request, res: Response) => {
-  const result = await couponsService.removeCoupon(req.user!.id);
+  const { code } = RemoveCouponQuerySchema.parse(req.query);
+  const result = await couponsService.removeCoupon(req.user!.id, code);
   res.json(ok(result));
 });
 

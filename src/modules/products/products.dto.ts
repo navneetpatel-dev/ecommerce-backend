@@ -136,6 +136,10 @@ export const GetProductsQuerySchema = z
   })
   .passthrough();
 
+export const TrackRecentlyViewedSchema = z.object({
+  productId: z.string().uuid(),
+});
+
 export const ApproveProductSchema = z.object({});
 
 export const RejectProductSchema = z.object({
@@ -169,6 +173,16 @@ export const ReplaceImageSchema = z.object({
   url: z.string().url(),
   isPrimary: z.boolean().optional(),
 });
+
+export type TrackRecentlyViewedRequest = z.infer<typeof TrackRecentlyViewedSchema>;
+
+/** Per-row outcome for POST /products/bulk-import. */
+export interface BulkImportRowResult {
+  row: number;
+  success: boolean;
+  productId?: string;
+  error?: string;
+}
 
 export type CreateProductRequest = z.infer<typeof CreateProductSchema>;
 export type UpdateProductRequest = z.infer<typeof UpdateProductSchema>;

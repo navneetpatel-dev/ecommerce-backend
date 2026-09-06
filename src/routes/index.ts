@@ -34,6 +34,10 @@ import supportTicketsRoutes from '@modules/supportTickets/supportTickets.routes'
 import bugReportsRoutes from '@modules/bugReports/bugReports.routes';
 import deliveryAgentsRoutes from '@modules/deliveryAgents/deliveryAgents.routes';
 import webVitalsRoutes from '@modules/webVitals/webVitals.routes';
+import productQnaRoutes from '@modules/productQna/productQna.routes';
+import giftCardsRoutes from '@modules/giftCards/giftCards.routes';
+import paymentsRoutes from '@modules/payments/payments.routes';
+import rolesRoutes from '@modules/roles/roles.routes';
 
 const router = Router();
 
@@ -71,5 +75,9 @@ router.use(API_MOUNTS.supportTickets, supportTicketsRoutes);
 router.use(API_MOUNTS.bugReports, bugReportsRoutes);
 router.use(API_MOUNTS.deliveryAgents, deliveryAgentsRoutes);
 router.use(API_MOUNTS.webVitals, webVitalsRoutes);
+router.use(API_MOUNTS.productQna, productQnaRoutes);
+router.use(API_MOUNTS.giftCards, giftCardsRoutes);
+router.use(API_MOUNTS.payments, paymentsRoutes);
+router.use(API_MOUNTS.roles, rolesRoutes);
 
 export { router as routes };

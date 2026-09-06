@@ -62,6 +62,13 @@ import { notifyOrderConfirmed } from '@modules/notifications/orderNotifications'
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { buildCheckoutOrderTotals, resolveShippingDisplayKey, resolveTaxDisplayKey } from './checkoutOrderTotals';
 
+/** Flat platform fee for checkout-time gift wrapping (v1: hardcoded, not vendor-specific). */
+export const GIFT_WRAP_FEE_RUPEES = 49;
+
+function resolveGiftWrapFee(giftWrap?: boolean): number {
+  return giftWrap ? GIFT_WRAP_FEE_RUPEES : 0;
+}
+
 type CartWithItems = Cart & {
   items: (CartItem & { variant: ProductVariant & { product: any } })[];
 };
@@ -210,6 +217,7 @@ export class CheckoutService {
       total: number;
     }>;
     grandTotal: number;
+    giftWrapFeeAmount: number;
     cashbackAmount: number;
     walletBalance: number;
     walletAmountToUse: number;
@@ -282,10 +290,10 @@ export class CheckoutService {
       vendorDiscountShares = result.vendorDiscountShares;
       vendorShippingDiscountShares = result.vendorShippingDiscountShares;
       vendorBorneDiscountShares = result.vendorBorneDiscountShares;
-      appliedCoupons = result.coupons.map((coupon) => ({
-        code: coupon.code,
-        discount: result.discount,
-        cashbackAmount: result.cashbackAmount,
+      appliedCoupons = result.perCoupon.map((entry) => ({
+        code: entry.code,
+        discount: entry.discount,
+        cashbackAmount: entry.cashbackAmount,
       }));
       if (result.primaryCoupon) {
         applied = {
@@ -352,9 +360,14 @@ export class CheckoutService {
       };
     });
 
-    const grandTotal = roundMoney(
+    const merchandiseGrandTotal = roundMoney(
       vendorBreakdowns.reduce((sum, row) => sum + row.total, 0),
     );
+    // Flat platform fee, not tied to any vendor — added on top the same way
+    // shipping/tax already flow into grandTotal, so it participates in the
+    // wallet/COD/Razorpay math below without touching those computations.
+    const giftWrapFeeAmount = resolveGiftWrapFee(data.giftWrap);
+    const grandTotal = roundMoney(merchandiseGrandTotal + giftWrapFeeAmount);
     const walletBalance = await walletService.getBalance(userId);
     let walletAmountToUse = clampWalletApply(
       Number(data.walletAmountToUse ?? 0),
@@ -381,7 +394,8 @@ export class CheckoutService {
     return {
       vendorBreakdowns,
       grandTotal,
-      orderTotals: buildCheckoutOrderTotals(vendorBreakdowns),
+      giftWrapFeeAmount,
+      orderTotals: buildCheckoutOrderTotals(vendorBreakdowns, giftWrapFeeAmount),
       cashbackAmount,
       walletBalance,
       walletAmountToUse,
@@ -497,7 +511,11 @@ export class CheckoutService {
       orderTaxTotal = roundMoney(orderTaxTotal);
       orderShippingTotal = roundMoney(orderShippingTotal);
 
-      const orderTotalRupees = fromPaise(customerGrandTotalPaise);
+      // Flat platform fee, not part of any vendor's priced rows — added on top
+      // the same way the quote adds it to grandTotal, so it flows into COD
+      // eligibility, wallet clamp, amountDue and the Razorpay order amount below.
+      const giftWrapFeeAmount = resolveGiftWrapFee(data.giftWrap);
+      const orderTotalRupees = roundMoney(fromPaise(customerGrandTotalPaise) + giftWrapFeeAmount);
       if (data.paymentMethod === PAYMENT_METHOD.COD) {
         const codAvailable = await resolveCodForCatalogItems(
           catalogItemsForCod(cart.items),
@@ -555,6 +573,9 @@ export class CheckoutService {
         taxTotal: orderTaxTotal,
         shippingTotal: orderShippingTotal,
         amountDue,
+        giftWrap: data.giftWrap ?? false,
+        giftMessage: data.giftWrap ? (data.giftMessage ?? null) : null,
+        giftWrapFeeAmount: data.giftWrap ? giftWrapFeeAmount : null,
         status: ORDER_STATUS.PENDING,
         paymentStatus: PAYMENT_STATUS.PENDING,
         paymentMethod: data.paymentMethod,

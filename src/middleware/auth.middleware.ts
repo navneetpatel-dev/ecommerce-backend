@@ -10,6 +10,7 @@ import { AppError } from '@core/errors/AppError';
 import { sendApiError } from '@core/http/sendApiError';
 import { roleNameOf } from '@utils/userRole';
 import type { JwtPayload } from '@modules/auth/auth.types';
+import { setImpersonatedBy } from '@core/context/requestContext';
 
 const BLOCKED_USER_CACHE_TTL_MS = 60_000;
 const blockedUserCache = new Map<string, { blocked: boolean; expiresAt: number }>();
@@ -74,6 +75,7 @@ export async function loadUserFromBearer(authHeader: string) {
         vendorId: decoded.vendorId,
         deliveryAgentId: decoded.deliveryAgentId ?? null,
         role: { name: roleName },
+        impersonatedBy: decoded.impersonatedBy ?? null,
       },
     };
   } catch (err) {
@@ -100,6 +102,7 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
   }
 
   req.user = result.user!;
+  setImpersonatedBy(req.user.impersonatedBy ?? null);
   next();
 };
 
@@ -122,5 +125,6 @@ export const optionalAuthenticate = async (req: Request, res: Response, next: Ne
   }
 
   req.user = result.user!;
+  setImpersonatedBy(req.user.impersonatedBy ?? null);
   next();
 };

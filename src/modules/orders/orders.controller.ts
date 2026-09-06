@@ -14,7 +14,7 @@ export const createOrder = asyncHandler(async (req: Request, res: Response) => {
 export const getOrders = asyncHandler(async (req: Request, res: Response) => {
   const query = GetOrdersQuerySchema.parse(req.query);
   const isAdmin = (ADMIN_ROLES as readonly string[]).includes(req.user!.role.name);
-  const result = await ordersService.getOrders(isAdmin ? null : req.user!.id, query);
+  const result = await ordersService.getOrders(isAdmin ? query.userId ?? null : req.user!.id, query);
   res.json(ok(result.orders, { pagination: result.pagination }));
 });
 

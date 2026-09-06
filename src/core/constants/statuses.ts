@@ -165,6 +165,30 @@ export const REVIEW_STATUS = {
 export type ReviewStatus = (typeof REVIEW_STATUS)[keyof typeof REVIEW_STATUS];
 export const REVIEW_STATUS_VALUES = Object.values(REVIEW_STATUS) as [ReviewStatus, ...ReviewStatus[]];
 
+/** Pre-moderation gate for customer-submitted product questions — mirrors REVIEW_STATUS. */
+export const PRODUCT_QUESTION_STATUS = {
+  PENDING: 'PENDING',
+  PUBLISHED: 'PUBLISHED',
+  REJECTED: 'REJECTED',
+} as const;
+export type ProductQuestionStatus = (typeof PRODUCT_QUESTION_STATUS)[keyof typeof PRODUCT_QUESTION_STATUS];
+export const PRODUCT_QUESTION_STATUS_VALUES = Object.values(PRODUCT_QUESTION_STATUS) as [
+  ProductQuestionStatus,
+  ...ProductQuestionStatus[],
+];
+
+/** Who wrote a product-question answer — VENDOR when the answering user owns the product. */
+export const PRODUCT_ANSWER_AUTHOR_TYPE = {
+  VENDOR: 'VENDOR',
+  CUSTOMER: 'CUSTOMER',
+} as const;
+export type ProductAnswerAuthorType =
+  (typeof PRODUCT_ANSWER_AUTHOR_TYPE)[keyof typeof PRODUCT_ANSWER_AUTHOR_TYPE];
+export const PRODUCT_ANSWER_AUTHOR_TYPE_VALUES = Object.values(PRODUCT_ANSWER_AUTHOR_TYPE) as [
+  ProductAnswerAuthorType,
+  ...ProductAnswerAuthorType[],
+];
+
 export const RETURN_STATUS = {
   REQUESTED: 'REQUESTED',
   APPROVED: 'APPROVED',
@@ -464,6 +488,21 @@ export const PAYOUT_STATUS = {
 export type PayoutStatus = (typeof PAYOUT_STATUS)[keyof typeof PAYOUT_STATUS];
 export const PAYOUT_STATUS_VALUES = Object.values(PAYOUT_STATUS) as [PayoutStatus, ...PayoutStatus[]];
 
+/**
+ * Vendor's preferred payout cadence — storage/display only. `null` means "no
+ * preference set"; there is no platform-wide default cadence constant today, so
+ * a null value is simply shown as "no preference" rather than falling back to a
+ * concrete cadence. NOT wired into payout processing — POST /payouts/process
+ * stays a manual, admin-run batch job regardless of this field.
+ */
+export const PAYOUT_FREQUENCY = {
+  WEEKLY: 'WEEKLY',
+  BIWEEKLY: 'BIWEEKLY',
+  MONTHLY: 'MONTHLY',
+} as const;
+export type PayoutFrequency = (typeof PAYOUT_FREQUENCY)[keyof typeof PAYOUT_FREQUENCY];
+export const PAYOUT_FREQUENCY_VALUES = Object.values(PAYOUT_FREQUENCY) as [PayoutFrequency, ...PayoutFrequency[]];
+
 export const COMMISSION_STATUS = {
   PENDING: 'PENDING',
   SETTLED: 'SETTLED',
@@ -509,3 +548,13 @@ export const ADMIN_ROLES = [
 
 export const VENDOR_ROLES = [ROLES.VENDOR_OWNER, ROLES.VENDOR_STAFF] as const;
 export const DELIVERY_ROLES = [ROLES.DELIVERY_AGENT] as const;
+
+export const GIFT_CARD_STATUS = {
+  PENDING: 'PENDING',
+  ACTIVE: 'ACTIVE',
+  REDEEMED: 'REDEEMED',
+  EXPIRED: 'EXPIRED',
+  CANCELLED: 'CANCELLED',
+  FAILED: 'FAILED',
+} as const;
+export type GiftCardStatus = (typeof GIFT_CARD_STATUS)[keyof typeof GIFT_CARD_STATUS];

@@ -27,6 +27,11 @@ export class Order extends Model<InferAttributes<Order>, InferCreationAttributes
   declare shippingTotal: CreationOptional<number>;
   /** Amount payable after wallet (Razorpay or COD remainder). */
   declare amountDue: CreationOptional<number>;
+  /** Checkout-time gift-wrap choice — covers the whole order, not per sub-order. */
+  declare giftWrap: CreationOptional<boolean>;
+  declare giftMessage: CreationOptional<string | null>;
+  /** Frozen gift-wrap fee charged at checkout (null when giftWrap is false). */
+  declare giftWrapFeeAmount: CreationOptional<number | null>;
   /** Sequential GST tax invoice number (allocated on first PDF download). */
   declare taxInvoiceNumber: CreationOptional<string | null>;
   /** Vendor that bears VENDOR cashback (coupon.vendorId). */
@@ -79,6 +84,9 @@ export const initOrderModel = (sequelize: Sequelize) => {
       taxTotal: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       shippingTotal: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       amountDue: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+      giftWrap: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+      giftMessage: { type: DataTypes.TEXT, allowNull: true },
+      giftWrapFeeAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       taxInvoiceNumber: { type: DataTypes.STRING(32), allowNull: true, unique: true },
       cashbackVendorId: { type: DataTypes.UUID, allowNull: true },
       shippingAddressId: { type: DataTypes.UUID, allowNull: false },

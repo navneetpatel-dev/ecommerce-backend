@@ -10,6 +10,7 @@ import {
 export const SearchProductsQuerySchema = pageLimitQuerySchema.extend({
   q: z.string().trim().min(1).max(SEARCH_AUTOCOMPLETE_MAX_QUERY_LENGTH),
   categoryId: z.string().uuid().optional(),
+  vendorId: z.string().uuid().optional(),
   minPrice: z.coerce.number().optional(),
   maxPrice: z.coerce.number().optional(),
 });

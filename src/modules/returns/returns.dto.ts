@@ -14,6 +14,7 @@ export const CreateReturnRequestSchema = z.object({
 
 export const TransitionReturnSchema = z.object({
   status: z.enum(RETURN_STATUS_VALUES),
+  rejectionReason: z.string().trim().min(3).max(1000).optional(),
 });
 
 export const RescheduleReturnPickupSchema = z.object({

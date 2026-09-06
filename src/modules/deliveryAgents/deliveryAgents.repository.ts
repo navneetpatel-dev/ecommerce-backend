@@ -158,7 +158,12 @@ export class DeliveryAgentsRepository extends BaseRepository<DeliveryAgent> {
         model: SubOrder,
         as: 'subOrder',
         include: [
-          { model: Order, as: 'order', attributes: ['id'] },
+          {
+            model: Order,
+            as: 'order',
+            attributes: ['id'],
+            include: [{ model: Address, as: 'shippingAddress', attributes: ['pincode'] }],
+          },
           { model: Vendor, as: 'vendor', attributes: ['id', 'businessName'] },
         ],
       }],
@@ -195,7 +200,14 @@ export class DeliveryAgentsRepository extends BaseRepository<DeliveryAgent> {
         {
           model: SubOrder,
           as: 'subOrder',
-          include: [{ model: Order, as: 'order', attributes: ['id'] }],
+          include: [
+            {
+              model: Order,
+              as: 'order',
+              attributes: ['id'],
+              include: [{ model: Address, as: 'shippingAddress', attributes: ['pincode'] }],
+            },
+          ],
         },
       ],
       order: [['updatedAt', 'ASC']],

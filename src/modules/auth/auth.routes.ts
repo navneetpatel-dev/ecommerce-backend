@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import { validate } from '@middleware/validate.middleware';
 import { authenticate } from '@middleware/auth.middleware';
+import { authorize } from '@middleware/rbac.middleware';
 import { authRateLimiter, otpRequestRateLimiter } from '@middleware/rateLimiter.middleware';
+import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { RegisterSchema, LoginSchema, RequestOtpSchema, VerifyOtpSchema, ForgotPasswordSchema, ResetPasswordSchema, ChangePasswordSchema, VerifyEmailSchema, ResendVerificationByEmailSchema } from './auth.dto';
 import * as controller from './auth.controller';
 
@@ -23,6 +25,13 @@ router.post('/verify-email/resend', validate(ResendVerificationByEmailSchema), o
 router.post('/resend-verification', authenticate, authRateLimiter, controller.resendVerification);
 router.post('/change-password', authenticate, validate(ChangePasswordSchema), controller.changePassword);
 router.get('/me', authenticate, controller.me);
+
+router.post(
+  '/impersonate/:userId',
+  authenticate,
+  authorize(PERMISSIONS.USER_IMPERSONATE),
+  controller.impersonate,
+);
 
 router.get('/sessions', authenticate, controller.listSessions);
 router.delete('/sessions/:family', authenticate, controller.revokeSession);

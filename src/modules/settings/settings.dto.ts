@@ -31,6 +31,15 @@ export const UpdateSettingsSchema = z.object({
   promotionalPointsTtlDays: z.number().int().min(0).default(0),
   refundSlaBusinessDays: z.number().int().positive().max(30).default(7),
   deliveryAgentPerTaskEarning: z.number().min(0).default(20),
+  /** Master switch for the automated weekly admin report email digest. */
+  scheduledReportsEnabled: z.boolean().default(false),
+  /** Report catalog `type` keys (see reports.constants ADMIN_SCHEDULABLE_REPORT_TYPES) to include. */
+  scheduledReportsTypes: z.array(z.string()).default(['reconciliation', 'gmv-sales']),
+  /** Explicit recipient email addresses (v1: no role-based fan-out). */
+  scheduledReportsRecipients: z.array(z.string().email()).default([]),
+  /** 0=Sunday..6=Saturday. Checked by the job body against the fixed hourly trigger. */
+  scheduledReportsDayOfWeek: z.number().int().min(0).max(6).default(1),
+  scheduledReportsHourUtc: z.number().int().min(0).max(23).default(6),
 });
 
 export type UpdateSettingsRequest = z.infer<typeof UpdateSettingsSchema>;

@@ -147,3 +147,8 @@ export const getDashboardSummary = asyncHandler(async (req: Request, res: Respon
   const summary = await vendorsService.getDashboardSummary(req.user!.vendorId!);
   res.json(ok(summary));
 });
+
+export const getDashboardAnalytics = asyncHandler(async (req: Request, res: Response) => {
+  const analytics = await vendorsService.getDashboardAnalytics(req.user!.vendorId!);
+  res.json(ok(analytics));
+});
