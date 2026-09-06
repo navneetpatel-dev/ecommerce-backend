@@ -10,6 +10,10 @@ import { SubOrder } from '@database/models/subOrder.model';
 import { Order } from '@database/models/order.model';
 import { Address } from '@database/models/address.model';
 import { WebhookEvent } from '@database/models/webhookEvent.model';
+import { OrderItem } from '@database/models/orderItem.model';
+import { CommissionLedger } from '@database/models/commissionLedger.model';
+import { TcsLedger } from '@database/models/tcsLedger.model';
+import { walletService } from '@modules/wallet/wallet.service';
 import { AppError } from '@core/errors/AppError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { NotFoundError } from '@core/errors/NotFoundError';
@@ -96,6 +100,82 @@ async function cascadeOrderDeliveredAndNotify(subOrderId: string, transaction: T
       orderId: subOrder.orderId,
       orderNumber: subOrder.orderId.slice(0, 8).toUpperCase(),
     });
+  }
+}
+
+/**
+ * Cascades an RTO parcel handover back to origin:
+ * 1. Sets SubOrder.status = 'RETURNED'
+ * 2. Restocks variant inventory
+ * 3. Destroys pending vendor commission & TCS ledger entries
+ * 4. Settles parent Order.status (RETURNED / DELIVERED)
+ * 5. If prepaid, credits refund to customer's wallet
+ * 6. Notifies customer of RTO completion and refund
+ */
+async function cascadeRtoDeliveredAndSettle(
+  subOrderId: string,
+  transaction: Transaction,
+): Promise<void> {
+  const subOrder = (await SubOrder.findByPk(subOrderId, {
+    include: [
+      { model: OrderItem, as: 'items' },
+      { model: Order, as: 'order' },
+    ],
+    transaction,
+  })) as (SubOrder & { items?: OrderItem[]; order?: Order }) | null;
+  if (!subOrder) return;
+
+  await subOrder.update({ status: 'RETURNED' }, { transaction });
+
+  // 1. Restock items
+  for (const item of subOrder.items ?? []) {
+    const variantId = (item as any).variantId ?? (item as any).productVariantId;
+    if (variantId) {
+      await ProductVariant.increment('stock', {
+        by: item.quantity,
+        where: { id: variantId },
+        transaction,
+      });
+    }
+  }
+
+  // 2. Destroy Commission & TCS Ledgers
+  await CommissionLedger.destroy({ where: { subOrderId }, transaction });
+  await TcsLedger.destroy({ where: { subOrderId }, transaction });
+
+  // 3. Settle parent Order
+  const order = subOrder.order;
+  if (order) {
+    const siblings = await SubOrder.findAll({ where: { orderId: order.id }, transaction });
+    const terminal = new Set(['DELIVERED', 'CANCELLED', 'RETURNED']);
+    const allSettled = siblings.every((s) => terminal.has(s.status));
+    if (allSettled) {
+      const anyDelivered = siblings.some((s) => s.status === 'DELIVERED');
+      const allReturned = siblings.every((s) => s.status === 'RETURNED');
+      const targetStatus = anyDelivered
+        ? ORDER_STATUS.DELIVERED
+        : allReturned
+          ? ORDER_STATUS.RETURNED
+          : ORDER_STATUS.CANCELLED;
+      await Order.update({ status: targetStatus }, { where: { id: order.id }, transaction });
+    }
+
+    // 4. If prepaid, credit refund to customer wallet
+    const isPrepaid = order.paymentMethod !== 'COD' && order.paymentStatus === 'PAID';
+    const refundAmount = Number(subOrder.customerTotal ?? 0);
+    if (isPrepaid && refundAmount > 0) {
+      await walletService.credit(
+        order.userId,
+        refundAmount,
+        { type: 'RTO_REFUND', id: subOrderId },
+        `Refund for undelivered returned parcel (Order #${order.id.slice(0, 8).toUpperCase()})`,
+        transaction,
+      );
+      void notificationsService.sendRefundProcessed(order.userId, subOrderId, {
+        amount: refundAmount,
+        orderNumber: order.id.slice(0, 8).toUpperCase(),
+      });
+    }
   }
 }
 
@@ -387,10 +467,15 @@ export const shippingService = {
     const owner = (shipment as Shipment & { subOrder?: SubOrder & { order?: Order } }).subOrder?.order
       ?.userId;
     if (owner !== userId) throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_ORDER);
-    if (!['FAILED', 'RTO_INITIATED'].includes(shipment.status)) {
+    if (shipment.status === 'RTO_INITIATED' || shipment.status === 'RTO_DELIVERED') {
+      throw new ValidationError({
+        status: ['This parcel has exceeded delivery attempts and is being returned to the seller. It cannot be rescheduled.'],
+      });
+    }
+    if (shipment.status !== 'FAILED') {
       throw new ValidationError({ status: ['Only a failed delivery attempt can be rescheduled'] });
     }
-    await shipment.update({ preferredRedeliverySlot: slot });
+    await shipment.update({ preferredRedeliverySlot: slot, status: 'IN_TRANSIT' });
     return shipment;
   },
 
@@ -505,6 +590,9 @@ export const shippingService = {
           { where: { id: shipment.subOrderId }, transaction },
         );
         await cascadeOrderDeliveredAndNotify(shipment.subOrderId, transaction);
+      }
+      if (status === 'RTO_DELIVERED') {
+        await cascadeRtoDeliveredAndSettle(shipment.subOrderId, transaction);
       }
       if (isFailedAttempt) {
         await notifyCustomerOfFailedAttempt(shipment, resolvedStatus, transaction);

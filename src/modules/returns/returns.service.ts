@@ -286,7 +286,7 @@ export class ReturnsService {
     if (row.status !== RETURN_STATUS.PICKUP_SCHEDULED || !row.pickupFailureReason) {
       throw new ValidationError({ status: ['Only a failed pickup attempt can be rescheduled'] });
     }
-    await row.update({ preferredRepickupSlot: slot });
+    await row.update({ preferredRepickupSlot: slot, pickupFailureReason: null });
     const slaDays = await refundSlaDays();
     return serializeReturn(row, slaDays);
   }

@@ -13,6 +13,7 @@ import { DeliveryAgentEarning } from '@database/models/deliveryAgentEarning.mode
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { DeliveryAgentDocument } from '@database/models/deliveryAgentDocument.model';
 import { ProductVariant } from '@database/models/productVariant.model';
+import { AuditLog } from '@database/models/auditLog.model';
 import { NotFoundError, ValidationError } from '@core/errors';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import {
@@ -1028,15 +1029,48 @@ export class DeliveryAgentsService {
     if (pickup.status !== RETURN_STATUS.PICKUP_SCHEDULED) {
       throw new ValidationError({ status: ['Only a scheduled pickup can record a failed attempt'] });
     }
-    await pickup.update({ pickupFailureReason: note, updatedBy: actorId });
+
+    const priorAttempts = await AuditLog.count({
+      where: {
+        entityType: 'ReturnRequest',
+        entityId: pickup.id,
+        action: 'RETURN_PICKUP_ATTEMPT_FAILED',
+      },
+    });
+    const currentAttempt = priorAttempts + 1;
+    const isMaxAttempts = currentAttempt >= 3;
+
+    if (isMaxAttempts) {
+      await pickup.update({
+        status: RETURN_STATUS.CLOSED,
+        pickupFailureReason: note,
+        rejectionReason: 'Closed after 3 failed pickup attempts.',
+        updatedBy: actorId,
+      });
+      await logAudit({
+        actorId,
+        action: 'RETURN_PICKUP_AUTO_CLOSED',
+        entityType: 'ReturnRequest',
+        entityId: pickup.id,
+        metadata: { attempts: currentAttempt, note },
+      });
+    } else {
+      await pickup.update({ pickupFailureReason: note, updatedBy: actorId });
+    }
+
     await logAudit({
       actorId,
       action: 'RETURN_PICKUP_ATTEMPT_FAILED',
       entityType: 'ReturnRequest',
       entityId: pickup.id,
-      metadata: { note },
+      metadata: { note, attemptNumber: currentAttempt },
     });
-    void notificationsService.sendPickupAttemptFailed(pickup.userId, pickup.id, { reason: note });
+
+    void notificationsService.sendPickupAttemptFailed(pickup.userId, pickup.id, {
+      reason: isMaxAttempts
+        ? 'Exceeded maximum 3 failed pickup attempts. Return request has been closed.'
+        : note,
+    });
     return pickup;
   }
 
