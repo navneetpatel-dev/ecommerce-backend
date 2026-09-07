@@ -43,6 +43,28 @@ export class ProductQnaRepository extends BaseRepository<ProductQuestion> {
       col: 'id',
     });
   }
+
+  /** Vendor dashboard — questions for products owned by this vendor. */
+  async findForVendor(vendorId: string) {
+    return this.model.findAll({
+      include: [
+        { association: 'user', attributes: ['id', 'name'] },
+        {
+          association: 'product',
+          required: true,
+          where: { vendorId },
+          attributes: ['id', 'name', 'slug'],
+        },
+        {
+          association: 'answers',
+          separate: true,
+          order: [['createdAt', 'ASC']],
+          include: [{ association: 'author', attributes: ['id', 'name'] }],
+        },
+      ],
+      order: [['createdAt', 'DESC']],
+    });
+  }
 }
 
 export const productQnaRepository = new ProductQnaRepository();

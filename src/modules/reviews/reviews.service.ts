@@ -98,6 +98,11 @@ export class ReviewsService {
     return reviewsRepository.findByUser(userId);
   }
 
+  /** Vendor-scoped reviews across all vendor products. */
+  async getVendorReviews(vendorId: string) {
+    return reviewsRepository.findByVendor(vendorId);
+  }
+
   async voteReview(reviewId: string, userId: string, vote: 'HELPFUL' | 'UNHELPFUL') {
     return sequelize.transaction(async (t) => {
       const review = await Review.findByPk(reviewId, {

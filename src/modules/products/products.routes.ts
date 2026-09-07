@@ -3,7 +3,11 @@ import multer from 'multer';
 import * as productsController from './products.controller';
 import { authenticate, optionalAuthenticate } from '@middleware/auth.middleware';
 import { authorize } from '@middleware/rbac.middleware';
-import { checkOwnership, checkProductImageOwnership } from '@middleware/ownership.middleware';
+import {
+  checkOwnership,
+  checkProductImageOwnership,
+  checkProductVariantOwnership,
+} from '@middleware/ownership.middleware';
 import { validate } from '@middleware/validate.middleware';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { BULK_IMPORT_LIMITS } from '@core/constants/product';
@@ -23,9 +27,6 @@ import {
 
 const router = Router();
 
-// No multer instance exists elsewhere in this codebase (uploads module transports
-// files as base64 dataUrl JSON to S3 instead) — this is a small, route-scoped
-// in-memory instance just for the bulk-import CSV, not shared/reused.
 const bulkImportUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: BULK_IMPORT_LIMITS.MAX_FILE_BYTES },
@@ -63,10 +64,14 @@ router.get('/:id/frequently-bought-together', productsController.getFrequentlyBo
 
 // Vendor product management
 router.post('/', authenticate, authorize(PERMISSIONS.PRODUCT_CREATE), validate(CreateProductSchema), productsController.createProduct);
-// Vendor-self CSV bulk import — authenticate only (mirrors payouts' /vendor/:vendorId
-// self-scoping pattern); the service reads req.user.vendorId, so no separate
-// PRODUCT_CREATE permission check is layered on here.
-router.post('/bulk-import', authenticate, bulkImportUploadMiddleware, productsController.bulkImportProducts);
+// Vendor-self CSV bulk import
+router.post(
+  '/bulk-import',
+  authenticate,
+  authorize(PERMISSIONS.PRODUCT_CREATE),
+  bulkImportUploadMiddleware,
+  productsController.bulkImportProducts,
+);
 router.patch('/:id', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE), checkOwnership('product'), validate(UpdateProductSchema), productsController.updateProduct);
 router.delete('/:id', authenticate, authorize(PERMISSIONS.PRODUCT_DELETE, PERMISSIONS.PRODUCT_MANAGE), checkOwnership('product'), productsController.deleteProduct);
 router.post('/:id/submit', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE), checkOwnership('product'), productsController.submitForApproval);
@@ -77,9 +82,29 @@ router.post('/:id/reject', authenticate, authorize(PERMISSIONS.PRODUCT_APPROVE),
 router.post('/:id/archive', authenticate, authorize(PERMISSIONS.PRODUCT_MANAGE), productsController.archiveProduct);
 
 // Variant management
-router.post('/:id/variants', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE), validate(AddVariantSchema), productsController.addVariant);
-router.patch('/variants/:variantId', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE), validate(UpdateVariantSchema), productsController.updateVariant);
-router.delete('/variants/:variantId', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE), productsController.deleteVariant);
+router.post(
+  '/:id/variants',
+  authenticate,
+  authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE),
+  checkOwnership('product'),
+  validate(AddVariantSchema),
+  productsController.addVariant,
+);
+router.patch(
+  '/variants/:variantId',
+  authenticate,
+  authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE),
+  checkProductVariantOwnership(),
+  validate(UpdateVariantSchema),
+  productsController.updateVariant,
+);
+router.delete(
+  '/variants/:variantId',
+  authenticate,
+  authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE),
+  checkProductVariantOwnership(),
+  productsController.deleteVariant,
+);
 
 // Image management
 router.post(

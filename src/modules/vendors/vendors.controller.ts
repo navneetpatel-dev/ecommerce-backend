@@ -90,6 +90,11 @@ export const suspendVendor = asyncHandler(async (req: Request, res: Response) =>
   res.json(ok(vendor));
 });
 
+export const unsuspendVendor = asyncHandler(async (req: Request, res: Response) => {
+  const vendor = await vendorsService.unsuspendVendor(req.params.id!, req.user!.id);
+  res.json(ok(vendor));
+});
+
 export const uploadDocument = asyncHandler(async (req: Request, res: Response) => {
   const dto = UploadDocumentSchema.parse(req.body);
   const document = await vendorsService.uploadDocument(req.params.id!, dto);

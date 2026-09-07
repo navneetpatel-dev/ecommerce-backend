@@ -7,12 +7,17 @@ import { OrderItem } from '@database/models/orderItem.model';
 import { Shipment } from '@database/models/shipment.model';
 import { DeliveryAgent } from '@database/models/deliveryAgent.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
+import { ProductVariant } from '@database/models/productVariant.model';
+import { CommissionLedger } from '@database/models/commissionLedger.model';
+import { TcsLedger } from '@database/models/tcsLedger.model';
 import { sequelize } from '@database/models';
-import { ORDER_STATUS } from '@core/constants/statuses';
+import { ORDER_STATUS, COMMISSION_STATUS, PAYMENT_STATUS, WALLET_REFERENCE_TYPE } from '@core/constants/statuses';
 import { roundMoney } from '@modules/pricing/money';
 import { mapSubOrder } from '@modules/orders/orderDisplayMappers';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { shippingService } from '@modules/shipping/shipping.service';
+import { walletService } from '@modules/wallet/wallet.service';
+import type { GetSubOrdersQuery } from './suborders.dto';
 
 /**
  * Transitions reachable through this manual, vendor/admin-facing endpoint.
@@ -89,9 +94,23 @@ function mapSubOrderRow(row: SubOrder) {
 }
 
 export class SubordersService {
-  async list(vendorId?: string | null) {
-    const rows = await SubOrder.findAll({
-      where: vendorId ? { vendorId } : undefined,
+  async list(vendorId?: string | null, query?: GetSubOrdersQuery) {
+    const page = query?.page ?? 1;
+    const limit = query?.limit ?? 50;
+    const offset = (page - 1) * limit;
+
+    const where: Record<string, unknown> = {};
+    if (vendorId) {
+      where.vendorId = vendorId;
+    } else if (query?.vendorId) {
+      where.vendorId = query.vendorId;
+    }
+    if (query?.status) {
+      where.status = query.status;
+    }
+
+    const { rows, count } = await SubOrder.findAndCountAll({
+      where,
       include: [
         { model: OrderItem, as: 'items' },
         { model: Order, as: 'order' },
@@ -100,8 +119,22 @@ export class SubordersService {
         returnRequestInclude,
       ],
       order: [['createdAt', 'DESC']],
+      limit,
+      offset,
+      distinct: true,
+      col: 'id',
     });
-    return rows.map(mapSubOrderRow);
+
+    const totalPages = Math.ceil(count / limit) || 1;
+    return {
+      suborders: rows.map(mapSubOrderRow),
+      pagination: {
+        total: count,
+        page,
+        limit,
+        totalPages,
+      },
+    };
   }
 
   async updateStatus(id: string, status: SubOrder['status'], trackingId: string | undefined, updatedBy: string) {
@@ -111,6 +144,70 @@ export class SubordersService {
       assertSubOrderTransition(row.status, status);
 
       await row.update({ status, trackingId: trackingId ?? row.trackingId, updatedBy }, { transaction });
+
+      if (status === ORDER_STATUS.CANCELLED) {
+        // 1. Restock items
+        const subOrderWithItems = (await SubOrder.findByPk(id, {
+          include: [{ model: OrderItem, as: 'items' }],
+          transaction,
+        })) as (SubOrder & { items?: OrderItem[] }) | null;
+        for (const item of subOrderWithItems?.items ?? []) {
+          const variantId = (item as any).variantId ?? (item as any).productVariantId;
+          if (variantId) {
+            await ProductVariant.increment('stock', {
+              by: item.quantity,
+              where: { id: variantId },
+              transaction,
+            });
+          }
+        }
+
+        // 2. Destroy pending CommissionLedger and TcsLedger
+        await CommissionLedger.destroy({
+          where: { subOrderId: id, status: COMMISSION_STATUS.PENDING },
+          transaction,
+        });
+        await TcsLedger.destroy({
+          where: { subOrderId: id },
+          transaction,
+        });
+
+        // 3. Customer wallet refund if prepaid / paid
+        const parentOrder = await Order.findByPk(row.orderId, { transaction });
+        const refundAmount = Number(row.customerTotal ?? row.subtotal);
+        if (
+          parentOrder &&
+          parentOrder.paymentStatus === PAYMENT_STATUS.PAID &&
+          refundAmount > 0
+        ) {
+          await walletService.credit(
+            parentOrder.userId,
+            refundAmount,
+            { type: WALLET_REFERENCE_TYPE.WALLET_REFUND, id: id },
+            `Refund for cancelled suborder #${id.slice(0, 8).toUpperCase()}`,
+            transaction,
+          );
+        }
+
+        // 4. Settle parent order if all suborders are now cancelled
+        if (parentOrder) {
+          const sisterSubOrders = await SubOrder.findAll({
+            where: { orderId: parentOrder.id },
+            attributes: ['id', 'status'],
+            transaction,
+          });
+          const allCancelled = sisterSubOrders.every(
+            (s) => s.id === id || s.status === ORDER_STATUS.CANCELLED,
+          );
+          if (allCancelled) {
+            await Order.update(
+              { status: ORDER_STATUS.CANCELLED },
+              { where: { id: parentOrder.id }, transaction },
+            );
+          }
+        }
+      }
+
       if (status === ORDER_STATUS.SHIPPED && trackingId) {
         const parentOrder = await Order.findByPk(row.orderId, {
           transaction,
@@ -166,6 +263,12 @@ export class SubordersService {
       }
       if (status === ORDER_STATUS.DELIVERED) {
         void notificationsService.sendSubOrderDelivered(order.userId, suborder.id, {
+          orderId: order.id,
+          orderNumber,
+        });
+      }
+      if (status === ORDER_STATUS.CANCELLED) {
+        void notificationsService.sendOrderCancelled(order.userId, order.id, {
           orderId: order.id,
           orderNumber,
         });

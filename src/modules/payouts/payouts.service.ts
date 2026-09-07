@@ -8,7 +8,7 @@ import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
-import { COMMISSION_STATUS, PAYOUT_STATUS } from '@core/constants/statuses';
+import { COMMISSION_STATUS, PAYOUT_STATUS, ORDER_STATUS } from '@core/constants/statuses';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import {
@@ -99,7 +99,14 @@ export class PayoutsService {
     const tdsRate = Number(settings.tdsRatePercent ?? 0);
     const ledgers = await CommissionLedger.findAll({
       where: { status: COMMISSION_STATUS.PENDING },
-      include: [{ model: SubOrder, attributes: ['id', 'orderId'] }],
+      include: [
+        {
+          model: SubOrder,
+          attributes: ['id', 'orderId', 'status'],
+          where: { status: ORDER_STATUS.DELIVERED },
+          required: true,
+        },
+      ],
     });
     const grouped = new Map<string, { amount: number; start: Date; end: Date; rows: CommissionLedger[] }>();
     for (const ledger of ledgers) {
@@ -128,7 +135,14 @@ export class PayoutsService {
               id: { [Op.in]: group.rows.map((row) => row.id) },
               status: COMMISSION_STATUS.PENDING,
             },
-            include: [{ model: SubOrder, attributes: ['id', 'orderId'] }],
+            include: [
+              {
+                model: SubOrder,
+                attributes: ['id', 'orderId', 'status'],
+                where: { status: ORDER_STATUS.DELIVERED },
+                required: true,
+              },
+            ],
             transaction,
             lock: transaction.LOCK.UPDATE,
           });

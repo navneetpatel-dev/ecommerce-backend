@@ -7,3 +7,14 @@ export const UpdateSubOrderStatusSchema = z.object({
 });
 
 export type UpdateSubOrderStatusRequest = z.infer<typeof UpdateSubOrderStatusSchema>;
+
+export const GetSubOrdersQuerySchema = z.object({
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(100).default(20),
+  status: z.enum(ORDER_STATUS_VALUES).optional(),
+  search: z.string().trim().optional(),
+  vendorId: z.string().uuid().optional(),
+});
+
+export type GetSubOrdersQuery = z.infer<typeof GetSubOrdersQuerySchema>;
+

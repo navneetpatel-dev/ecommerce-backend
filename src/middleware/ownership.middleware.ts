@@ -93,3 +93,39 @@ export const checkProductImageOwnership = () => {
     next();
   };
 };
+
+/** Resolves product_variants.variantId → product.vendorId for variant and inventory stock mutation routes. */
+export const checkProductVariantOwnership = () => {
+  return async (req: Request, _res: Response, next: NextFunction) => {
+    const user = req.user;
+    if (!user) {
+      return next(new ForbiddenError(ERROR_MESSAGES.AUTH_REQUIRED));
+    }
+
+    if (isAdminBypass(user.role.name)) {
+      return next();
+    }
+
+    const variantId = req.params.variantId;
+    const [row] = await sequelize.query<{ vendorId: string | null }>(
+      `SELECT p."vendorId"
+       FROM product_variants pv
+       INNER JOIN products p ON p.id = pv."productId"
+       WHERE pv.id = :variantId
+         AND pv."deletedAt" IS NULL
+         AND p."deletedAt" IS NULL
+       LIMIT 1`,
+      { replacements: { variantId }, type: QueryTypes.SELECT },
+    );
+
+    if (!row) {
+      return next(new NotFoundError('ProductVariant'));
+    }
+
+    if (row.vendorId !== user.vendorId) {
+      return next(new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_PRODUCT));
+    }
+
+    next();
+  };
+};

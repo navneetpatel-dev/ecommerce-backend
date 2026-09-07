@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { ValidationError } from '@core/errors/ValidationError';
+import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { BULK_IMPORT_LIMITS } from '@core/constants/product';
 import { productsService } from './products.service';
@@ -37,6 +38,9 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
 });
 
 export const bulkImportProducts = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user?.vendorId) {
+    throw new ForbiddenError(ERROR_MESSAGES.VENDOR_NOT_LINKED);
+  }
   if (!req.file || req.file.buffer.length === 0) {
     throw new ValidationError(ERROR_MESSAGES.PRODUCT_BULK_IMPORT_FILE_REQUIRED);
   }

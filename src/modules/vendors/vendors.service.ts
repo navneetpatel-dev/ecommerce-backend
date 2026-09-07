@@ -474,6 +474,41 @@ export class VendorsService {
     return updated;
   }
 
+  async unsuspendVendor(vendorId: string, actorId: string) {
+    await sequelize.transaction(async (t) => {
+      const vendor = await vendorsRepository.findById(vendorId, { transaction: t });
+      if (!vendor) throw new NotFoundError('Vendor');
+      if (vendor.status !== VENDOR_STATUS.SUSPENDED) {
+        throw new ValidationError('Only suspended vendors can be unsuspended');
+      }
+
+      await vendorsRepository.update(
+        vendorId,
+        {
+          status: VENDOR_STATUS.APPROVED,
+          suspensionReason: null,
+        },
+        { transaction: t },
+      );
+    });
+
+    const updated = await this.getVendorById(vendorId);
+    await logAudit({
+      actorId,
+      action: 'VENDOR_UNSUSPEND',
+      entityType: 'Vendor',
+      entityId: vendorId,
+      metadata: {},
+    });
+    const ownerId = await findVendorOwnerUserId(vendorId);
+    if (ownerId) {
+      void notificationsService.sendVendorApproved(ownerId, vendorId, {
+        businessName: updated.businessName,
+      });
+    }
+    return updated;
+  }
+
   async uploadDocument(vendorId: string, data: UploadDocumentRequest) {
     const { document, previousUrl } = await sequelize.transaction(async (t) => {
       const vendor = await vendorsRepository.findById(vendorId, { transaction: t });

@@ -521,6 +521,16 @@ export class ProductsService {
         throw new ValidationError(ERROR_MESSAGES.PRODUCT_NOT_DRAFT);
       }
 
+      const variantCount = await ProductVariant.count({ where: { productId: id }, transaction: t });
+      if (variantCount === 0) {
+        throw new ValidationError('Cannot submit product for approval without at least one variant.');
+      }
+
+      const imageCount = await ProductImage.count({ where: { productId: id }, transaction: t });
+      if (imageCount === 0) {
+        throw new ValidationError('Cannot submit product for approval without at least one image.');
+      }
+
       const secondary = await ProductCategory.findAll({
         where: { productId: id },
         attributes: ['categoryId'],
@@ -545,6 +555,16 @@ export class ProductsService {
 
       if (row.status !== PRODUCT_STATUS.PENDING_APPROVAL) {
         throw new ValidationError(ERROR_MESSAGES.PRODUCT_NOT_PENDING_APPROVAL);
+      }
+
+      const variantCount = await ProductVariant.count({ where: { productId: id }, transaction: t });
+      if (variantCount === 0) {
+        throw new ValidationError('Cannot approve product without at least one variant.');
+      }
+
+      const imageCount = await ProductImage.count({ where: { productId: id }, transaction: t });
+      if (imageCount === 0) {
+        throw new ValidationError('Cannot approve product without at least one image.');
       }
 
       const secondary = await ProductCategory.findAll({

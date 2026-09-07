@@ -48,6 +48,23 @@ export class ReviewsRepository extends BaseRepository<Review> {
       order: [['createdAt', 'DESC']],
     });
   }
+
+  /** Vendor dashboard — all reviews for products owned by this vendor. */
+  async findByVendor(vendorId: string) {
+    return this.model.findAll({
+      include: [
+        { association: 'user', attributes: ['id', 'name'] },
+        {
+          model: Product,
+          as: 'product',
+          required: true,
+          where: { vendorId },
+          attributes: ['id', 'name', 'slug'],
+        },
+      ],
+      order: [['createdAt', 'DESC']],
+    });
+  }
 }
 
 export const reviewsRepository = new ReviewsRepository();

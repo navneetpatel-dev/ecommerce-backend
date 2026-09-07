@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
+import { ForbiddenError } from '@core/errors/ForbiddenError';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 import { pageLimitQuerySchema } from '@core/http/pagination';
 import { reviewsService } from './reviews.service';
 import { CreateReviewSchema, VoteReviewSchema } from './reviews.dto';
@@ -24,6 +26,14 @@ export const getByProduct = asyncHandler(async (req: Request, res: Response) => 
 
 export const getMyReviews = asyncHandler(async (req: Request, res: Response) => {
   const reviews = await reviewsService.getUserReviews(req.user!.id);
+  res.json(ok(reviews));
+});
+
+export const getVendorReviews = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user?.vendorId) {
+    throw new ForbiddenError(ERROR_MESSAGES.VENDOR_NOT_LINKED);
+  }
+  const reviews = await reviewsService.getVendorReviews(req.user.vendorId);
   res.json(ok(reviews));
 });
 

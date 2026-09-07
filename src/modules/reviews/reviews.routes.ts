@@ -12,6 +12,7 @@ router.get('/moderation', authenticate, authorize(PERMISSIONS.REVIEW_MODERATE), 
 router.post('/', authenticate, validate(CreateReviewSchema), reviewsController.create);
 router.get('/product/:productId', reviewsController.getByProduct);
 router.get('/my-reviews', authenticate, reviewsController.getMyReviews);
+router.get('/vendor/me', authenticate, authorize(PERMISSIONS.REVIEW_RESPOND), reviewsController.getVendorReviews);
 router.post('/:id/vote', authenticate, validate(VoteReviewSchema), reviewsController.vote);
 router.patch('/:id/approve', authenticate, authorize(PERMISSIONS.REVIEW_MODERATE), reviewsController.approve);
 router.patch('/:id/reject', authenticate, authorize(PERMISSIONS.REVIEW_MODERATE), reviewsController.reject);

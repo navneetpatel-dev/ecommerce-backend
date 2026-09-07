@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
+import { ForbiddenError } from '@core/errors/ForbiddenError';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 import { pageLimitQuerySchema } from '@core/http/pagination';
 import { productQnaService } from './productQna.service';
 import { AskQuestionSchema, AnswerQuestionSchema, ModerateQuestionSchema } from './productQna.dto';
@@ -15,6 +17,14 @@ export const getByProduct = asyncHandler(async (req: Request, res: Response) => 
   const query = pageLimitQuerySchema.parse(req.query);
   const result = await productQnaService.getProductQuestions(req.params.productId!, query);
   res.json(ok(result.questions, { pagination: result.pagination }));
+});
+
+export const getVendorQuestions = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user?.vendorId) {
+    throw new ForbiddenError(ERROR_MESSAGES.VENDOR_NOT_LINKED);
+  }
+  const questions = await productQnaService.getVendorQuestions(req.user.vendorId);
+  res.json(ok(questions));
 });
 
 export const listPending = asyncHandler(async (req: Request, res: Response) => {

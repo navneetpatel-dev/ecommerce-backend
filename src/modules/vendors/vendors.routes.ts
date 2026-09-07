@@ -145,6 +145,12 @@ router.patch(
   validate(SuspendVendorSchema),
   vendorsController.suspendVendor,
 );
+router.patch(
+  '/:id/unsuspend',
+  authenticate,
+  authorize(PERMISSIONS.VENDOR_MANAGE),
+  vendorsController.unsuspendVendor,
+);
 
 router.post(
   '/:id/documents',

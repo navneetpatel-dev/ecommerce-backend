@@ -59,6 +59,12 @@ export class ProductQnaService {
     };
   }
 
+  /** Vendor dashboard — questions for products owned by this vendor. */
+  async getVendorQuestions(vendorId: string) {
+    const rows = await productQnaRepository.findForVendor(vendorId);
+    return rows.map((row) => serializeQuestion(row));
+  }
+
   /** Moderation queue. */
   async listPending(query: { page: number; limit: number }) {
     const offset = paginationOffset(query.page, query.limit);
