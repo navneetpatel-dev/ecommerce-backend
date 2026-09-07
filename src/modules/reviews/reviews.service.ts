@@ -200,7 +200,7 @@ export class ReviewsService {
   private async recalculateProductRating(productId: string, transaction: any) {
     const [result] = await sequelize.query<{ avg: string; count: string }>(
       `SELECT AVG(rating)::numeric(3,2) as avg, COUNT(*) as count 
-       FROM reviews WHERE product_id = :productId AND status = :status`,
+       FROM reviews WHERE "productId" = :productId AND status = :status AND "deletedAt" IS NULL`,
       {
         replacements: { productId, status: REVIEW_STATUS.APPROVED },
         type: QueryTypes.SELECT,

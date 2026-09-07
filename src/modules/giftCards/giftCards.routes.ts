@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authenticate } from '@middleware/auth.middleware';
 import { validate } from '@middleware/validate.middleware';
+import { authRateLimiter } from '@middleware/rateLimiter.middleware';
 import {
   PurchaseGiftCardSchema,
   VerifyGiftCardPurchaseSchema,
@@ -31,6 +32,6 @@ router.post(
   giftCardsController.redeemGiftCard,
 );
 
-router.get('/:code', giftCardsController.getGiftCardByCode);
+router.get('/:code', authRateLimiter, giftCardsController.getGiftCardByCode);
 
 export default router;

@@ -36,11 +36,7 @@ async function canBypassOwnership(
     return userHasPermission(user, PERMISSIONS.PRODUCT_MANAGE);
   }
   if (resourceType === 'suborder') {
-    return userHasPermission(
-      user,
-      PERMISSIONS.ORDER_MANAGE,
-      PERMISSIONS.SUBORDER_MANAGE,
-    );
+    return userHasPermission(user, PERMISSIONS.ORDER_MANAGE);
   }
   if (resourceType === 'vendor') {
     return userHasPermission(user, PERMISSIONS.VENDOR_MANAGE);
