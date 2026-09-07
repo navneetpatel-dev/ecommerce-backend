@@ -314,9 +314,23 @@ export class VendorsService {
     return this.getVendorById(userVendorId);
   }
 
-  async updateMyVendor(userVendorId: string | null | undefined, data: UpdateVendorRequest) {
+  async updateMyVendor(
+    userVendorId: string | null | undefined,
+    data: UpdateVendorRequest,
+    actor?: { id: string; role: { name: string }; roleId?: string },
+  ) {
     if (!userVendorId) {
       throw new ForbiddenError(ERROR_MESSAGES.VENDOR_NOT_LINKED);
+    }
+    if (actor && actor.role?.name === ROLES.VENDOR_STAFF) {
+      const isMutatingSensitiveFields =
+        data.bankDetails !== undefined ||
+        data.payoutFrequency !== undefined ||
+        data.returnShippingFee !== undefined ||
+        data.codEnabled !== undefined;
+      if (isMutatingSensitiveFields) {
+        throw new ForbiddenError('Only vendor owners can update store bank details and financial settings');
+      }
     }
     // commissionRate is admin-only (set via approval or PATCH /vendors/:id) — strip it
     // here so a vendor owner can't self-set their own commission via PATCH /vendors/me.

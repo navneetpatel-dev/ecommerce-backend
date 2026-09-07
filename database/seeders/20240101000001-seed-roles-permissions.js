@@ -34,12 +34,12 @@ const PERMISSION_KEYS = [
 const ROLE_PERMISSIONS = {
   SUPER_ADMIN: PERMISSION_KEYS,
   ADMIN_ORDER_MANAGER: [
-    'order.manage', 'order.refund', 'analytics.view', 'audit.view',
+    'order.manage', 'suborder.manage', 'order.refund', 'shipping.manage', 'analytics.view', 'audit.view',
     'ticket.manage', 'bug_report.manage', 'wallet.adjust',
     'delivery_agent.manage',
   ],
   ADMIN_CATALOG_MANAGER: [
-    'product.manage', 'product.approve', 'category.manage', 'banner.manage',
+    'product.manage', 'product.create', 'product.approve', 'category.manage', 'coupon.manage', 'banner.manage',
     'review.moderate', 'analytics.view', 'audit.view',
   ],
   VENDOR_OWNER: ['product.create', 'product.update', 'product.delete', 'suborder.manage', 'payout.view', 'review.respond'],

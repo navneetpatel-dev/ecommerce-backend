@@ -53,12 +53,7 @@ router.post(
 );
 router.post('/:id/resolve', authenticate, supportTicketsController.resolve);
 router.post('/:id/reopen', authenticate, supportTicketsController.reopen);
-router.post(
-  '/:id/close',
-  authenticate,
-  authorize(PERMISSIONS.TICKET_MANAGE),
-  supportTicketsController.close,
-);
+router.post('/:id/close', authenticate, supportTicketsController.close);
 router.post(
   '/:id/reassign',
   authenticate,

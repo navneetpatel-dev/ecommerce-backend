@@ -8,7 +8,9 @@ import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
-import { COMMISSION_STATUS, PAYOUT_STATUS, ORDER_STATUS } from '@core/constants/statuses';
+import { COMMISSION_STATUS, PAYOUT_STATUS, ORDER_STATUS, ROLES } from '@core/constants/statuses';
+import { PERMISSIONS } from '@core/permissions/permissionKeys';
+import { userHasPermission } from '@middleware/rbac.middleware';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import {
@@ -82,10 +84,27 @@ export class PayoutsService {
     };
   }
 
-  async listByVendor(vendorId: string, requesterVendorId?: string | null) {
-    if (requesterVendorId && requesterVendorId !== vendorId) {
+  async listByVendor(
+    vendorId: string,
+    actor?: { id: string; vendorId?: string | null; role: { name: string }; roleId?: string } | string | null,
+  ) {
+    if (typeof actor === 'object' && actor) {
+      const isAdmin =
+        actor.role?.name === ROLES.SUPER_ADMIN ||
+        (await userHasPermission(actor, PERMISSIONS.PAYOUT_MANAGE));
+      if (!isAdmin) {
+        if (!actor.vendorId || actor.vendorId !== vendorId) {
+          throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_VENDOR_PAYOUTS);
+        }
+      }
+    } else if (typeof actor === 'string') {
+      if (actor !== vendorId) {
+        throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_VENDOR_PAYOUTS);
+      }
+    } else if (!actor) {
       throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_VENDOR_PAYOUTS);
     }
+
     const rows = await Payout.findAll({
       where: { vendorId },
       include: [vendorInclude],

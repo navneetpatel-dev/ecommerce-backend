@@ -6,6 +6,9 @@ import { QueryTypes } from 'sequelize';
 import { ROLES } from '@core/constants/statuses';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 
+import { PERMISSIONS } from '@core/permissions/permissionKeys';
+import { userHasPermission } from './rbac.middleware';
+
 type ResourceType = 'product' | 'suborder' | 'vendor';
 
 const resourceQueries: Record<ResourceType, string> = {
@@ -14,12 +17,35 @@ const resourceQueries: Record<ResourceType, string> = {
   vendor: 'SELECT id as "vendorId" FROM vendors WHERE id = :id',
 };
 
-function isAdminBypass(roleName: string): boolean {
-  return (
-    roleName === ROLES.SUPER_ADMIN ||
-    roleName === ROLES.ADMIN_CATALOG_MANAGER ||
-    roleName === ROLES.ADMIN_ORDER_MANAGER
-  );
+async function canBypassOwnership(
+  user: { roleId?: string; role: { name: string } },
+  resourceType: ResourceType | 'variant' | 'image',
+): Promise<boolean> {
+  if (user.role.name === ROLES.SUPER_ADMIN) return true;
+  if (
+    user.role.name === ROLES.ADMIN_CATALOG_MANAGER ||
+    user.role.name === ROLES.ADMIN_ORDER_MANAGER
+  ) {
+    return true;
+  }
+  if (
+    resourceType === 'product' ||
+    resourceType === 'variant' ||
+    resourceType === 'image'
+  ) {
+    return userHasPermission(user, PERMISSIONS.PRODUCT_MANAGE);
+  }
+  if (resourceType === 'suborder') {
+    return userHasPermission(
+      user,
+      PERMISSIONS.ORDER_MANAGE,
+      PERMISSIONS.SUBORDER_MANAGE,
+    );
+  }
+  if (resourceType === 'vendor') {
+    return userHasPermission(user, PERMISSIONS.VENDOR_MANAGE);
+  }
+  return false;
 }
 
 export const checkOwnership = (resourceType: ResourceType) => {
@@ -29,7 +55,7 @@ export const checkOwnership = (resourceType: ResourceType) => {
       return next(new ForbiddenError(ERROR_MESSAGES.AUTH_REQUIRED));
     }
 
-    if (isAdminBypass(user.role.name)) {
+    if (await canBypassOwnership(user, resourceType)) {
       return next();
     }
 
@@ -66,7 +92,7 @@ export const checkProductImageOwnership = () => {
       return next(new ForbiddenError(ERROR_MESSAGES.AUTH_REQUIRED));
     }
 
-    if (isAdminBypass(user.role.name)) {
+    if (await canBypassOwnership(user, 'image')) {
       return next();
     }
 
@@ -102,7 +128,7 @@ export const checkProductVariantOwnership = () => {
       return next(new ForbiddenError(ERROR_MESSAGES.AUTH_REQUIRED));
     }
 
-    if (isAdminBypass(user.role.name)) {
+    if (await canBypassOwnership(user, 'variant')) {
       return next();
     }
 

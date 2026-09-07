@@ -18,6 +18,7 @@ export const UpdateUserStatusSchema = z.object({
 
 export const UpdateUserRoleSchema = z.object({
   roleId: z.string().uuid(),
+  vendorId: z.string().uuid().nullable().optional(),
 });
 
 export const GetUsersQuerySchema = z.object({

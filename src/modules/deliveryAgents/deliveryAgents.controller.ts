@@ -73,6 +73,11 @@ export const profile = asyncHandler(async (req: Request, res: Response) => {
   res.json(ok(agent));
 });
 
+export const myRatings = asyncHandler(async (req: Request, res: Response) => {
+  const result = await deliveryAgentsService.myRatings(req.user!.deliveryAgentId!);
+  res.json(ok(result));
+});
+
 export const setAvailability = asyncHandler(async (req: Request, res: Response) => {
   const agent = await deliveryAgentsService.setAvailability(req.user!.deliveryAgentId!, req.body.availableForAssignment);
   res.json(ok(agent));

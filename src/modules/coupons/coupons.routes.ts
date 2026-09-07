@@ -5,7 +5,7 @@ import { validate } from '@middleware/validate.middleware';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
-import { VENDOR_ROLES } from '@core/constants/statuses';
+import { ROLES, VENDOR_ROLES } from '@core/constants/statuses';
 import {
   CreateCouponSchema,
   UpdateCouponSchema,
@@ -24,6 +24,17 @@ function requireVendorRole(req: Request, _res: Response, next: NextFunction) {
   const role = req.user?.role?.name;
   if (!role || !(VENDOR_ROLES as readonly string[]).includes(role) || !req.user?.vendorId) {
     return next(new ForbiddenError(ERROR_MESSAGES.AUTH_REQUIRED));
+  }
+  return next();
+}
+
+export function requireVendorOwner(req: Request, _res: Response, next: NextFunction) {
+  const role = req.user?.role?.name;
+  if (role === ROLES.SUPER_ADMIN) {
+    return next();
+  }
+  if (role !== ROLES.VENDOR_OWNER || !req.user?.vendorId) {
+    return next(new ForbiddenError('Only vendor owners can create or manage store coupons'));
   }
   return next();
 }
@@ -52,7 +63,7 @@ router.get(
 router.post(
   '/vendor',
   authenticate,
-  requireVendorRole,
+  requireVendorOwner,
   validate(CreateCouponSchema),
   couponsController.createVendorCoupon,
 );
@@ -66,7 +77,7 @@ router.get(
 router.patch(
   '/vendor/:id',
   authenticate,
-  requireVendorRole,
+  requireVendorOwner,
   validate(UpdateCouponSchema),
   couponsController.updateCoupon,
 );
@@ -75,7 +86,7 @@ router.get('/vendor/:id/analytics', authenticate, requireVendorRole, couponsCont
 router.patch(
   '/vendor/:id/status',
   authenticate,
-  requireVendorRole,
+  requireVendorOwner,
   validate(StatusSchema),
   couponsController.setCouponStatus,
 );

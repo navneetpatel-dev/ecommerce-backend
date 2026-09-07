@@ -12,6 +12,7 @@ import { DeliveryCashDeposit } from '@database/models/deliveryCashDeposit.model'
 import { DeliveryAgentEarning } from '@database/models/deliveryAgentEarning.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { DeliveryAgentDocument } from '@database/models/deliveryAgentDocument.model';
+import { DeliveryRating } from '@database/models/deliveryRating.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { AuditLog } from '@database/models/auditLog.model';
 import { NotFoundError, ValidationError } from '@core/errors';
@@ -481,6 +482,23 @@ export class DeliveryAgentsService {
     if (!agent) throw new NotFoundError('DeliveryAgent');
     const { average, count: ratingCount } = await deliveryRatingsService.averageForAgent(id);
     return { ...agent.get({ plain: true }), averageRating: average, ratingCount };
+  }
+
+  async myRatings(deliveryAgentId: string) {
+    const [stats, recentRatings] = await Promise.all([
+      deliveryRatingsService.averageForAgent(deliveryAgentId),
+      DeliveryRating.findAll({
+        where: { deliveryAgentId },
+        attributes: ['id', 'rating', 'comment', 'createdAt'],
+        order: [['createdAt', 'DESC']],
+        limit: 50,
+      }),
+    ]);
+    return {
+      averageRating: stats.average,
+      ratingCount: stats.count,
+      ratings: recentRatings,
+    };
   }
 
   async setAvailability(id: string, availableForAssignment: boolean) {

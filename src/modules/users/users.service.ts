@@ -603,8 +603,27 @@ export class UsersService {
         throw new ForbiddenError('Only super administrators can assign the super administrator role');
       }
 
+      const isVendorRole = newRole.name === ROLES.VENDOR_OWNER || newRole.name === ROLES.VENDOR_STAFF;
+      let newVendorId = user.vendorId;
+
+      if (isVendorRole) {
+        if (data.vendorId !== undefined) {
+          newVendorId = data.vendorId;
+        }
+        if (!newVendorId) {
+          throw new ValidationError('A vendor store must be selected for vendor roles');
+        }
+      } else {
+        newVendorId = null;
+      }
+
       const previousRoleId = user.roleId;
-      await usersRepository.update(userId, { roleId: newRole.id } as any, { transaction: t });
+      const previousVendorId = user.vendorId;
+      await usersRepository.update(
+        userId,
+        { roleId: newRole.id, vendorId: newVendorId } as any,
+        { transaction: t },
+      );
       await authRepository.deleteRefreshTokensByUser(userId);
 
       await logAudit({
@@ -615,8 +634,10 @@ export class UsersService {
         metadata: {
           previousRoleId,
           previousRoleName: targetRoleName,
+          previousVendorId,
           newRoleId: newRole.id,
           newRoleName: newRole.name,
+          newVendorId,
         },
         transaction: t,
       });

@@ -57,6 +57,7 @@ router.post('/shipments/bulk-assign', authenticate, manage, validate(BulkAssignS
 router.post('/shipments/:shipmentId/force-confirm', authenticate, manage, validate(ForceConfirmSchema), controller.forceConfirmDelivery);
 router.post('/returns/:returnId/assign', authenticate, manage, validate(AssignAgentSchema), controller.assignPickup);
 router.get('/me/profile', authenticate, authorize(PERMISSIONS.SHIPMENT_DELIVERY_UPDATE, PERMISSIONS.RETURN_PICKUP_UPDATE), controller.profile);
+router.get('/me/ratings', authenticate, authorize(PERMISSIONS.SHIPMENT_DELIVERY_UPDATE, PERMISSIONS.RETURN_PICKUP_UPDATE), controller.myRatings);
 router.patch('/me/availability', authenticate, authorize(PERMISSIONS.SHIPMENT_DELIVERY_UPDATE, PERMISSIONS.RETURN_PICKUP_UPDATE), validate(SetAvailabilitySchema), controller.setAvailability);
 router.patch('/me/location', authenticate, authorize(PERMISSIONS.SHIPMENT_DELIVERY_UPDATE, PERMISSIONS.RETURN_PICKUP_UPDATE), validate(UpdateLocationSchema), controller.updateLocation);
 router.get('/me/shift-summary', authenticate, authorize(PERMISSIONS.SHIPMENT_DELIVERY_UPDATE, PERMISSIONS.RETURN_PICKUP_UPDATE), controller.shiftSummary);

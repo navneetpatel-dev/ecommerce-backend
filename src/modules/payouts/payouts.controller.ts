@@ -16,7 +16,7 @@ export const process = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const listByVendor = asyncHandler(async (req: Request, res: Response) => {
-  const rows = await payoutsService.listByVendor(req.params.vendorId!, req.user!.vendorId);
+  const rows = await payoutsService.listByVendor(req.params.vendorId!, req.user!);
   res.json(ok(rows));
 });
 

@@ -892,7 +892,9 @@ export class SupportTicketsService {
       if (!locked) {
         throw new AppError(ERROR_MESSAGES.TICKET_NOT_FOUND, 404, ERROR_CODES.TICKET_NOT_FOUND);
       }
-      if (!(await isAdminActor(actor))) {
+      const isOwnerCustomer = locked.customerId === actor.id;
+      const isAdmin = await isAdminActor(actor);
+      if (!isAdmin && !isOwnerCustomer) {
         throw new AppError(ERROR_MESSAGES.TICKET_FORBIDDEN, 403, ERROR_CODES.TICKET_FORBIDDEN);
       }
 
