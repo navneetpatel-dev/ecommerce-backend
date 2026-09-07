@@ -24,9 +24,11 @@ import { ERROR_MESSAGES } from '@core/constants/errors';
 import { PERMISSIONS, type PermissionKey } from '@core/permissions/permissionKeys';
 import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { ValidationError } from '@core/errors/ValidationError';
+import { logAudit } from '@modules/audit/audit.service';
 import type {
   UpdateUserProfileRequest,
   UpdateUserStatusRequest,
+  UpdateUserRoleRequest,
   GetUsersQuery,
   CreateAddressRequest,
   UpdateAddressRequest,
@@ -531,21 +533,123 @@ export class UsersService {
     return serializeProfile(user);
   }
 
-  async updateUserStatus(userId: string, data: UpdateUserStatusRequest) {
+  async updateUserStatus(
+    userId: string,
+    data: UpdateUserStatusRequest,
+    actor?: { id: string; role?: { name: string } },
+  ) {
     return sequelize.transaction(async (t: Transaction) => {
-      const user = await usersRepository.findById(userId, { transaction: t });
+      const user = await usersRepository.findById(userId, {
+        include: [{ model: Role, as: 'role' }],
+        transaction: t,
+      });
       if (!user) throw new NotFoundError('User');
 
+      const targetRoleName = (user as any).role?.name;
+      const actorRoleName = actor?.role?.name;
+
+      if (targetRoleName === ROLES.SUPER_ADMIN) {
+        if (actorRoleName !== ROLES.SUPER_ADMIN) {
+          throw new ForbiddenError('Cannot modify status of a super administrator');
+        }
+        if (actor?.id === userId && data.status === USER_STATUS.BLOCKED) {
+          throw new ValidationError('Super administrators cannot block their own account');
+        }
+      }
+
       await usersRepository.update(userId, data, { transaction: t });
+
+      if (data.status === USER_STATUS.BLOCKED) {
+        await authRepository.deleteRefreshTokensByUser(userId);
+      }
+
+      if (actor) {
+        await logAudit({
+          actorId: actor.id,
+          action: 'USER_STATUS_UPDATED',
+          entityType: 'User',
+          entityId: userId,
+          metadata: { previousStatus: user.status, newStatus: data.status },
+          transaction: t,
+        });
+      }
+
       return this.getUserById(userId);
     });
   }
 
-  async deleteUser(userId: string) {
-    await sequelize.transaction(async (t: Transaction) => {
-      const user = await usersRepository.findById(userId, { transaction: t });
+  async updateUserRole(
+    userId: string,
+    data: UpdateUserRoleRequest,
+    actor: { id: string; role: { name: string } },
+  ) {
+    return sequelize.transaction(async (t: Transaction) => {
+      const user = await usersRepository.findById(userId, {
+        include: [{ model: Role, as: 'role' }],
+        transaction: t,
+      });
       if (!user) throw new NotFoundError('User');
+
+      const newRole = await Role.findByPk(data.roleId, { transaction: t });
+      if (!newRole) throw new NotFoundError('Role');
+
+      const targetRoleName = (user as any).role?.name;
+      const isActorSuperAdmin = actor.role.name === ROLES.SUPER_ADMIN;
+
+      if (targetRoleName === ROLES.SUPER_ADMIN && !isActorSuperAdmin) {
+        throw new ForbiddenError('Only super administrators can modify a super administrator');
+      }
+      if (newRole.name === ROLES.SUPER_ADMIN && !isActorSuperAdmin) {
+        throw new ForbiddenError('Only super administrators can assign the super administrator role');
+      }
+
+      const previousRoleId = user.roleId;
+      await usersRepository.update(userId, { roleId: newRole.id } as any, { transaction: t });
+      await authRepository.deleteRefreshTokensByUser(userId);
+
+      await logAudit({
+        actorId: actor.id,
+        action: 'USER_ROLE_UPDATED',
+        entityType: 'User',
+        entityId: userId,
+        metadata: {
+          previousRoleId,
+          previousRoleName: targetRoleName,
+          newRoleId: newRole.id,
+          newRoleName: newRole.name,
+        },
+        transaction: t,
+      });
+
+      return this.getUserById(userId);
+    });
+  }
+
+  async deleteUser(userId: string, actor?: { id: string; role?: { name: string } }) {
+    await sequelize.transaction(async (t: Transaction) => {
+      const user = await usersRepository.findById(userId, {
+        include: [{ model: Role, as: 'role' }],
+        transaction: t,
+      });
+      if (!user) throw new NotFoundError('User');
+
+      const targetRoleName = (user as any).role?.name;
+      if (targetRoleName === ROLES.SUPER_ADMIN) {
+        throw new ForbiddenError('Cannot delete a super administrator');
+      }
+
+      await authRepository.deleteRefreshTokensByUser(userId);
       await usersRepository.softDelete(userId, { transaction: t });
+
+      if (actor) {
+        await logAudit({
+          actorId: actor.id,
+          action: 'USER_DELETED',
+          entityType: 'User',
+          entityId: userId,
+          transaction: t,
+        });
+      }
     });
     await cascadeDeleteEntityMedia(S3_ENTITY_TYPES.USERS, userId);
   }

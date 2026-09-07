@@ -144,7 +144,7 @@ export const getMyDocuments = asyncHandler(async (req: Request, res: Response) =
 });
 
 export const deleteVendor = asyncHandler(async (req: Request, res: Response) => {
-  await vendorsService.deleteVendor(req.params.id!);
+  await vendorsService.deleteVendor(req.params.id!, req.user!.id);
   res.status(204).send();
 });
 

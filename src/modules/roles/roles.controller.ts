@@ -14,21 +14,21 @@ export const listAvailablePermissions = asyncHandler(async (req: Request, res: R
 });
 
 export const create = asyncHandler(async (req: Request, res: Response) => {
-  const role = await rolesService.create(req.body);
+  const role = await rolesService.create(req.body, req.user!.id);
   res.status(201).json(ok(role));
 });
 
 export const update = asyncHandler(async (req: Request, res: Response) => {
-  const role = await rolesService.update(req.params.id!, req.body);
+  const role = await rolesService.update(req.params.id!, req.body, req.user!.id);
   res.json(ok(role));
 });
 
 export const remove = asyncHandler(async (req: Request, res: Response) => {
-  await rolesService.delete(req.params.id!);
+  await rolesService.delete(req.params.id!, req.user!.id);
   res.json(ok({ deleted: true }));
 });
 
 export const setPermissions = asyncHandler(async (req: Request, res: Response) => {
-  const role = await rolesService.setPermissions(req.params.id!, req.body);
+  const role = await rolesService.setPermissions(req.params.id!, req.body, req.user!.id);
   res.json(ok(role));
 });

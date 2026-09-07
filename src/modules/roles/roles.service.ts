@@ -6,6 +6,7 @@ import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ROLE_VALUES } from '@core/constants/statuses';
 import { clearPermissionCache } from '@middleware/rbac.middleware';
+import { logAudit } from '@modules/audit/audit.service';
 import type { CreateRoleRequest, UpdateRoleRequest, SetRolePermissionsRequest } from './roles.dto';
 
 /** The 7 seeded role names are checked by string identity all over the codebase
@@ -45,16 +46,27 @@ export class RolesService {
     return permissions.map((p) => ({ id: p.id, key: p.key }));
   }
 
-  async create(data: CreateRoleRequest): Promise<SerializedRole> {
+  async create(data: CreateRoleRequest, actorId?: string): Promise<SerializedRole> {
     const existing = await Role.findOne({ where: { name: data.name } });
     if (existing) {
       throw new ValidationError({ name: ['A role with this name already exists'] });
     }
     const role = await Role.create({ name: data.name });
+
+    if (actorId) {
+      await logAudit({
+        actorId,
+        action: 'ROLE_CREATED',
+        entityType: 'Role',
+        entityId: role.id,
+        metadata: { name: role.name },
+      });
+    }
+
     return serializeRole(role as Role & { Permissions?: Permission[] });
   }
 
-  async update(id: string, data: UpdateRoleRequest): Promise<SerializedRole> {
+  async update(id: string, data: UpdateRoleRequest, actorId?: string): Promise<SerializedRole> {
     const role = await Role.findByPk(id);
     if (!role) throw new NotFoundError('Role');
     if (SYSTEM_ROLE_NAMES.has(role.name)) {
@@ -64,11 +76,23 @@ export class RolesService {
     if (existing && existing.id !== id) {
       throw new ValidationError({ name: ['A role with this name already exists'] });
     }
+    const previousName = role.name;
     await role.update({ name: data.name });
+
+    if (actorId) {
+      await logAudit({
+        actorId,
+        action: 'ROLE_UPDATED',
+        entityType: 'Role',
+        entityId: id,
+        metadata: { previousName, newName: data.name },
+      });
+    }
+
     return this.getById(id);
   }
 
-  async delete(id: string): Promise<void> {
+  async delete(id: string, actorId?: string): Promise<void> {
     const role = await Role.findByPk(id);
     if (!role) throw new NotFoundError('Role');
     if (SYSTEM_ROLE_NAMES.has(role.name)) {
@@ -83,11 +107,22 @@ export class RolesService {
     await sequelize.transaction(async (t) => {
       await (role as any).setPermissions([], { transaction: t });
       await role.destroy({ transaction: t });
+
+      if (actorId) {
+        await logAudit({
+          actorId,
+          action: 'ROLE_DELETED',
+          entityType: 'Role',
+          entityId: id,
+          metadata: { name: role.name },
+          transaction: t,
+        });
+      }
     });
     clearPermissionCache();
   }
 
-  async setPermissions(id: string, data: SetRolePermissionsRequest): Promise<SerializedRole> {
+  async setPermissions(id: string, data: SetRolePermissionsRequest, actorId?: string): Promise<SerializedRole> {
     const role = await Role.findByPk(id);
     if (!role) throw new NotFoundError('Role');
 
@@ -100,6 +135,17 @@ export class RolesService {
 
     await sequelize.transaction(async (t) => {
       await (role as any).setPermissions(permissions, { transaction: t });
+
+      if (actorId) {
+        await logAudit({
+          actorId,
+          action: 'ROLE_PERMISSIONS_UPDATED',
+          entityType: 'Role',
+          entityId: id,
+          metadata: { permissionKeys: data.permissionKeys },
+          transaction: t,
+        });
+      }
     });
     clearPermissionCache();
     return this.getById(id);

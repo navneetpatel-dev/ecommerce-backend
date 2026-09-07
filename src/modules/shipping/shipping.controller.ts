@@ -5,7 +5,7 @@ import { pageLimitQuerySchema } from '@core/http/pagination';
 import { COOKIES } from '@core/constants/http';
 import { shippingService } from './shipping.service';
 import { deliveryRatingsService } from '@modules/deliveryAgents/deliveryRatings.service';
-import { GetShippingRatesSchema } from './shipping.dto';
+import { GetShippingRatesSchema, UpdateRateSchema } from './shipping.dto';
 
 export const getRates = asyncHandler(async (req: Request, res: Response) => {
   const query = GetShippingRatesSchema.parse(req.query);
@@ -49,7 +49,7 @@ export const updateZone = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const deleteZone = asyncHandler(async (req: Request, res: Response) => {
-  await shippingService.deleteZone(req.params.id!);
+  await shippingService.deleteZone(req.params.id!, req.user!.id);
   res.status(204).send();
 });
 
@@ -75,6 +75,17 @@ export const listAdminRates = asyncHandler(async (_req: Request, res: Response) 
 export const createRate = asyncHandler(async (req: Request, res: Response) => {
   const rate = await shippingService.createRate(req.body, req.user!.id);
   res.status(201).json(ok(rate));
+});
+
+export const updateRate = asyncHandler(async (req: Request, res: Response) => {
+  const dto = UpdateRateSchema.parse(req.body);
+  const rate = await shippingService.updateRate(req.params.id!, dto, req.user!.id);
+  res.json(ok(rate));
+});
+
+export const deleteRate = asyncHandler(async (req: Request, res: Response) => {
+  await shippingService.deleteRate(req.params.id!, req.user!.id);
+  res.status(204).send();
 });
 
 export const processWebhook = asyncHandler(async (req: Request, res: Response) => {

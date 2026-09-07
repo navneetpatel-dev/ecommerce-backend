@@ -27,6 +27,7 @@ import { notificationsService } from '@modules/notifications/notifications.servi
 import { findVendorOwnerUserId } from '@modules/notifications/orderNotifications';
 import { vendorsService } from '@modules/vendors/vendors.service';
 import { shippingService } from '@modules/shipping/shipping.service';
+import { logAudit } from '@modules/audit/audit.service';
 import type { Transaction } from 'sequelize';
 import { resolvePdpPolicy, resolveCodEligibleAtPrice } from './pdpPolicy';
 import { productDiscountPercent, productShowMrp, taxInclusivePrice } from '@modules/pricing/displayMoney';
@@ -594,6 +595,14 @@ export class ProductsService {
 
     const product = await this.getProductById(id);
 
+    await logAudit({
+      actorId: adminId,
+      action: 'PRODUCT_APPROVED',
+      entityType: 'Product',
+      entityId: id,
+      metadata: { name: product.name },
+    });
+
     const ownerId = await findVendorOwnerUserId(product.vendorId);
     if (ownerId) {
       void notificationsService.sendProductApproved(ownerId, product.id, {
@@ -603,7 +612,7 @@ export class ProductsService {
     return product;
   }
 
-  async rejectProduct(id: string, data: RejectProductRequest) {
+  async rejectProduct(id: string, data: RejectProductRequest, actorId?: string) {
     await sequelize.transaction(async (t) => {
       const row = await productsRepository.findById(id, { transaction: t });
       if (!row) throw new NotFoundError('Product');
@@ -620,6 +629,16 @@ export class ProductsService {
 
     const product = await this.getProductById(id);
 
+    if (actorId) {
+      await logAudit({
+        actorId,
+        action: 'PRODUCT_REJECTED',
+        entityType: 'Product',
+        entityId: id,
+        metadata: { name: product.name, rejectionNote: data.rejectionNote },
+      });
+    }
+
     const ownerId = await findVendorOwnerUserId(product.vendorId);
     if (ownerId) {
       void notificationsService.sendProductRejected(ownerId, product.id, {
@@ -630,12 +649,49 @@ export class ProductsService {
     return product;
   }
 
-  async archiveProduct(id: string) {
+  async archiveProduct(id: string, actorId?: string) {
     return sequelize.transaction(async (t) => {
       const product = await productsRepository.findById(id, { transaction: t });
       if (!product) throw new NotFoundError('Product');
 
       await productsRepository.update(id, { status: PRODUCT_STATUS.ARCHIVED }, { transaction: t });
+
+      if (actorId) {
+        await logAudit({
+          actorId,
+          action: 'PRODUCT_ARCHIVED',
+          entityType: 'Product',
+          entityId: id,
+          metadata: { name: product.name },
+          transaction: t,
+        });
+      }
+
+      return this.getProductById(id);
+    });
+  }
+
+  async unarchiveProduct(id: string, actorId?: string) {
+    return sequelize.transaction(async (t) => {
+      const product = await productsRepository.findById(id, { transaction: t });
+      if (!product) throw new NotFoundError('Product');
+      if (product.status !== PRODUCT_STATUS.ARCHIVED) {
+        throw new ValidationError('Only archived products can be unarchived');
+      }
+
+      await productsRepository.update(id, { status: PRODUCT_STATUS.DRAFT }, { transaction: t });
+
+      if (actorId) {
+        await logAudit({
+          actorId,
+          action: 'PRODUCT_UNARCHIVED',
+          entityType: 'Product',
+          entityId: id,
+          metadata: { name: product.name, restoredStatus: PRODUCT_STATUS.DRAFT },
+          transaction: t,
+        });
+      }
+
       return this.getProductById(id);
     });
   }

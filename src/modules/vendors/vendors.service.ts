@@ -2,7 +2,7 @@ import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { AppError } from '@core/errors/AppError';
-import { ROLES, VENDOR_STATUS, ORDER_STATUS, COMMISSION_STATUS } from '@core/constants/statuses';
+import { ROLES, VENDOR_STATUS, ORDER_STATUS, COMMISSION_STATUS, PRODUCT_STATUS } from '@core/constants/statuses';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { fromPaise } from '@modules/pricing/money';
@@ -16,6 +16,8 @@ import { extractS3KeyFromUrl, signedGetObjectUrl } from '@config/s3';
 import { vendorsRepository } from './vendors.repository';
 import { VendorDocument } from '@database/models/vendorDocument.model';
 import { VendorCategory } from '@database/models/vendorCategory.model';
+import { SubOrder } from '@database/models/subOrder.model';
+import { Product } from '@database/models/product.model';
 import { Category } from '@database/models/category.model';
 import { Role } from '@database/models/role.model';
 import { sequelize } from '@database/models';
@@ -574,10 +576,37 @@ export class VendorsService {
     return this.getVendorDocuments(userVendorId);
   }
 
-  async deleteVendor(vendorId: string) {
+  async deleteVendor(vendorId: string, actorId?: string) {
     const media = await sequelize.transaction(async (t) => {
       const vendor = await vendorsRepository.findById(vendorId, { transaction: t });
       if (!vendor) throw new NotFoundError('Vendor');
+
+      const activeSubOrdersCount = await SubOrder.count({
+        where: {
+          vendorId,
+          status: {
+            [Op.in]: [ORDER_STATUS.PENDING, ORDER_STATUS.CONFIRMED, ORDER_STATUS.SHIPPED],
+          },
+        },
+        transaction: t,
+      });
+
+      if (activeSubOrdersCount > 0) {
+        throw new ValidationError(
+          'Cannot delete vendor with active suborders in progress. Settle or cancel all active orders first.',
+        );
+      }
+
+      await Product.update(
+        { status: PRODUCT_STATUS.ARCHIVED },
+        {
+          where: {
+            vendorId,
+            status: { [Op.ne]: PRODUCT_STATUS.ARCHIVED },
+          },
+          transaction: t,
+        },
+      );
 
       const docs = await VendorDocument.findAll({
         where: { vendorId },
@@ -589,6 +618,17 @@ export class VendorsService {
       await VendorDocument.destroy({ where: { vendorId }, transaction: t });
       await VendorCategory.destroy({ where: { vendorId }, transaction: t });
       await vendorsRepository.softDelete(vendorId, { transaction: t });
+
+      if (actorId) {
+        await logAudit({
+          actorId,
+          action: 'VENDOR_DELETED',
+          entityType: 'Vendor',
+          entityId: vendorId,
+          metadata: { businessName: vendor.businessName },
+          transaction: t,
+        });
+      }
 
       return {
         urls: [vendor.logoUrl, vendor.bannerUrl, ...docs.map((d) => d.url)],

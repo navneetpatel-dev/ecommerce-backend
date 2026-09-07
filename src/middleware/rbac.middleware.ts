@@ -21,11 +21,14 @@ export async function loadPermissionsForRole(roleId: string): Promise<Set<string
 }
 
 export async function resolvePermissionsForUser(user: {
-  roleId: string;
+  roleId?: string;
   role: { name: string };
 }): Promise<PermissionKey[]> {
   if (user.role.name === ROLES.SUPER_ADMIN) {
     return [...PERMISSION_KEYS];
+  }
+  if (!user.roleId) {
+    return [];
   }
   let perms = rolePermissionCache.get(user.roleId);
   if (!perms) {
@@ -34,6 +37,16 @@ export async function resolvePermissionsForUser(user: {
   return [...perms].filter((k): k is PermissionKey =>
     (PERMISSION_KEYS as readonly string[]).includes(k),
   );
+}
+
+export async function userHasPermission(
+  user: { roleId?: string; role: { name: string } } | undefined | null,
+  ...permissionKeys: PermissionKey[]
+): Promise<boolean> {
+  if (!user) return false;
+  if (user.role.name === ROLES.SUPER_ADMIN) return true;
+  const perms = await resolvePermissionsForUser(user);
+  return permissionKeys.some((k) => perms.includes(k));
 }
 
 /**

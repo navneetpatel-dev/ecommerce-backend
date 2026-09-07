@@ -16,6 +16,10 @@ export const UpdateUserStatusSchema = z.object({
   status: z.enum(USER_STATUS_VALUES),
 });
 
+export const UpdateUserRoleSchema = z.object({
+  roleId: z.string().uuid(),
+});
+
 export const GetUsersQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(100).default(20),
@@ -60,6 +64,7 @@ export const UpdateAddressSchema = CreateAddressSchema.partial();
 
 export type UpdateUserProfileRequest = z.infer<typeof UpdateUserProfileSchema>;
 export type UpdateUserStatusRequest = z.infer<typeof UpdateUserStatusSchema>;
+export type UpdateUserRoleRequest = z.infer<typeof UpdateUserRoleSchema>;
 export type GetUsersQuery = z.infer<typeof GetUsersQuerySchema>;
 export type ListAssigneesQuery = z.infer<typeof ListAssigneesQuerySchema>;
 export type CreateAddressRequest = z.infer<typeof CreateAddressSchema>;

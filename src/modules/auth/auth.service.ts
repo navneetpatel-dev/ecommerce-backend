@@ -13,7 +13,7 @@ import { logger } from '@core/logger';
 import { clearPermissionCache, resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { redisClient, withRedis } from '@config/redis';
 import { EMAIL_VERIFY_EXPIRY, PASSWORD_RESET_EXPIRY, REFRESH_TOKEN_TTL_MS } from '@core/constants/http';
-import { ROLES, USER_STATUS } from '@core/constants/statuses';
+import { ADMIN_ROLES, ROLES, USER_STATUS } from '@core/constants/statuses';
 import { ERROR_MESSAGES, ERROR_CODES } from '@core/constants/errors';
 import { roleNameOf } from '@utils/userRole';
 import { notificationsService } from '@modules/notifications/notifications.service';
@@ -522,7 +522,11 @@ export class AuthService {
    * this token is active is attributed back to `actingAdminId` via the request
    * context (see `logAudit` in the audit module), not just this initiating call.
    */
-  async impersonateUser(actingAdminId: string, targetUserId: string): Promise<ImpersonationResult> {
+  async impersonateUser(
+    actingAdmin: { id: string; role?: { name: string } } | string,
+    targetUserId: string,
+  ): Promise<ImpersonationResult> {
+    const actingAdminId = typeof actingAdmin === 'string' ? actingAdmin : actingAdmin.id;
     if (actingAdminId === targetUserId) {
       throw new ValidationError({ userId: ['You cannot impersonate your own account'] });
     }
@@ -535,6 +539,26 @@ export class AuthService {
     const roleName = roleNameOf(target);
     if (roleName === ROLES.SUPER_ADMIN) {
       throw new ForbiddenError('Super admin accounts cannot be impersonated');
+    }
+
+    let actingAdminRoleName: string | undefined =
+      typeof actingAdmin !== 'string' ? actingAdmin.role?.name : undefined;
+    if (!actingAdminRoleName) {
+      const actingUser = await User.findByPk(actingAdminId, { include: [{ model: Role, as: 'role' }] });
+      actingAdminRoleName = actingUser ? roleNameOf(actingUser) : undefined;
+    }
+
+    if (actingAdminRoleName !== ROLES.SUPER_ADMIN) {
+      const isTargetStaffOrAdmin =
+        (ADMIN_ROLES as readonly string[]).includes(roleName) ||
+        roleName.startsWith('ADMIN_') ||
+        ((await resolvePermissionsForUser({ roleId: target.roleId, role: { name: roleName } })).length > 0 &&
+          roleName !== ROLES.CUSTOMER &&
+          roleName !== ROLES.VENDOR_OWNER &&
+          roleName !== ROLES.VENDOR_STAFF);
+      if (isTargetStaffOrAdmin) {
+        throw new ForbiddenError('Only super administrators can impersonate administrative staff accounts');
+      }
     }
 
     const payload: JwtPayload = {

@@ -4,8 +4,9 @@ import { User } from '@database/models/user.model';
 import { Product } from '@database/models/product.model';
 import { Review } from '@database/models/review.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
+import { Role } from '@database/models/role.model';
 import { sequelize } from '@database/models';
-import { QueryTypes } from 'sequelize';
+import { Op, QueryTypes } from 'sequelize';
 import { fromPaise } from '@modules/pricing/money';
 import { REPORTABLE_ORDER_SQL, sqlFrozenPaise } from '@modules/pricing/frozenMoneySql';
 import {
@@ -14,6 +15,7 @@ import {
   VENDOR_STATUS,
   REVIEW_STATUS,
   ORDER_STATUS,
+  ROLES,
 } from '@core/constants/statuses';
 
 export type DashboardMetrics = {
@@ -71,9 +73,20 @@ export const adminService = {
       await Promise.all([
         Order.count(),
         Vendor.count(),
-        User.count(),
+        User.count({
+          include: [{
+            model: Role,
+            as: 'role',
+            where: { name: ROLES.CUSTOMER },
+          }],
+        }),
         Product.count({ where: { status: PRODUCT_STATUS.PENDING_APPROVAL } }),
-        Order.sum('totalAmount'),
+        Order.sum('totalAmount', {
+          where: {
+            paymentStatus: PAYMENT_STATUS.PAID,
+            status: { [Op.ne]: ORDER_STATUS.CANCELLED },
+          },
+        }),
       ]);
 
     return {
@@ -105,11 +118,22 @@ export const adminService = {
       ratingRows,
       growthRows,
     ] = await Promise.all([
-      Order.sum('totalAmount', { where: { paymentStatus: [PAYMENT_STATUS.PAID] as any } }),
+      Order.sum('totalAmount', {
+        where: {
+          paymentStatus: PAYMENT_STATUS.PAID,
+          status: { [Op.ne]: ORDER_STATUS.CANCELLED },
+        },
+      }),
       Order.sum('totalAmount'),
       Order.count(),
       Vendor.count(),
-      User.count(),
+      User.count({
+        include: [{
+          model: Role,
+          as: 'role',
+          where: { name: ROLES.CUSTOMER },
+        }],
+      }),
       Order.count({ where: { status: ORDER_STATUS.CANCELLED } }),
       ReturnRequest.count(),
       Product.count({ where: { status: PRODUCT_STATUS.PENDING_APPROVAL } }),

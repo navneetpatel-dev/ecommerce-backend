@@ -10,12 +10,12 @@ import {
 import { CreditNote } from '@database/models/creditNote.model';
 import { DebitNote } from '@database/models/debitNote.model';
 import { NotFoundError } from '@core/errors/NotFoundError';
-import { ADMIN_ROLES } from '@core/constants/statuses';
-import { roleNameOf } from '@utils/userRole';
+import { PERMISSIONS } from '@core/constants/permissions';
+import { userHasPermission } from '@middleware/rbac.middleware';
 
-function isAdminActor(req: Request): boolean {
-  const name = req.user!.role?.name ?? roleNameOf(req.user as any);
-  return (ADMIN_ROLES as readonly string[]).includes(name);
+async function isAdminActor(req: Request): Promise<boolean> {
+  if (!req.user) return false;
+  return await userHasPermission(req.user, PERMISSIONS.ORDER_REFUND, PERMISSIONS.ORDER_MANAGE);
 }
 
 export const create = asyncHandler(async (req: Request, res: Response) => {
@@ -81,7 +81,7 @@ export const downloadCreditNote = asyncHandler(async (req: Request, res: Respons
     noteId: note.id,
     userId: req.user!.id,
     vendorId: req.user!.vendorId,
-    isAdmin: isAdminActor(req),
+    isAdmin: await isAdminActor(req),
   });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -95,7 +95,7 @@ export const downloadDebitNote = asyncHandler(async (req: Request, res: Response
   const { buffer, filename } = await getDebitNotePdfForActor({
     noteId: note.id,
     vendorId: req.user!.vendorId,
-    isAdmin: isAdminActor(req),
+    isAdmin: await isAdminActor(req),
   });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);

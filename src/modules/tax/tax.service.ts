@@ -4,6 +4,7 @@ import { TaxRule } from '@database/models/taxRule.model';
 import { Category } from '@database/models/category.model';
 import { sequelize } from '@database/models';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
+import { logAudit } from '@modules/audit/audit.service';
 
 import { toPaise, fromPaise } from '@modules/pricing/money';
 import { computeSubOrderBreakdown } from '@modules/pricing/pricing.engine';
@@ -100,11 +101,14 @@ export class TaxService {
     };
   }
 
-  async createTaxRule(data: {
-    categoryId?: string;
-    hsnCode?: string;
-    gstPercentage: number;
-  }) {
+  async createTaxRule(
+    data: {
+      categoryId?: string;
+      hsnCode?: string;
+      gstPercentage: number;
+    },
+    actorId?: string,
+  ) {
     return sequelize.transaction(async (t) => {
       const rule = await TaxRule.create({
         categoryId: data.categoryId ?? null,
@@ -112,30 +116,67 @@ export class TaxService {
         gstPercentage: data.gstPercentage,
       }, { transaction: t });
 
+      if (actorId) {
+        await logAudit({
+          actorId,
+          action: 'TAX_RULE_CREATED',
+          entityType: 'TaxRule',
+          entityId: rule.id,
+          metadata: { gstPercentage: data.gstPercentage, categoryId: data.categoryId },
+          transaction: t,
+        });
+      }
+
       return rule;
     });
   }
 
-  async updateTaxRule(id: string, data: {
-    categoryId?: string;
-    hsnCode?: string;
-    gstPercentage?: number;
-  }) {
+  async updateTaxRule(
+    id: string,
+    data: {
+      categoryId?: string;
+      hsnCode?: string;
+      gstPercentage?: number;
+    },
+    actorId?: string,
+  ) {
     return sequelize.transaction(async (t) => {
       const rule = await TaxRule.findByPk(id, { transaction: t });
       if (!rule) throw new NotFoundError('TaxRule');
 
       await rule.update(data, { transaction: t });
+
+      if (actorId) {
+        await logAudit({
+          actorId,
+          action: 'TAX_RULE_UPDATED',
+          entityType: 'TaxRule',
+          entityId: id,
+          metadata: { patch: data },
+          transaction: t,
+        });
+      }
+
       return rule;
     });
   }
 
-  async deleteTaxRule(id: string) {
+  async deleteTaxRule(id: string, actorId?: string) {
     return sequelize.transaction(async (t) => {
       const rule = await TaxRule.findByPk(id, { transaction: t });
       if (!rule) throw new NotFoundError('TaxRule');
 
       await rule.destroy({ transaction: t });
+
+      if (actorId) {
+        await logAudit({
+          actorId,
+          action: 'TAX_RULE_DELETED',
+          entityType: 'TaxRule',
+          entityId: id,
+          transaction: t,
+        });
+      }
     });
   }
 }

@@ -270,6 +270,6 @@ export const me = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const impersonate = asyncHandler(async (req: Request, res: Response) => {
-  const result = await authService.impersonateUser(req.user!.id, req.params.userId!);
+  const result = await authService.impersonateUser(req.user!, req.params.userId!);
   res.status(200).json(ok(result));
 });

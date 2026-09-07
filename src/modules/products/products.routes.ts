@@ -80,6 +80,7 @@ router.post('/:id/submit', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE), 
 router.post('/:id/approve', authenticate, authorize(PERMISSIONS.PRODUCT_APPROVE), productsController.approveProduct);
 router.post('/:id/reject', authenticate, authorize(PERMISSIONS.PRODUCT_APPROVE), validate(RejectProductSchema), productsController.rejectProduct);
 router.post('/:id/archive', authenticate, authorize(PERMISSIONS.PRODUCT_MANAGE), productsController.archiveProduct);
+router.post('/:id/unarchive', authenticate, authorize(PERMISSIONS.PRODUCT_MANAGE), productsController.unarchiveProduct);
 
 // Variant management
 router.post(

@@ -22,6 +22,7 @@ import { checkoutAmountDue } from '@modules/pricing/displayMoney';
 import { roundMoney } from '@modules/pricing/money';
 import { rollbackOrderWalletIfNeeded } from '@modules/wallet/walletOrderRollback';
 import { notificationsService } from '@modules/notifications/notifications.service';
+import { logAudit } from '@modules/audit/audit.service';
 
 const CANCELLABLE_SUB_STATUSES = new Set<string>([
   ORDER_STATUS.PENDING,
@@ -51,7 +52,7 @@ export async function cancelPaidOrder(
     if (!isAdmin && locked.userId !== userId) {
       throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_ORDER);
     }
-    if (locked.paymentStatus !== PAYMENT_STATUS.PAID) {
+    if (locked.paymentStatus !== PAYMENT_STATUS.PAID && !isAdmin) {
       throw new ValidationError(ERROR_MESSAGES.ORDER_CANCEL_PAID_ONLY);
     }
     if (locked.status === ORDER_STATUS.CANCELLED) {
@@ -134,30 +135,40 @@ export async function cancelPaidOrder(
   if (!order) throw new NotFoundError('Order');
 
   if (!alreadyCancelled) {
-    if (razorpayPaymentId && razorpayDue > 0) {
-      try {
-        const refundId = await paymentsService.createRazorpayRefund(
-          razorpayPaymentId,
-          Math.round(razorpayDue * 100),
-          { orderId: order.id, reason: 'ORDER_CANCEL' },
-        );
+    if (order.paymentStatus === PAYMENT_STATUS.PAID) {
+      if (razorpayPaymentId && razorpayDue > 0) {
+        try {
+          const refundId = await paymentsService.createRazorpayRefund(
+            razorpayPaymentId,
+            Math.round(razorpayDue * 100),
+            { orderId: order.id, reason: 'ORDER_CANCEL' },
+          );
+          await order.update({
+            cancelRefundStatus: REFUND_STATUS.INITIATED,
+            cancelRazorpayRefundId: refundId,
+          });
+        } catch {
+          await order.update({ cancelRefundStatus: REFUND_STATUS.FAILED });
+        }
+      } else {
         await order.update({
-          cancelRefundStatus: REFUND_STATUS.INITIATED,
-          cancelRazorpayRefundId: refundId,
+          paymentStatus: PAYMENT_STATUS.REFUNDED,
+          cancelRefundStatus: REFUND_STATUS.COMPLETED,
         });
-      } catch {
-        await order.update({ cancelRefundStatus: REFUND_STATUS.FAILED });
       }
-    } else {
-      await order.update({
-        paymentStatus: PAYMENT_STATUS.REFUNDED,
-        cancelRefundStatus: REFUND_STATUS.COMPLETED,
-      });
     }
 
     void notificationsService.sendOrderCancelled(order.userId, order.id, {
       orderId: order.id,
       orderNumber: order.id.slice(0, 8).toUpperCase(),
+    });
+
+    await logAudit({
+      actorId: userId,
+      action: 'ORDER_CANCELLED',
+      entityType: 'Order',
+      entityId: order.id,
+      metadata: { isAdmin, paymentStatus: order.paymentStatus, cancelRefundStatus: order.cancelRefundStatus },
     });
   }
 

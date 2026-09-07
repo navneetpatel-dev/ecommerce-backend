@@ -42,7 +42,7 @@ import { settingsService } from '@modules/settings/settings.service';
 import { logAudit } from '@modules/audit/audit.service';
 import { usersService } from '@modules/users/users.service';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
-import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
+import { resolvePermissionsForUser, userHasPermission } from '@middleware/rbac.middleware';
 import { rebaseAttachmentUrlsToEntity, S3_ENTITY_TYPES } from '@core/s3';
 import { extractS3KeyFromUrl, signedGetObjectUrlMap } from '@config/s3';
 import { assertAttachmentLimits, assertCombinedAttachmentLimits } from '@core/media';
@@ -82,7 +82,8 @@ function assertTransition(from: SupportTicketStatus, to: SupportTicketStatus) {
   }
 }
 
-function toTicketSenderRole(roleName: string): TicketSenderRole {
+async function toTicketSenderRole(actor: Actor): Promise<TicketSenderRole> {
+  const roleName = actor.role.name;
   if (roleName === ROLES.VENDOR_OWNER) return TICKET_SENDER_ROLE.VENDOR;
   if (roleName === ROLES.VENDOR_STAFF) return TICKET_SENDER_ROLE.VENDOR_STAFF;
   if (roleName === ROLES.CUSTOMER) return TICKET_SENDER_ROLE.CUSTOMER;
@@ -90,6 +91,9 @@ function toTicketSenderRole(roleName: string): TicketSenderRole {
   if (roleName === ROLES.ADMIN_ORDER_MANAGER) return TICKET_SENDER_ROLE.ADMIN_ORDER_MANAGER;
   if (roleName === ROLES.ADMIN_CATALOG_MANAGER) return TICKET_SENDER_ROLE.ADMIN_CATALOG_MANAGER;
   if ((ADMIN_ROLES as readonly string[]).includes(roleName)) return TICKET_SENDER_ROLE.ADMIN;
+  if (await userHasPermission(actor, PERMISSIONS.TICKET_MANAGE)) {
+    return TICKET_SENDER_ROLE.ADMIN;
+  }
   return TICKET_SENDER_ROLE.CUSTOMER;
 }
 
@@ -97,8 +101,11 @@ function isStaffSender(senderRole: string): boolean {
   return senderRole !== TICKET_SENDER_ROLE.CUSTOMER;
 }
 
-function isAdminActor(actor: Actor): boolean {
-  return (ADMIN_ROLES as readonly string[]).includes(actor.role.name);
+async function isAdminActor(actor: Actor): Promise<boolean> {
+  return (
+    (ADMIN_ROLES as readonly string[]).includes(actor.role.name) ||
+    (await userHasPermission(actor, PERMISSIONS.TICKET_MANAGE))
+  );
 }
 
 function isVendorActor(actor: Actor): boolean {
@@ -225,7 +232,7 @@ async function markTicketRead(
 }
 
 async function assertTicketAccess(ticket: SupportTicket, actor: Actor): Promise<void> {
-  if (isAdminActor(actor)) {
+  if (await isAdminActor(actor)) {
     const permissions = await resolvePermissionsForUser(actor);
     if (permissions.includes(PERMISSIONS.TICKET_MANAGE)) return;
     throw new AppError(ERROR_MESSAGES.TICKET_FORBIDDEN, 403, ERROR_CODES.TICKET_FORBIDDEN);
@@ -662,7 +669,7 @@ export class SupportTicketsService {
       );
       await assertRemoteVideoBackstop(data.attachmentUrls ?? [], 'ticket');
 
-      const senderRole = toTicketSenderRole(actor.role.name);
+      const senderRole = await toTicketSenderRole(actor);
       const message = await TicketMessage.create(
         {
           ticketId: id,
@@ -765,7 +772,7 @@ export class SupportTicketsService {
       }
 
       await assertTicketAccess(locked, actor);
-      if (!isAdminActor(actor) && !isVendorActor(actor)) {
+      if (!(await isAdminActor(actor)) && !isVendorActor(actor)) {
         throw new AppError(ERROR_MESSAGES.TICKET_FORBIDDEN, 403, ERROR_CODES.TICKET_FORBIDDEN);
       }
 
@@ -885,7 +892,7 @@ export class SupportTicketsService {
       if (!locked) {
         throw new AppError(ERROR_MESSAGES.TICKET_NOT_FOUND, 404, ERROR_CODES.TICKET_NOT_FOUND);
       }
-      if (!isAdminActor(actor)) {
+      if (!(await isAdminActor(actor))) {
         throw new AppError(ERROR_MESSAGES.TICKET_FORBIDDEN, 403, ERROR_CODES.TICKET_FORBIDDEN);
       }
 
@@ -921,7 +928,7 @@ export class SupportTicketsService {
       if (!locked) {
         throw new AppError(ERROR_MESSAGES.TICKET_NOT_FOUND, 404, ERROR_CODES.TICKET_NOT_FOUND);
       }
-      if (!isAdminActor(actor)) {
+      if (!(await isAdminActor(actor))) {
         throw new AppError(ERROR_MESSAGES.TICKET_FORBIDDEN, 403, ERROR_CODES.TICKET_FORBIDDEN);
       }
 
@@ -955,7 +962,7 @@ export class SupportTicketsService {
       if (!locked) {
         throw new AppError(ERROR_MESSAGES.TICKET_NOT_FOUND, 404, ERROR_CODES.TICKET_NOT_FOUND);
       }
-      if (!isAdminActor(actor)) {
+      if (!(await isAdminActor(actor))) {
         throw new AppError(ERROR_MESSAGES.TICKET_FORBIDDEN, 403, ERROR_CODES.TICKET_FORBIDDEN);
       }
 
@@ -1005,7 +1012,7 @@ export class SupportTicketsService {
       if (!locked) {
         throw new AppError(ERROR_MESSAGES.TICKET_NOT_FOUND, 404, ERROR_CODES.TICKET_NOT_FOUND);
       }
-      if (!isAdminActor(actor)) {
+      if (!(await isAdminActor(actor))) {
         throw new AppError(ERROR_MESSAGES.TICKET_FORBIDDEN, 403, ERROR_CODES.TICKET_FORBIDDEN);
       }
 

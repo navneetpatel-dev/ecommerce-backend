@@ -1,7 +1,8 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
-import { ADMIN_ROLES } from '@core/constants/statuses';
+import { PERMISSIONS } from '@core/constants/permissions';
+import { userHasPermission } from '@middleware/rbac.middleware';
 import { inventoryService } from './inventory.service';
 import { DEFAULT_LOW_STOCK_THRESHOLD } from '@core/constants/http';
 
@@ -27,7 +28,7 @@ export const createStockAlert = asyncHandler(async (req: Request, res: Response)
 });
 
 export const deleteStockAlert = asyncHandler(async (req: Request, res: Response) => {
-  const isAdmin = !!req.user?.role?.name && (ADMIN_ROLES as readonly string[]).includes(req.user.role.name);
+  const isAdmin = !!req.user && (await userHasPermission(req.user, PERMISSIONS.PRODUCT_MANAGE));
   await inventoryService.deleteStockAlert(req.params.id!, {
     userId: req.user?.id,
     isAdmin,

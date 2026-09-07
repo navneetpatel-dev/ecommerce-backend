@@ -8,6 +8,7 @@ import {
   CreateZoneSchema,
   UpdateZoneSchema,
   CreateRateSchema,
+  UpdateRateSchema,
   RescheduleDeliverySchema,
   SubmitDeliveryRatingSchema,
 } from './shipping.dto';
@@ -44,6 +45,8 @@ router.delete('/zones/:id', authenticate, authorize(PERMISSIONS.SHIPPING_MANAGE)
 
 router.get(['/rates/admin', '/admin/rates'], authenticate, authorize(PERMISSIONS.SHIPPING_MANAGE), shippingController.listAdminRates);
 router.post('/rates', authenticate, authorize(PERMISSIONS.SHIPPING_MANAGE), validate(CreateRateSchema), shippingController.createRate);
+router.patch('/rates/:id', authenticate, authorize(PERMISSIONS.SHIPPING_MANAGE), validate(UpdateRateSchema), shippingController.updateRate);
+router.delete('/rates/:id', authenticate, authorize(PERMISSIONS.SHIPPING_MANAGE), shippingController.deleteRate);
 
 router.post('/webhooks/:carrier', shippingController.processWebhook);
 

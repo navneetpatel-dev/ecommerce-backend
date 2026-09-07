@@ -49,6 +49,8 @@ export const CreateRateSchema = z.object({
   vendorId: z.string().uuid().optional(),
 });
 
+export const UpdateRateSchema = CreateRateSchema.partial();
+
 export const RescheduleDeliverySchema = z.object({
   slot: z.string().trim().min(3).max(64),
 });
@@ -67,6 +69,7 @@ export type GetShippingRatesRequest = z.infer<typeof GetShippingRatesSchema>;
 export type CreateZoneRequest = z.infer<typeof CreateZoneSchema>;
 export type UpdateZoneRequest = z.infer<typeof UpdateZoneSchema>;
 export type CreateRateRequest = z.infer<typeof CreateRateSchema>;
+export type UpdateRateRequest = z.infer<typeof UpdateRateSchema>;
 export type WebhookPayload = z.infer<typeof WebhookPayloadSchema>;
 export type RescheduleDeliveryRequest = z.infer<typeof RescheduleDeliverySchema>;
 export type SubmitDeliveryRatingRequest = z.infer<typeof SubmitDeliveryRatingSchema>;

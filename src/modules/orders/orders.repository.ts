@@ -1,6 +1,7 @@
 import { BaseRepository } from '@core/repository/BaseRepository';
 import { Order } from '@database/models/order.model';
-import { WhereOptions } from 'sequelize';
+import { Op, type WhereOptions } from 'sequelize';
+import { sequelize } from '@database/models';
 
 export class OrdersRepository extends BaseRepository<Order> {
   constructor() {
@@ -10,6 +11,7 @@ export class OrdersRepository extends BaseRepository<Order> {
   async findWithFilters(filters: {
     userId?: string;
     status?: string;
+    search?: string;
     limit: number;
     offset: number;
   }) {
@@ -21,6 +23,15 @@ export class OrdersRepository extends BaseRepository<Order> {
 
     if (filters.status) {
       where.status = filters.status as any;
+    }
+
+    if (filters.search?.trim()) {
+      const q = `%${filters.search.trim()}%`;
+      (where as any)[Op.and] = [
+        sequelize.literal(
+          `("Order"."id"::text ILIKE ${sequelize.escape(q)} OR "user"."name" ILIKE ${sequelize.escape(q)} OR "user"."email" ILIKE ${sequelize.escape(q)})`,
+        ),
+      ];
     }
 
     return this.model.findAndCountAll({

@@ -7,6 +7,8 @@ import { ERROR_MESSAGES } from '@core/constants/errors';
 import { BULK_IMPORT_LIMITS } from '@core/constants/product';
 import { productsService } from './products.service';
 import { ADMIN_ROLES, ROLES } from '@core/constants/statuses';
+import { PERMISSIONS } from '@core/constants/permissions';
+import { userHasPermission } from '@middleware/rbac.middleware';
 import { parseProductsCsv } from './products.csv';
 import {
   CreateProductSchema,
@@ -21,13 +23,13 @@ import {
 } from './products.dto';
 
 /** Admin/vendor dashboards stay unscoped; shoppers use customerVisible. */
-function isCatalogModerator(req: Request): boolean {
+async function isCatalogModerator(req: Request): Promise<boolean> {
   const role = req.user?.role?.name;
   if (!role) return false;
+  if (role === ROLES.VENDOR_OWNER || role === ROLES.VENDOR_STAFF) return true;
   return (
     (ADMIN_ROLES as readonly string[]).includes(role) ||
-    role === ROLES.VENDOR_OWNER ||
-    role === ROLES.VENDOR_STAFF
+    await userHasPermission(req.user, PERMISSIONS.PRODUCT_MANAGE)
   );
 }
 
@@ -93,7 +95,7 @@ function extractAttributeFilters(query: Request['query']): Record<string, string
 export const getProducts = asyncHandler(async (req: Request, res: Response) => {
   const query = GetProductsQuerySchema.parse(req.query);
   const result = await productsService.getProducts(query, {
-    customerFacing: !isCatalogModerator(req),
+    customerFacing: !(await isCatalogModerator(req)),
     includeDescendants: Boolean(query.includeDescendants),
     attributeFilters: extractAttributeFilters(req.query),
   });
@@ -102,7 +104,7 @@ export const getProducts = asyncHandler(async (req: Request, res: Response) => {
 
 export const getProductById = asyncHandler(async (req: Request, res: Response) => {
   const product = await productsService.getProductById(req.params.id!, {
-    customerFacing: !isCatalogModerator(req),
+    customerFacing: !(await isCatalogModerator(req)),
   });
   res.json(ok(product));
 });
@@ -125,7 +127,7 @@ export const getFrequentlyBoughtTogether = asyncHandler(async (req: Request, res
 
 export const getProductBySlug = asyncHandler(async (req: Request, res: Response) => {
   const product = await productsService.getProductBySlug(req.params.slug!, {
-    customerFacing: !isCatalogModerator(req),
+    customerFacing: !(await isCatalogModerator(req)),
   });
   res.json(ok(product));
 });
@@ -153,12 +155,17 @@ export const approveProduct = asyncHandler(async (req: Request, res: Response) =
 
 export const rejectProduct = asyncHandler(async (req: Request, res: Response) => {
   const dto = RejectProductSchema.parse(req.body);
-  const product = await productsService.rejectProduct(req.params.id!, dto);
+  const product = await productsService.rejectProduct(req.params.id!, dto, req.user!.id);
   res.json(ok(product));
 });
 
 export const archiveProduct = asyncHandler(async (req: Request, res: Response) => {
-  const product = await productsService.archiveProduct(req.params.id!);
+  const product = await productsService.archiveProduct(req.params.id!, req.user!.id);
+  res.json(ok(product));
+});
+
+export const unarchiveProduct = asyncHandler(async (req: Request, res: Response) => {
+  const product = await productsService.unarchiveProduct(req.params.id!, req.user!.id);
   res.json(ok(product));
 });
 

@@ -1,4 +1,5 @@
 import { PlatformSetting } from '@database/models/platformSetting.model';
+import { logAudit } from '@modules/audit/audit.service';
 
 export type PlatformSettingsPayload = {
   defaultCommissionRate: number;
@@ -107,6 +108,15 @@ export const settingsService = {
       updatedBy: actorId,
       createdBy: actorId,
     });
+
+    await logAudit({
+      actorId,
+      action: 'PLATFORM_SETTINGS_UPDATED',
+      entityType: 'PlatformSetting',
+      entityId: SETTINGS_KEY,
+      metadata: { keysUpdated: Object.keys(value) },
+    });
+
     return next;
   },
 };

@@ -4,6 +4,8 @@ import { env } from '@config/env';
 import { logger } from '@core/logger';
 import { BEARER_PREFIX } from '@core/constants/http';
 import { ADMIN_ROLES, ROLES } from '@core/constants/statuses';
+import { PERMISSIONS } from '@core/constants/permissions';
+import { userHasPermission } from '@middleware/rbac.middleware';
 import { loadUserFromBearer } from '@middleware/auth.middleware';
 import { Shipment } from '@database/models/shipment.model';
 import { SubOrder } from '@database/models/subOrder.model';
@@ -79,7 +81,10 @@ export function initSocket(server: HttpServer): SocketIOServer {
           const user = socket.data.user as SocketUser;
           const subOrder = (shipment as Shipment & { subOrder?: SubOrder & { order?: Order } })
             .subOrder;
-          const isAdmin = Boolean(user) && (ADMIN_ROLES as readonly string[]).includes(user!.role.name);
+          const isAdmin =
+            Boolean(user) &&
+            ((ADMIN_ROLES as readonly string[]).includes(user!.role.name) ||
+              (await userHasPermission(user as any, PERMISSIONS.SHIPPING_MANAGE, PERMISSIONS.ORDER_MANAGE)));
           const isCustomerOwner =
             Boolean(user) && user!.role.name === ROLES.CUSTOMER && subOrder?.order?.userId === user!.id;
           const isVendorOwner = Boolean(user) && user!.vendorId != null && subOrder?.vendorId === user!.vendorId;

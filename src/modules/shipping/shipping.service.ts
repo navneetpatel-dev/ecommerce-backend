@@ -20,9 +20,12 @@ import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { ADMIN_ROLES, ORDER_STATUS, ROLES } from '@core/constants/statuses';
+import { PERMISSIONS } from '@core/constants/permissions';
+import { userHasPermission } from '@middleware/rbac.middleware';
 import { Op, type Transaction } from 'sequelize';
 import { sequelize } from '@database/models';
-import type { CreateZoneRequest, UpdateZoneRequest, CreateRateRequest, GetShippingRatesRequest } from './shipping.dto';
+import type { CreateZoneRequest, UpdateZoneRequest, CreateRateRequest, UpdateRateRequest, GetShippingRatesRequest } from './shipping.dto';
+import { logAudit } from '@modules/audit/audit.service';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { settingsService } from '@modules/settings/settings.service';
 import { notificationsService } from '@modules/notifications/notifications.service';
@@ -365,10 +368,20 @@ export const shippingService = {
     return zone.update({ ...dto, updatedBy: actorId });
   },
 
-  async deleteZone(id: string) {
+  async deleteZone(id: string, actorId?: string) {
     const zone = await ShippingZone.findByPk(id);
     if (!zone) throw new NotFoundError('ShippingZone');
     await zone.destroy();
+
+    if (actorId) {
+      await logAudit({
+        actorId,
+        action: 'SHIPPING_ZONE_DELETED',
+        entityType: 'ShippingZone',
+        entityId: id,
+        metadata: { name: zone.name },
+      });
+    }
   },
 
   async listAdminRates() {
@@ -376,7 +389,7 @@ export const shippingService = {
   },
 
   async createRate(dto: CreateRateRequest, actorId: string) {
-    return ShippingRate.create({
+    const rate = await ShippingRate.create({
       zoneId: dto.zoneId,
       method: dto.method,
       minWeightGrams: dto.minWeightGrams ?? 0,
@@ -388,6 +401,57 @@ export const shippingService = {
       createdBy: actorId,
       updatedBy: null,
       deletedBy: null,
+    });
+
+    await logAudit({
+      actorId,
+      action: 'SHIPPING_RATE_CREATED',
+      entityType: 'ShippingRate',
+      entityId: rate.id,
+      metadata: { zoneId: dto.zoneId, method: dto.method, price: dto.price },
+    });
+
+    return rate;
+  },
+
+  async updateRate(id: string, dto: UpdateRateRequest, actorId: string) {
+    const rate = await ShippingRate.findByPk(id);
+    if (!rate) throw new NotFoundError('ShippingRate');
+
+    await rate.update({
+      ...(dto.zoneId !== undefined ? { zoneId: dto.zoneId } : {}),
+      ...(dto.method !== undefined ? { method: dto.method } : {}),
+      ...(dto.minWeightGrams !== undefined ? { minWeightGrams: dto.minWeightGrams } : {}),
+      ...(dto.maxWeightGrams !== undefined ? { maxWeightGrams: dto.maxWeightGrams } : {}),
+      ...(dto.price !== undefined ? { price: dto.price } : {}),
+      ...(dto.estimatedDays !== undefined ? { estimatedDays: dto.estimatedDays } : {}),
+      ...(dto.freeShippingThreshold !== undefined ? { freeShippingThreshold: dto.freeShippingThreshold } : {}),
+      ...(dto.vendorId !== undefined ? { vendorId: dto.vendorId } : {}),
+      updatedBy: actorId,
+    });
+
+    await logAudit({
+      actorId,
+      action: 'SHIPPING_RATE_UPDATED',
+      entityType: 'ShippingRate',
+      entityId: id,
+      metadata: { patch: dto },
+    });
+
+    return rate;
+  },
+
+  async deleteRate(id: string, actorId: string) {
+    const rate = await ShippingRate.findByPk(id);
+    if (!rate) throw new NotFoundError('ShippingRate');
+
+    await rate.destroy();
+
+    await logAudit({
+      actorId,
+      action: 'SHIPPING_RATE_DELETED',
+      entityType: 'ShippingRate',
+      entityId: id,
     });
   },
 
@@ -432,7 +496,9 @@ export const shippingService = {
       subOrder?: SubOrder & { order?: Order & { shippingAddress?: Address | null } };
     };
     const subOrder = shipmentWithOrder.subOrder;
-    const isAdmin = (ADMIN_ROLES as readonly string[]).includes(actor.role.name);
+    const isAdmin =
+      (ADMIN_ROLES as readonly string[]).includes(actor.role.name) ||
+      (await userHasPermission(actor, PERMISSIONS.SHIPPING_MANAGE, PERMISSIONS.ORDER_MANAGE));
     const isCustomerOwner = actor.role.name === ROLES.CUSTOMER && subOrder?.order?.userId === actor.id;
     const isVendorOwner = actor.vendorId != null && subOrder?.vendorId === actor.vendorId;
     const isDeliveryAgent = actor.role.name === ROLES.DELIVERY_AGENT;

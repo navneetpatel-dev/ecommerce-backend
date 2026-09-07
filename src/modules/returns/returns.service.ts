@@ -53,6 +53,7 @@ import { resolveReturnWindowForCategory } from '@modules/products/pdpPolicy';
 import { walletService } from '@modules/wallet/wallet.service';
 import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
 import { clawbackCashbackForReturn } from '@modules/wallet/cashback.service';
+import { logAudit } from '@modules/audit/audit.service';
 import { paymentsService } from '@modules/payments/payments.service';
 import {
   cascadeDeleteEntityMedia,
@@ -1204,6 +1205,14 @@ export class ReturnsService {
       }
     }
 
+    await logAudit({
+      actorId,
+      action: 'RETURN_STATUS_TRANSITIONED',
+      entityType: 'ReturnRequest',
+      entityId: id,
+      metadata: { newStatus: status, rejectionReason, refundStatus: result.refundStatus },
+    });
+
     return result;
   }
 
@@ -1319,6 +1328,13 @@ export class ReturnsService {
     await row.update({ deletedBy: actorUserId });
     await row.destroy();
     await cascadeDeleteEntityMedia(S3_ENTITY_TYPES.RETURNS, returnId, photoUrls);
+
+    await logAudit({
+      actorId: actorUserId,
+      action: 'RETURN_REQUEST_DELETED',
+      entityType: 'ReturnRequest',
+      entityId: returnId,
+    });
   }
 }
 

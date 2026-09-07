@@ -18,25 +18,25 @@ import { ReturnRequest } from '@database/models/returnRequest.model';
 import { Op } from 'sequelize';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { ORDER_STATUS, REFUND_STATUS, RETURN_STATUS } from '@core/constants/statuses';
+import { logAudit } from '@modules/audit/audit.service';
 
 /**
  * Transitions reachable through this manual, admin-facing endpoint.
  * DELIVERED is deliberately absent — it's only reachable through the
  * cascade in `shippingService`'s `cascadeOrderDeliveredAndNotify`, once
- * every sibling suborder has genuinely settled (OTP-confirmed delivery,
- * cancellation, or return). CANCELLED is likewise absent — cancelling an
+ * every suborder's shipment has reached DELIVERED. A customer's paid
  * order has its own dedicated flow (`POST /:id/cancel` -> `cancelPaidOrder`)
- * that restores stock, destroys coupon usage, and processes refunds; a raw
- * status PATCH to CANCELLED would silently skip all of that. RETURNED is
- * owned by the returns module via `ReturnRequest.status`.
+ * that atomically handles stock restores, refunds, wallet rollbacks,
+ * and ledger cleanups; this manual status-transition path is for
+ * exceptional support interventions only.
  */
-const ORDER_MANUAL_TRANSITIONS: Record<string, readonly string[]> = {
-  [ORDER_STATUS.PENDING]: [ORDER_STATUS.CONFIRMED, ORDER_STATUS.SHIPPED],
-  [ORDER_STATUS.CONFIRMED]: [ORDER_STATUS.SHIPPED],
+const ORDER_MANUAL_TRANSITIONS: Record<string, string[]> = {
+  PENDING: [ORDER_STATUS.CONFIRMED, ORDER_STATUS.CANCELLED],
+  CONFIRMED: [ORDER_STATUS.SHIPPED, ORDER_STATUS.CANCELLED],
+  SHIPPED: [ORDER_STATUS.CANCELLED],
 };
 
 function assertOrderTransition(from: string, to: string) {
-  if (from === to) return;
   if (!ORDER_MANUAL_TRANSITIONS[from]?.includes(to)) {
     throw new ValidationError({ status: [`Cannot move an order from ${from} to ${to} here`] });
   }
@@ -75,7 +75,6 @@ const orderDetailInclude = [
           {
             model: DeliveryAgent,
             as: 'deliveryAgent',
-            attributes: ['id', 'fullName', 'phone'],
           },
           {
             model: ShipmentAttempt,
@@ -102,6 +101,7 @@ export class OrdersService {
     const { rows, count } = await ordersRepository.findWithFilters({
       userId: userId ?? undefined,
       status: query.status,
+      search: query.search,
       limit: query.limit,
       offset,
     });
@@ -158,13 +158,43 @@ export class OrdersService {
     return { openReturnCount, returnRefundAlerts };
   }
 
-  async updateOrderStatus(id: string, status: string) {
+  async updateOrderStatus(id: string, status: string, actorId?: string) {
+    if (status === ORDER_STATUS.CANCELLED) {
+      await cancelPaidOrder(id, actorId ?? 'SYSTEM', true);
+      if (actorId) {
+        await logAudit({
+          actorId,
+          action: 'ORDER_STATUS_UPDATED',
+          entityType: 'Order',
+          entityId: id,
+          metadata: { newStatus: status, adminCancelled: true },
+        });
+      }
+      return this.getOrderById(id);
+    }
+
     return sequelize.transaction(async (t) => {
       const order = await ordersRepository.findById(id, { transaction: t });
       if (!order) throw new NotFoundError('Order');
 
       assertOrderTransition(order.status, status);
-      await ordersRepository.update(id, { status: status as never }, { transaction: t });
+      await ordersRepository.update(
+        id,
+        { status: status as never, updatedBy: actorId ?? null } as any,
+        { transaction: t },
+      );
+
+      if (actorId) {
+        await logAudit({
+          actorId,
+          action: 'ORDER_STATUS_UPDATED',
+          entityType: 'Order',
+          entityId: id,
+          metadata: { previousStatus: order.status, newStatus: status },
+          transaction: t,
+        });
+      }
+
       return this.getOrderById(id);
     });
   }
