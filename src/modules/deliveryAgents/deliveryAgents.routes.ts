@@ -1,9 +1,12 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
+import multer from 'multer';
 import { authenticate } from '@middleware/auth.middleware';
 import { authorize } from '@middleware/rbac.middleware';
 import { validate } from '@middleware/validate.middleware';
+import { ValidationError } from '@core/errors/ValidationError';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { otpRequestRateLimiter } from '@middleware/rateLimiter.middleware';
+import { MAX_BULK_IMPORT_BYTES } from './deliveryAgents.template';
 import {
   AssignAgentSchema,
   BulkAssignShipmentsSchema,
@@ -34,9 +37,33 @@ import * as controller from './deliveryAgents.controller';
 const router = Router();
 const manage = authorize(PERMISSIONS.DELIVERY_AGENT_MANAGE);
 
+const bulkAgentsUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_BULK_IMPORT_BYTES },
+});
+
+function bulkAgentsUploadMiddleware(req: Request, res: Response, next: NextFunction) {
+  bulkAgentsUpload.single('file')(req, res, (err: unknown) => {
+    if (!err) return next();
+    if (err instanceof multer.MulterError) {
+      const maxMb = MAX_BULK_IMPORT_BYTES / (1024 * 1024);
+      return next(
+        new ValidationError(
+          err.code === 'LIMIT_FILE_SIZE'
+            ? `File exceeds the ${maxMb}MB limit`
+            : 'File upload error',
+        ),
+      );
+    }
+    return next(err);
+  });
+}
+
 router.get('/', authenticate, manage, validate(ListDeliveryAgentsSchema, 'query'), controller.list);
 router.post('/', authenticate, manage, validate(CreateDeliveryAgentSchema), controller.create);
+router.get('/bulk-template', authenticate, manage, controller.downloadBulkTemplate);
 router.post('/bulk', authenticate, manage, validate(BulkCreateDeliveryAgentsSchema), controller.bulkCreate);
+router.post('/bulk-import-file', authenticate, manage, bulkAgentsUploadMiddleware, controller.bulkImportFile);
 router.get('/unassigned-shipments', authenticate, manage, controller.unassignedShipments);
 router.get('/unassigned-pickups', authenticate, manage, controller.unassignedPickups);
 router.get('/rto-shipments', authenticate, manage, controller.adminRtoQueue);

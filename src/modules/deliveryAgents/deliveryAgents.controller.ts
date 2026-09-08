@@ -1,9 +1,15 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
+import { ValidationError } from '@core/errors/ValidationError';
 import { pageLimitQuerySchema } from '@core/http/pagination';
 import { deliveryAgentsService } from './deliveryAgents.service';
 import { deliveryAgentPayoutsService } from './deliveryAgentPayouts.service';
+import {
+  generateAgentsTemplateCsv,
+  generateAgentsTemplateExcel,
+  parseAgentsFile,
+} from './deliveryAgents.template';
 
 export const list = asyncHandler(async (req: Request, res: Response) => {
   const result = await deliveryAgentsService.list(req.query as any);
@@ -45,6 +51,33 @@ export const create = asyncHandler(async (req: Request, res: Response) => {
 
 export const bulkCreate = asyncHandler(async (req: Request, res: Response) => {
   const results = await deliveryAgentsService.bulkCreate(req.body.rows, req.user!.id);
+  res.status(201).json(ok(results));
+});
+
+export const downloadBulkTemplate = asyncHandler(async (req: Request, res: Response) => {
+  const format = req.query.format === 'csv' ? 'csv' : 'xlsx';
+  if (format === 'csv') {
+    const csvContent = generateAgentsTemplateCsv();
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="delivery_agents_template.csv"');
+    res.send(csvContent);
+    return;
+  }
+  const buffer = await generateAgentsTemplateExcel();
+  res.setHeader(
+    'Content-Type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  );
+  res.setHeader('Content-Disposition', 'attachment; filename="delivery_agents_template.xlsx"');
+  res.send(buffer);
+});
+
+export const bulkImportFile = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.file) {
+    throw new ValidationError('File is required for bulk import.');
+  }
+  const rows = await parseAgentsFile(req.file);
+  const results = await deliveryAgentsService.bulkCreate(rows, req.user!.id);
   res.status(201).json(ok(results));
 });
 
