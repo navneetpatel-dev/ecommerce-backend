@@ -31,6 +31,16 @@ export class AuthRepository extends BaseRepository<User> {
     });
   }
 
+  /**
+   * The authenticated-user representation always needs its role association.
+   * Keeping this query here prevents HTTP handlers from reaching into models.
+   */
+  async findByIdWithRole(userId: string) {
+    return User.findByPk(userId, {
+      include: [{ model: Role, as: 'role' }],
+    });
+  }
+
   /** Includes soft-deleted rows (for register-time reactivation). */
   async findByEmailIncludingDeleted(email: string) {
     return User.findOne({

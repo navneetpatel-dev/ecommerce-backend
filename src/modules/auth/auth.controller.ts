@@ -8,16 +8,12 @@ import {
   createOAuthState,
   isGoogleOAuthConfigured,
 } from './googleOAuth.service';
-import { User } from '@database/models/user.model';
-import { Role } from '@database/models/role.model';
-import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { COOKIES, REFRESH_TOKEN_TTL_MS } from '@core/constants/http';
 import { AUTH_COOKIE_PATH } from '@core/constants/apiPaths';
 import { AppError } from '@core/errors';
 import { sendApiError } from '@core/http/sendApiError';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { env } from '@config/env';
-import { roleNameOf } from '@utils/userRole';
 
 const OAUTH_STATE_COOKIE = 'oauth_state';
 const OAUTH_REDIRECT_COOKIE = 'oauth_redirect';
@@ -247,26 +243,7 @@ export const revokeOtherSessions = asyncHandler(async (req: Request, res: Respon
 });
 
 export const me = asyncHandler(async (req: Request, res: Response) => {
-  const user = await User.findByPk(req.user!.id, { include: [{ model: Role, as: 'role' }] });
-  if (!user) {
-    sendApiError(res, new AppError(ERROR_MESSAGES.NOT_FOUND, 404, ERROR_CODES.NOT_FOUND));
-    return;
-  }
-  const roleName = roleNameOf(user);
-  const permissions = await resolvePermissionsForUser({ roleId: user.roleId, role: { name: roleName } });
-  res.json(ok({
-    id: user.id,
-    email: user.email,
-    name: user.name,
-    phone: user.phone,
-    role: roleName,
-    vendorId: user.vendorId,
-    deliveryAgentId: user.deliveryAgentId,
-    emailVerified: user.emailVerified,
-    emailMarketingConsent: user.emailMarketingConsent,
-    avatarUrl: user.avatarUrl,
-    permissions,
-  }));
+  res.json(ok(await authService.getCurrentUser(req.user!.id)));
 });
 
 export const impersonate = asyncHandler(async (req: Request, res: Response) => {

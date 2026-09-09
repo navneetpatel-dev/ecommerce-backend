@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
+import { sendDownload, sendPdfDownload } from '@core/http/sendDownload';
 import { walletService } from './wallet.service';
 import { walletRechargeService } from './walletRecharge.service';
 import {
@@ -60,9 +61,7 @@ export const downloadRechargeInvoice = asyncHandler(async (req: Request, res: Re
     req.user!.id,
     String(req.params.id),
   );
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  res.send(buffer);
+  sendPdfDownload(res, { buffer, filename });
 });
 
 export const listTransactions = asyncHandler(async (req: Request, res: Response) => {
@@ -78,7 +77,5 @@ export const exportStatement = asyncHandler(async (req: Request, res: Response) 
     to: query.to,
     format: query.format,
   });
-  res.setHeader('Content-Type', result.contentType);
-  res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
-  res.send(result.buffer);
+  sendDownload(res, result);
 });

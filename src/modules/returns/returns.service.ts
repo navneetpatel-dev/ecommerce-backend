@@ -59,6 +59,10 @@ import {
   cascadeDeleteEntityMedia,
   S3_ENTITY_TYPES,
 } from '@core/s3';
+import {
+  getCreditNotePdfForActor,
+  getDebitNotePdfForActor,
+} from '@modules/reports/notePdf.service';
 
 const returnListInclude = [
   { model: OrderItem, as: 'orderItem', required: false, attributes: ['id', 'productName'] },
@@ -228,6 +232,46 @@ async function refundSlaDays(): Promise<number> {
 }
 
 export class ReturnsService {
+  private async canManageRefunds(actor: {
+    roleId: string;
+    role: { name: string };
+  }): Promise<boolean> {
+    const permissions = await resolvePermissionsForUser(actor);
+    return (
+      permissions.includes(PERMISSIONS.ORDER_REFUND) ||
+      permissions.includes(PERMISSIONS.ORDER_MANAGE)
+    );
+  }
+
+  async getCreditNotePdf(
+    returnId: string,
+    actor: { id: string; vendorId?: string | null; roleId: string; role: { name: string } },
+  ) {
+    const note = await CreditNote.findOne({ where: { returnRequestId: returnId } });
+    if (!note) throw new NotFoundError('CreditNote');
+
+    return getCreditNotePdfForActor({
+      noteId: note.id,
+      userId: actor.id,
+      vendorId: actor.vendorId,
+      isAdmin: await this.canManageRefunds(actor),
+    });
+  }
+
+  async getDebitNotePdf(
+    returnId: string,
+    actor: { vendorId?: string | null; roleId: string; role: { name: string } },
+  ) {
+    const note = await DebitNote.findOne({ where: { returnRequestId: returnId } });
+    if (!note) throw new NotFoundError('DebitNote');
+
+    return getDebitNotePdfForActor({
+      noteId: note.id,
+      vendorId: actor.vendorId,
+      isAdmin: await this.canManageRefunds(actor),
+    });
+  }
+
   async listForUser(userId: string) {
     const slaDays = await refundSlaDays();
     const rows = await ReturnRequest.findAll({

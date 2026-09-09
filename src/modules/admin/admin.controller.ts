@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
+import { sendDownload } from '@core/http/sendDownload';
 import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { roleNameOf } from '@utils/userRole';
 import { reportEngine, type ReportActor } from '@modules/reports/engine/reportEngine';
@@ -47,7 +48,5 @@ export const exportPlatformAnalytics = asyncHandler(async (req: Request, res: Re
   assertReportRange({ from, to });
   const actor = await analyticsActor(req);
   const result = await reportEngine.runExportDirect(actor, 'platform-analytics', { from, to }, format);
-  res.setHeader('Content-Type', result.contentType);
-  res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
-  res.send(result.buffer);
+  sendDownload(res, result);
 });

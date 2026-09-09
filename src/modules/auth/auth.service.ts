@@ -54,6 +54,13 @@ export type RegisterResult = {
   requiresVerification: true;
 };
 
+export type CurrentAuthUser = AuthUserPayload & {
+  phone: string | null;
+  emailVerified: boolean;
+  emailMarketingConsent: boolean;
+  avatarUrl: string | null;
+};
+
 function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
@@ -151,6 +158,31 @@ function serializeSession(
 }
 
 export class AuthService {
+  async getCurrentUser(userId: string): Promise<CurrentAuthUser> {
+    const user = await repo.findByIdWithRole(userId);
+    if (!user) throw new NotFoundError('User');
+
+    const roleName = roleNameOf(user);
+    const permissions = await resolvePermissionsForUser({
+      roleId: user.roleId,
+      role: { name: roleName },
+    });
+
+    return {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      phone: user.phone,
+      role: roleName,
+      vendorId: user.vendorId,
+      deliveryAgentId: user.deliveryAgentId,
+      emailVerified: user.emailVerified,
+      emailMarketingConsent: user.emailMarketingConsent,
+      avatarUrl: user.avatarUrl,
+      permissions,
+    };
+  }
+
   async register(dto: RegisterRequest): Promise<RegisterResult> {
     const existing = await repo.findByEmailIncludingDeleted(dto.email);
 

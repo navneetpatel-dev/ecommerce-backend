@@ -2,21 +2,8 @@ import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { pageLimitQuerySchema } from '@core/http/pagination';
+import { sendPdfDownload } from '@core/http/sendDownload';
 import { returnsService } from './returns.service';
-import {
-  getCreditNotePdfForActor,
-  getDebitNotePdfForActor,
-} from '@modules/reports/notePdf.service';
-import { CreditNote } from '@database/models/creditNote.model';
-import { DebitNote } from '@database/models/debitNote.model';
-import { NotFoundError } from '@core/errors/NotFoundError';
-import { PERMISSIONS } from '@core/constants/permissions';
-import { userHasPermission } from '@middleware/rbac.middleware';
-
-async function isAdminActor(req: Request): Promise<boolean> {
-  if (!req.user) return false;
-  return await userHasPermission(req.user, PERMISSIONS.ORDER_REFUND, PERMISSIONS.ORDER_MANAGE);
-}
 
 export const create = asyncHandler(async (req: Request, res: Response) => {
   const created = await returnsService.create(req.user!.id, req.body);
@@ -74,30 +61,11 @@ export const remove = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const downloadCreditNote = asyncHandler(async (req: Request, res: Response) => {
-  const returnId = req.params.id!;
-  const note = await CreditNote.findOne({ where: { returnRequestId: returnId } });
-  if (!note) throw new NotFoundError('CreditNote');
-  const { buffer, filename } = await getCreditNotePdfForActor({
-    noteId: note.id,
-    userId: req.user!.id,
-    vendorId: req.user!.vendorId,
-    isAdmin: await isAdminActor(req),
-  });
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  res.send(buffer);
+  const { buffer, filename } = await returnsService.getCreditNotePdf(req.params.id!, req.user!);
+  sendPdfDownload(res, { buffer, filename });
 });
 
 export const downloadDebitNote = asyncHandler(async (req: Request, res: Response) => {
-  const returnId = req.params.id!;
-  const note = await DebitNote.findOne({ where: { returnRequestId: returnId } });
-  if (!note) throw new NotFoundError('DebitNote');
-  const { buffer, filename } = await getDebitNotePdfForActor({
-    noteId: note.id,
-    vendorId: req.user!.vendorId,
-    isAdmin: await isAdminActor(req),
-  });
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  res.send(buffer);
+  const { buffer, filename } = await returnsService.getDebitNotePdf(req.params.id!, req.user!);
+  sendPdfDownload(res, { buffer, filename });
 });

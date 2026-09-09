@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
+import { sendDownload, sendPdfDownload } from '@core/http/sendDownload';
 import { ValidationError } from '@core/errors/ValidationError';
 import { pageLimitQuerySchema } from '@core/http/pagination';
 import { deliveryAgentsService } from './deliveryAgents.service';
@@ -57,19 +58,19 @@ export const bulkCreate = asyncHandler(async (req: Request, res: Response) => {
 export const downloadBulkTemplate = asyncHandler(async (req: Request, res: Response) => {
   const format = req.query.format === 'csv' ? 'csv' : 'xlsx';
   if (format === 'csv') {
-    const csvContent = generateAgentsTemplateCsv();
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="delivery_agents_template.csv"');
-    res.send(csvContent);
+    sendDownload(res, {
+      buffer: generateAgentsTemplateCsv(),
+      filename: 'delivery_agents_template.csv',
+      contentType: 'text/csv; charset=utf-8',
+    });
     return;
   }
   const buffer = await generateAgentsTemplateExcel();
-  res.setHeader(
-    'Content-Type',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  );
-  res.setHeader('Content-Disposition', 'attachment; filename="delivery_agents_template.xlsx"');
-  res.send(buffer);
+  sendDownload(res, {
+    buffer,
+    filename: 'delivery_agents_template.xlsx',
+    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
 });
 
 export const bulkImportFile = asyncHandler(async (req: Request, res: Response) => {
@@ -230,18 +231,14 @@ export const myPayoutStatement = asyncHandler(async (req: Request, res: Response
     req.params.payoutId!,
     req.user!.deliveryAgentId!,
   );
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  res.send(buffer);
+  sendPdfDownload(res, { buffer, filename });
 });
 
 export const adminPayoutStatement = asyncHandler(async (req: Request, res: Response) => {
   const { buffer, filename } = await deliveryAgentPayoutsService.renderStatement(
     req.params.payoutId!,
   );
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  res.send(buffer);
+  sendPdfDownload(res, { buffer, filename });
 });
 
 export const myEarnings = asyncHandler(async (req: Request, res: Response) => {

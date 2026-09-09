@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
+import { sendDownload, sendPdfDownload } from '@core/http/sendDownload';
 import { reportsService } from './reports.service';
 import {
   getCustomerOrderInvoices,
@@ -55,9 +56,7 @@ async function sendExportFile(
   format: ReportExportFormat,
 ) {
   const result = await reportEngine.runExportDirect(actor, reportType, filters, format);
-  res.setHeader('Content-Type', result.contentType);
-  res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
-  res.send(result.buffer);
+  sendDownload(res, result);
 }
 
 export const adminSummary = asyncHandler(async (req: Request, res: Response) => {
@@ -269,13 +268,11 @@ export const customerOrderInvoice = asyncHandler(async (req: Request, res: Respo
     userId: req.user!.id,
     orderId: req.params.orderId!,
   });
-  if (result.mode === 'zip') {
-    res.setHeader('Content-Type', 'application/zip');
-  } else {
-    res.setHeader('Content-Type', 'application/pdf');
-  }
-  res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
-  res.send(result.buffer);
+  sendDownload(res, {
+    buffer: result.buffer,
+    filename: result.filename,
+    contentType: result.mode === 'zip' ? 'application/zip' : 'application/pdf',
+  });
 });
 
 export const customerOrderSubInvoice = asyncHandler(async (req: Request, res: Response) => {
@@ -284,9 +281,7 @@ export const customerOrderSubInvoice = asyncHandler(async (req: Request, res: Re
     orderId: req.params.orderId!,
     subOrderId: req.params.subOrderId!,
   });
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
-  res.send(result.pdf);
+  sendPdfDownload(res, { buffer: result.pdf, filename: result.filename });
 });
 
 export const vendorSubOrderInvoice = asyncHandler(async (req: Request, res: Response) => {
@@ -298,7 +293,5 @@ export const vendorSubOrderInvoice = asyncHandler(async (req: Request, res: Resp
     vendorId,
     subOrderId: req.params.subOrderId!,
   });
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
-  res.send(result.pdf);
+  sendPdfDownload(res, { buffer: result.pdf, filename: result.filename });
 });

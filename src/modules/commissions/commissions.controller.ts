@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { pageLimitQuerySchema } from '@core/http/pagination';
+import { sendPdfDownload } from '@core/http/sendDownload';
 import { commissionsService } from './commissions.service';
 
 export const list = asyncHandler(async (req: Request, res: Response) => {
@@ -28,7 +29,5 @@ export const downloadInvoice = asyncHandler(async (req: Request, res: Response) 
     invoiceId,
     req.user!.vendorId,
   );
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  res.send(buffer);
+  sendPdfDownload(res, { buffer, filename });
 });
