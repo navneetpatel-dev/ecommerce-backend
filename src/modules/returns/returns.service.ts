@@ -22,6 +22,7 @@ import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { OrderItem } from '@database/models/orderItem.model';
 import { SubOrder } from '@database/models/subOrder.model';
+import { Shipment } from '@database/models/shipment.model';
 import { Order } from '@database/models/order.model';
 import { User } from '@database/models/user.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
@@ -90,12 +91,14 @@ type CreateReturnInput = {
   photoUrls?: string[];
 };
 
+// NOTE: REJECTED is only reachable from REQUESTED. Approving a return synchronously moves real
+// money (wallet credit and/or a Razorpay refund initiation) and freezes vendor accounting — there
+// is no reversal path for any of that, so an already-APPROVED return must never be rejectable.
 const ALLOWED_TRANSITIONS: Record<ReturnStatus, ReturnStatus[]> = {
   [RETURN_STATUS.REQUESTED]: [RETURN_STATUS.APPROVED, RETURN_STATUS.REJECTED],
   [RETURN_STATUS.APPROVED]: [
     RETURN_STATUS.PICKUP_SCHEDULED,
     RETURN_STATUS.REFUNDED,
-    RETURN_STATUS.REJECTED,
   ],
   [RETURN_STATUS.PICKUP_SCHEDULED]: [RETURN_STATUS.RECEIVED, RETURN_STATUS.REFUNDED],
   [RETURN_STATUS.RECEIVED]: [RETURN_STATUS.REFUNDED, RETURN_STATUS.CLOSED],
@@ -344,7 +347,10 @@ export class ReturnsService {
           {
             model: SubOrder,
             as: 'subOrder',
-            include: [{ model: Order, as: 'order' }],
+            include: [
+              { model: Order, as: 'order' },
+              { model: Shipment, as: 'shipment', attributes: ['deliveredAt'] },
+            ],
           },
           {
             model: ProductVariant,
@@ -358,7 +364,7 @@ export class ReturnsService {
       if (!orderItem) throw new NotFoundError('OrderItem');
 
       const item = orderItem as OrderItem & {
-        subOrder: SubOrder & { order: Order };
+        subOrder: SubOrder & { order: Order; shipment?: Shipment | null };
         variant?: ProductVariant & { product?: Product };
       };
 
@@ -374,7 +380,11 @@ export class ReturnsService {
         throw new ValidationError(ERROR_MESSAGES.RETURN_NOT_ALLOWED);
       }
       const windowDays = returnWindow.returnWindowDays;
-      const deliveredAt = item.subOrder.updatedAt;
+      // Prefer the real delivery timestamp (Shipment.deliveredAt, set once by the OTP-gated
+      // delivery-agent confirmation) over SubOrder.updatedAt, which is a generic timestamp any
+      // later, unrelated write to the row (a payout run, an admin edit, another return) bumps —
+      // silently resetting/extending the return window if used.
+      const deliveredAt = item.subOrder.shipment?.deliveredAt ?? item.subOrder.updatedAt;
       if (deliveredAt) {
         const expires = new Date(deliveredAt.getTime() + windowDays * 24 * 60 * 60 * 1000);
         if (Date.now() > expires.getTime()) {

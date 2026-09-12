@@ -13,7 +13,7 @@ import {
   WALLET_POINT_SOURCE,
   type DiscountBearer,
 } from '@core/constants/statuses';
-import { toPaise, fromPaise } from '@modules/pricing/money';
+import { toPaise, fromPaise, roundMoney } from '@modules/pricing/money';
 import { walletService } from '@modules/wallet/wallet.service';
 import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
 import { env } from '@config/env';
@@ -36,15 +36,54 @@ export async function creditPendingCashbackForOrder(
     const pending = Number(order.pendingCashbackAmount ?? 0);
     if (pending <= 0 || order.cashbackCreditedAt) return false;
 
-    const delivered = await SubOrder.findOne({
-      where: { orderId: order.id, status: ORDER_STATUS.DELIVERED },
+    // `pendingCashbackAmount` covers every vendor in the cart, not just one — crediting it the
+    // moment a single suborder delivers would pay out cashback for items from other vendors that
+    // haven't shipped yet (and may still be cancelled). Require every suborder that hasn't been
+    // cancelled to be DELIVERED before crediting anything.
+    const allSubOrders = await SubOrder.findAll({
+      where: { orderId: order.id },
       transaction,
     });
-    if (!delivered) return false;
+    const relevant = allSubOrders.filter((s) => s.status !== ORDER_STATUS.CANCELLED);
+    if (relevant.length === 0) return false;
+    const allDelivered = relevant.every((s) => s.status === ORDER_STATUS.DELIVERED);
+    if (!allDelivered) return false;
+    const delivered = relevant[0]!;
+
+    // `pending` is frozen at its checkout-time (whole-cart) value — it is never shrunk when a
+    // sibling suborder is cancelled (see suborders.service.ts's cancellation branch). Prorate it
+    // here, fresh, against the immutable `merchandiseSubtotal`/`subtotal` figures rather than
+    // mutating a running balance incrementally: computing it fresh each time is unaffected by how
+    // many suborders were cancelled or in what order, whereas an incremental "shrink by this
+    // suborder's share" on every cancellation compounds against an already-shrunk balance and
+    // under-reduces it after two or more partial cancellations.
+    const merchandiseBase = Number(order.merchandiseSubtotal ?? 0);
+    const deliveredMerchandise = relevant.reduce((sum, s) => sum + Number(s.subtotal ?? 0), 0);
+    const proratedPending =
+      merchandiseBase > 0
+        ? roundMoney(pending * Math.min(1, deliveredMerchandise / merchandiseBase))
+        : pending;
+
+    // Overwrite pendingCashbackAmount with what was ACTUALLY credited (proratedPending, which can
+    // be less than the frozen checkout-time value once a sibling suborder was cancelled) — after
+    // this point the column means "cashback actually in the customer's wallet for this order",
+    // which is exactly what clawbackCashbackForReturn's proportional-clawback math reads. Leaving
+    // it at the pre-proration value would let a later return's clawback calculation claw back
+    // more than was ever credited.
+    await order.update(
+      {
+        cashbackCreditedAt: new Date(),
+        pendingCashbackAmount: proratedPending,
+        updatedBy: order.userId,
+      },
+      { transaction },
+    );
+
+    if (proratedPending <= 0) return true;
 
     await walletService.credit(
       order.userId,
-      pending,
+      proratedPending,
       { type: WALLET_REFERENCE_TYPE.CASHBACK, id: order.id },
       `${WALLET_DESCRIPTIONS.CASHBACK_CREDIT} #${order.id.slice(0, 8).toUpperCase()}`,
       transaction,
@@ -66,20 +105,20 @@ export async function creditPendingCashbackForOrder(
               })) ?? delivered
             : delivered;
       if (vendorId && subOrder) {
-        const amountPaise = toPaise(pending);
+        const amountPaise = toPaise(proratedPending);
         await CommissionLedger.create(
           {
             vendorId,
             subOrderId: subOrder.id,
             saleAmount: 0,
             commissionRate: 0,
-            commissionAmount: -pending,
+            commissionAmount: -proratedPending,
             taxableAmount: 0,
             discountAmount: 0,
             discountBearer: DISCOUNT_BEARER.VENDOR,
             taxAmount: 0,
             tcsAmount: 0,
-            netPayoutAmount: -pending,
+            netPayoutAmount: -proratedPending,
             shippingCollected: 0,
             saleAmountPaise: 0,
             commissionAmountPaise: -amountPaise,
@@ -100,13 +139,6 @@ export async function creditPendingCashbackForOrder(
       }
     }
 
-    await order.update(
-      {
-        cashbackCreditedAt: new Date(),
-        updatedBy: order.userId,
-      },
-      { transaction },
-    );
     return true;
   };
 

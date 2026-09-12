@@ -1,6 +1,7 @@
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
+import { ROLES } from '@core/constants/statuses';
 import { fromPaise } from '@modules/pricing/money';
 import { buildPaginationMeta } from '@core/http/pagination';
 import { DEFAULT_PAGE_LIMIT } from '@core/constants/http';
@@ -102,8 +103,21 @@ export class ReportsService {
     };
   }
 
-  async vendorSummary(vendorId: string, query: ReportRangeQuery, requesterVendorId?: string | null) {
-    if (requesterVendorId && requesterVendorId !== vendorId) {
+  async vendorSummary(
+    vendorId: string,
+    query: ReportRangeQuery,
+    requesterVendorId?: string | null,
+    requesterRoleName?: string | null,
+  ) {
+    if (requesterVendorId) {
+      if (requesterVendorId !== vendorId) {
+        throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_VENDOR_REPORT);
+      }
+    } else if (requesterRoleName !== ROLES.SUPER_ADMIN) {
+      // Mirrors reportEngine.helpers.ts's resolveFiltersForActor: a vendor-scoped report
+      // requires either a matching vendorId on the actor or SUPER_ADMIN — never silently allow
+      // an actor with neither (e.g. a future role/permission misconfiguration, or a bug leaving
+      // a vendor-staff account's vendorId unset) to view an arbitrary vendor's financial summary.
       throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_VENDOR_REPORT);
     }
     assertRange(query);

@@ -35,6 +35,13 @@ export type ValidateCouponInput = {
   existingCouponCode?: string | null;
   /** All codes already on the cart (multi-coupon). */
   existingCouponCodes?: string[] | null;
+  /**
+   * When provided, the coupon row is locked (`FOR UPDATE`) and usage-limit checks read within
+   * this transaction — required at order-creation time so concurrent checkouts against a
+   * usage-capped coupon serialize instead of both reading a stale `usedCount`. Omit for
+   * read-only previews (cart/quote) where a lock would serve no purpose.
+   */
+  transaction?: Transaction;
 };
 
 export type ValidateCouponResult = {
@@ -120,6 +127,10 @@ export function resolveCartCouponCodes(cart: {
   return [...new Set(codes)];
 }
 
+function couponHasUsageLimit(coupon: Coupon): boolean {
+  return coupon.usageLimitTotal != null || coupon.usageLimitPerUser != null;
+}
+
 export async function validateCoupon(input: ValidateCouponInput): Promise<ValidateCouponResult> {
   const shippingTotal = input.shippingTotal ?? 0;
   let coupon = input.coupon ?? null;
@@ -129,7 +140,24 @@ export async function validateCoupon(input: ValidateCouponInput): Promise<Valida
     if (!code) {
       return fail(ERROR_MESSAGES.COUPON_INVALID, ERROR_CODES.COUPON_INVALID);
     }
+    // Unlocked read first: most coupons carry no usage cap at all, and taking a row lock on
+    // every checkout for a popular, uncapped, platform-wide coupon would serialize otherwise
+    // fully-concurrent checkouts on that one row for no reason. Only the (comparatively rare)
+    // usage-capped coupons below re-fetch under lock.
     coupon = await Coupon.findOne({ where: { code: code.toUpperCase() } });
+  }
+
+  if (coupon && input.transaction && couponHasUsageLimit(coupon)) {
+    // Re-fetch under lock so the usage-limit checks below read a locked, current value —
+    // required for both the code-lookup path above and a caller-supplied `coupon` (e.g.
+    // validateCouponSet's inner loop passes a code, but this also covers any future caller that
+    // passes a preloaded row).
+    coupon =
+      (await Coupon.findOne({
+        where: { id: coupon.id },
+        transaction: input.transaction,
+        lock: input.transaction.LOCK.UPDATE,
+      })) ?? coupon;
   }
 
   if (!coupon) {
@@ -168,6 +196,7 @@ export async function validateCoupon(input: ValidateCouponInput): Promise<Valida
   if (coupon.usageLimitPerUser != null && input.userId) {
     const userUsage = await CouponUsage.count({
       where: { couponId: coupon.id, userId: input.userId },
+      transaction: input.transaction,
     });
     if (userUsage >= coupon.usageLimitPerUser) {
       return fail(ERROR_MESSAGES.COUPON_USAGE_LIMIT, ERROR_CODES.VALIDATION_ERROR);
@@ -309,6 +338,8 @@ export async function validateCouponSet(input: {
   lines: CartLineForCoupon[];
   shippingTotal?: number;
   shippingByVendor?: Record<string, number>;
+  /** Pass the order-creation transaction to lock each coupon row during usage-limit checks. */
+  transaction?: Transaction;
 }): Promise<ValidateCouponSetResult> {
   const codes = [...new Set(input.codes.map((c) => c.trim().toUpperCase()).filter(Boolean))];
   if (codes.length === 0) {
@@ -337,6 +368,7 @@ export async function validateCouponSet(input: {
       shippingTotal: input.shippingTotal,
       shippingByVendor: input.shippingByVendor,
       existingCouponCodes: codes,
+      transaction: input.transaction,
     });
     if (!result.valid || !result.coupon) {
       return failSet(

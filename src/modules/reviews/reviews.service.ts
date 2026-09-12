@@ -164,6 +164,12 @@ export class ReviewsService {
       if (!review) throw new NotFoundError('Review');
 
       await review.update({ status: REVIEW_STATUS.REJECTED }, { transaction: t });
+
+      // Recalculate product rating — required whenever the previous status was APPROVED (its
+      // score was counted into the average), but harmless to always run since the aggregate
+      // query only ever counts APPROVED rows regardless of what this review used to be.
+      await this.recalculateProductRating(review.productId, t);
+
       return review;
     });
   }

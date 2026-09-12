@@ -48,6 +48,40 @@ async function findCheckoutDebit(
 }
 
 /**
+ * Best-effort restoration of the original promotional lot's expiry, rather than always minting a
+ * fresh full-TTL expiry on rollback (which would silently extend points that were about to
+ * expire, every time they're spent-then-rolled-back via order cancellation). The ledger only
+ * tracks aggregate purchased/promotional balances, not which specific credit row(s) a debit
+ * actually drew from — so this approximates the codebase's documented FIFO policy (oldest
+ * promotional credit spent first) by using the oldest promotional credit that existed at the
+ * time of the debit being rolled back. Returns null (caller falls back to a fresh TTL) when no
+ * such credit can be found, OR when that lot's expiry has already passed by now — restoring an
+ * already-elapsed expiry would grant a credit the promo-expiry cron job immediately reclaims on
+ * its next run, silently vanishing the "restored" points while `hasWalletRollbackCredit` already
+ * marks the rollback done (unretriable). A fresh TTL is a known, accepted, minor windfall; a
+ * grant-then-instant-reclaim is a confusing bug.
+ */
+async function resolveOriginalPromotionalExpiry(
+  userId: string,
+  debit: WalletLedger,
+  transaction: Transaction,
+): Promise<Date | null> {
+  const oldestPromotionalCredit = await WalletLedger.findOne({
+    where: {
+      userId,
+      type: WALLET_LEDGER_TYPE.CREDIT,
+      pointSource: WALLET_POINT_SOURCE.PROMOTIONAL,
+      createdAt: { [Op.lte]: debit.createdAt },
+    },
+    order: [['createdAt', 'ASC']],
+    transaction,
+  });
+  const expiresAt = oldestPromotionalCredit?.expiresAt ?? null;
+  if (!expiresAt || expiresAt.getTime() <= Date.now()) return null;
+  return expiresAt;
+}
+
+/**
  * Idempotently restore wallet points debited at checkout for a cancelled order.
  * Restores purchased vs promotional split when the original debit recorded it.
  * Returns true when a new credit was written.
@@ -67,6 +101,9 @@ export async function rollbackOrderWalletIfNeeded(
   const breakdown = debit?.pointSourceBreakdown;
   const promoAmount = Number(breakdown?.promotional ?? 0);
   const purchasedAmount = Number(breakdown?.purchased ?? 0);
+  const originalPromotionalExpiry = debit
+    ? await resolveOriginalPromotionalExpiry(userId, debit, transaction)
+    : null;
 
   if (promoAmount > 0 || purchasedAmount > 0) {
     if (promoAmount > 0) {
@@ -76,7 +113,10 @@ export async function rollbackOrderWalletIfNeeded(
         ref,
         description,
         transaction,
-        { pointSource: WALLET_POINT_SOURCE.PROMOTIONAL },
+        {
+          pointSource: WALLET_POINT_SOURCE.PROMOTIONAL,
+          ...(originalPromotionalExpiry ? { expiresAt: originalPromotionalExpiry } : {}),
+        },
       );
     }
     if (purchasedAmount > 0) {
@@ -98,7 +138,10 @@ export async function rollbackOrderWalletIfNeeded(
     ref,
     description,
     transaction,
-    { pointSource: WALLET_POINT_SOURCE.PROMOTIONAL },
+    {
+      pointSource: WALLET_POINT_SOURCE.PROMOTIONAL,
+      ...(originalPromotionalExpiry ? { expiresAt: originalPromotionalExpiry } : {}),
+    },
   );
   return true;
 }

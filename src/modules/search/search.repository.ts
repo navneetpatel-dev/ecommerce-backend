@@ -41,6 +41,7 @@ export interface SearchResultRow {
   avgRating: string;
   reviewCount: number;
   stock: number;
+  defaultVariant: { id: string; stock: number } | null;
   vendor: {
     id: string;
     businessName: string;
@@ -89,6 +90,23 @@ const primaryImageLateral = `
     ORDER BY pi."isPrimary" DESC, pi."createdAt" ASC
     LIMIT 1
   ) img ON true
+`;
+
+/**
+ * One deterministic "default" variant per product, matching the first entry the regular listing
+ * endpoint's unfiltered `variants` association effectively returns — search results need at
+ * least this much to enable the product card's quick-add-to-cart action, which otherwise stays
+ * disabled for every card because the search response carried no variant data at all.
+ */
+const defaultVariantLateral = `
+  LEFT JOIN LATERAL (
+    SELECT json_build_object('id', sv.id, 'stock', sv.stock) AS variant
+    FROM product_variants sv
+    WHERE sv."productId" = p.id
+      AND sv."deletedAt" IS NULL
+    ORDER BY sv."createdAt" ASC
+    LIMIT 1
+  ) dv ON true
 `;
 
 const skuMatchExists = `
@@ -160,6 +178,7 @@ export class SearchRepository {
           WHERE sv."productId" = p.id
             AND sv."deletedAt" IS NULL
         ) AS "stock",
+        dv.variant AS "defaultVariant",
         json_build_object(
           'id', v.id,
           'businessName', v."businessName",
@@ -173,6 +192,7 @@ export class SearchRepository {
       FROM products p
       JOIN vendors v ON v.id = p."vendorId" AND v."deletedAt" IS NULL
       ${primaryImageLateral}
+      ${defaultVariantLateral}
       , websearch_to_tsquery('english', :term) query
       WHERE (
           p.search_vector @@ query

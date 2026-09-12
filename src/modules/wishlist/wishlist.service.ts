@@ -167,10 +167,21 @@ export class WishlistService {
 
       const wishlistItem = wishlistItemResult as WishlistItem & { product: Product & { variants: any[] } };
 
-      // Get default variant
-      const variant = wishlistItem.product.variants?.[0];
-      if (!variant) {
+      // Pick a deterministic default variant (oldest first, matching the product listing's
+      // convention) and require it to actually be in stock — the unordered association include
+      // previously let this pick an arbitrary, possibly zero-stock or wrong variant.
+      const variants = (wishlistItem.product.variants ?? [])
+        .slice()
+        .sort(
+          (a, b) =>
+            new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime(),
+        );
+      if (variants.length === 0) {
         throw new ValidationError(ERROR_MESSAGES.WISHLIST_NO_VARIANTS);
+      }
+      const variant = variants.find((v) => Number(v.stock) > 0);
+      if (!variant) {
+        throw new ValidationError(ERROR_MESSAGES.INSUFFICIENT_STOCK);
       }
 
       // Add to cart

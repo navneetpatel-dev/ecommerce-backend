@@ -41,6 +41,11 @@ export class SearchService {
           reviewCount: Number(row.reviewCount ?? 0),
           imageUrl: row.imageUrl ?? '',
           stock: Number(row.stock ?? 0),
+          // Enables the product card's quick-add action — without at least one variant id, the
+          // card has no id to add to cart and quick-add silently disables itself for every result.
+          variants: row.defaultVariant
+            ? [{ id: row.defaultVariant.id, stock: Number(row.defaultVariant.stock ?? 0) }]
+            : [],
           vendor: row.vendor,
           categoryId: row.categoryId,
           description: row.description,

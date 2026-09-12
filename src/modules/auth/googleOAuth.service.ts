@@ -147,6 +147,13 @@ async function findOrCreateGoogleUser(profile: GoogleUserInfo): Promise<User> {
     if (existing.status === USER_STATUS.BLOCKED) {
       throw new ForbiddenError(ERROR_MESSAGES.ACCOUNT_BLOCKED);
     }
+    // Google's contract makes `email_verified: false` rare but not impossible (e.g. a
+    // Workspace-provisioned address before confirmation) — never auto-link an unverified Google
+    // identity onto an existing password account without proof of control of the original
+    // password. Reject explicitly rather than silently granting a second login path in.
+    if (profile.email_verified === false) {
+      throw new ValidationError({ oauth: [ERROR_MESSAGES.OAUTH_GOOGLE_EMAIL_UNVERIFIED] });
+    }
     await existing.update({
       googleId: profile.sub,
       emailVerified: profile.email_verified ?? existing.emailVerified,
@@ -163,6 +170,17 @@ async function findOrCreateGoogleUser(profile: GoogleUserInfo): Promise<User> {
   if (existing?.deletedAt) {
     throw new ValidationError({
       email: [ERROR_MESSAGES.EMAIL_ALREADY_REGISTERED],
+    });
+  }
+
+  // Same reasoning as the account-linking branch above, but for brand-new accounts: without this,
+  // anyone able to produce a Google profile with email_verified:false for an address they do not
+  // control (no account exists here yet) could create a real, immediately-usable account tied to
+  // that email — permanently squatting it, since register()'s EMAIL_ALREADY_REGISTERED check
+  // fires regardless of verification state and the real owner could never register afterward.
+  if (profile.email_verified === false) {
+    throw new ValidationError({
+      oauth: [ERROR_MESSAGES.OAUTH_GOOGLE_EMAIL_UNVERIFIED_NEW_ACCOUNT],
     });
   }
 

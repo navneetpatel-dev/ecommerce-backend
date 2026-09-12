@@ -17,6 +17,7 @@ import { mapSubOrder } from '@modules/orders/orderDisplayMappers';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { shippingService } from '@modules/shipping/shipping.service';
 import { walletService } from '@modules/wallet/wallet.service';
+import { rollbackOrderWalletIfNeeded } from '@modules/wallet/walletOrderRollback';
 import type { GetSubOrdersQuery } from './suborders.dto';
 
 /**
@@ -139,6 +140,21 @@ export class SubordersService {
 
   async updateStatus(id: string, status: SubOrder['status'], trackingId: string | undefined, updatedBy: string) {
     const suborder = await sequelize.transaction(async (transaction) => {
+      // Cancellation locks the parent Order row further down (for the wallet-rollback sentinel
+      // and cashback-reduction writes) — acquire that lock FIRST, before the SubOrder row, so the
+      // lock order here (Order -> SubOrder) always matches ordersCancel.service.ts's
+      // cancelPaidOrder (which locks Order, then implicitly locks SubOrder rows via `.update()`).
+      // Locking SubOrder-then-Order here while the other path locks Order-then-SubOrder would be
+      // a classic lock-ordering deadlock risk if both run concurrently on the same order.
+      if (status === ORDER_STATUS.CANCELLED) {
+        const unlockedOrderId = (
+          await SubOrder.findByPk(id, { attributes: ['orderId'], transaction })
+        )?.orderId;
+        if (unlockedOrderId) {
+          await Order.findByPk(unlockedOrderId, { transaction, lock: transaction.LOCK.UPDATE });
+        }
+      }
+
       const row = await SubOrder.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
       if (!row) throw new NotFoundError('SubOrder');
       assertSubOrderTransition(row.status, status);
@@ -173,7 +189,10 @@ export class SubordersService {
         });
 
         // 3. Customer wallet refund if prepaid / paid
-        const parentOrder = await Order.findByPk(row.orderId, { transaction });
+        const parentOrder = await Order.findByPk(row.orderId, {
+          transaction,
+          lock: transaction.LOCK.UPDATE,
+        });
         const refundAmount = Number(row.customerTotal ?? row.subtotal);
         if (
           parentOrder &&
@@ -189,6 +208,14 @@ export class SubordersService {
           );
         }
 
+        // Note: pendingCashbackAmount is deliberately NOT shrunk here. It stays frozen at its
+        // checkout-time (whole-cart) value; cashback.service.ts's creditPendingCashbackForOrder
+        // prorates it against whichever suborders actually deliver at the moment of crediting.
+        // (An earlier version of this fix tried to shrink it incrementally on each cancellation,
+        // but that compounds against the already-shrunk running balance across sequential partial
+        // cancellations, under-reducing it — computing the prorated amount fresh at credit time
+        // from the immutable merchandiseSubtotal/subtotal figures avoids that entirely.)
+
         // 4. Settle parent order if all suborders are now cancelled
         if (parentOrder) {
           const sisterSubOrders = await SubOrder.findAll({
@@ -200,8 +227,18 @@ export class SubordersService {
             (s) => s.id === id || s.status === ORDER_STATUS.CANCELLED,
           );
           if (allCancelled) {
+            // Also roll back the checkout-time wallet spend here (writing the same rollback
+            // sentinel `cancelPaidOrder` checks for) and zero `walletAmountUsed` — otherwise a
+            // later order-level cancel call on this same now-CANCELLED order finds no sentinel
+            // and issues a second wallet credit for the full amount already refunded above.
+            await rollbackOrderWalletIfNeeded(parentOrder, parentOrder.userId, transaction);
             await Order.update(
-              { status: ORDER_STATUS.CANCELLED },
+              {
+                status: ORDER_STATUS.CANCELLED,
+                walletAmountUsed: 0,
+                // Every suborder is cancelled — nothing will ever deliver, so no cashback is due.
+                pendingCashbackAmount: 0,
+              },
               { where: { id: parentOrder.id }, transaction },
             );
           }

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { API_MOUNTS } from '@core/constants/apiPaths';
+import { NotFoundError } from '@core/errors/NotFoundError';
 import { authRoutes } from '@modules/auth/auth.routes';
 import usersRoutes from '@modules/users/users.routes';
 import vendorsRoutes from '@modules/vendors/vendors.routes';
@@ -79,5 +80,13 @@ router.use(API_MOUNTS.productQna, productQnaRoutes);
 router.use(API_MOUNTS.giftCards, giftCardsRoutes);
 router.use(API_MOUNTS.payments, paymentsRoutes);
 router.use(API_MOUNTS.roles, rolesRoutes);
+
+// Catch-all for any /api/v1/... path that matched none of the mounts above — without this,
+// Express falls through to its default HTML 404 ("Cannot GET /api/v1/xyz") instead of the API's
+// standard JSON error envelope, which is inconsistent for frontend error handling and external
+// integrators (e.g. debugging a webhook misconfiguration).
+router.use((_req, _res, next) => {
+  next(new NotFoundError('Route'));
+});
 
 export { router as routes };

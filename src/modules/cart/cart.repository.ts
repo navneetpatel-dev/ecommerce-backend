@@ -7,17 +7,19 @@ export class CartRepository extends BaseRepository<Cart> {
     super(Cart);
   }
 
-  async findByUserId(userId: string) {
+  async findByUserId(userId: string, transaction?: Transaction) {
     return this.model.findOne({
       where: { userId },
       include: ['items'],
+      transaction,
     });
   }
 
-  async findBySessionId(sessionId: string) {
+  async findBySessionId(sessionId: string, transaction?: Transaction) {
     return this.model.findOne({
       where: { sessionId },
       include: ['items'],
+      transaction,
     });
   }
 

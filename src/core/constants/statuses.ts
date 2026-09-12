@@ -11,6 +11,20 @@ export const ORDER_STATUS = {
 export type OrderStatus = (typeof ORDER_STATUS)[keyof typeof ORDER_STATUS];
 export const ORDER_STATUS_VALUES = Object.values(ORDER_STATUS) as [OrderStatus, ...OrderStatus[]];
 
+/** SubOrder statuses from which a full order/checkout cancellation is still allowed (pre-shipment only). */
+export const CANCELLABLE_SUB_STATUSES = new Set<string>([ORDER_STATUS.PENDING, ORDER_STATUS.CONFIRMED]);
+
+/**
+ * True only when every suborder is still in a cancellable (pre-shipment) status. Shared by every
+ * full-order-cancellation path (checkout.service.ts, payments.service.ts, ordersCancel.service.ts)
+ * so the rule can't drift between them — each caller still decides how to react to `false`
+ * (throw vs. silently no-op), since that differs by context (user-facing request vs. a webhook
+ * handler's best-effort cleanup).
+ */
+export function allSubOrdersCancellable(subOrders: { status: string }[]): boolean {
+  return subOrders.every((subOrder) => CANCELLABLE_SUB_STATUSES.has(subOrder.status));
+}
+
 export const PAYMENT_STATUS = {
   PENDING: 'PENDING',
   PAID: 'PAID',

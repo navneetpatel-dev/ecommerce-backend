@@ -55,6 +55,8 @@ import {
   DISCOUNT_BEARER,
   WALLET_REFERENCE_TYPE,
   WALLET_POINT_SOURCE,
+  UNAVAILABLE_REASON,
+  allSubOrdersCancellable,
 } from '@core/constants/statuses';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { resolveCodForCatalogItems } from '@modules/products/pdpPolicy';
@@ -133,6 +135,51 @@ function assertCartItemsAvailable(cart: CartWithItems) {
       items: unavailable,
     });
   }
+}
+
+/**
+ * Row-locks every distinct variant in the cart (SELECT ... FOR UPDATE) and re-checks stock
+ * against the locked values. Must run inside the order-creation transaction, after the initial
+ * (unlocked) `assertCartItemsAvailable` check and before any stock decrement, so two concurrent
+ * checkouts for the same last unit serialize on the lock instead of both reading stale stock.
+ */
+async function lockCartVariantsAndAssertStock(cart: CartWithItems, transaction: any) {
+  const variantIds = [...new Set(cart.items.map((item) => String(item.variantId)))];
+  // `ORDER BY id` is required, not cosmetic: without it, Postgres doesn't guarantee the order it
+  // acquires locks for a multi-row `WHERE id IN (...) FOR UPDATE`. Two concurrent checkouts
+  // sharing overlapping variants, listed in different orders (e.g. cart [X, Y] vs. cart [Y, X]),
+  // could then lock them in opposite orders and deadlock. Sorting both transactions' lock
+  // acquisition into the same deterministic (ascending id) order rules that out entirely.
+  const lockedVariants = await ProductVariant.findAll({
+    where: { id: variantIds },
+    order: [['id', 'ASC']],
+    transaction,
+    lock: transaction.LOCK.UPDATE,
+  });
+  const lockedById = new Map(lockedVariants.map((variant) => [String(variant.id), variant]));
+
+  const unavailable = cart.items
+    .map((item) => {
+      const locked = lockedById.get(String(item.variantId));
+      if (!locked || Number(locked.stock) < Number(item.quantity)) {
+        return {
+          cartItemId: item.id,
+          variantId: item.variantId,
+          productName: item.variant?.product?.name ?? null,
+          unavailableReason: UNAVAILABLE_REASON.OUT_OF_STOCK,
+        };
+      }
+      return null;
+    })
+    .filter(Boolean);
+
+  if (unavailable.length > 0) {
+    throw new AppError(ERROR_MESSAGES.ITEMS_UNAVAILABLE, 422, ERROR_CODES.ITEMS_UNAVAILABLE, {
+      items: unavailable,
+    });
+  }
+
+  return lockedById;
 }
 
 function catalogItemsForCod(
@@ -415,6 +462,7 @@ export class CheckoutService {
       const cart = await loadUserCart(userId, t);
 
       assertCartItemsAvailable(cart);
+      await lockCartVariantsAndAssertStock(cart, t);
 
       const shippingAddress = await Address.findOne({
         where: { id: data.shippingAddressId, userId },
@@ -467,6 +515,7 @@ export class CheckoutService {
           lines: toCouponLines(cart.items),
           shippingTotal,
           shippingByVendor,
+          transaction: t,
         });
         if (!result.valid) {
           throw new ValidationError(result.reason ?? ERROR_MESSAGES.COUPON_INVALID);
@@ -863,6 +912,16 @@ export class CheckoutService {
       }
 
       const order = orderResult as OrderForRollback;
+
+      // COD orders stay paymentStatus PENDING all the way to delivery, so the PAID check above
+      // never catches them — this is the only cancel path a COD order can reach at all (the
+      // frontend's own cancel button requires paymentStatus === PAID). Without this guard a
+      // customer could cancel their own already-SHIPPED COD order, restocking inventory and
+      // deleting commission/TCS ledgers for goods the vendor already fulfilled.
+      if (!allSubOrdersCancellable(order.subOrders ?? [])) {
+        throw new ValidationError(ERROR_MESSAGES.ORDER_CANCEL_ITEMS_SHIPPED);
+      }
+
       const restoreLines: Array<{ variantId: string; quantity: number }> = [];
 
       for (const subOrder of order.subOrders ?? []) {

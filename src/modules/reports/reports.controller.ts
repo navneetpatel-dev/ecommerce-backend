@@ -124,7 +124,12 @@ export const vendorSummary = asyncHandler(async (req: Request, res: Response) =>
     );
     return;
   }
-  const data = await reportsService.vendorSummary(vendorId, query, req.user?.vendorId ?? null);
+  const data = await reportsService.vendorSummary(
+    vendorId,
+    query,
+    req.user?.vendorId ?? null,
+    req.user?.role?.name ?? roleNameOf(req.user as any),
+  );
   res.json(ok(data));
 });
 

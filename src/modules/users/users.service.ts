@@ -539,6 +539,10 @@ export class UsersService {
     actor?: { id: string; role?: { name: string } },
   ) {
     return sequelize.transaction(async (t: Transaction) => {
+      if (actor?.id === userId) {
+        throw new ForbiddenError('Cannot change your own account status — ask another administrator');
+      }
+
       const user = await usersRepository.findById(userId, {
         include: [{ model: Role, as: 'role' }],
         transaction: t,
@@ -548,13 +552,8 @@ export class UsersService {
       const targetRoleName = (user as any).role?.name;
       const actorRoleName = actor?.role?.name;
 
-      if (targetRoleName === ROLES.SUPER_ADMIN) {
-        if (actorRoleName !== ROLES.SUPER_ADMIN) {
-          throw new ForbiddenError('Cannot modify status of a super administrator');
-        }
-        if (actor?.id === userId && data.status === USER_STATUS.BLOCKED) {
-          throw new ValidationError('Super administrators cannot block their own account');
-        }
+      if (targetRoleName === ROLES.SUPER_ADMIN && actorRoleName !== ROLES.SUPER_ADMIN) {
+        throw new ForbiddenError('Cannot modify status of a super administrator');
       }
 
       await usersRepository.update(userId, data, { transaction: t });
@@ -584,6 +583,10 @@ export class UsersService {
     actor: { id: string; role: { name: string } },
   ) {
     return sequelize.transaction(async (t: Transaction) => {
+      if (actor.id === userId) {
+        throw new ForbiddenError('Cannot change your own role — ask another administrator');
+      }
+
       const user = await usersRepository.findById(userId, {
         include: [{ model: Role, as: 'role' }],
         transaction: t,
@@ -648,6 +651,10 @@ export class UsersService {
 
   async deleteUser(userId: string, actor?: { id: string; role?: { name: string } }) {
     await sequelize.transaction(async (t: Transaction) => {
+      if (actor?.id === userId) {
+        throw new ForbiddenError('Cannot delete your own account — ask another administrator');
+      }
+
       const user = await usersRepository.findById(userId, {
         include: [{ model: Role, as: 'role' }],
         transaction: t,

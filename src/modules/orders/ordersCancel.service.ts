@@ -13,6 +13,7 @@ import {
   PAYMENT_STATUS,
   COMMISSION_STATUS,
   REFUND_STATUS,
+  allSubOrdersCancellable,
 } from '@core/constants/statuses';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { cartService } from '@modules/cart/cart.service';
@@ -23,11 +24,6 @@ import { roundMoney } from '@modules/pricing/money';
 import { rollbackOrderWalletIfNeeded } from '@modules/wallet/walletOrderRollback';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { logAudit } from '@modules/audit/audit.service';
-
-const CANCELLABLE_SUB_STATUSES = new Set<string>([
-  ORDER_STATUS.PENDING,
-  ORDER_STATUS.CONFIRMED,
-]);
 
 type OrderForCancel = Order & {
   subOrders?: (SubOrder & { items?: OrderItem[] })[];
@@ -91,10 +87,8 @@ export async function cancelPaidOrder(
     );
     razorpayPaymentId = order.razorpayPaymentId;
 
-    for (const subOrder of order.subOrders ?? []) {
-      if (!CANCELLABLE_SUB_STATUSES.has(subOrder.status)) {
-        throw new ValidationError(ERROR_MESSAGES.ORDER_CANCEL_ITEMS_SHIPPED);
-      }
+    if (!allSubOrdersCancellable(order.subOrders ?? [])) {
+      throw new ValidationError(ERROR_MESSAGES.ORDER_CANCEL_ITEMS_SHIPPED);
     }
 
     const restoreLines: Array<{ variantId: string; quantity: number }> = [];
@@ -123,6 +117,8 @@ export async function cancelPaidOrder(
       {
         status: ORDER_STATUS.CANCELLED,
         walletAmountUsed: 0,
+        // Every suborder is cancelled here too — nothing will ever deliver, so no cashback is due.
+        pendingCashbackAmount: 0,
         cancelRefundStatus: REFUND_STATUS.PENDING,
         updatedBy: userId,
       },

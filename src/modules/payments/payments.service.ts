@@ -23,6 +23,7 @@ import {
   ORDER_STATUS,
   PAYMENT_STATUS,
   COMMISSION_STATUS,
+  allSubOrdersCancellable,
 } from '@core/constants/statuses';
 import { ERROR_MESSAGES, ERROR_CODES } from '@core/constants/errors';
 import { RAZORPAY_MIN_AMOUNT_PAISE } from '@core/constants/http';
@@ -92,6 +93,13 @@ export class PaymentsService {
       if (!orderResult) return;
 
       const order = orderResult as OrderForRollback;
+
+      // Defense in depth, matching checkout.service.ts's cancelPendingCheckout and
+      // ordersCancel.service.ts's cancelPaidOrder: never restock/un-order a suborder that has
+      // already moved past pre-shipment, even though a `payment.failed` webhook for an order
+      // still PENDING payment shouldn't normally reach a shipped suborder.
+      if (!allSubOrdersCancellable(order.subOrders ?? [])) return;
+
       const restoreLines: Array<{ variantId: string; quantity: number }> = [];
 
       for (const subOrder of order.subOrders ?? []) {

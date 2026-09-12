@@ -155,6 +155,10 @@ export const ERROR_MESSAGES = {
   OAUTH_GOOGLE_NOT_CONFIGURED: 'Google sign-in is not configured yet',
   OAUTH_GOOGLE_FAILED: 'Google sign-in failed. Please try again.',
   OAUTH_GOOGLE_PROFILE_INCOMPLETE: 'Google did not return the required profile information',
+  OAUTH_GOOGLE_EMAIL_UNVERIFIED:
+    'This Google account email is not verified. Please sign in with your password first, then link Google from account settings.',
+  OAUTH_GOOGLE_EMAIL_UNVERIFIED_NEW_ACCOUNT:
+    'This Google account email is not verified. Please verify ownership of this email address before continuing.',
   OAUTH_PASSWORD_ACCOUNT: 'This account uses Google sign-in. Continue with Google instead.',
   OAUTH_STATE_INVALID: 'Sign-in session expired. Please try again.',
   VENDOR_NOT_PENDING: 'Vendor is not in PENDING status',

@@ -425,15 +425,35 @@ export class CartService {
     return this.getCart(userId, sessionId);
   }
 
+  /** Resolves the caller's own cart id — never creates one, since a mutation implies it must already exist. */
+  private async resolveOwnCartId(
+    userId: string | null,
+    sessionId: string | null,
+    transaction: Transaction,
+  ): Promise<string> {
+    let cart;
+    if (userId) {
+      cart = await cartRepository.findByUserId(userId, transaction);
+    } else if (sessionId) {
+      cart = await cartRepository.findBySessionId(sessionId, transaction);
+    } else {
+      throw new ValidationError('No user or session ID provided');
+    }
+    if (!cart) throw new NotFoundError('CartItem');
+    return cart.id;
+  }
+
   async updateCartItem(userId: string | null, sessionId: string | null, itemId: string, data: UpdateCartItemRequest): Promise<CartView> {
     await sequelize.transaction(async (t) => {
+      const ownCartId = await this.resolveOwnCartId(userId, sessionId, t);
+
       // Postgres rejects FOR UPDATE on the nullable side of an OUTER JOIN.
       // Lock the cart line alone, then load the variant without a lock.
       const item = await CartItem.findByPk(itemId, {
         transaction: t,
         lock: t.LOCK.UPDATE,
       });
-      if (!item) throw new NotFoundError('CartItem');
+      if (!item || item.cartId !== ownCartId) throw new NotFoundError('CartItem');
 
       const variant = await ProductVariant.findByPk(item.variantId, { transaction: t });
       if (!variant) throw new NotFoundError('ProductVariant');
@@ -450,10 +470,14 @@ export class CartService {
   }
 
   async removeFromCart(userId: string | null, sessionId: string | null, itemId: string): Promise<CartView> {
-    const item = await CartItem.findByPk(itemId);
-    if (!item) throw new NotFoundError('CartItem');
+    await sequelize.transaction(async (t) => {
+      const ownCartId = await this.resolveOwnCartId(userId, sessionId, t);
 
-    await item.destroy();
+      const item = await CartItem.findByPk(itemId, { transaction: t });
+      if (!item || item.cartId !== ownCartId) throw new NotFoundError('CartItem');
+
+      await item.destroy({ transaction: t });
+    });
 
     return this.getCart(userId, sessionId);
   }
