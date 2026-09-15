@@ -82,6 +82,7 @@ import { initProductAffinityModel, ProductAffinity } from './productAffinity.mod
 import { initGiftCardModel, GiftCard } from './giftCard.model';
 import { initProductQuestionModel, ProductQuestion } from './productQuestion.model';
 import { initProductAnswerModel, ProductAnswer } from './productAnswer.model';
+import { initExportJobModel, ExportJob } from './exportJob.model';
 
 const models = {
   Role: initRoleModel(sequelize),
@@ -158,6 +159,7 @@ const models = {
   ProductQuestion: initProductQuestionModel(sequelize),
   ProductAnswer: initProductAnswerModel(sequelize),
   GiftCard: initGiftCardModel(sequelize),
+  ExportJob: initExportJobModel(sequelize),
 };
 
 Object.values(models).forEach((model: any) => {
@@ -192,4 +194,5 @@ export {
   ProductQuestion,
   ProductAnswer,
   GiftCard,
+  ExportJob,
 };

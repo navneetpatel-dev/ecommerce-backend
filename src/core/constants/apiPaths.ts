@@ -40,6 +40,7 @@ export const API_MOUNTS = {
   giftCards: '/gift-cards',
   payments: '/payments',
   roles: '/roles',
+  exports: '/exports',
 } as const;
 
 export const HEALTH_PATH = '/health';

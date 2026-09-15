@@ -10,6 +10,7 @@ import { loadUserFromBearer } from '@middleware/auth.middleware';
 import { Shipment } from '@database/models/shipment.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { Order } from '@database/models/order.model';
+import { ExportJob } from '@database/models/exportJob.model';
 
 type SocketUser = {
   id: string;
@@ -104,6 +105,35 @@ export function initSocket(server: HttpServer): SocketIOServer {
         }
       },
     );
+
+    socket.on(
+      'subscribe:export-job',
+      async (
+        payload: { jobId?: string },
+        ack?: (res: { ok: boolean; message?: string }) => void,
+      ) => {
+        try {
+          const jobId = String(payload?.jobId ?? '').trim();
+          const user = socket.data.user as SocketUser;
+          if (!jobId || !user) {
+            ack?.({ ok: false, message: 'Not authorized' });
+            return;
+          }
+          const job = await ExportJob.findByPk(jobId, { attributes: ['id', 'ownerId'] });
+          if (!job || job.ownerId !== user.id) {
+            ack?.({ ok: false, message: 'Export job not found' });
+            return;
+          }
+          socket.join(`export-job:${jobId}`);
+          ack?.({ ok: true });
+        } catch (error) {
+          logger.warn('socket subscribe:export-job failed', {
+            error: error instanceof Error ? error.message : error,
+          });
+          ack?.({ ok: false, message: 'Could not subscribe' });
+        }
+      },
+    );
   });
 
   logger.info('Socket.IO realtime server initialized');
@@ -116,4 +146,12 @@ export function emitShipmentLocation(
   payload: { lat: number; lng: number; updatedAt: string },
 ): void {
   io?.to(`shipment:${shipmentId}`).emit('location:update', { shipmentId, ...payload });
+}
+
+export function emitExportJobEvent(
+  jobId: string,
+  event: 'export:progress' | 'export:completed' | 'export:failed',
+  payload: Record<string, unknown>,
+): void {
+  io?.to(`export-job:${jobId}`).emit(event, payload);
 }

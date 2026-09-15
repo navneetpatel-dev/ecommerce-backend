@@ -123,6 +123,11 @@ const envSchema = z.object({
   REPORT_EXPORT_CHUNK_SIZE: z.coerce.number().int().positive().default(2000),
   /** Hard cap on rows streamed per export (0 = unlimited). */
   REPORT_EXPORT_MAX_ROWS: z.coerce.number().int().nonnegative().default(500_000),
+  EXPORT_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(2),
+  /** How long a completed/failed export's S3 artifact + DB row are kept before cleanup sweeps them. */
+  EXPORT_JOB_TTL_HOURS: z.coerce.number().int().positive().default(48),
+  /** Max time with zero progress signal before a job is treated as stuck — see exportConfig.maxInactivityMs. Not a total-duration cap. */
+  EXPORT_JOB_MAX_INACTIVITY_MINUTES: z.coerce.number().int().positive().default(30),
   /** When false, run `npm run worker` in a separate process (recommended in production). */
   START_WORKERS_IN_API: z
     .union([z.boolean(), z.string()])

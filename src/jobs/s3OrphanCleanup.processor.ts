@@ -8,11 +8,14 @@ import {
 } from './walletRechargeExpiry.processor';
 import { REFUND_RETRY_JOB, runRefundRetry } from './refundRetry.processor';
 import { PROMO_POINTS_EXPIRY_JOB, runPromoPointsExpiry } from './promoPointsExpiry.processor';
+import { EXPORT_CLEANUP_JOB, EXPORT_STALE_PROCESSING_SWEEP_JOB, runExportCleanup, runStaleProcessingSweep } from './exportCleanup';
 
 const REPEAT_JOB_ID = 's3-orphan-cleanup-daily';
 const WALLET_RECHARGE_EXPIRY_JOB_ID = 'wallet-recharge-expiry-hourly';
 const REFUND_RETRY_JOB_ID = 'refund-retry-hourly';
 const PROMO_POINTS_EXPIRY_JOB_ID = 'promo-points-expiry-daily';
+const EXPORT_CLEANUP_JOB_ID = 'export-cleanup-daily';
+const EXPORT_STALE_PROCESSING_SWEEP_JOB_ID = 'export-stale-processing-sweep-15min';
 
 export function startS3OrphanCleanupWorker(): Worker {
   const worker = new Worker(
@@ -33,6 +36,14 @@ export function startS3OrphanCleanupWorker(): Worker {
       }
       if (job.name === PROMO_POINTS_EXPIRY_JOB) {
         await runPromoPointsExpiry();
+        return;
+      }
+      if (job.name === EXPORT_CLEANUP_JOB) {
+        await runExportCleanup();
+        return;
+      }
+      if (job.name === EXPORT_STALE_PROCESSING_SWEEP_JOB) {
+        await runStaleProcessingSweep();
         return;
       }
     },
@@ -101,6 +112,30 @@ export async function scheduleS3OrphanCleanupJob(): Promise<void> {
     },
   );
   logger.info('Promo points expiry scheduled', { cron: '45 3 * * *' });
+
+  await queues.s3OrphanCleanup.add(
+    EXPORT_CLEANUP_JOB,
+    {},
+    {
+      jobId: EXPORT_CLEANUP_JOB_ID,
+      repeat: { pattern: '15 3 * * *' },
+      removeOnComplete: 50,
+      removeOnFail: 100,
+    },
+  );
+  logger.info('Export cleanup scheduled', { cron: '15 3 * * *' });
+
+  await queues.s3OrphanCleanup.add(
+    EXPORT_STALE_PROCESSING_SWEEP_JOB,
+    {},
+    {
+      jobId: EXPORT_STALE_PROCESSING_SWEEP_JOB_ID,
+      repeat: { pattern: '*/15 * * * *' },
+      removeOnComplete: 50,
+      removeOnFail: 100,
+    },
+  );
+  logger.info('Export stale-processing sweep scheduled', { cron: '*/15 * * * *' });
 }
 
 export async function stopS3OrphanCleanupWorker(worker: Worker | null): Promise<void> {

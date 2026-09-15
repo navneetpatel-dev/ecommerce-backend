@@ -12,6 +12,7 @@ export const S3_ENTITY_TYPE_VALUES = [
   'payouts',
   'shipments',
   'delivery-agent-documents',
+  'export',
 ] as const;
 
 export type S3EntityType = (typeof S3_ENTITY_TYPE_VALUES)[number];
@@ -29,6 +30,7 @@ export const S3_ENTITY_TYPES = {
   PAYOUTS: 'payouts',
   SHIPMENTS: 'shipments',
   DELIVERY_AGENT_DOCUMENTS: 'delivery-agent-documents',
+  EXPORT: 'export',
 } as const satisfies Record<string, S3EntityType>;
 
 /** Purpose segments under an entity — matches `…/{entityId}/{purpose}/{uuid}.ext`. */
@@ -45,6 +47,7 @@ export const S3_PURPOSE_VALUES = [
   'video',
   'size-chart',
   'proof',
+  'export-artifact',
 ] as const;
 
 export type S3Purpose = (typeof S3_PURPOSE_VALUES)[number];
@@ -62,6 +65,7 @@ export const S3_PURPOSES = {
   VIDEO: 'video',
   SIZE_CHART: 'size-chart',
   PROOF: 'proof',
+  EXPORT_ARTIFACT: 'export-artifact',
 } as const satisfies Record<string, S3Purpose>;
 
 /** Allowed purpose values per entity type. */
@@ -78,6 +82,7 @@ export const S3_ENTITY_PURPOSES: Record<S3EntityType, readonly S3Purpose[]> = {
   [S3_ENTITY_TYPES.PAYOUTS]: [S3_PURPOSES.ATTACHMENTS],
   [S3_ENTITY_TYPES.SHIPMENTS]: [S3_PURPOSES.PROOF],
   [S3_ENTITY_TYPES.DELIVERY_AGENT_DOCUMENTS]: [S3_PURPOSES.KYC],
+  [S3_ENTITY_TYPES.EXPORT]: [S3_PURPOSES.EXPORT_ARTIFACT],
 };
 
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;

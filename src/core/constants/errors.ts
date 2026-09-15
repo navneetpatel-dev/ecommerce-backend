@@ -305,4 +305,8 @@ export const ERROR_MESSAGES = {
   GIFT_CARD_EXPIRED: 'This gift card has expired',
   GIFT_CARD_ALREADY_REDEEMED: 'This gift card has already been redeemed',
   GIFT_CARD_AMOUNT_RANGE: 'Gift card amount is outside the allowed range',
+  EXPORT_JOB_NOT_FOUND: 'Export job not found',
+  EXPORT_JOB_NOT_CANCELLABLE: 'This export can no longer be cancelled',
+  EXPORT_JOB_NOT_READY: 'This export isn’t ready to download yet',
+  EXPORT_RATE_LIMITED: 'Too many exports requested — please wait a moment',
 } as const;

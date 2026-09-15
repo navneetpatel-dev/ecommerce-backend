@@ -1,19 +1,16 @@
-import fsp from 'node:fs/promises';
+import { PassThrough } from 'node:stream';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { getReportDefinition } from './reportRegistry';
 import { buildReportFilename } from './excelExporter';
-import {
-  contentTypeForFormat,
-  extensionForFormat,
-  type ReportExportFormat,
-} from './csvExporter';
+import { extensionForFormat, type ReportExportFormat } from './csvExporter';
 import { assertReportRange } from './queryHelpers';
 import type { ReportFilters } from './types';
 import { createReportRowIterator } from './export/ReportRowIterator';
-import { createStreamingWriter } from './export/StreamingExportWriter';
+import { createExportWriter, contentTypeForExportFormat } from '@core/export';
+import { resolveReportColumnLabel } from '../reports.constants';
 import { reportExportConfig } from '../reportExportConfig';
 import { emitReportExportMetric } from '../reportExportMetrics';
 import type { ReportActor } from './reportEngine.types';
@@ -45,10 +42,27 @@ export async function generateReportExport(
   if (def.audience === 'customer') filters.userId = actor.id;
 
   const startedAt = Date.now();
-  let writer: ReturnType<typeof createStreamingWriter> | null = null;
+  const columns = def.columns.map((col) => ({
+    key: col.key,
+    label: resolveReportColumnLabel(col.labelKey),
+    format: col.format,
+  }));
+
+  // In-memory sink: this direct/synchronous path returns a Buffer to an
+  // HTTP response (unlike the async job path in Step 08, which streams
+  // straight to S3 and never buffers), so the writer's output is collected
+  // here via a PassThrough instead of going to a temp file or to S3.
+  const chunks: Buffer[] = [];
+  const sink = new PassThrough();
+  sink.on('data', (chunk: Buffer) => chunks.push(chunk));
+  const collected = new Promise<void>((resolve, reject) => {
+    sink.on('end', resolve);
+    sink.on('error', reject);
+  });
+
+  const writer = createExportWriter(exportFormat, columns, def.type, sink);
 
   try {
-    writer = createStreamingWriter(exportFormat, def.columns, def.type);
     await writer.writeHeader();
 
     let rowCount = 0;
@@ -63,10 +77,11 @@ export async function generateReportExport(
       await writer.writeRows(chunk);
     }
 
-    const artifact = await writer.finalize();
+    await writer.finalize();
+    await collected;
+    const buffer = Buffer.concat(chunks);
     const ext = extensionForFormat(exportFormat);
     const filename = buildReportFilename(def.type, filters.from, filters.to, ext);
-    const buffer = await fsp.readFile(artifact.tempPath);
 
     emitReportExportMetric({
       outcome: 'completed',
@@ -80,7 +95,7 @@ export async function generateReportExport(
     return {
       buffer,
       filename,
-      contentType: contentTypeForFormat(exportFormat),
+      contentType: contentTypeForExportFormat(exportFormat),
       rowCount,
     };
   } catch (err) {
@@ -92,6 +107,6 @@ export async function generateReportExport(
     });
     throw err;
   } finally {
-    if (writer) await writer.dispose().catch(() => undefined);
+    await writer.dispose().catch(() => undefined);
   }
 }

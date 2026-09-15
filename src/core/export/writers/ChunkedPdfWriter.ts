@@ -1,5 +1,3 @@
-import fs from 'node:fs';
-import fsp from 'node:fs/promises';
 import { createBrandedPdfDocument, pipePdfDocument } from '@core/pdf';
 import { formatPdfCellValue } from '@core/pdf/pdfFormatters';
 import { PdfPageLayout } from '@core/pdf/pdfPageLayout';
@@ -13,22 +11,18 @@ import {
   drawTableRow,
   measureTableRowHeight,
 } from '@core/pdf/pdfTable';
-import { resolveReportColumnLabel } from '../../reports.constants';
-import { reportExportConfig } from '../../reportExportConfig';
-import { contentTypeForFormat } from '../csvExporter';
-import type { ReportColumn } from '../types';
-import type { StreamingExportArtifact, StreamingExportWriter } from './exportWriterTypes';
+import type { ExportColumn, ExportArtifact, ExportWriter } from '../exportTypes';
+import { contentTypeForExportFormat } from '../exportTypes';
 
 function isNumericColumn(values: string[]): boolean {
   if (values.length === 0) return false;
   return values.every((v) => /^-?\d[\d,]*(\.\d+)?$/.test(v) || v === '--');
 }
 
-/** Incremental PDF table writer — pipes PDFKit to a temp file as pages are drawn. */
-export class ChunkedPdfWriter implements StreamingExportWriter {
+/** Incremental PDF table writer — pipes PDFKit to the caller-supplied sink as pages are drawn. */
+export class ChunkedPdfWriter implements ExportWriter {
   private doc: PDFKit.PDFDocument;
   private layout: PdfPageLayout;
-  private stream: fs.WriteStream;
   private cols: ReturnType<typeof buildMeasuredColumns> | null = null;
   private primaryKey: string;
   private rowIndex = 0;
@@ -39,14 +33,14 @@ export class ChunkedPdfWriter implements StreamingExportWriter {
   private pendingRows: Record<string, unknown>[] = [];
 
   constructor(
-    readonly tempPath: string,
-    private readonly columns: ReportColumn[],
+    private readonly sink: NodeJS.WritableStream,
+    private readonly columns: ExportColumn[],
     private readonly title: string,
+    private readonly chunkSize: number,
   ) {
     this.primaryKey = columns[0]?.key ?? 'col0';
     this.doc = createBrandedPdfDocument({ title: this.title });
-    this.stream = fs.createWriteStream(tempPath);
-    this.doc.pipe(this.stream);
+    this.doc.pipe(this.sink as NodeJS.WritableStream & { write: any });
     this.layout = new PdfPageLayout(this.doc, this.title, this.title);
   }
 
@@ -62,7 +56,7 @@ export class ChunkedPdfWriter implements StreamingExportWriter {
 
     const pdfColumns = this.columns.map((col) => ({
       key: col.key,
-      label: resolveReportColumnLabel(col.labelKey),
+      label: col.label,
     }));
 
     if (!this.cols) {
@@ -75,7 +69,7 @@ export class ChunkedPdfWriter implements StreamingExportWriter {
         }
         this.sampleBuffer.push(out);
       }
-      const lastChunk = rows.length < reportExportConfig.chunkSize;
+      const lastChunk = rows.length < this.chunkSize;
       if (this.sampleBuffer.length < this.sampleTarget && !lastChunk) {
         return;
       }
@@ -178,42 +172,32 @@ export class ChunkedPdfWriter implements StreamingExportWriter {
     this.layout.y += tableHeaderH;
   }
 
-  async finalize(): Promise<StreamingExportArtifact> {
+  async finalize(): Promise<ExportArtifact> {
     if (this.finalized) {
-      const stat = await fsp.stat(this.tempPath);
-      return {
-        tempPath: this.tempPath,
-        contentType: contentTypeForFormat('pdf'),
-        byteSize: stat.size,
-      };
+      const byteSize = (this.sink as unknown as { bytesWritten?: number }).bytesWritten ?? 0;
+      return { contentType: contentTypeForExportFormat('pdf'), byteSize };
     }
     if (!this.started) await this.writeHeader();
     if (!this.cols && this.pendingRows.length > 0) {
       const pdfColumns = this.columns.map((col) => ({
         key: col.key,
-        label: resolveReportColumnLabel(col.labelKey),
+        label: col.label,
       }));
       this.ensureColumns(pdfColumns);
-      for (const pending of this.pendingRows) {
-        this.drawRow(pdfColumns, pending);
-      }
+      for (const pending of this.pendingRows) this.drawRow(pdfColumns, pending);
       this.pendingRows = [];
     }
     if (this.rowIndex === 0) {
       this.layout.doc.font('Helvetica').fontSize(10).fillColor('#1B1917');
       this.layout.doc.text('No rows', this.layout.margin, this.layout.y);
     }
-    await pipePdfDocument(this.doc, this.stream);
+    await pipePdfDocument(this.doc, this.sink);
     this.finalized = true;
-    const stat = await fsp.stat(this.tempPath);
-    return {
-      tempPath: this.tempPath,
-      contentType: contentTypeForFormat('pdf'),
-      byteSize: stat.size,
-    };
+    const byteSize = (this.sink as unknown as { bytesWritten?: number }).bytesWritten ?? 0;
+    return { contentType: contentTypeForExportFormat('pdf'), byteSize };
   }
 
   async dispose(): Promise<void> {
-    await fsp.unlink(this.tempPath).catch(() => undefined);
+    if ('destroy' in this.sink) (this.sink as { destroy: () => void }).destroy();
   }
 }

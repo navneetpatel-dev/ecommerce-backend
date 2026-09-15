@@ -6,7 +6,8 @@ import { logger } from '@core/logger';
 import { env } from '@config/env';
 import { couponsService } from '@modules/coupons/coupons.service';
 import { startBackgroundWorkers, stopBackgroundWorkers } from '@jobs/index';
-import { initSocket } from '@realtime/socket';
+import { initSocket, emitExportJobEvent } from '@realtime/socket';
+import { bindExportQueueEvents, exportProgressBridgeIo } from '@realtime/exportProgressBridge';
 
 const COUPON_ALERT_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
@@ -19,6 +20,10 @@ async function bootstrap() {
     logger.info('Redis connected');
     try {
       await connectQueues();
+      if (areQueuesReady()) {
+        exportProgressBridgeIo.emitExportJobEvent = emitExportJobEvent;
+        bindExportQueueEvents();
+      }
       if (areQueuesReady() && env.START_WORKERS_IN_API) {
         await startBackgroundWorkers();
       } else if (areQueuesReady() && !env.START_WORKERS_IN_API) {

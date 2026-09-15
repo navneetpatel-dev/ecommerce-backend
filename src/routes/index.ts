@@ -39,6 +39,7 @@ import productQnaRoutes from '@modules/productQna/productQna.routes';
 import giftCardsRoutes from '@modules/giftCards/giftCards.routes';
 import paymentsRoutes from '@modules/payments/payments.routes';
 import rolesRoutes from '@modules/roles/roles.routes';
+import exportsRoutes from '@modules/exports/exports.routes';
 
 const router = Router();
 
@@ -80,6 +81,7 @@ router.use(API_MOUNTS.productQna, productQnaRoutes);
 router.use(API_MOUNTS.giftCards, giftCardsRoutes);
 router.use(API_MOUNTS.payments, paymentsRoutes);
 router.use(API_MOUNTS.roles, rolesRoutes);
+router.use(API_MOUNTS.exports, exportsRoutes);
 
 // Catch-all for any /api/v1/... path that matched none of the mounts above — without this,
 // Express falls through to its default HTML 404 ("Cannot GET /api/v1/xyz") instead of the API's

@@ -1,3 +1,4 @@
+import './engine/reportExportSource'; // registers the 'report' export domain — side-effect import, keep first
 import { Router } from 'express';
 import { authenticate } from '@middleware/auth.middleware';
 import { authorize } from '@middleware/rbac.middleware';

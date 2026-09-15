@@ -10,6 +10,7 @@ import { env } from '@config/env';
 import { couponsService } from '@modules/coupons/coupons.service';
 import { startBackgroundWorkers, stopBackgroundWorkers } from '@jobs/index';
 import '@database/models';
+import '@modules/reports/engine/reportExportSource';
 
 const COUPON_ALERT_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
