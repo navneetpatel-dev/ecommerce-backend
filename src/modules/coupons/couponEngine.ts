@@ -24,6 +24,8 @@ import {
   vendorEligibleSubtotals,
 } from './coupon.utils';
 
+export const LOYAL_CUSTOMER_MIN_PAID_ORDERS = 3;
+
 export type ValidateCouponInput = {
   code?: string | null;
   coupon?: Coupon | null;
@@ -276,7 +278,7 @@ export async function validateCoupon(input: ValidateCouponInput): Promise<Valida
     const segments = new Set<string>();
     if (paidOrders === 0) segments.add(COUPON_USER_SEGMENT.NEW);
     if (paidOrders > 0) segments.add(COUPON_USER_SEGMENT.RETURNING);
-    if (paidOrders >= 3) segments.add(COUPON_USER_SEGMENT.LOYAL);
+    if (paidOrders >= LOYAL_CUSTOMER_MIN_PAID_ORDERS) segments.add(COUPON_USER_SEGMENT.LOYAL);
     if (!wanted.some((segment) => segments.has(segment))) {
       return fail(ERROR_MESSAGES.COUPON_RESTRICTION, ERROR_CODES.COUPON_RESTRICTION);
     }

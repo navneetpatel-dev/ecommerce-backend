@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import type { Vendor } from '@database/models/vendor.model';
 import { roundMoney } from '@modules/pricing/money';
 import { combinedDiscount } from '@modules/pricing/displayMoney';
+import { splitTaxAmount } from '@modules/pricing/pricing.engine';
 import { buildCheckoutOrderTotals } from '../checkoutOrderTotals';
 import { priceVendorRows, type VendorPricingRow } from '../vendorPricingPlan';
 import type { PlatformSettingsPayload } from '@modules/settings/settings.service';
@@ -205,6 +206,96 @@ describe('cart / checkout pricing parity', () => {
     // Each vendor ships to itself, so both buckets are intra-state.
     for (const entry of Object.values(pricedByVendor)) {
       assert.equal(entry.rupees.tax.igst, 0);
+    }
+  });
+});
+
+/** Mirrors checkout.service.ts TcsLedger COLLECTION split. */
+function checkoutTcsSplit(tcsTotal: number, taxIgst: number) {
+  const useIgst = Number(taxIgst ?? 0) > 0;
+  return splitTaxAmount(tcsTotal, !useIgst);
+}
+
+describe('TcsLedger split at checkout (via priceVendorRows)', () => {
+  it('splits intra-state TCS into CGST+SGST matching splitTaxAmount, including odd paise', () => {
+    const rows: VendorPricingRow[] = [
+      {
+        vendorId: 'vendor-intra',
+        vendor: vendorStub('KARNATAKA'),
+        lines: [
+          {
+            key: 'odd-tcs',
+            vendorId: 'vendor-intra',
+            unitPrice: 101,
+            quantity: 1,
+            categoryId: 'cat-1',
+            weightGrams: 500,
+          },
+        ],
+        shippingCost: 0,
+        shippingRateFound: true,
+        gstPercentage: 18,
+        commissionRatePercent: 10,
+        lineRates: { 'odd-tcs': { gstPercentage: 18, commissionRatePercent: 10 } },
+      },
+    ];
+    const { pricedByVendor } = priceVendorRows({
+      rows,
+      shares: { vendorDiscountShares: {}, vendorShippingDiscountShares: {}, vendorBorneDiscountShares: {} },
+      shippingStateCode: 'KARNATAKA',
+      settings,
+    });
+    const p = pricedByVendor['vendor-intra']!.paise;
+    assert.ok(p.tcsPaise > 0);
+    const split = checkoutTcsSplit(p.tcsPaise, p.tax.igst);
+    assert.equal(split.cgst + split.sgst + split.igst, p.tcsPaise);
+    assert.deepEqual(split, splitTaxAmount(p.tcsPaise, true));
+    assert.equal(split.igst, 0);
+  });
+
+  it('puts inter-state TCS entirely into IGST', () => {
+    const rows = buildRows();
+    const { pricedByVendor } = priceVendorRows({
+      rows,
+      shares,
+      shippingStateCode: 'KARNATAKA',
+      settings,
+    });
+    const intra = pricedByVendor['vendor-intra']!.paise;
+    const inter = pricedByVendor['vendor-inter']!.paise;
+
+    const intraSplit = checkoutTcsSplit(intra.tcsPaise, intra.tax.igst);
+    assert.deepEqual(intraSplit, splitTaxAmount(intra.tcsPaise, true));
+    assert.equal(intraSplit.igst, 0);
+    assert.equal(intraSplit.cgst + intraSplit.sgst, intra.tcsPaise);
+
+    const interSplit = checkoutTcsSplit(inter.tcsPaise, inter.tax.igst);
+    assert.deepEqual(interSplit, splitTaxAmount(inter.tcsPaise, false));
+    assert.equal(interSplit.igst, inter.tcsPaise);
+    assert.equal(interSplit.cgst, 0);
+    assert.equal(interSplit.sgst, 0);
+  });
+
+  it('does not silently file intra-state TCS as IGST if useIgst polarity is inverted', () => {
+    const tcsTotal = 101;
+    const useIgst = false;
+    const correct = splitTaxAmount(tcsTotal, !useIgst);
+    const invertedWrong = splitTaxAmount(tcsTotal, useIgst);
+    assert.deepEqual(correct, { cgst: 50, sgst: 51, igst: 0 });
+    assert.deepEqual(invertedWrong, { cgst: 0, sgst: 0, igst: 101 });
+    assert.notDeepEqual(correct, invertedWrong);
+  });
+
+  it('regression-locks the pre-refactor TCS split formula', () => {
+    const snapshots = [
+      { tcsTotal: 101, useIgst: false, expected: { cgst: 50, sgst: 51, igst: 0 } },
+      { tcsTotal: 101, useIgst: true, expected: { cgst: 0, sgst: 0, igst: 101 } },
+      { tcsTotal: 100, useIgst: false, expected: { cgst: 50, sgst: 50, igst: 0 } },
+      { tcsTotal: 180, useIgst: true, expected: { cgst: 0, sgst: 0, igst: 180 } },
+    ] as const;
+    for (const s of snapshots) {
+      const split = splitTaxAmount(s.tcsTotal, !s.useIgst);
+      assert.deepEqual(split, s.expected);
     }
   });
 });

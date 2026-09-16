@@ -1,6 +1,6 @@
 import { settingsService } from '@modules/settings/settings.service';
 import { categoriesService } from '@modules/categories/categories.service';
-import { taxRepository } from '@modules/tax/tax.repository';
+import { taxService } from '@modules/tax/tax.service';
 import { WARRANTY_TYPE, type WarrantyType } from '@core/constants/statuses';
 import type { Product } from '@database/models/product.model';
 
@@ -76,25 +76,9 @@ export async function resolvePdpPolicy(product: Product): Promise<PdpPolicy> {
     warrantyType = null;
   }
 
-  let gstPercentage = 18;
-  let hsnCode = product.hsnCode?.trim() || null;
-  let foundTaxRule = false;
-  for (const node of chain) {
-    const rule = await taxRepository.findByCategory(node.id);
-    if (rule) {
-      foundTaxRule = true;
-      gstPercentage = Number(rule.gstPercentage);
-      if (!hsnCode && rule.hsnCode) hsnCode = String(rule.hsnCode);
-      break;
-    }
-  }
-  if (!foundTaxRule) {
-    const fallback = await taxRepository.findDefault();
-    if (fallback) {
-      gstPercentage = Number(fallback.gstPercentage);
-      if (!hsnCode && fallback.hsnCode) hsnCode = String(fallback.hsnCode);
-    }
-  }
+  const effectiveTaxRule = await taxService.resolveEffectiveTaxRule(product.categoryId ?? undefined);
+  const gstPercentage = effectiveTaxRule.gstPercentage;
+  const hsnCode = product.hsnCode?.trim() || effectiveTaxRule.hsnCode;
 
   const vendor = (product as Product & {
     vendor?: { returnShippingFee?: number | null; performanceScore?: number | null; codEnabled?: boolean };

@@ -9,7 +9,7 @@ import { RAZORPAY_MIN_AMOUNT_PAISE } from '@core/constants/http';
 import { GIFT_CARD_STATUS, WALLET_POINT_SOURCE } from '@core/constants/statuses';
 import { sequelize } from '@database/models';
 import { GiftCard } from '@database/models/giftCard.model';
-import { roundMoney } from '@modules/pricing/money';
+import { roundMoney, toPaise } from '@modules/pricing/money';
 import { paymentsService } from '@modules/payments/payments.service';
 import { walletService } from '@modules/wallet/wallet.service';
 import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
@@ -53,7 +53,7 @@ export class GiftCardsService {
     if (amount < GIFT_CARD_MIN_AMOUNT_INR || amount > GIFT_CARD_MAX_AMOUNT_INR) {
       throw new ValidationError(ERROR_MESSAGES.GIFT_CARD_AMOUNT_RANGE);
     }
-    const amountInPaise = Math.round(amount * 100);
+    const amountInPaise = toPaise(amount);
     if (amountInPaise < RAZORPAY_MIN_AMOUNT_PAISE) {
       throw new ValidationError(ERROR_MESSAGES.ORDER_AMOUNT_BELOW_RAZORPAY_MIN);
     }

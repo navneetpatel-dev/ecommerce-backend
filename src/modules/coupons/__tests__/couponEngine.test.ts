@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it, mock } from 'node:test';
 import { Coupon } from '@database/models/coupon.model';
+import { Order } from '@database/models/order.model';
 import { Vendor } from '@database/models/vendor.model';
-import { COUPON_STATUS, VENDOR_STATUS } from '@core/constants/statuses';
-import { validateCoupon } from '../couponEngine';
+import { COUPON_STATUS, COUPON_USER_SEGMENT, VENDOR_STATUS } from '@core/constants/statuses';
+import { LOYAL_CUSTOMER_MIN_PAID_ORDERS, validateCoupon } from '../couponEngine';
 
 function freeShippingCoupon(overrides: Partial<Coupon> = {}): Coupon {
   return {
@@ -100,5 +101,38 @@ describe('FREE_SHIPPING allocation', () => {
       'vendor-1': 20,
       'vendor-2': 30,
     });
+  });
+});
+
+describe('LOYAL_CUSTOMER_MIN_PAID_ORDERS segment threshold', () => {
+  afterEach(() => mock.restoreAll());
+
+  it('treats a customer as LOYAL at the named paid-order threshold', async () => {
+    mock.method(Order, 'count', async () => LOYAL_CUSTOMER_MIN_PAID_ORDERS);
+    const result = await validateCoupon({
+      coupon: freeShippingCoupon({
+        userRestriction: { type: 'segment', value: [COUPON_USER_SEGMENT.LOYAL] },
+      }),
+      userId: 'user-loyal',
+      lines,
+      shippingTotal: 100,
+      shippingByVendor: { 'vendor-1': 40, 'vendor-2': 60 },
+    });
+    assert.equal(LOYAL_CUSTOMER_MIN_PAID_ORDERS, 3);
+    assert.equal(result.valid, true);
+  });
+
+  it('does not treat a customer as LOYAL below the named threshold', async () => {
+    mock.method(Order, 'count', async () => LOYAL_CUSTOMER_MIN_PAID_ORDERS - 1);
+    const result = await validateCoupon({
+      coupon: freeShippingCoupon({
+        userRestriction: { type: 'segment', value: [COUPON_USER_SEGMENT.LOYAL] },
+      }),
+      userId: 'user-returning',
+      lines,
+      shippingTotal: 100,
+      shippingByVendor: { 'vendor-1': 40, 'vendor-2': 60 },
+    });
+    assert.equal(result.valid, false);
   });
 });

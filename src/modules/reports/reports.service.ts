@@ -2,7 +2,7 @@ import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { ROLES } from '@core/constants/statuses';
-import { fromPaise } from '@modules/pricing/money';
+import { fromPaise, roundMoney } from '@modules/pricing/money';
 import { buildPaginationMeta } from '@core/http/pagination';
 import { DEFAULT_PAGE_LIMIT } from '@core/constants/http';
 import type { ReportRangeQuery } from './reports.dto';
@@ -183,11 +183,11 @@ export class ReportsService {
     ]);
 
     return {
-      totalLiability: Math.round(totals.totalLiability * 100) / 100,
+      totalLiability: roundMoney(totals.totalLiability),
       customerCount: totals.customerCount,
-      totalPointsLiability: Math.round(pointTotals.totalPointsLiability * 100) / 100,
-      purchasedPointsLiability: Math.round(pointTotals.purchasedPointsLiability * 100) / 100,
-      promotionalPointsLiability: Math.round(pointTotals.promotionalPointsLiability * 100) / 100,
+      totalPointsLiability: roundMoney(pointTotals.totalPointsLiability),
+      purchasedPointsLiability: roundMoney(pointTotals.purchasedPointsLiability),
+      promotionalPointsLiability: roundMoney(pointTotals.promotionalPointsLiability),
       rows: result.rows.map((r) => ({
         userId: String(r.userId ?? ''),
         balance: Number(r.balance ?? 0),

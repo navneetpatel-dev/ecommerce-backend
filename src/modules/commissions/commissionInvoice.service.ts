@@ -3,6 +3,7 @@ import PDFDocument from 'pdfkit';
 import { CommissionInvoice } from '@database/models/commissionInvoice.model';
 import { Vendor } from '@database/models/vendor.model';
 import { fromPaise } from '@modules/pricing/money';
+import { splitTaxAmount } from '@modules/pricing/pricing.engine';
 import {
   nextVendorDocumentNumber,
   VENDOR_DOCUMENT_KIND,
@@ -27,6 +28,8 @@ export async function computeCommissionGstPaise(commissionTaxablePaise: number):
   gstPaise: number;
 }> {
   const settings = await settingsService.getPlatformSettings();
+  // settings.commissionGstRatePercent always has a DB default (see settings.service.ts DEFAULTS);
+  // this fallback should never actually trigger.
   const gstRate = Number(settings.commissionGstRatePercent ?? 18);
   const gstPaise =
     commissionTaxablePaise > 0 ? Math.round((commissionTaxablePaise * gstRate) / 100) : 0;
@@ -59,6 +62,8 @@ export async function createCommissionInvoiceForPayout(
   if (existing) return existing;
 
   const settings = await settingsService.getPlatformSettings();
+  // settings.commissionGstRatePercent always has a DB default (see settings.service.ts DEFAULTS);
+  // this fallback should never actually trigger.
   const gstRate = Number(settings.commissionGstRatePercent ?? 18);
   const issuedAt = new Date();
   const { number } = await nextVendorDocumentNumber(
@@ -74,9 +79,7 @@ export async function createCommissionInvoiceForPayout(
   });
   const intra = sameState(settings.platformState, vendor?.state);
   const gstPaise = Math.round((input.commissionTaxablePaise * gstRate) / 100);
-  const cgstPaise = intra ? Math.floor(gstPaise / 2) : 0;
-  const sgstPaise = intra ? gstPaise - cgstPaise : 0;
-  const igstPaise = intra ? 0 : gstPaise;
+  const { cgst: cgstPaise, sgst: sgstPaise, igst: igstPaise } = splitTaxAmount(gstPaise, intra);
 
   return CommissionInvoice.create(
     {

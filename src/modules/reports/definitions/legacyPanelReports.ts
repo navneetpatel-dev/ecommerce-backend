@@ -19,6 +19,7 @@ import {
   DISCOUNT_BEARER,
 } from '../engine/queryHelpers';
 import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
+import { roundMoney } from '@modules/pricing/money';
 
 const WALLET_LIABILITY_KEYSET: KeysetOrderCol[] = [
   { column: 'balance', direction: 'DESC' },
@@ -29,11 +30,11 @@ function walletLiabilityUserSourcesCte(): string {
   return `
     user_sources AS (
       SELECT wl."userId",
-        COALESCE(SUM(CASE WHEN wl.type = 'CREDIT' AND wl."pointSource" = 'PURCHASED' THEN wl.amount ELSE 0 END), 0)::float AS purchased_cr,
-        COALESCE(SUM(CASE WHEN wl.type = 'CREDIT' AND (wl."pointSource" = 'PROMOTIONAL' OR wl."pointSource" IS NULL) THEN wl.amount ELSE 0 END), 0)::float AS promo_cr,
-        COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' AND wl."pointSourceBreakdown" IS NOT NULL THEN COALESCE((wl."pointSourceBreakdown"->>'purchased')::float, 0) ELSE 0 END), 0)::float AS purchased_dr_explicit,
-        COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' AND wl."pointSourceBreakdown" IS NOT NULL THEN COALESCE((wl."pointSourceBreakdown"->>'promotional')::float, 0) ELSE 0 END), 0)::float AS promo_dr_explicit,
-        COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' AND wl."pointSourceBreakdown" IS NULL THEN wl.amount ELSE 0 END), 0)::float AS legacy_debits
+        COALESCE(SUM(CASE WHEN wl.type = 'CREDIT' AND wl."pointSource" = 'PURCHASED' THEN wl.amount ELSE 0 END), 0)::numeric AS purchased_cr,
+        COALESCE(SUM(CASE WHEN wl.type = 'CREDIT' AND (wl."pointSource" = 'PROMOTIONAL' OR wl."pointSource" IS NULL) THEN wl.amount ELSE 0 END), 0)::numeric AS promo_cr,
+        COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' AND wl."pointSourceBreakdown" IS NOT NULL THEN COALESCE((wl."pointSourceBreakdown"->>'purchased')::numeric, 0) ELSE 0 END), 0)::numeric AS purchased_dr_explicit,
+        COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' AND wl."pointSourceBreakdown" IS NOT NULL THEN COALESCE((wl."pointSourceBreakdown"->>'promotional')::numeric, 0) ELSE 0 END), 0)::numeric AS promo_dr_explicit,
+        COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' AND wl."pointSourceBreakdown" IS NULL THEN wl.amount ELSE 0 END), 0)::numeric AS legacy_debits
       FROM wallet_ledgers wl
       WHERE wl."deletedAt" IS NULL
         AND wl."createdAt" <= :to
@@ -52,7 +53,7 @@ function fifoPurchasedRemainingSql(alias = 'us'): string {
       )`;
 }
 
-function walletLiabilitySelectSql(): string {
+export function walletLiabilitySelectSql(): string {
   return `
     WITH active_users AS (
       SELECT DISTINCT "userId"
@@ -64,7 +65,7 @@ function walletLiabilitySelectSql(): string {
     latest AS (
       SELECT DISTINCT ON (wl."userId")
         wl."userId" AS "userId",
-        wl."balanceAfter"::float AS balance,
+        wl."balanceAfter"::numeric AS balance,
         wl."createdAt" AS "asOf"
       FROM wallet_ledgers wl
       INNER JOIN active_users au ON au."userId" = wl."userId"
@@ -107,7 +108,7 @@ export async function walletLiabilityTotals(filters: {
      )
      SELECT
        COUNT(*)::int AS "customerCount",
-       COALESCE(SUM("balanceAfter"), 0)::float AS "totalLiability"
+       COALESCE(SUM("balanceAfter"), 0)::numeric AS "totalLiability"
      FROM latest
      WHERE "balanceAfter" > 0`,
     { replacements: { from: filters.from, to: filters.to } },
@@ -129,7 +130,7 @@ export async function walletPointSourceLiabilityTotals(filters: {
     `WITH latest AS (
        SELECT DISTINCT ON (wl."userId")
          wl."userId",
-         wl."balanceAfter"::float AS balance
+         wl."balanceAfter"::numeric AS balance
        FROM wallet_ledgers wl
        WHERE wl."deletedAt" IS NULL
          AND wl."createdAt" <= :to
@@ -137,11 +138,11 @@ export async function walletPointSourceLiabilityTotals(filters: {
      ),
      user_sources AS (
        SELECT wl."userId",
-         COALESCE(SUM(CASE WHEN wl.type = 'CREDIT' AND wl."pointSource" = 'PURCHASED' THEN wl.amount ELSE 0 END), 0)::float AS purchased_cr,
-         COALESCE(SUM(CASE WHEN wl.type = 'CREDIT' AND (wl."pointSource" = 'PROMOTIONAL' OR wl."pointSource" IS NULL) THEN wl.amount ELSE 0 END), 0)::float AS promo_cr,
-         COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' AND wl."pointSourceBreakdown" IS NOT NULL THEN COALESCE((wl."pointSourceBreakdown"->>'purchased')::float, 0) ELSE 0 END), 0)::float AS purchased_dr_explicit,
-         COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' AND wl."pointSourceBreakdown" IS NOT NULL THEN COALESCE((wl."pointSourceBreakdown"->>'promotional')::float, 0) ELSE 0 END), 0)::float AS promo_dr_explicit,
-         COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' AND wl."pointSourceBreakdown" IS NULL THEN wl.amount ELSE 0 END), 0)::float AS legacy_debits
+         COALESCE(SUM(CASE WHEN wl.type = 'CREDIT' AND wl."pointSource" = 'PURCHASED' THEN wl.amount ELSE 0 END), 0)::numeric AS purchased_cr,
+         COALESCE(SUM(CASE WHEN wl.type = 'CREDIT' AND (wl."pointSource" = 'PROMOTIONAL' OR wl."pointSource" IS NULL) THEN wl.amount ELSE 0 END), 0)::numeric AS promo_cr,
+         COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' AND wl."pointSourceBreakdown" IS NOT NULL THEN COALESCE((wl."pointSourceBreakdown"->>'purchased')::numeric, 0) ELSE 0 END), 0)::numeric AS purchased_dr_explicit,
+         COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' AND wl."pointSourceBreakdown" IS NOT NULL THEN COALESCE((wl."pointSourceBreakdown"->>'promotional')::numeric, 0) ELSE 0 END), 0)::numeric AS promo_dr_explicit,
+         COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' AND wl."pointSourceBreakdown" IS NULL THEN wl.amount ELSE 0 END), 0)::numeric AS legacy_debits
        FROM wallet_ledgers wl
        WHERE wl."deletedAt" IS NULL
          AND wl."createdAt" <= :to
@@ -163,9 +164,9 @@ export async function walletPointSourceLiabilityTotals(filters: {
        WHERE l.balance > 0
      )
      SELECT
-       COALESCE(SUM(balance), 0)::float AS "totalPointsLiability",
-       COALESCE(SUM(purchased_net), 0)::float AS "purchasedPointsLiability",
-       COALESCE(SUM(balance - purchased_net), 0)::float AS "promotionalPointsLiability"
+       COALESCE(SUM(balance), 0)::numeric AS "totalPointsLiability",
+       COALESCE(SUM(purchased_net), 0)::numeric AS "purchasedPointsLiability",
+       COALESCE(SUM(balance - purchased_net), 0)::numeric AS "promotionalPointsLiability"
      FROM breakdown`,
     { replacements: { to: filters.to } },
   )) as [
@@ -345,8 +346,8 @@ async function cashbackWriteOffQuery(filters: ReportFilters) {
     })),
     total: pageResult.count,
     meta: {
-      recoveredTotal: Math.round(Number(aggregate.recoveredTotal) * 100) / 100,
-      writtenOffTotal: Math.round(Number(aggregate.writtenOffTotal) * 100) / 100,
+      recoveredTotal: roundMoney(aggregate.recoveredTotal),
+      writtenOffTotal: roundMoney(aggregate.writtenOffTotal),
       bornBy: filters.bornBy ?? null,
     },
   };
@@ -451,7 +452,7 @@ async function platformAnalyticsQuery(filters: ReportFilters) {
   const orderCount = Number(stats.orderCount ?? 0);
   const gmv = Number(stats.gmv ?? 0);
   const paidGmv = Number(stats.paidGmv ?? 0);
-  const aov = orderCount > 0 ? Math.round((gmv / orderCount) * 100) / 100 : 0;
+  const aov = orderCount > 0 ? roundMoney(gmv / orderCount) : 0;
   const cancelRate =
     orderCount > 0
       ? Math.round((Number(stats.cancelledCount ?? 0) / orderCount) * 10_000) / 100
@@ -616,10 +617,10 @@ function mapWalletRechargeRow(row: WalletRechargeOrder) {
 async function walletRechargeMeta(from: Date, to: Date) {
   const [[totals]] = (await sequelize.query(
     `SELECT
-       COALESCE(SUM(CASE WHEN status = 'PAID' THEN "amountInr" ELSE 0 END), 0)::float AS "totalInrCollected",
+       COALESCE(SUM(CASE WHEN status = 'PAID' THEN "amountInr" ELSE 0 END), 0)::numeric AS "totalInrCollected",
        COUNT(*) FILTER (WHERE status = 'PAID')::int AS "successCount",
        COUNT(*) FILTER (WHERE status IN ('FAILED', 'EXPIRED'))::int AS "failedCount",
-       COALESCE(SUM(CASE WHEN status = 'PAID' THEN "pointsCredited" ELSE 0 END), 0)::float AS "pointsIssued"
+       COALESCE(SUM(CASE WHEN status = 'PAID' THEN "pointsCredited" ELSE 0 END), 0)::numeric AS "pointsIssued"
      FROM wallet_recharge_orders
      WHERE "deletedAt" IS NULL
        AND "createdAt" BETWEEN :from AND :to`,

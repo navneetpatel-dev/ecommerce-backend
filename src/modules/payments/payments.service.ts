@@ -27,6 +27,7 @@ import {
 } from '@core/constants/statuses';
 import { ERROR_MESSAGES, ERROR_CODES } from '@core/constants/errors';
 import { RAZORPAY_MIN_AMOUNT_PAISE } from '@core/constants/http';
+import { toPaise } from '@modules/pricing/money';
 import { notifyOrderConfirmed } from '@modules/notifications/orderNotifications';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { rollbackOrderWalletIfNeeded } from '@modules/wallet/walletOrderRollback';
@@ -206,7 +207,7 @@ export class PaymentsService {
 
     const chargeAmount =
       amountOverrideRupees != null ? Number(amountOverrideRupees) : Number(order.totalAmount);
-    const amountInPaise = Math.round(chargeAmount * 100);
+    const amountInPaise = toPaise(chargeAmount);
     if (amountInPaise < RAZORPAY_MIN_AMOUNT_PAISE) {
       throw new ValidationError(ERROR_MESSAGES.ORDER_AMOUNT_BELOW_RAZORPAY_MIN);
     }

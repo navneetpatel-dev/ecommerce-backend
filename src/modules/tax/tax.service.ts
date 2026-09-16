@@ -63,26 +63,41 @@ export class TaxService {
   }
 
   /**
-   * Get GST rate for a category, walking parents when the leaf has no override.
+   * Resolve the effective tax rule for a category, walking parents when the leaf
+   * has no override, falling back to the platform default TaxRule, then to 18%.
    */
-  async getGstRate(categoryId?: string): Promise<number> {
+  async resolveEffectiveTaxRule(categoryId?: string): Promise<{ gstPercentage: number; hsnCode: string | null }> {
     if (categoryId) {
       const { categoriesService } = await import('../categories/categories.service');
       const chain = await categoriesService.walkCategoryAncestors(categoryId);
       for (const node of chain) {
         const categoryRule = await taxRepository.findByCategory(node.id);
         if (categoryRule) {
-          return Number(categoryRule.gstPercentage);
+          return {
+            gstPercentage: Number(categoryRule.gstPercentage),
+            hsnCode: categoryRule.hsnCode ? String(categoryRule.hsnCode) : null,
+          };
         }
       }
     }
 
     const defaultRule = await taxRepository.findDefault();
     if (defaultRule) {
-      return Number(defaultRule.gstPercentage);
+      return {
+        gstPercentage: Number(defaultRule.gstPercentage),
+        hsnCode: defaultRule.hsnCode ? String(defaultRule.hsnCode) : null,
+      };
     }
 
-    return 18.0;
+    return { gstPercentage: 18.0, hsnCode: null };
+  }
+
+  /**
+   * Get GST rate for a category, walking parents when the leaf has no override.
+   */
+  async getGstRate(categoryId?: string): Promise<number> {
+    const { gstPercentage } = await this.resolveEffectiveTaxRule(categoryId);
+    return gstPercentage;
   }
 
   async getTaxRules(query: { page: number; limit: number }) {

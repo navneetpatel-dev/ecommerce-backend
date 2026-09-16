@@ -14,7 +14,7 @@ import {
 import { sequelize } from '@database/models';
 import { WalletRechargeOrder } from '@database/models/walletRechargeOrder.model';
 import { settingsService } from '@modules/settings/settings.service';
-import { roundMoney } from '@modules/pricing/money';
+import { roundMoney, toPaise } from '@modules/pricing/money';
 import { paymentsService } from '@modules/payments/payments.service';
 import { walletService } from './wallet.service';
 import { WALLET_DESCRIPTIONS } from './wallet.constants';
@@ -182,7 +182,7 @@ export class WalletRechargeService {
         return {
           rechargeId: existing.id,
           razorpayOrderId: existing.razorpayOrderId,
-          amount: Math.round(existingAmount * 100),
+          amount: toPaise(existingAmount),
           currency: 'INR',
           keyId: env.RAZORPAY_KEY_ID,
           pointsToCredit: Number(existing.pointsCredited),
@@ -199,7 +199,7 @@ export class WalletRechargeService {
         existing.status === 'PENDING' &&
         !existing.razorpayOrderId
       ) {
-        const amountInPaise = Math.round(amount * 100);
+        const amountInPaise = toPaise(amount);
         const rzpOrder = await razorpay.orders.create({
           amount: amountInPaise,
           currency: 'INR',
@@ -244,7 +244,7 @@ export class WalletRechargeService {
           paidAt: null,
           updatedBy: userId,
         });
-        const amountInPaise = Math.round(amount * 100);
+        const amountInPaise = toPaise(amount);
         const rzpOrder = await razorpay.orders.create({
           amount: amountInPaise,
           currency: 'INR',
@@ -277,7 +277,7 @@ export class WalletRechargeService {
       }
     }
 
-    const amountInPaise = Math.round(amount * 100);
+    const amountInPaise = toPaise(amount);
     if (amountInPaise < RAZORPAY_MIN_AMOUNT_PAISE) {
       throw new ValidationError(ERROR_MESSAGES.WALLET_RECHARGE_RAZORPAY_MIN);
     }
@@ -481,7 +481,7 @@ export class WalletRechargeService {
     recharge: WalletRechargeOrder,
     razorpayPaymentId: string,
   ): Promise<void> {
-    const amountPaise = Math.round(Number(recharge.amountInr) * 100);
+    const amountPaise = toPaise(Number(recharge.amountInr));
     try {
       const refundId = await paymentsService.createRazorpayRefund(razorpayPaymentId, amountPaise, {
         rechargeId: recharge.id,

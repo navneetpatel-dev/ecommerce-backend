@@ -20,7 +20,7 @@ import { cartService } from '@modules/cart/cart.service';
 import { destroyCouponUsageForOrder } from '@modules/coupons/couponEngine';
 import { paymentsService } from '@modules/payments/payments.service';
 import { checkoutAmountDue } from '@modules/pricing/displayMoney';
-import { roundMoney } from '@modules/pricing/money';
+import { roundMoney, toPaise } from '@modules/pricing/money';
 import { rollbackOrderWalletIfNeeded } from '@modules/wallet/walletOrderRollback';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { logAudit } from '@modules/audit/audit.service';
@@ -136,7 +136,7 @@ export async function cancelPaidOrder(
         try {
           const refundId = await paymentsService.createRazorpayRefund(
             razorpayPaymentId,
-            Math.round(razorpayDue * 100),
+            toPaise(razorpayDue),
             { orderId: order.id, reason: 'ORDER_CANCEL' },
           );
           await order.update({

@@ -41,6 +41,7 @@ import {
   recomputeSubOrderDisplayFields,
   scaleTaxBreakdown,
 } from '@modules/pricing/displayMoney';
+import { splitTaxAmount } from '@modules/pricing/pricing.engine';
 import { pricingService } from '@modules/pricing/pricing.service';
 import {
   nextVendorDocumentNumber,
@@ -118,6 +119,61 @@ const RESOLVED_AT_STATUSES: ReturnStatus[] = [
   RETURN_STATUS.REFUNDED,
   RETURN_STATUS.CLOSED,
 ];
+
+export async function persistTcsReturnAdjustmentLedger(
+  params: {
+    refundTcsPaise: number;
+    refundMerchandisePaise: number;
+    itemIgst: number;
+    subOrderIgst: number;
+    orderId: string;
+    subOrderId: string;
+    vendorId: string;
+    originalTcs: {
+      ratePercent?: number | null;
+      vendorGstin?: string | null;
+      placeOfSupplyState?: string | null;
+    } | null;
+    vendor: { gstNumber?: string | null; state?: string | null } | null;
+    fallbackRatePercent: number;
+    returnRequestId: string;
+    actorId: string;
+    issuedAt: Date;
+  },
+  transaction: Transaction,
+) {
+  const useIgst =
+    Number(params.itemIgst ?? 0) > 0 || Number(params.subOrderIgst ?? 0) > 0;
+  const { cgst: tcsCgstPaise, sgst: tcsSgstPaise, igst: tcsIgstPaise } = splitTaxAmount(
+    params.refundTcsPaise,
+    !useIgst,
+  );
+  const placeOfSupplyState =
+    params.originalTcs?.placeOfSupplyState ?? params.vendor?.state ?? null;
+  return TcsLedger.create(
+    {
+      orderId: params.orderId,
+      subOrderId: params.subOrderId,
+      vendorId: params.vendorId,
+      taxableAmountPaise: -Math.abs(params.refundMerchandisePaise),
+      ratePercent: Number(params.originalTcs?.ratePercent ?? params.fallbackRatePercent ?? 0),
+      tcsAmountPaise: -params.refundTcsPaise,
+      tcsCgstPaise: -tcsCgstPaise,
+      tcsSgstPaise: -tcsSgstPaise,
+      tcsIgstPaise: -tcsIgstPaise,
+      period: params.issuedAt.toISOString().slice(0, 7),
+      section: '52',
+      entryType: 'RETURN_ADJUSTMENT',
+      vendorGstin: params.originalTcs?.vendorGstin ?? params.vendor?.gstNumber ?? null,
+      placeOfSupplyState,
+      returnRequestId: params.returnRequestId,
+      createdBy: params.actorId,
+      updatedBy: params.actorId,
+      deletedBy: null,
+    },
+    { transaction },
+  );
+}
 
 const returnLockInclude = [
   {
@@ -565,42 +621,24 @@ export class ReturnsService {
             transaction: t,
             order: [['createdAt', 'ASC']],
           });
-          const tcsTotal = reversal.refundTcsPaise;
-          const useIgst =
-            Number((orderItem.taxBreakdown as any)?.igst ?? 0) > 0 ||
-            Number((orderItem.subOrder.taxBreakdown as any)?.igst ?? 0) > 0;
-          const tcsCgstPaise = useIgst ? 0 : Math.floor(tcsTotal / 2);
-          const tcsSgstPaise = useIgst ? 0 : tcsTotal - tcsCgstPaise;
-          const tcsIgstPaise = useIgst ? tcsTotal : 0;
-          const placeOfSupplyState =
-            originalTcs?.placeOfSupplyState ??
-            vendor?.state ??
-            null;
           const settings = await settingsService.getPlatformSettings();
-          await TcsLedger.create(
+          await persistTcsReturnAdjustmentLedger(
             {
+              refundTcsPaise: reversal.refundTcsPaise,
+              refundMerchandisePaise: reversal.refundMerchandisePaise,
+              itemIgst: Number((orderItem.taxBreakdown as any)?.igst ?? 0),
+              subOrderIgst: Number((orderItem.subOrder.taxBreakdown as any)?.igst ?? 0),
               orderId: orderItem.subOrder.orderId,
               subOrderId: orderItem.subOrderId,
               vendorId,
-              taxableAmountPaise: -Math.abs(reversal.refundMerchandisePaise),
-              ratePercent: Number(
-                originalTcs?.ratePercent ?? settings.tcsRatePercent ?? 0,
-              ),
-              tcsAmountPaise: -tcsTotal,
-              tcsCgstPaise: -tcsCgstPaise,
-              tcsSgstPaise: -tcsSgstPaise,
-              tcsIgstPaise: -tcsIgstPaise,
-              period: issuedAt.toISOString().slice(0, 7),
-              section: '52',
-              entryType: 'RETURN_ADJUSTMENT',
-              vendorGstin: originalTcs?.vendorGstin ?? vendor?.gstNumber ?? null,
-              placeOfSupplyState,
+              originalTcs,
+              vendor,
+              fallbackRatePercent: Number(settings.tcsRatePercent ?? 0),
               returnRequestId: row.id,
-              createdBy: actorId,
-              updatedBy: actorId,
-              deletedBy: null,
+              actorId,
+              issuedAt,
             },
-            { transaction: t },
+            t,
           );
         }
       }
@@ -1289,7 +1327,7 @@ export class ReturnsService {
     const paymentId = order?.razorpayPaymentId;
     if (!paymentId) throw new ValidationError(ERROR_MESSAGES.RETURN_NO_RAZORPAY_PAYMENT);
 
-    const amountPaise = Math.round(razorpayAmount * 100);
+    const amountPaise = toPaise(razorpayAmount);
     try {
       const refundId = await paymentsService.createRazorpayRefund(paymentId, amountPaise, {
         returnRequestId: row.id,

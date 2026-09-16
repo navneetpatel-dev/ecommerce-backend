@@ -1,4 +1,4 @@
-import { coerceRupees, roundMoney as roundMoneyValue } from '@modules/pricing/money';
+import { coerceRupees, roundMoney as roundMoneyValue, toPaise } from '@modules/pricing/money';
 
 export { roundMoneyValue as roundMoney };
 
@@ -57,7 +57,7 @@ function underThousandWithHundred(n: number): string {
 
 /** Indian-system amount in words for printed invoices. */
 export function rupeesInWords(amount: unknown): string {
-  const paiseTotal = Math.round(roundMoneyValue(amount) * 100);
+  const paiseTotal = toPaise(roundMoneyValue(amount));
   const abs = Math.abs(paiseTotal);
   const rupees = Math.floor(abs / 100);
   const paise = abs % 100;

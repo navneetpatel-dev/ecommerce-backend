@@ -104,26 +104,23 @@ export type RefundReversalBreakdown = {
   customerRefundPaise: Paise;
 };
 
+/** Splits an already-computed tax/TCS total into CGST+SGST (intra-state) or IGST (inter-state). */
+export function splitTaxAmount(
+  totalPaise: Paise,
+  intraState: boolean,
+): { cgst: Paise; sgst: Paise; igst: Paise } {
+  if (intraState) {
+    const half = Math.floor(totalPaise / 2);
+    const other = totalPaise - half;
+    return { cgst: half, sgst: other, igst: 0 };
+  }
+  return { cgst: 0, sgst: 0, igst: totalPaise };
+}
+
 function splitTax(taxablePaise: Paise, gstPercentage: number, intraState: boolean): TaxBreakdownPaise {
   const total = Math.round((taxablePaise * gstPercentage) / 100);
-  if (intraState) {
-    const half = Math.floor(total / 2);
-    const other = total - half;
-    return {
-      cgst: half,
-      sgst: other,
-      igst: 0,
-      total,
-      gstPercentage,
-    };
-  }
-  return {
-    cgst: 0,
-    sgst: 0,
-    igst: total,
-    total,
-    gstPercentage,
-  };
+  const { cgst, sgst, igst } = splitTaxAmount(total, intraState);
+  return { cgst, sgst, igst, total, gstPercentage };
 }
 
 /**

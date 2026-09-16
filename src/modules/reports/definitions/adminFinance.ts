@@ -435,14 +435,14 @@ async function reconciliation(filters: ReportFilters) {
     `
     SELECT
       COALESCE((
-        SELECT SUM(wro."amountInr")::float
+        SELECT SUM(wro."amountInr")::numeric
         FROM wallet_recharge_orders wro
         WHERE wro.status = 'PAID'
           AND wro."paidAt" BETWEEN :from AND :to
           AND wro."deletedAt" IS NULL
       ), 0) AS "walletRechargeInflow",
       COALESCE((
-        SELECT SUM(o."walletAmountUsed")::float
+        SELECT SUM(o."walletAmountUsed")::numeric
         FROM orders o
         WHERE o."createdAt" BETWEEN :from AND :to
           AND o."deletedAt" IS NULL

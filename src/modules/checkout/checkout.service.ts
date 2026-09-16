@@ -13,6 +13,7 @@ import { TcsLedger } from '@database/models/tcsLedger.model';
 import { Address } from '@database/models/address.model';
 import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
+import type { Transaction } from 'sequelize';
 import { paymentsService } from '@modules/payments/payments.service';
 import { cartService } from '@modules/cart/cart.service';
 import { settingsService } from '@modules/settings/settings.service';
@@ -24,6 +25,7 @@ import {
 } from '@modules/coupons/couponEngine';
 import { pricingService } from '@modules/pricing/pricing.service';
 import { fromPaise, roundMoney, toPaise } from '@modules/pricing/money';
+import { splitTaxAmount } from '@modules/pricing/pricing.engine';
 import { checkoutAmountDue, combinedDiscount, lineTotal } from '@modules/pricing/displayMoney';
 import {
   buildVendorPricingRows,
@@ -69,6 +71,51 @@ export const GIFT_WRAP_FEE_RUPEES = 49;
 
 function resolveGiftWrapFee(giftWrap?: boolean): number {
   return giftWrap ? GIFT_WRAP_FEE_RUPEES : 0;
+}
+
+export async function persistTcsCollectionLedger(
+  params: {
+    tcsTotal: number;
+    taxIgst: number;
+    orderId: string;
+    subOrderId: string;
+    vendorId: string;
+    taxableAmountPaise: number;
+    ratePercent: number;
+    vendorGstin: string | null;
+    placeOfSupplyState: string | null;
+    actorId: string;
+  },
+  transaction: Transaction,
+) {
+  const useIgst = Number(params.taxIgst ?? 0) > 0;
+  const { cgst: tcsCgstPaise, sgst: tcsSgstPaise, igst: tcsIgstPaise } = splitTaxAmount(
+    params.tcsTotal,
+    !useIgst,
+  );
+  return TcsLedger.create(
+    {
+      orderId: params.orderId,
+      subOrderId: params.subOrderId,
+      vendorId: params.vendorId,
+      taxableAmountPaise: params.taxableAmountPaise,
+      ratePercent: params.ratePercent,
+      tcsAmountPaise: params.tcsTotal,
+      tcsCgstPaise,
+      tcsSgstPaise,
+      tcsIgstPaise,
+      period: new Date().toISOString().slice(0, 7),
+      section: '52',
+      entryType: 'COLLECTION',
+      vendorGstin: params.vendorGstin,
+      placeOfSupplyState: params.placeOfSupplyState,
+      returnRequestId: null,
+      createdBy: params.actorId,
+      updatedBy: params.actorId,
+      deletedBy: null,
+    },
+    { transaction },
+  );
 }
 
 type CartWithItems = Cart & {
@@ -793,32 +840,21 @@ export class CheckoutService {
           }, { transaction: t });
 
           if (p.tcsPaise > 0) {
-            const tcsTotal = p.tcsPaise;
-            const useIgst = Number(p.tax.igst ?? 0) > 0;
-            const tcsCgstPaise = useIgst ? 0 : Math.floor(tcsTotal / 2);
-            const tcsSgstPaise = useIgst ? 0 : tcsTotal - tcsCgstPaise;
-            const tcsIgstPaise = useIgst ? tcsTotal : 0;
-            const period = new Date().toISOString().slice(0, 7);
-            await TcsLedger.create({
-              orderId: orderRow.id,
-              subOrderId: subOrder.id,
-              vendorId,
-              taxableAmountPaise: p.taxablePaise,
-              ratePercent: settings.tcsRatePercent,
-              tcsAmountPaise: tcsTotal,
-              tcsCgstPaise,
-              tcsSgstPaise,
-              tcsIgstPaise,
-              period,
-              section: '52',
-              entryType: 'COLLECTION',
-              vendorGstin: vendorMap[vendorId]?.gstNumber ?? null,
-              placeOfSupplyState: shippingAddress.state ?? vendorMap[vendorId]?.state ?? null,
-              returnRequestId: null,
-              createdBy: userId,
-              updatedBy: userId,
-              deletedBy: null,
-            }, { transaction: t });
+            await persistTcsCollectionLedger(
+              {
+                tcsTotal: p.tcsPaise,
+                taxIgst: p.tax.igst,
+                orderId: orderRow.id,
+                subOrderId: subOrder.id,
+                vendorId,
+                taxableAmountPaise: p.taxablePaise,
+                ratePercent: settings.tcsRatePercent,
+                vendorGstin: vendorMap[vendorId]?.gstNumber ?? null,
+                placeOfSupplyState: shippingAddress.state ?? vendorMap[vendorId]?.state ?? null,
+                actorId: userId,
+              },
+              t,
+            );
           }
         }
       }

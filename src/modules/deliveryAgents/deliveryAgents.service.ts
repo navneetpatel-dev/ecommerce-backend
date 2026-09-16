@@ -707,6 +707,7 @@ export class DeliveryAgentsService {
     ]);
     const earningsToday = roundMoney(earningsTodayRows.reduce((sum, r) => sum + Number(r.amount), 0));
     const pendingEarnings = roundMoney(pendingEarningsRows.reduce((sum, r) => sum + Number(r.amount), 0));
+    const pendingEarningsCount = pendingEarningsRows.length;
 
     return {
       deliveredToday,
@@ -714,6 +715,7 @@ export class DeliveryAgentsService {
       onTimePercent,
       codCashInHand,
       pendingEarnings,
+      pendingEarningsCount,
       earningsToday,
       perTaskEarning,
       pendingDeposits,
