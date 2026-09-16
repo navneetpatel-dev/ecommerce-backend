@@ -96,11 +96,23 @@ export class DeliveryAgentsRepository extends BaseRepository<DeliveryAgent> {
   }
 
   async assignedShipment(id: string, deliveryAgentId: string, transaction?: Transaction) {
+    // Lock the row first, with no includes: `attemptsInclude` uses `separate: true`, which
+    // runs as its own follow-up query, and Sequelize propagates `lock`/`transaction` onto
+    // that query too — a `FOR UPDATE OF "Shipment"` clause then gets attached to a query
+    // whose FROM clause is ShipmentAttempts, not Shipment ("relation Shipment ... not found
+    // in FROM clause"). A plain locked findOne avoids that entirely; the second call
+    // hydrates the full associations without re-requesting the lock (already held in `t`).
+    if (transaction) {
+      await Shipment.findOne({
+        where: { id, deliveryAgentId },
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+    }
     return Shipment.findOne({
       where: { id, deliveryAgentId },
       include: [orderInclude, attemptsInclude],
       transaction,
-      lock: transaction?.LOCK.UPDATE,
     });
   }
 
@@ -127,11 +139,18 @@ export class DeliveryAgentsRepository extends BaseRepository<DeliveryAgent> {
   }
 
   async assignedPickup(id: string, deliveryAgentId: string, transaction?: Transaction) {
+    // See assignedShipment() above for why the lock happens on a separate, include-free query.
+    if (transaction) {
+      await ReturnRequest.findOne({
+        where: { id, deliveryAgentId },
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+    }
     return ReturnRequest.findOne({
       where: { id, deliveryAgentId },
       include: pickupInclude,
       transaction,
-      lock: transaction?.LOCK.UPDATE,
     });
   }
 
