@@ -157,11 +157,9 @@ describe('Vendor Modules Gap Fixes Verification', () => {
         return 1;
       });
 
-      let walletCreditCalled = false;
-      let walletAmount = 0;
+      const walletCreditAmounts: number[] = [];
       mock.method(walletService, 'credit', async (_userId: string, amount: number) => {
-        walletCreditCalled = true;
-        walletAmount = amount;
+        walletCreditAmounts.push(amount);
         return {} as any;
       });
 
@@ -202,8 +200,9 @@ describe('Vendor Modules Gap Fixes Verification', () => {
       assert.equal(destroyedLedgers[0].where.status, COMMISSION_STATUS.PENDING);
       assert.equal(destroyedLedgers[1].model, 'TcsLedger');
 
-      assert.equal(walletCreditCalled, true);
-      assert.equal(walletAmount, 500);
+      // Cash-only last-suborder cancel must not dump the gross total into the wallet.
+      // Wallet spend is restored only via rollbackOrderWalletIfNeeded (no-op here: no wallet used).
+      assert.equal(walletCreditAmounts.reduce((s, n) => s + n, 0), 0);
 
       assert.equal(orderUpdatedStatus, ORDER_STATUS.CANCELLED);
     });

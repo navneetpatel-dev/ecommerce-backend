@@ -11,6 +11,12 @@ const router = Router();
 router.post('/', authenticate, validate(CreateReturnRequestSchema), returnsController.create);
 router.get('/', authenticate, returnsController.list);
 router.get('/admin', authenticate, authorize(PERMISSIONS.ORDER_REFUND), returnsController.listAdmin);
+router.get(
+  '/vendor/me',
+  authenticate,
+  authorize(PERMISSIONS.SUBORDER_MANAGE),
+  returnsController.listVendor,
+);
 router.get('/:id', authenticate, returnsController.getById);
 router.get('/:id/credit-note', authenticate, returnsController.downloadCreditNote);
 router.get(

@@ -4,7 +4,7 @@ import { Category } from '@database/models/category.model';
 import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
 import { Op } from 'sequelize';
-import { PRODUCT_STATUS, REVIEW_STATUS, type ProductStatus } from '@core/constants/statuses';
+import { REVIEW_STATUS, type ProductStatus } from '@core/constants/statuses';
 
 const reviewCountLiteral = [
   sequelize.literal(`(

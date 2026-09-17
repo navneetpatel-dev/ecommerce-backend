@@ -20,10 +20,12 @@ import { settingsService } from '@modules/settings/settings.service';
 import {
   validateCouponSet,
   resolveCartCouponCodes,
-  recordCouponUsage,
+  recordCouponUsagesForOrder,
+  destroyCouponUsageForOrder,
+  breakdownFromPerCoupon,
+  type AppliedCouponBreakdownEntry,
   type CartLineForCoupon,
 } from '@modules/coupons/couponEngine';
-import { pricingService } from '@modules/pricing/pricing.service';
 import { fromPaise, roundMoney, toPaise } from '@modules/pricing/money';
 import { splitTaxAmount } from '@modules/pricing/pricing.engine';
 import { checkoutAmountDue, combinedDiscount, lineTotal } from '@modules/pricing/displayMoney';
@@ -56,7 +58,6 @@ import {
   COMMISSION_STATUS,
   DISCOUNT_BEARER,
   WALLET_REFERENCE_TYPE,
-  WALLET_POINT_SOURCE,
   UNAVAILABLE_REASON,
   allSubOrdersCancellable,
 } from '@core/constants/statuses';
@@ -554,6 +555,7 @@ export class CheckoutService {
       let vendorDiscountShares: Record<string, number> = {};
       let vendorShippingDiscountShares: Record<string, number> = {};
       let vendorBorneDiscountShares: Record<string, number> = {};
+      let appliedCouponBreakdown: AppliedCouponBreakdownEntry[] = [];
 
       if (couponCodes.length > 0) {
         const result = await validateCouponSet({
@@ -574,6 +576,7 @@ export class CheckoutService {
         vendorDiscountShares = result.vendorDiscountShares;
         vendorShippingDiscountShares = result.vendorShippingDiscountShares;
         vendorBorneDiscountShares = result.vendorBorneDiscountShares;
+        appliedCouponBreakdown = breakdownFromPerCoupon(result.perCoupon, coupons);
         const cashbackCoupon = coupons.find((c) => c.type === 'CASHBACK');
         if (cashbackCoupon) {
           cashbackDiscountBearer =
@@ -663,6 +666,7 @@ export class CheckoutService {
         shippingAddressId: data.shippingAddressId,
         couponId: primaryCoupon?.id ?? null,
         appliedCouponIds: coupons.map((c) => c.id),
+        appliedCouponBreakdown,
         totalAmount: orderTotalRupees,
         discountTotal,
         merchandiseSubtotal,
@@ -707,18 +711,15 @@ export class CheckoutService {
           { transaction: t },
         );
         if (coupons.length > 0) {
-          const perCouponDiscount =
-            coupons.length > 0 ? discountTotal / coupons.length : 0;
-          for (const coupon of coupons) {
-            await recordCouponUsage({
-              couponId: coupon.id,
-              userId,
-              orderId: orderRow.id,
-              discountApplied: perCouponDiscount,
-              actorId: userId,
-              transaction: t,
-            });
-          }
+          await recordCouponUsagesForOrder({
+            coupons,
+            breakdown: appliedCouponBreakdown,
+            discountTotal,
+            userId,
+            orderId: orderRow.id,
+            actorId: userId,
+            transaction: t,
+          });
         }
       }
 
@@ -861,18 +862,15 @@ export class CheckoutService {
 
       // Usage is webhook-driven for Razorpay. COD has no webhook — record on place.
       if (coupons.length > 0 && data.paymentMethod === PAYMENT_METHOD.COD) {
-        const perCouponDiscount =
-          coupons.length > 0 ? discountTotal / coupons.length : 0;
-        for (const coupon of coupons) {
-          await recordCouponUsage({
-            couponId: coupon.id,
-            userId,
-            orderId: orderRow.id,
-            discountApplied: perCouponDiscount,
-            actorId: userId,
-            transaction: t,
-          });
-        }
+        await recordCouponUsagesForOrder({
+          coupons,
+          breakdown: appliedCouponBreakdown,
+          discountTotal,
+          userId,
+          orderId: orderRow.id,
+          actorId: userId,
+          transaction: t,
+        });
       }
 
       await cart.update({ couponCode: null, couponCodes: [] }, { transaction: t });
@@ -982,9 +980,11 @@ export class CheckoutService {
         });
       }
 
+      await destroyCouponUsageForOrder(order.id, t);
+
       await cartService.restoreItemsToUserCart(userId, restoreLines, t);
 
-      const walletRestored = await rollbackOrderWalletIfNeeded(order, userId, t);
+      await rollbackOrderWalletIfNeeded(order, userId, t);
 
       await order.update(
         {

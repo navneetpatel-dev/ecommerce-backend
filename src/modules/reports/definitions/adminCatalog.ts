@@ -4,7 +4,7 @@ import { PRODUCT_STATUS } from '@core/constants/statuses';
 import { Product } from '@database/models/product.model';
 import { Category } from '@database/models/category.model';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
-import { createOffsetExportQuery, createSingleShotExportQuery } from '../engine/export/createOffsetExportQuery';
+import { createOffsetExportQuery } from '../engine/export/createOffsetExportQuery';
 import {
   assertReportRange,
   fromPaise,

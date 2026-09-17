@@ -19,7 +19,7 @@ import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
-import { ADMIN_ROLES, ORDER_STATUS, ROLES } from '@core/constants/statuses';
+import { ADMIN_ROLES, ORDER_STATUS, PAYMENT_STATUS, ROLES } from '@core/constants/statuses';
 import { PERMISSIONS } from '@core/constants/permissions';
 import { userHasPermission } from '@middleware/rbac.middleware';
 import { Op, type Transaction } from 'sequelize';
@@ -35,6 +35,7 @@ import {
 } from './shippingWeight';
 import { resolveShippingDisplayKey } from '@modules/checkout/checkoutOrderTotals';
 import { WebhookPayloadSchema } from './shipping.dto';
+import { deliveryAgentPayoutsService } from '@modules/deliveryAgents/deliveryAgentPayouts.service';
 
 export type ShippingQuoteRate = {
   method: 'STANDARD' | 'EXPRESS';
@@ -57,6 +58,27 @@ const WEBHOOK_STATUS_MAP: Record<string, string> = {
   CANCELLED: 'FAILED',
   CANCELED: 'FAILED',
 };
+
+/**
+ * Canonical forward transitions for every caller of `applyShipmentStatus`
+ * (agent update, OTP confirm, carrier webhook). Skips are allowed so a
+ * webhook can jump e.g. IN_TRANSIT → DELIVERED. Terminal statuses have no
+ * outbound edges — duplicates and regressions no-op instead of throwing.
+ */
+const SHIPMENT_STATUS_TRANSITIONS: Record<string, readonly string[]> = {
+  PENDING: ['PICKED_UP', 'IN_TRANSIT', 'OUT_FOR_DELIVERY', 'DELIVERED', 'FAILED'],
+  PICKED_UP: ['IN_TRANSIT', 'OUT_FOR_DELIVERY', 'DELIVERED', 'FAILED'],
+  IN_TRANSIT: ['OUT_FOR_DELIVERY', 'DELIVERED', 'FAILED'],
+  OUT_FOR_DELIVERY: ['DELIVERED', 'FAILED'],
+  FAILED: ['PICKED_UP', 'IN_TRANSIT', 'OUT_FOR_DELIVERY'],
+  RTO_INITIATED: ['RTO_DELIVERED'],
+  DELIVERED: [],
+  RTO_DELIVERED: [],
+};
+
+function isTerminalShipmentStatus(status: string): boolean {
+  return status === 'DELIVERED' || status === 'RTO_DELIVERED';
+}
 
 type TrackingActor = {
   id: string;
@@ -201,6 +223,24 @@ async function notifyCustomerOfFailedAttempt(
         : (shipment.failureReason ?? 'Delivery attempt unsuccessful'),
     failedAttemptCount: shipment.failedAttemptCount,
   });
+}
+
+/** Marks the order PAID once every COD shipment on it has had cash collected at the door. */
+async function settleCodPaymentIfComplete(subOrderId: string, transaction: Transaction) {
+  const subOrder = await SubOrder.findByPk(subOrderId, { transaction });
+  if (!subOrder) return;
+  const order = await Order.findByPk(subOrder.orderId, { transaction });
+  if (!order || order.paymentMethod !== 'COD' || order.paymentStatus === PAYMENT_STATUS.PAID) return;
+
+  const siblingShipments = await Shipment.findAll({
+    include: [{ association: 'subOrder', where: { orderId: order.id }, attributes: [] }],
+    transaction,
+  });
+  const codShipments = siblingShipments.filter((s) => s.codAmount != null);
+  const allCollected = codShipments.length > 0 && codShipments.every((s) => s.codCollected);
+  if (allCollected) {
+    await order.update({ paymentStatus: PAYMENT_STATUS.PAID }, { transaction });
+  }
 }
 
 export const shippingService = {
@@ -630,6 +670,17 @@ export const shippingService = {
     existingTransaction?: Transaction,
   ) {
     const apply = async (transaction: Transaction) => {
+      if (shipment.status === status) {
+        if (isTerminalShipmentStatus(status) || status === 'FAILED') {
+          return shipment;
+        }
+        await shipment.update({ ...extra }, { transaction });
+        return shipment;
+      }
+      if (!SHIPMENT_STATUS_TRANSITIONS[shipment.status]?.includes(status)) {
+        return shipment;
+      }
+
       const isFailedAttempt = status === 'FAILED';
       const nextFailedCount = isFailedAttempt
         ? Number(shipment.failedAttemptCount ?? 0) + 1
@@ -638,6 +689,7 @@ export const shippingService = {
         isFailedAttempt && nextFailedCount >= MAX_DELIVERY_ATTEMPTS
           ? 'RTO_INITIATED'
           : status;
+      const isCodDelivery = status === 'DELIVERED' && shipment.codAmount != null;
 
       await shipment.update(
         {
@@ -646,6 +698,12 @@ export const shippingService = {
           deliveredAt: status === 'DELIVERED' ? new Date() : shipment.deliveredAt,
           failedAttemptCount: isFailedAttempt ? nextFailedCount : shipment.failedAttemptCount,
           lastFailedAttemptAt: isFailedAttempt ? new Date() : shipment.lastFailedAttemptAt,
+          ...(isCodDelivery
+            ? {
+                codCollected: true,
+                codCollectedAt: extra.codCollectedAt ?? new Date(),
+              }
+            : {}),
           ...extra,
         },
         { transaction },
@@ -656,6 +714,15 @@ export const shippingService = {
           { where: { id: shipment.subOrderId }, transaction },
         );
         await cascadeOrderDeliveredAndNotify(shipment.subOrderId, transaction);
+        await settleCodPaymentIfComplete(shipment.subOrderId, transaction);
+        if (shipment.deliveryAgentId) {
+          await deliveryAgentPayoutsService.recordEarning(
+            shipment.deliveryAgentId,
+            'DELIVERY',
+            shipment.id,
+            transaction,
+          );
+        }
       }
       if (status === 'RTO_DELIVERED') {
         await cascadeRtoDeliveredAndSettle(shipment.subOrderId, transaction);

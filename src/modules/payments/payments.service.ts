@@ -16,7 +16,7 @@ import { SavedPaymentMethod } from '@database/models/savedPaymentMethod.model';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { cartService } from '@modules/cart/cart.service';
 import {
-  recordCouponUsage,
+  recordCouponUsagesForOrder,
   destroyCouponUsageForOrder,
 } from '@modules/coupons/couponEngine';
 import {
@@ -156,17 +156,17 @@ export class PaymentsService {
     });
     if (coupons.length === 0) return;
 
-    const perCouponDiscount = Number(order.discountTotal ?? 0) / coupons.length;
-    for (const coupon of coupons) {
-      await recordCouponUsage({
-        couponId: coupon.id,
-        userId: order.userId,
-        orderId: order.id,
-        discountApplied: perCouponDiscount,
-        actorId: order.userId,
-        transaction,
-      });
-    }
+    await recordCouponUsagesForOrder({
+      coupons,
+      breakdown: Array.isArray(order.appliedCouponBreakdown)
+        ? order.appliedCouponBreakdown
+        : [],
+      discountTotal: Number(order.discountTotal ?? 0),
+      userId: order.userId,
+      orderId: order.id,
+      actorId: order.userId,
+      transaction,
+    });
   }
 
   /**

@@ -460,6 +460,34 @@ export async function validateCouponSet(input: {
   };
 }
 
+export type AppliedCouponBreakdownEntry = {
+  couponId: string;
+  discountApplied: number;
+};
+
+export function breakdownFromPerCoupon(
+  perCoupon: ValidateCouponSetResult['perCoupon'],
+  coupons: Array<{ id: string; code: string }>,
+): AppliedCouponBreakdownEntry[] {
+  return perCoupon.flatMap((entry) => {
+    const coupon = coupons.find((row) => row.code === entry.code);
+    if (!coupon) return [];
+    return [{ couponId: coupon.id, discountApplied: entry.discount }];
+  });
+}
+
+export function discountAppliedFromBreakdown(
+  couponId: string,
+  breakdown: AppliedCouponBreakdownEntry[] | null | undefined,
+  fallbackEqualShare: number,
+): number {
+  const entry = breakdown?.find((row) => row.couponId === couponId);
+  if (entry && Number.isFinite(Number(entry.discountApplied))) {
+    return Number(entry.discountApplied);
+  }
+  return fallbackEqualShare;
+}
+
 export async function recordCouponUsage(params: {
   couponId: string;
   userId: string;
@@ -496,6 +524,33 @@ export async function recordCouponUsage(params: {
   });
 
   return { created: true };
+}
+
+export async function recordCouponUsagesForOrder(params: {
+  coupons: Array<{ id: string }>;
+  breakdown: AppliedCouponBreakdownEntry[];
+  discountTotal: number;
+  userId: string;
+  orderId: string;
+  actorId: string;
+  transaction?: Transaction;
+}): Promise<void> {
+  const fallbackEqualShare =
+    params.coupons.length > 0 ? params.discountTotal / params.coupons.length : 0;
+  for (const coupon of params.coupons) {
+    await recordCouponUsage({
+      couponId: coupon.id,
+      userId: params.userId,
+      orderId: params.orderId,
+      discountApplied: discountAppliedFromBreakdown(
+        coupon.id,
+        params.breakdown,
+        fallbackEqualShare,
+      ),
+      actorId: params.actorId,
+      transaction: params.transaction,
+    });
+  }
 }
 
 export async function destroyCouponUsageForOrder(

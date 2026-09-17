@@ -5,6 +5,7 @@
 import assert from 'node:assert/strict';
 import { describe, it, before, after, mock } from 'node:test';
 import { randomUUID } from 'node:crypto';
+import { Op } from 'sequelize';
 import { sequelize } from '@database/models';
 import { ensureTestRoles } from '../../../testHelpers/ensureTestRoles';
 import { User } from '@database/models/user.model';
@@ -41,6 +42,8 @@ import {
   RETURN_STATUS,
   ROLES,
   WALLET_REFERENCE_TYPE,
+  WALLET_POINT_SOURCE,
+  WALLET_LEDGER_TYPE,
 } from '@core/constants/statuses';
 import { toPaise } from '@modules/pricing/money';
 import {
@@ -48,6 +51,7 @@ import {
   hasWalletRollbackCredit,
 } from '@modules/wallet/walletOrderRollback';
 import { cancelPaidOrder } from '@modules/orders/ordersCancel.service';
+import { subordersService } from '@modules/suborders/suborders.service';
 
 let dbReady = false;
 let sharedVariantId: string | null = null;
@@ -280,6 +284,20 @@ async function seedFullOrder(opts: SeedOrderOpts) {
   return { order, sub, item, address };
 }
 
+async function assertReturnRefundPurchasedNonExpiring(userId: string, returnRequestId: string) {
+  const row = await WalletLedger.findOne({
+    where: {
+      userId,
+      referenceId: returnRequestId,
+      type: WALLET_LEDGER_TYPE.CREDIT,
+    },
+    order: [['createdAt', 'DESC']],
+  });
+  assert.ok(row, 'expected a wallet credit for the return refund');
+  assert.equal(row.pointSource, WALLET_POINT_SOURCE.PURCHASED);
+  assert.equal(row.expiresAt, null);
+}
+
 async function setPlatformReturnShippingFee(fee: number) {
   const row = await PlatformSetting.findOne({ where: { key: 'platform' } });
   if (!row) return;
@@ -374,6 +392,7 @@ describe('consolidated refund scenarios (seeded)', () => {
 
     const credit = await CreditNote.findOne({ where: { returnRequestId: rr.id } });
     assert.ok(credit);
+    await assertReturnRefundPurchasedNonExpiring(customer.id, rr.id);
   });
 
   it('2. COD NO_LONGER_NEEDED → excludes shipping, deducts return fee', async (t) => {
@@ -403,6 +422,7 @@ describe('consolidated refund scenarios (seeded)', () => {
     // 100 + 18 - 50 = 68
     assert.ok(Math.abs(Number(approved.refundAmount) - 68) < 0.02);
     assert.equal(await walletService.getBalance(customer.id), Number(approved.refundAmount));
+    await assertReturnRefundPurchasedNonExpiring(customer.id, rr.id);
   });
 
   it('2b. Vendor returnShippingFee override wins over platform', async (t) => {
@@ -426,6 +446,7 @@ describe('consolidated refund scenarios (seeded)', () => {
     });
     const approved = await returnsService.transition(rr.id, RETURN_STATUS.APPROVED, customer.id);
     assert.equal(Number(approved.returnShippingFeeAmount), 25);
+    await assertReturnRefundPurchasedNonExpiring(customer.id, rr.id);
   });
 
   it('3. Razorpay return → REFUNDED only after refund.processed webhook', async (t) => {
@@ -552,6 +573,7 @@ describe('consolidated refund scenarios (seeded)', () => {
     assert.ok(Number(approved.razorpayRefundAmount) > 0);
     assert.equal(approved.refundStatus, REFUND_STATUS.INITIATED);
     assert.ok((await walletService.getBalance(customer.id)) > 0);
+    await assertReturnRefundPurchasedNonExpiring(customer.id, rr.id);
 
     await returnsService.markRazorpayRefundProcessed({
       razorpayRefundId: 'rfnd_split',
@@ -1049,5 +1071,104 @@ describe('consolidated refund scenarios (seeded)', () => {
     await sequelize.transaction(async (txn) => {
       assert.equal(await hasWalletRollbackCredit(order.id, txn), true);
     });
+  });
+
+  it('16. full suborder cancellation restores wallet spend once (not the gross total)', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    await walletService.credit(
+      customer.id,
+      300,
+      { type: WALLET_REFERENCE_TYPE.TOPUP, id: randomUUID() },
+      'seed',
+      undefined,
+      { pointSource: 'PURCHASED' as const },
+    );
+
+    const paymentId = `pay_${randomUUID().slice(0, 10)}`;
+    const { order, sub } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.RAZORPAY,
+      totalAmount: 1000,
+      walletAmountUsed: 300,
+      razorpayAmountPaid: 700,
+      razorpayPaymentId: paymentId,
+      shippingCharged: 0,
+      lineTaxable: 847.46,
+      lineTax: 152.54,
+    });
+    await order.update({ status: ORDER_STATUS.CONFIRMED });
+    await sub.update({ status: ORDER_STATUS.CONFIRMED, customerTotal: 1000, subtotal: 1000 });
+
+    await sequelize.transaction(async (txn) => {
+      await walletService.debit(
+        customer.id,
+        300,
+        { type: WALLET_REFERENCE_TYPE.ORDER, id: order.id },
+        'checkout spend',
+        txn,
+      );
+    });
+    assert.equal(await walletService.getBalance(customer.id), 0);
+    const before = await walletService.getBalance(customer.id);
+
+    const createRefund = mock.method(
+      paymentsService,
+      'createRazorpayRefund',
+      async () => `rfnd_${randomUUID().slice(0, 8)}`,
+    );
+
+    await subordersService.updateStatus(sub.id, ORDER_STATUS.CANCELLED, undefined, customer.id);
+
+    const after = await walletService.getBalance(customer.id);
+    assert.equal(after - before, 300);
+    assert.equal(createRefund.mock.callCount(), 1);
+    const refundPaise = createRefund.mock.calls[0]?.arguments[1];
+    assert.equal(refundPaise, toPaise(700));
+
+    createRefund.mock.restore();
+  });
+
+  it('17. return-refund wallet credit is excluded from promotional expiry sweep', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    const { item } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.COD,
+      totalAmount: 167,
+      shippingCharged: 49,
+      lineTaxable: 100,
+      lineTax: 18,
+    });
+
+    const rr = await returnsService.create(customer.id, {
+      orderItemId: item.id,
+      reasonCode: RETURN_REASON.DAMAGED,
+      reason: 'Damaged on arrival',
+    });
+    await returnsService.transition(rr.id, RETURN_STATUS.APPROVED, customer.id);
+    await assertReturnRefundPurchasedNonExpiring(customer.id, rr.id);
+
+    const credit = await WalletLedger.findOne({
+      where: {
+        userId: customer.id,
+        referenceId: rr.id,
+        type: WALLET_LEDGER_TYPE.CREDIT,
+      },
+    });
+    assert.ok(credit);
+    const swept = await WalletLedger.findAll({
+      where: {
+        id: credit.id,
+        type: WALLET_LEDGER_TYPE.CREDIT,
+        pointSource: WALLET_POINT_SOURCE.PROMOTIONAL,
+        expiresAt: { [Op.lte]: new Date() },
+      },
+    });
+    assert.equal(swept.length, 0);
   });
 });

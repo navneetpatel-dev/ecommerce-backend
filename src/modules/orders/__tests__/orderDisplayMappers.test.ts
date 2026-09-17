@@ -37,6 +37,34 @@ describe('mapOrderItem', () => {
     assert.equal(mapped.unitPrice, 100);
     assert.equal(mapped.quantity, 2);
   });
+
+  it('resolves live product images even when the parent product is soft-deleted', () => {
+    const mapped = mapOrderItem({
+      id: 'item-1',
+      variantId: 'var-1',
+      productName: 'Archived shirt',
+      quantity: 1,
+      unitPrice: 100,
+      taxableAmount: 100,
+      taxAmount: 0,
+      discountAmount: 0,
+      commissionAmount: 0,
+      tcsAmount: 0,
+      netPayoutAmount: 0,
+      lineSubtotal: 100,
+      variant: {
+        attributes: { Size: 'M' },
+        product: {
+          slug: 'archived-shirt',
+          deletedAt: new Date('2026-01-01'),
+          images: [
+            { url: 'https://cdn.example/archived.jpg', isPrimary: true },
+          ],
+        },
+      },
+    });
+    assert.equal(mapped.imageUrl, 'https://cdn.example/archived.jpg');
+  });
 });
 
 describe('mapSubOrder', () => {

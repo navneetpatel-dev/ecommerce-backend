@@ -13,7 +13,8 @@ export async function runWalletRechargeExpiry(): Promise<{ expired: number }> {
   const cutoff = new Date(Date.now() - walletRechargePendingTtlHours() * 60 * 60 * 1000);
   let expired = 0;
 
-  while (true) {
+  let more = true;
+  while (more) {
     const batch = await WalletRechargeOrder.findAll({
       where: {
         status: 'PENDING',
@@ -22,7 +23,10 @@ export async function runWalletRechargeExpiry(): Promise<{ expired: number }> {
       limit: 500,
       attributes: ['id'],
     });
-    if (batch.length === 0) break;
+    if (batch.length === 0) {
+      more = false;
+      continue;
+    }
 
     const ids = batch.map((r) => r.id);
     const [count] = await WalletRechargeOrder.update(
@@ -30,7 +34,7 @@ export async function runWalletRechargeExpiry(): Promise<{ expired: number }> {
       { where: { id: { [Op.in]: ids }, status: 'PENDING' } },
     );
     expired += count;
-    if (batch.length < 500) break;
+    more = batch.length >= 500;
   }
 
   logger.info('Wallet recharge expiry finished', { expired, cutoff: cutoff.toISOString() });

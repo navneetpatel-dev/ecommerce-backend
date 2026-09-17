@@ -13,7 +13,7 @@ import { Product } from '@database/models/product.model';
 import { TaxRule } from '@database/models/taxRule.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
-import { createOffsetExportQuery, createSingleShotExportQuery } from '../engine/export/createOffsetExportQuery';
+import { createOffsetExportQuery } from '../engine/export/createOffsetExportQuery';
 import {
   assertReportRange,
   frozenPaise,

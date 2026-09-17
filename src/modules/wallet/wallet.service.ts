@@ -17,7 +17,7 @@ import {
   WALLET_REFERENCE_TYPE,
   type DiscountBearer,
 } from '@core/constants/statuses';
-import { fromPaise, toPaise, roundMoney } from '@modules/pricing/money';
+import { roundMoney } from '@modules/pricing/money';
 import {
   allocateDebitFromBalances,
   getPointSourceBalances,

@@ -65,7 +65,19 @@ export const initTcsLedgerModel = (sequelize: Sequelize) => {
       updatedAt: DataTypes.DATE,
       deletedAt: DataTypes.DATE,
     },
-    { sequelize, tableName: 'tcs_ledgers', timestamps: true, paranoid: true },
+    {
+      sequelize,
+      tableName: 'tcs_ledgers',
+      timestamps: true,
+      paranoid: true,
+      indexes: [
+        {
+          unique: true,
+          fields: ['subOrderId', 'entryType'],
+          name: 'tcs_ledgers_sub_order_entry_type_unique',
+        },
+      ],
+    },
   );
   return TcsLedger;
 };

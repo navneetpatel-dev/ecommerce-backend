@@ -191,6 +191,18 @@ export const PRODUCT_QUESTION_STATUS_VALUES = Object.values(PRODUCT_QUESTION_STA
   ...ProductQuestionStatus[],
 ];
 
+/** Answer moderation — same vocabulary as ProductQuestion.status. */
+export const PRODUCT_ANSWER_STATUS = {
+  PENDING: 'PENDING',
+  PUBLISHED: 'PUBLISHED',
+  REJECTED: 'REJECTED',
+} as const;
+export type ProductAnswerStatus = (typeof PRODUCT_ANSWER_STATUS)[keyof typeof PRODUCT_ANSWER_STATUS];
+export const PRODUCT_ANSWER_STATUS_VALUES = Object.values(PRODUCT_ANSWER_STATUS) as [
+  ProductAnswerStatus,
+  ...ProductAnswerStatus[],
+];
+
 /** Who wrote a product-question answer — VENDOR when the answering user owns the product. */
 export const PRODUCT_ANSWER_AUTHOR_TYPE = {
   VENDOR: 'VENDOR',

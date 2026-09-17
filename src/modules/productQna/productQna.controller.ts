@@ -49,3 +49,18 @@ export const moderate = asyncHandler(async (req: Request, res: Response) => {
   const question = await productQnaService.moderateQuestion(req.params.id!, status);
   res.json(ok(question));
 });
+
+export const deleteAnswer = asyncHandler(async (req: Request, res: Response) => {
+  await productQnaService.deleteAnswer(req.params.answerId!, {
+    id: req.user!.id,
+    roleId: req.user!.roleId,
+    role: req.user!.role,
+  });
+  res.status(204).send();
+});
+
+export const moderateAnswer = asyncHandler(async (req: Request, res: Response) => {
+  const { status } = ModerateQuestionSchema.parse(req.body);
+  const answer = await productQnaService.moderateAnswer(req.params.answerId!, status);
+  res.json(ok(answer));
+});

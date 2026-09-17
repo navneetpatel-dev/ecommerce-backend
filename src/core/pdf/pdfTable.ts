@@ -4,8 +4,6 @@ import {
   PDF_FONT,
   PDF_HDR_FONT_SIZE,
   PDF_NAME_FONT_SIZE,
-  PDF_NUM_FONT_SIZE,
-  PDF_PAGE,
 } from './pdfTheme';
 import type { PdfColumn } from './pdfText';
 import { drawBoundedText } from './pdfText';

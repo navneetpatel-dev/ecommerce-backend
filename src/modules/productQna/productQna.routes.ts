@@ -13,6 +13,14 @@ router.post('/questions', authenticate, validate(AskQuestionSchema), productQnaC
 router.get('/questions/vendor/me', authenticate, authorize(PERMISSIONS.REVIEW_RESPOND), productQnaController.getVendorQuestions);
 router.get('/products/:productId/questions', productQnaController.getByProduct);
 router.post('/questions/:id/answers', authenticate, validate(AnswerQuestionSchema), productQnaController.answer);
+router.delete('/answers/:answerId', authenticate, productQnaController.deleteAnswer);
+router.patch(
+  '/answers/:answerId/status',
+  authenticate,
+  authorize(PERMISSIONS.REVIEW_MODERATE),
+  validate(ModerateQuestionSchema),
+  productQnaController.moderateAnswer,
+);
 router.patch(
   '/questions/:id/status',
   authenticate,

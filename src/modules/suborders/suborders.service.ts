@@ -11,12 +11,22 @@ import { ProductVariant } from '@database/models/productVariant.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { TcsLedger } from '@database/models/tcsLedger.model';
 import { sequelize } from '@database/models';
-import { ORDER_STATUS, COMMISSION_STATUS, PAYMENT_STATUS, WALLET_REFERENCE_TYPE } from '@core/constants/statuses';
-import { roundMoney } from '@modules/pricing/money';
+import {
+  ORDER_STATUS,
+  COMMISSION_STATUS,
+  PAYMENT_STATUS,
+  PAYMENT_METHOD,
+  REFUND_STATUS,
+  WALLET_REFERENCE_TYPE,
+} from '@core/constants/statuses';
+import { checkoutAmountDue } from '@modules/pricing/displayMoney';
+import { roundMoney, toPaise } from '@modules/pricing/money';
 import { mapSubOrder } from '@modules/orders/orderDisplayMappers';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { shippingService } from '@modules/shipping/shipping.service';
+import { paymentsService } from '@modules/payments/payments.service';
 import { walletService } from '@modules/wallet/wallet.service';
+import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
 import { rollbackOrderWalletIfNeeded } from '@modules/wallet/walletOrderRollback';
 import type { GetSubOrdersQuery } from './suborders.dto';
 
@@ -70,6 +80,41 @@ function assertSubOrderTransition(from: string, to: string) {
   if (!SUBORDER_MANUAL_TRANSITIONS[from]?.includes(to)) {
     throw new ValidationError({ status: [`Cannot move an order from ${from} to ${to} here`] });
   }
+}
+
+function orderOriginalTotal(order: Order): number {
+  const walletUsed = Number(order.walletAmountUsed ?? 0);
+  return Math.max(
+    Number(order.originalTotalAmount ?? 0),
+    Number(order.razorpayAmountPaid ?? 0) + walletUsed,
+    Number(order.totalAmount ?? 0),
+    walletUsed,
+  );
+}
+
+/**
+ * Non-wallet (cash/Razorpay/COD) share of a suborder refund. The wallet-funded
+ * share is restored only by `rollbackOrderWalletIfNeeded` when the parent order
+ * is fully cancelled — never credited here as WALLET_REFUND.
+ */
+function suborderCancelCashShare(order: Order, customerRefund: number): number {
+  const walletUsed = Number(order.walletAmountUsed ?? 0);
+  const originalTotal = orderOriginalTotal(order);
+  const isCod = order.paymentMethod === PAYMENT_METHOD.COD;
+  const walletOnly =
+    walletUsed > 0 &&
+    Number(order.razorpayAmountPaid ?? 0) <= 0 &&
+    !order.razorpayPaymentId &&
+    !isCod;
+
+  if (walletOnly || (walletUsed > 0 && originalTotal > 0 && walletUsed >= originalTotal)) {
+    return 0;
+  }
+  if (walletUsed <= 0 || originalTotal <= 0) {
+    return roundMoney(customerRefund);
+  }
+  const walletShare = roundMoney(Math.min(customerRefund, (customerRefund * walletUsed) / originalTotal));
+  return roundMoney(customerRefund - walletShare);
 }
 
 function mapSubOrderRow(row: SubOrder) {
@@ -139,6 +184,11 @@ export class SubordersService {
   }
 
   async updateStatus(id: string, status: SubOrder['status'], trackingId: string | undefined, updatedBy: string) {
+    let razorpayDue = 0;
+    let razorpayPaymentId: string | null = null;
+    let refundOrderId: string | null = null;
+    let orderFullyCancelled = false;
+
     const suborder = await sequelize.transaction(async (transaction) => {
       // Cancellation locks the parent Order row further down (for the wallet-rollback sentinel
       // and cashback-reduction writes) — acquire that lock FIRST, before the SubOrder row, so the
@@ -188,25 +238,13 @@ export class SubordersService {
           transaction,
         });
 
-        // 3. Customer wallet refund if prepaid / paid
+        // 3. Customer refund: restore wallet spend only via rollbackOrderWalletIfNeeded when the
+        // whole order is cancelled (same sentinel `cancelPaidOrder` uses). Never credit the
+        // gross suborder total as WALLET_REFUND — that double-credits the wallet-funded share.
         const parentOrder = await Order.findByPk(row.orderId, {
           transaction,
           lock: transaction.LOCK.UPDATE,
         });
-        const refundAmount = Number(row.customerTotal ?? row.subtotal);
-        if (
-          parentOrder &&
-          parentOrder.paymentStatus === PAYMENT_STATUS.PAID &&
-          refundAmount > 0
-        ) {
-          await walletService.credit(
-            parentOrder.userId,
-            refundAmount,
-            { type: WALLET_REFERENCE_TYPE.WALLET_REFUND, id: id },
-            `Refund for cancelled suborder #${id.slice(0, 8).toUpperCase()}`,
-            transaction,
-          );
-        }
 
         // Note: pendingCashbackAmount is deliberately NOT shrunk here. It stays frozen at its
         // checkout-time (whole-cart) value; cashback.service.ts's creditPendingCashbackForOrder
@@ -216,31 +254,97 @@ export class SubordersService {
         // cancellations, under-reducing it — computing the prorated amount fresh at credit time
         // from the immutable merchandiseSubtotal/subtotal figures avoids that entirely.)
 
-        // 4. Settle parent order if all suborders are now cancelled
         if (parentOrder) {
           const sisterSubOrders = await SubOrder.findAll({
             where: { orderId: parentOrder.id },
-            attributes: ['id', 'status'],
+            attributes: ['id', 'status', 'customerTotal', 'subtotal'],
             transaction,
           });
           const allCancelled = sisterSubOrders.every(
             (s) => s.id === id || s.status === ORDER_STATUS.CANCELLED,
           );
           if (allCancelled) {
-            // Also roll back the checkout-time wallet spend here (writing the same rollback
-            // sentinel `cancelPaidOrder` checks for) and zero `walletAmountUsed` — otherwise a
-            // later order-level cancel call on this same now-CANCELLED order finds no sentinel
-            // and issues a second wallet credit for the full amount already refunded above.
             await rollbackOrderWalletIfNeeded(parentOrder, parentOrder.userId, transaction);
+          }
+
+          const customerRefund = roundMoney(Number(row.customerTotal ?? row.subtotal));
+          if (
+            parentOrder.paymentStatus === PAYMENT_STATUS.PAID &&
+            customerRefund > 0
+          ) {
+            let cashShare: number;
+            if (allCancelled && sisterSubOrders.length === 1) {
+              cashShare = roundMoney(
+                Number(parentOrder.razorpayAmountPaid) ||
+                  checkoutAmountDue(
+                    Number(parentOrder.totalAmount),
+                    Number(parentOrder.walletAmountUsed ?? 0),
+                  ),
+              );
+            } else {
+              cashShare = suborderCancelCashShare(parentOrder, customerRefund);
+              if (parentOrder.paymentMethod !== PAYMENT_METHOD.COD) {
+                const razorpayPaid = roundMoney(
+                  Number(parentOrder.razorpayAmountPaid) ||
+                    checkoutAmountDue(
+                      orderOriginalTotal(parentOrder),
+                      Number(parentOrder.walletAmountUsed ?? 0),
+                    ),
+                );
+                const alreadyRefunded = sisterSubOrders
+                  .filter((s) => s.id !== id && s.status === ORDER_STATUS.CANCELLED)
+                  .reduce(
+                    (sum, s) =>
+                      sum +
+                      suborderCancelCashShare(
+                        parentOrder,
+                        roundMoney(Number(s.customerTotal ?? s.subtotal)),
+                      ),
+                    0,
+                  );
+                const remaining = roundMoney(Math.max(0, razorpayPaid - alreadyRefunded));
+                cashShare = roundMoney(Math.min(cashShare, remaining));
+              }
+            }
+
+            if (cashShare > 0) {
+              if (parentOrder.paymentMethod === PAYMENT_METHOD.COD) {
+                await walletService.credit(
+                  parentOrder.userId,
+                  cashShare,
+                  { type: WALLET_REFERENCE_TYPE.COD_REFUND, id },
+                  WALLET_DESCRIPTIONS.COD_REFUND,
+                  transaction,
+                );
+              } else if (parentOrder.razorpayPaymentId) {
+                razorpayDue = cashShare;
+                razorpayPaymentId = parentOrder.razorpayPaymentId;
+                refundOrderId = parentOrder.id;
+              }
+            }
+          }
+
+          if (allCancelled) {
+            const paidNoGatewayRefund =
+              parentOrder.paymentStatus === PAYMENT_STATUS.PAID && !razorpayPaymentId;
             await Order.update(
               {
                 status: ORDER_STATUS.CANCELLED,
                 walletAmountUsed: 0,
                 // Every suborder is cancelled — nothing will ever deliver, so no cashback is due.
                 pendingCashbackAmount: 0,
+                ...(razorpayPaymentId
+                  ? { cancelRefundStatus: REFUND_STATUS.PENDING }
+                  : paidNoGatewayRefund
+                    ? {
+                        paymentStatus: PAYMENT_STATUS.REFUNDED,
+                        cancelRefundStatus: REFUND_STATUS.COMPLETED,
+                      }
+                    : {}),
               },
               { where: { id: parentOrder.id }, transaction },
             );
+            orderFullyCancelled = true;
           }
         }
       }
@@ -287,6 +391,32 @@ export class SubordersService {
         transaction,
       });
     });
+
+    if (razorpayPaymentId && razorpayDue > 0 && refundOrderId) {
+      try {
+        const refundId = await paymentsService.createRazorpayRefund(
+          razorpayPaymentId,
+          toPaise(razorpayDue),
+          { orderId: refundOrderId, reason: 'SUBORDER_CANCEL', subOrderId: id },
+        );
+        if (orderFullyCancelled) {
+          await Order.update(
+            {
+              cancelRefundStatus: REFUND_STATUS.INITIATED,
+              cancelRazorpayRefundId: refundId,
+            },
+            { where: { id: refundOrderId } },
+          );
+        }
+      } catch {
+        if (orderFullyCancelled) {
+          await Order.update(
+            { cancelRefundStatus: REFUND_STATUS.FAILED },
+            { where: { id: refundOrderId } },
+          );
+        }
+      }
+    }
 
     const order = (suborder as SubOrder & { order?: Order }).order;
     if (order?.userId) {

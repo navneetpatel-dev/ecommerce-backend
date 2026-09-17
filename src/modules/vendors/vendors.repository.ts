@@ -1,6 +1,6 @@
 import { BaseRepository } from '@core/repository/BaseRepository';
 import { Vendor } from '@database/models/vendor.model';
-import { Op, WhereOptions } from 'sequelize';
+import { Op } from 'sequelize';
 import type { VendorStatus } from '@core/constants/statuses';
 
 export class VendorsRepository extends BaseRepository<Vendor> {

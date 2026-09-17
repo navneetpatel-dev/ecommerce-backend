@@ -1,9 +1,16 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
+import { ValidationError } from '@core/errors/ValidationError';
+import { ForbiddenError } from '@core/errors/ForbiddenError';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 import {
   PRODUCT_QUESTION_STATUS,
   PRODUCT_ANSWER_AUTHOR_TYPE,
+  PRODUCT_ANSWER_STATUS,
   type ProductQuestionStatus,
+  type ProductAnswerStatus,
 } from '@core/constants/statuses';
+import { PERMISSIONS } from '@core/permissions/permissionKeys';
+import { userHasPermission } from '@middleware/rbac.middleware';
 import { productQnaRepository } from './productQna.repository';
 import { ProductQuestion } from '@database/models/productQuestion.model';
 import { ProductAnswer } from '@database/models/productAnswer.model';
@@ -11,8 +18,11 @@ import { Product } from '@database/models/product.model';
 import { sequelize } from '@database/models';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 
-function serializeQuestion(row: ProductQuestion) {
+function serializeQuestion(row: ProductQuestion, opts?: { publishedAnswersOnly?: boolean }) {
   const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
+  const answers = ((plain.answers ?? []) as Array<Record<string, unknown>>).filter((answer) =>
+    opts?.publishedAnswersOnly ? answer.status === PRODUCT_ANSWER_STATUS.PUBLISHED : true,
+  );
   return {
     id: plain.id,
     productId: plain.productId,
@@ -21,11 +31,12 @@ function serializeQuestion(row: ProductQuestion) {
     createdAt: plain.createdAt,
     customerName: plain.user?.name ?? null,
     productName: plain.product?.name ?? null,
-    answers: (plain.answers ?? []).map((a: any) => ({
+    answers: answers.map((a: any) => ({
       id: a.id,
       answer: a.answer,
       authorType: a.authorType,
       authorName: a.author?.name ?? null,
+      status: a.status,
       createdAt: a.createdAt,
     })),
   };
@@ -49,12 +60,12 @@ export class ProductQnaService {
     });
   }
 
-  /** Public PDP Q&A — PUBLISHED only. */
+  /** Public PDP Q&A — PUBLISHED questions and PUBLISHED answers only. */
   async getProductQuestions(productId: string, query: { page: number; limit: number }) {
     const offset = paginationOffset(query.page, query.limit);
     const { rows, count } = await productQnaRepository.findPublishedForProduct(productId, query.limit, offset);
     return {
-      questions: rows.map((row) => serializeQuestion(row)),
+      questions: rows.map((row) => serializeQuestion(row, { publishedAnswersOnly: true })),
       pagination: buildPaginationMeta(count, query.page, query.limit),
     };
   }
@@ -89,6 +100,11 @@ export class ProductQnaService {
         transaction: t,
       });
       if (!question) throw new NotFoundError('ProductQuestion');
+      if (question.status !== PRODUCT_QUESTION_STATUS.PUBLISHED) {
+        throw new ValidationError({
+          status: ['Only published questions can be answered'],
+        });
+      }
 
       const product = (question as any).product as Product | undefined;
       const authorType =
@@ -102,6 +118,7 @@ export class ProductQnaService {
           authorId: userId,
           authorType,
           answer,
+          status: PRODUCT_ANSWER_STATUS.PENDING,
         },
         { transaction: t },
       );
@@ -112,6 +129,26 @@ export class ProductQnaService {
     const question = await ProductQuestion.findByPk(questionId);
     if (!question) throw new NotFoundError('ProductQuestion');
     return question.update({ status });
+  }
+
+  async deleteAnswer(
+    answerId: string,
+    actor: { id: string; roleId?: string; role: { name: string } },
+  ) {
+    const answer = await ProductAnswer.findByPk(answerId);
+    if (!answer) throw new NotFoundError('ProductAnswer');
+    const isAuthor = answer.authorId === actor.id;
+    const isModerator = await userHasPermission(actor, PERMISSIONS.REVIEW_MODERATE);
+    if (!isAuthor && !isModerator) {
+      throw new ForbiddenError(ERROR_MESSAGES.FORBIDDEN);
+    }
+    await answer.destroy();
+  }
+
+  async moderateAnswer(answerId: string, status: Exclude<ProductAnswerStatus, 'PENDING'>) {
+    const answer = await ProductAnswer.findByPk(answerId);
+    if (!answer) throw new NotFoundError('ProductAnswer');
+    return answer.update({ status });
   }
 }
 

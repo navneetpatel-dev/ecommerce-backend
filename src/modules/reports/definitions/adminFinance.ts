@@ -15,7 +15,7 @@ import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQ
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { AuditLog } from '@database/models/auditLog.model';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
-import { createOffsetExportQuery, createSingleShotExportQuery } from '../engine/export/createOffsetExportQuery';
+import { createSingleShotExportQuery } from '../engine/export/createOffsetExportQuery';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { sequelize } from '@database/models';
 

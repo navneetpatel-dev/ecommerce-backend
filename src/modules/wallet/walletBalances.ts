@@ -1,6 +1,5 @@
 import type { Transaction } from 'sequelize';
 import { Op } from 'sequelize';
-import { sequelize } from '@database/models';
 import { WalletLedger } from '@database/models/walletLedger.model';
 import {
   WALLET_LEDGER_TYPE,

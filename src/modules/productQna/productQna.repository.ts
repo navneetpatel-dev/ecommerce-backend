@@ -1,6 +1,6 @@
 import { BaseRepository } from '@core/repository/BaseRepository';
 import { ProductQuestion } from '@database/models/productQuestion.model';
-import { PRODUCT_QUESTION_STATUS } from '@core/constants/statuses';
+import { PRODUCT_ANSWER_STATUS, PRODUCT_QUESTION_STATUS } from '@core/constants/statuses';
 
 export class ProductQnaRepository extends BaseRepository<ProductQuestion> {
   constructor() {
@@ -16,6 +16,8 @@ export class ProductQnaRepository extends BaseRepository<ProductQuestion> {
         {
           association: 'answers',
           separate: true,
+          required: false,
+          where: { status: PRODUCT_ANSWER_STATUS.PUBLISHED },
           order: [['createdAt', 'ASC']],
           include: [{ association: 'author', attributes: ['id', 'name'] }],
         },

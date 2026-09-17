@@ -48,7 +48,19 @@ export const initTdsLedgerModel = (sequelize: Sequelize) => {
       updatedAt: DataTypes.DATE,
       deletedAt: DataTypes.DATE,
     },
-    { sequelize, tableName: 'tds_ledgers', timestamps: true, paranoid: true },
+    {
+      sequelize,
+      tableName: 'tds_ledgers',
+      timestamps: true,
+      paranoid: true,
+      indexes: [
+        {
+          unique: true,
+          fields: ['subOrderId'],
+          name: 'tds_ledgers_sub_order_unique',
+        },
+      ],
+    },
   );
   return TdsLedger;
 };

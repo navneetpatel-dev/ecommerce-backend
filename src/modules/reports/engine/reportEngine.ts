@@ -1,7 +1,6 @@
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
-import type { PermissionKey } from '@core/permissions/permissionKeys';
 import { buildPaginationMeta } from '@core/http/pagination';
 import {
   getReportDefinition,

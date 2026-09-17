@@ -6,10 +6,8 @@ import { PRODUCT_STATUS, REVIEW_STATUS } from '@core/constants/statuses';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import {
-  cascadeDeleteEntityMedia,
   deleteS3ObjectByUrl,
   deleteS3ObjectIfReplaced,
-  S3_ENTITY_TYPES,
 } from '@core/s3';
 import { productsRepository } from './products.repository';
 import { Category } from '@database/models/category.model';
@@ -487,7 +485,7 @@ export class ProductsService {
   }
 
   async deleteProduct(id: string, vendorId: string | null) {
-    const imageUrls = await sequelize.transaction(async (t) => {
+    await sequelize.transaction(async (t) => {
       const product = await productsRepository.findById(id, { transaction: t });
       if (!product) throw new NotFoundError('Product');
 
@@ -495,18 +493,11 @@ export class ProductsService {
         throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_PRODUCT);
       }
 
-      const images = await ProductImage.findAll({
-        where: { productId: id },
-        attributes: ['url'],
-        transaction: t,
-      });
-
-      await ProductImage.destroy({ where: { productId: id }, transaction: t });
+      // Soft-delete the product only. Keep ProductImage rows and S3 objects so
+      // historical order views can still live-join thumbnails. Hard-delete/GC
+      // of orphaned media is out of scope for this path.
       await productsRepository.softDelete(id, { transaction: t });
-      return images.map((img) => img.url);
     });
-
-    await cascadeDeleteEntityMedia(S3_ENTITY_TYPES.PRODUCTS, id, imageUrls);
   }
 
   async submitForApproval(id: string, vendorId: string) {

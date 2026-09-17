@@ -3,6 +3,8 @@ import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { pageLimitQuerySchema } from '@core/http/pagination';
 import { sendPdfDownload } from '@core/http/sendDownload';
+import { ForbiddenError } from '@core/errors/ForbiddenError';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 import { returnsService } from './returns.service';
 
 export const create = asyncHandler(async (req: Request, res: Response) => {
@@ -21,11 +23,21 @@ export const listAdmin = asyncHandler(async (req: Request, res: Response) => {
   res.json(ok(result.returns, { pagination: result.pagination }));
 });
 
+export const listVendor = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user?.vendorId) {
+    throw new ForbiddenError(ERROR_MESSAGES.VENDOR_NOT_LINKED);
+  }
+  const query = pageLimitQuerySchema.parse(req.query);
+  const result = await returnsService.listForVendor(req.user.vendorId, query);
+  res.json(ok(result.returns, { pagination: result.pagination }));
+});
+
 export const getById = asyncHandler(async (req: Request, res: Response) => {
   const item = await returnsService.getById(req.params.id!, {
     id: req.user!.id,
     roleId: req.user!.roleId,
     role: req.user!.role,
+    vendorId: req.user!.vendorId,
   });
   res.json(ok(item));
 });
@@ -51,6 +63,7 @@ export const retryRefund = asyncHandler(async (req: Request, res: Response) => {
     id: req.user!.id,
     roleId: req.user!.roleId,
     role: req.user!.role,
+    vendorId: req.user!.vendorId,
   });
   res.json(ok(item));
 });

@@ -62,6 +62,7 @@ const orderDetailInclude = [
                 model: Product,
                 as: 'product',
                 required: false,
+                paranoid: false,
                 include: ['images'],
               },
             ],

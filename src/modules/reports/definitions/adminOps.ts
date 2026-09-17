@@ -6,7 +6,7 @@ import { Order } from '@database/models/order.model';
 import { Vendor } from '@database/models/vendor.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
-import { createOffsetExportQuery, createSingleShotExportQuery } from '../engine/export/createOffsetExportQuery';
+import { createOffsetExportQuery } from '../engine/export/createOffsetExportQuery';
 import {
   assertReportRange,
   pagedFindAndCount,

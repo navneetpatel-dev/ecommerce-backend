@@ -6,6 +6,7 @@ export class ProductAnswer extends Model<InferAttributes<ProductAnswer>, InferCr
   declare authorId: string;
   declare authorType: 'VENDOR' | 'CUSTOMER';
   declare answer: string;
+  declare status: CreationOptional<'PENDING' | 'PUBLISHED' | 'REJECTED'>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -27,6 +28,11 @@ export const initProductAnswerModel = (sequelize: Sequelize) => {
       authorId: { type: DataTypes.UUID, allowNull: false },
       authorType: { type: DataTypes.ENUM('VENDOR', 'CUSTOMER'), allowNull: false },
       answer: { type: DataTypes.TEXT, allowNull: false },
+      status: {
+        type: DataTypes.ENUM('PENDING', 'PUBLISHED', 'REJECTED'),
+        allowNull: false,
+        defaultValue: 'PENDING',
+      },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

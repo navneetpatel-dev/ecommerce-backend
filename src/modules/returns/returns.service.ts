@@ -69,6 +69,7 @@ import {
 const returnListInclude = [
   { model: OrderItem, as: 'orderItem', required: false, attributes: ['id', 'productName'] },
   { model: User, as: 'user', required: false, attributes: ['id', 'name'] },
+  { model: SubOrder, as: 'subOrder', required: false, attributes: ['id', 'vendorId'] },
   {
     model: CreditNote,
     as: 'creditNote',
@@ -364,7 +365,7 @@ export class ReturnsService {
 
   async getById(
     id: string,
-    requester: { id: string; roleId: string; role: { name: string } },
+    requester: { id: string; roleId: string; role: { name: string }; vendorId?: string | null },
   ) {
     const slaDays = await refundSlaDays();
     const row = await ReturnRequest.findByPk(id, { include: returnListInclude });
@@ -374,12 +375,45 @@ export class ReturnsService {
       return serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }, slaDays);
     }
 
+    const subOrder = (row as ReturnRequest & { subOrder?: { vendorId?: string } }).subOrder;
+    if (requester.vendorId && subOrder?.vendorId === requester.vendorId) {
+      return serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }, slaDays);
+    }
+
     const permissions = await resolvePermissionsForUser(requester);
     if (!permissions.includes(PERMISSIONS.ORDER_REFUND)) {
       throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_RETURN);
     }
 
     return serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }, slaDays);
+  }
+
+  async listForVendor(vendorId: string, query: { page: number; limit: number }) {
+    const slaDays = await refundSlaDays();
+    const offset = paginationOffset(query.page, query.limit);
+    const vendorInclude = returnListInclude.map((inc) =>
+      (inc as { as?: string }).as === 'subOrder'
+        ? {
+            ...inc,
+            required: true,
+            where: { vendorId },
+          }
+        : inc,
+    );
+    const { rows, count } = await ReturnRequest.findAndCountAll({
+      include: vendorInclude,
+      order: [['createdAt', 'DESC']],
+      limit: query.limit,
+      offset,
+      distinct: true,
+      col: 'id',
+    });
+    return {
+      returns: rows.map((row) =>
+        serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }, slaDays),
+      ),
+      pagination: buildPaginationMeta(count, query.page, query.limit),
+    };
   }
 
   /** Customer picks a repickup window after a failed attempt — mirrors shippingService.rescheduleDelivery. */
@@ -1183,7 +1217,7 @@ export class ReturnsService {
             },
             desc,
             t,
-            { pointSource: WALLET_POINT_SOURCE.PROMOTIONAL },
+            { pointSource: WALLET_POINT_SOURCE.PURCHASED, expiresAt: null },
           );
         }
 

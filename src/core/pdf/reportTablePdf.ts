@@ -11,7 +11,6 @@ import {
   drawTableRow,
   measureTableRowHeight,
 } from './pdfTable';
-import { PDF_PAGE } from './pdfTheme';
 
 export type ReportPdfColumn = {
   key: string;

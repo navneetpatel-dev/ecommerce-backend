@@ -1,12 +1,11 @@
 import bcrypt from 'bcrypt';
-import { Op, QueryTypes, type Transaction } from 'sequelize';
+import { Op, QueryTypes } from 'sequelize';
 import { sequelize } from '@database/models';
 import { User } from '@database/models/user.model';
 import { Role } from '@database/models/role.model';
 import { Shipment } from '@database/models/shipment.model';
 import { DeliveryAgent } from '@database/models/deliveryAgent.model';
 import { ShipmentAttempt } from '@database/models/shipmentAttempt.model';
-import { Order } from '@database/models/order.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { DeliveryCashDeposit } from '@database/models/deliveryCashDeposit.model';
 import { DeliveryAgentEarning } from '@database/models/deliveryAgentEarning.model';
@@ -19,7 +18,6 @@ import { NotFoundError, ValidationError } from '@core/errors';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import {
   DELIVERY_AGENT_REQUIRED_DOCUMENT_TYPES,
-  PAYMENT_STATUS,
   RETURN_STATUS,
   RETURN_TYPE,
   ROLES,
@@ -963,10 +961,6 @@ export class DeliveryAgentsService {
         },
         transaction,
       );
-      if (isCod) {
-        await this.settleCodPaymentIfComplete(shipment.subOrderId, transaction);
-      }
-      await deliveryAgentPayoutsService.recordEarning(deliveryAgentId, 'DELIVERY', shipment.id, transaction);
       await logAudit({
         actorId,
         action: 'DELIVERY_CONFIRMED',
@@ -981,24 +975,6 @@ export class DeliveryAgentsService {
       throw new ValidationError({ otpCode: [result.verification.message] });
     }
     return result.shipment;
-  }
-
-  /** Marks the order PAID once every COD shipment on it has had cash collected at the door. */
-  private async settleCodPaymentIfComplete(subOrderId: string, transaction: Transaction) {
-    const subOrder = await SubOrder.findByPk(subOrderId, { transaction });
-    if (!subOrder) return;
-    const order = await Order.findByPk(subOrder.orderId, { transaction });
-    if (!order || order.paymentMethod !== 'COD' || order.paymentStatus === PAYMENT_STATUS.PAID) return;
-
-    const siblingShipments = await Shipment.findAll({
-      include: [{ association: 'subOrder', where: { orderId: order.id }, attributes: [] }],
-      transaction,
-    });
-    const codShipments = siblingShipments.filter((s) => s.codAmount != null);
-    const allCollected = codShipments.length > 0 && codShipments.every((s) => s.codCollected);
-    if (allCollected) {
-      await order.update({ paymentStatus: PAYMENT_STATUS.PAID }, { transaction });
-    }
   }
 
   async forceConfirmDelivery(shipmentId: string, actorId: string, reason: string) {

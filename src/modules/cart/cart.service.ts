@@ -147,6 +147,23 @@ function clampQuantity(desired: number, stock: number) {
   return Math.max(0, Math.min(desired, stock, MAX_CART_LINE_QUANTITY));
 }
 
+function cartHasCoupon(cart: Cart): boolean {
+  return Boolean(cart.couponCode) || (cart.couponCodes?.length ?? 0) > 0;
+}
+
+/** Copy guest coupons onto the user cart only when the user has none selected. */
+async function copyGuestCouponIfUserCartEmpty(
+  guestCart: Cart,
+  userCart: Cart,
+  transaction: Transaction,
+) {
+  if (!cartHasCoupon(guestCart) || cartHasCoupon(userCart)) return;
+  await userCart.update(
+    { couponCode: guestCart.couponCode, couponCodes: guestCart.couponCodes ?? [] },
+    { transaction },
+  );
+}
+
 export class CartService {
   async getCart(userId: string | null, sessionId: string | null): Promise<CartView> {
     let cart;
@@ -520,6 +537,7 @@ export class CartService {
       });
 
       if (guestItems.length === 0) {
+        await copyGuestCouponIfUserCartEmpty(guestCart, userCart, t);
         await guestCart.destroy({ transaction: t });
         return { merged: false };
       }
@@ -565,6 +583,7 @@ export class CartService {
       }
 
       await CartItem.destroy({ where: { cartId: guestCart.id }, transaction: t });
+      await copyGuestCouponIfUserCartEmpty(guestCart, userCart, t);
       await guestCart.destroy({ transaction: t });
       return { merged: true };
     });

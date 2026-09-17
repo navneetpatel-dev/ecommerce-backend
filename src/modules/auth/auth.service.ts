@@ -10,7 +10,7 @@ import { AuthTokens, JwtPayload } from './auth.types';
 import { RegisterRequest, LoginRequest } from './auth.dto';
 import { AppError, NotFoundError, ValidationError, ForbiddenError } from '@core/errors';
 import { logger } from '@core/logger';
-import { clearPermissionCache, resolvePermissionsForUser } from '@middleware/rbac.middleware';
+import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { redisClient, withRedis } from '@config/redis';
 import { EMAIL_VERIFY_EXPIRY, PASSWORD_RESET_EXPIRY, REFRESH_TOKEN_TTL_MS } from '@core/constants/http';
 import { ADMIN_ROLES, ROLES, USER_STATUS } from '@core/constants/statuses';

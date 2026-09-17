@@ -11,6 +11,7 @@ import { ERROR_MESSAGES } from '@core/constants/errors';
 import { resolveItemAvailability, isProductCustomerVisible } from '@core/catalog/customerVisibility';
 import { productDiscountPercent, productShowMrp } from '@modules/pricing/displayMoney';
 import { roundMoney } from '@modules/pricing/money';
+import { MAX_CART_LINE_QUANTITY } from '@modules/cart/cart.constants';
 
 function mapWishlistProduct(product: Product | null | undefined) {
   if (!product) return null;
@@ -197,8 +198,15 @@ export class WishlistService {
       });
 
       if (existingCartItem) {
-        // already exists, increment quantity
-        await existingCartItem.increment('quantity', { transaction: t });
+        const nextQuantity = Math.max(
+          0,
+          Math.min(existingCartItem.quantity + 1, Number(variant.stock), MAX_CART_LINE_QUANTITY),
+        );
+        if (nextQuantity !== existingCartItem.quantity) {
+          await existingCartItem.update({ quantity: nextQuantity }, { transaction: t });
+        } else if (Number(variant.stock) <= existingCartItem.quantity) {
+          throw new ValidationError(ERROR_MESSAGES.INSUFFICIENT_STOCK);
+        }
       } else {
         // Create new cart item
         await CartItem.create({

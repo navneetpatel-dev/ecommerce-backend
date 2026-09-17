@@ -1,6 +1,7 @@
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { Payout } from '@database/models/payout.model';
 import { SubOrder } from '@database/models/subOrder.model';
+import { Shipment } from '@database/models/shipment.model';
 import { TdsLedger } from '@database/models/tdsLedger.model';
 import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
@@ -8,7 +9,13 @@ import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
-import { COMMISSION_STATUS, PAYOUT_STATUS, ORDER_STATUS, ROLES } from '@core/constants/statuses';
+import {
+  COMMISSION_STATUS,
+  PAYOUT_STATUS,
+  ORDER_STATUS,
+  RETURN_STATUS,
+  ROLES,
+} from '@core/constants/statuses';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { userHasPermission } from '@middleware/rbac.middleware';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
@@ -66,6 +73,53 @@ const vendorInclude = {
   attributes: ['id', 'businessName'],
 };
 
+/** Open returns still in flight — exclude these suborders from payout eligibility. */
+const OPEN_PAYOUT_BLOCKING_RETURN_STATUSES = [
+  RETURN_STATUS.REQUESTED,
+  RETURN_STATUS.APPROVED,
+  RETURN_STATUS.PICKUP_SCHEDULED,
+  RETURN_STATUS.RECEIVED,
+] as const;
+
+function payoutReturnWindowCutoff(defaultReturnWindowDays: number): Date {
+  const days =
+    Number.isFinite(defaultReturnWindowDays) && defaultReturnWindowDays > 0
+      ? defaultReturnWindowDays
+      : 7;
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+}
+
+function openReturnNotExistsSql() {
+  const statuses = OPEN_PAYOUT_BLOCKING_RETURN_STATUSES.map((status) => `'${status}'`).join(', ');
+  return sequelize.literal(
+    `NOT EXISTS (SELECT 1 FROM return_requests AS rr WHERE rr."subOrderId" = "SubOrder"."id" AND rr.status IN (${statuses}) AND rr."deletedAt" IS NULL)`,
+  );
+}
+
+/** Shared SubOrder include for both payout candidate queries — do not duplicate. */
+function payoutEligibleSubOrderInclude(windowCutoff: Date) {
+  return {
+    model: SubOrder,
+    attributes: ['id', 'orderId', 'status'],
+    required: true,
+    where: {
+      status: ORDER_STATUS.DELIVERED,
+      [Op.and]: [openReturnNotExistsSql()],
+    },
+    include: [
+      {
+        model: Shipment,
+        as: 'shipment' as const,
+        attributes: ['id', 'deliveredAt'],
+        required: true,
+        where: {
+          deliveredAt: { [Op.ne]: null, [Op.lte]: windowCutoff },
+        },
+      },
+    ],
+  };
+}
+
 export class PayoutsService {
   async list(query: { page: number; limit: number }, vendorId?: string | null) {
     const offset = paginationOffset(query.page, query.limit);
@@ -116,16 +170,11 @@ export class PayoutsService {
   async process(actorId: string) {
     const settings = await settingsService.getPlatformSettings();
     const tdsRate = Number(settings.tdsRatePercent ?? 0);
+    const windowCutoff = payoutReturnWindowCutoff(Number(settings.defaultReturnWindow ?? 7));
+    const subOrderInclude = payoutEligibleSubOrderInclude(windowCutoff);
     const ledgers = await CommissionLedger.findAll({
       where: { status: COMMISSION_STATUS.PENDING },
-      include: [
-        {
-          model: SubOrder,
-          attributes: ['id', 'orderId', 'status'],
-          where: { status: ORDER_STATUS.DELIVERED },
-          required: true,
-        },
-      ],
+      include: [subOrderInclude],
     });
     const grouped = new Map<string, { amount: number; start: Date; end: Date; rows: CommissionLedger[] }>();
     for (const ledger of ledgers) {
@@ -154,14 +203,7 @@ export class PayoutsService {
               id: { [Op.in]: group.rows.map((row) => row.id) },
               status: COMMISSION_STATUS.PENDING,
             },
-            include: [
-              {
-                model: SubOrder,
-                attributes: ['id', 'orderId', 'status'],
-                where: { status: ORDER_STATUS.DELIVERED },
-                required: true,
-              },
-            ],
+            include: [subOrderInclude],
             transaction,
             lock: transaction.LOCK.UPDATE,
           });
@@ -186,10 +228,6 @@ export class PayoutsService {
                       ? Number(row.netPayoutAmount)
                       : Number(row.saleAmount) - Number(row.commissionAmount),
                   );
-            const taxablePaise =
-              row.taxableAmountPaise != null && Number(row.taxableAmountPaise) > 0
-                ? Number(row.taxableAmountPaise)
-                : toPaise(Number(row.taxableAmount ?? row.saleAmount));
             const commissionPaise =
               row.commissionAmountPaise != null && Number(row.commissionAmountPaise) > 0
                 ? Number(row.commissionAmountPaise)

@@ -12,14 +12,25 @@ import { authRepository } from '../auth/auth.repository';
 import { Role } from '@database/models/role.model';
 import { Vendor } from '@database/models/vendor.model';
 import { Order } from '@database/models/order.model';
+import { SubOrder } from '@database/models/subOrder.model';
 import { Review } from '@database/models/review.model';
 import { Wishlist } from '@database/models/wishlist.model';
 import { WishlistItem } from '@database/models/wishlistItem.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
+import { CommissionLedger } from '@database/models/commissionLedger.model';
+import { DeliveryAgent } from '@database/models/deliveryAgent.model';
+import { Shipment } from '@database/models/shipment.model';
+import { DeliveryCashDeposit } from '@database/models/deliveryCashDeposit.model';
 import { sequelize } from '@database/models';
 import type { Transaction } from 'sequelize';
-import { QueryTypes } from 'sequelize';
-import { ROLES, USER_STATUS } from '@core/constants/statuses';
+import { QueryTypes, Op } from 'sequelize';
+import {
+  ROLES,
+  USER_STATUS,
+  ORDER_STATUS,
+  COMMISSION_STATUS,
+  RETURN_STATUS,
+} from '@core/constants/statuses';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { PERMISSIONS, type PermissionKey } from '@core/permissions/permissionKeys';
 import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
@@ -36,6 +47,148 @@ import type {
 } from './users.dto';
 
 const ASSIGNEE_PERMISSIONS = [PERMISSIONS.TICKET_MANAGE, PERMISSIONS.BUG_REPORT_MANAGE] as const;
+
+const ACTIVE_FULFILLMENT_STATUSES = [
+  ORDER_STATUS.PENDING,
+  ORDER_STATUS.CONFIRMED,
+  ORDER_STATUS.SHIPPED,
+] as const;
+
+const TERMINAL_SHIPMENT_STATUSES = ['DELIVERED', 'FAILED', 'RTO_DELIVERED'] as const;
+
+async function countOtherActiveSuperAdmins(userId: string, transaction: Transaction): Promise<number> {
+  const countRows = await sequelize.query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count
+     FROM users u
+     INNER JOIN roles r ON r.id = u."roleId" AND r."deletedAt" IS NULL
+     WHERE u."deletedAt" IS NULL
+       AND u.status = :status
+       AND r.name = :superAdmin
+       AND u.id != :userId`,
+    {
+      replacements: {
+        status: USER_STATUS.ACTIVE,
+        superAdmin: ROLES.SUPER_ADMIN,
+        userId,
+      },
+      type: QueryTypes.SELECT,
+      transaction,
+    },
+  );
+  return Number(countRows[0]?.count ?? 0);
+}
+
+async function assertSelfDeletionAllowed(
+  user: { id: string; vendorId?: string | null; role?: { name?: string } },
+  transaction: Transaction,
+): Promise<void> {
+  const roleName = user.role?.name;
+
+  if (roleName === ROLES.SUPER_ADMIN) {
+    const others = await countOtherActiveSuperAdmins(user.id, transaction);
+    if (others === 0) {
+      throw new ForbiddenError('Cannot delete the sole Super Administrator account');
+    }
+    return;
+  }
+
+  if (roleName === ROLES.VENDOR_OWNER || roleName === ROLES.VENDOR_STAFF) {
+    if (!user.vendorId) return;
+    const [activeSuborders, pendingCommission] = await Promise.all([
+      SubOrder.count({
+        where: {
+          vendorId: user.vendorId,
+          status: { [Op.in]: [...ACTIVE_FULFILLMENT_STATUSES] },
+        },
+        transaction,
+      }),
+      CommissionLedger.count({
+        where: { vendorId: user.vendorId, status: COMMISSION_STATUS.PENDING },
+        transaction,
+      }),
+    ]);
+    if (activeSuborders > 0) {
+      throw new ForbiddenError(
+        `You have ${activeSuborders} active suborders in progress — settle these before deleting your account`,
+      );
+    }
+    if (pendingCommission > 0) {
+      throw new ForbiddenError(
+        `You have ${pendingCommission} pending commission ledger entries — settle these before deleting your account`,
+      );
+    }
+    return;
+  }
+
+  if (roleName === ROLES.DELIVERY_AGENT) {
+    const agent = await DeliveryAgent.findOne({
+      where: { userId: user.id },
+      transaction,
+    });
+    if (!agent) return;
+
+    const [activeShipments, activePickups, collectedRows, verifiedDeposits] = await Promise.all([
+      Shipment.count({
+        where: {
+          deliveryAgentId: agent.id,
+          status: { [Op.notIn]: [...TERMINAL_SHIPMENT_STATUSES] },
+        },
+        transaction,
+      }),
+      ReturnRequest.count({
+        where: {
+          deliveryAgentId: agent.id,
+          status: RETURN_STATUS.PICKUP_SCHEDULED,
+        },
+        transaction,
+      }),
+      Shipment.findAll({
+        where: { deliveryAgentId: agent.id, codCollected: true },
+        attributes: ['codAmount'],
+        transaction,
+      }),
+      DeliveryCashDeposit.findAll({
+        where: { deliveryAgentId: agent.id, status: 'VERIFIED' },
+        attributes: ['amount'],
+        transaction,
+      }),
+    ]);
+    if (activeShipments > 0) {
+      throw new ForbiddenError(
+        `You have ${activeShipments} active shipments in progress — settle these before deleting your account`,
+      );
+    }
+    if (activePickups > 0) {
+      throw new ForbiddenError(
+        `You have ${activePickups} scheduled return pickups — settle these before deleting your account`,
+      );
+    }
+    const collected = collectedRows.reduce((sum, row) => sum + Number(row.codAmount ?? 0), 0);
+    const deposited = verifiedDeposits.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+    const outstanding = collected - deposited;
+    if (outstanding > 0) {
+      throw new ForbiddenError(
+        'You have outstanding undeposited COD cash — settle this before deleting your account',
+      );
+    }
+    return;
+  }
+
+  if (roleName === ROLES.CUSTOMER) {
+    const activeOrders = await Order.count({
+      where: {
+        userId: user.id,
+        status: { [Op.in]: [...ACTIVE_FULFILLMENT_STATUSES] },
+      },
+      transaction,
+    });
+    if (activeOrders > 0) {
+      throw new ForbiddenError(
+        `You have ${activeOrders} active orders in progress — settle these before deleting your account`,
+      );
+    }
+  }
+}
 
 export type AssigneeCandidate = {
   id: string;
@@ -287,8 +440,19 @@ export class UsersService {
 
   async deleteOwnAccount(userId: string) {
     return sequelize.transaction(async (t: Transaction) => {
-      const user = await usersRepository.findById(userId, { transaction: t });
+      const user = await usersRepository.findById(userId, {
+        include: [{ model: Role, as: 'role' }],
+        transaction: t,
+      });
       if (!user) throw new NotFoundError('User');
+      await assertSelfDeletionAllowed(
+        {
+          id: user.id,
+          vendorId: user.vendorId,
+          role: (user as { role?: { name?: string } }).role,
+        },
+        t,
+      );
       await authRepository.deleteRefreshTokensByUser(userId);
       await usersRepository.softDelete(userId, { transaction: t });
     }).then(async () => {
