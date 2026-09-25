@@ -114,3 +114,18 @@ export function sqlLineSubtotalPaise(alias: string): string {
 export function sqlGmvPaise(alias: string): string {
   return sqlFrozenPaise(alias, 'subtotalPaise', 'subtotal');
 }
+
+/**
+ * Sub-orders whose merchandise counts toward GMV (aliases `s` = sub_orders,
+ * `o` = its order): not cancelled — a cancelled sub-order was refunded — on a
+ * reportable order. Returns need no filter; they are already netted out of
+ * `subtotal` / `lineSubtotal`. Every GMV and revenue surface filters with this
+ * and sums `sqlGmvPaise('s')` (or `sqlLineSubtotalPaise` per line), so the
+ * dashboards, rankings, trend charts and settlement reports publish one number.
+ */
+export const GMV_SUB_ORDER_SQL = `(
+  s."deletedAt" IS NULL
+  AND s."status" <> '${ORDER_STATUS.CANCELLED}'
+  AND o."deletedAt" IS NULL
+  AND ${REPORTABLE_ORDER_SQL}
+)`;

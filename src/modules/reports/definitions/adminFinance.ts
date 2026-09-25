@@ -11,6 +11,7 @@ import {
   DISCOUNT_BEARER,
   COMMISSION_STATUS,
 } from '../engine/queryHelpers';
+import { GMV_SUB_ORDER_SQL, sqlLineSubtotalPaise } from '@modules/pricing/frozenMoneySql';
 import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { AuditLog } from '@database/models/auditLog.model';
@@ -835,13 +836,12 @@ async function gmvSales(filters: ReportFilters) {
   const replacements = sqlReplacements(filters);
 
   if (filters.categoryId) {
-    const taxableExpr = sqlFrozenPaise('oi', 'taxableAmountPaise', 'taxableAmount');
     const selectSql = `
       SELECT
         s."vendorId"::text AS "vendorId",
         MAX(v."businessName") AS "vendorName",
         p."categoryId"::text AS "categoryId",
-        SUM(${taxableExpr})::bigint AS "gmvPaise"
+        SUM(${sqlLineSubtotalPaise('oi')})::bigint AS "gmvPaise"
       FROM order_items oi
       INNER JOIN sub_orders s ON s.id = oi."subOrderId" AND s."deletedAt" IS NULL
       INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
@@ -850,7 +850,7 @@ async function gmvSales(filters: ReportFilters) {
       LEFT JOIN vendors v ON v.id = s."vendorId" AND v."deletedAt" IS NULL
       WHERE oi."deletedAt" IS NULL
         AND o."createdAt" BETWEEN :from AND :to
-        AND ${REPORTABLE_ORDER_SQL}
+        AND ${GMV_SUB_ORDER_SQL}
         AND p."categoryId" = :categoryId
         AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
       GROUP BY s."vendorId", p."categoryId"
@@ -880,9 +880,8 @@ async function gmvSales(filters: ReportFilters) {
     FROM sub_orders s
     INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
     LEFT JOIN vendors v ON v.id = s."vendorId" AND v."deletedAt" IS NULL
-    WHERE s."deletedAt" IS NULL
-      AND o."createdAt" BETWEEN :from AND :to
-      AND ${REPORTABLE_ORDER_SQL}
+    WHERE o."createdAt" BETWEEN :from AND :to
+      AND ${GMV_SUB_ORDER_SQL}
       AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
     GROUP BY s."vendorId"
   `;
@@ -920,13 +919,12 @@ async function gmvSalesExport(
   assertReportRange(filters);
   const replacements = sqlReplacements(filters);
   if (filters.categoryId) {
-    const taxableExpr = sqlFrozenPaise('oi', 'taxableAmountPaise', 'taxableAmount');
     const selectSql = `
       SELECT
         s."vendorId"::text AS "vendorId",
         MAX(v."businessName") AS "vendorName",
         p."categoryId"::text AS "categoryId",
-        SUM(${taxableExpr})::bigint AS "gmvPaise"
+        SUM(${sqlLineSubtotalPaise('oi')})::bigint AS "gmvPaise"
       FROM order_items oi
       INNER JOIN sub_orders s ON s.id = oi."subOrderId" AND s."deletedAt" IS NULL
       INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
@@ -935,7 +933,7 @@ async function gmvSalesExport(
       LEFT JOIN vendors v ON v.id = s."vendorId" AND v."deletedAt" IS NULL
       WHERE oi."deletedAt" IS NULL
         AND o."createdAt" BETWEEN :from AND :to
-        AND ${REPORTABLE_ORDER_SQL}
+        AND ${GMV_SUB_ORDER_SQL}
         AND p."categoryId" = :categoryId
         AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
       GROUP BY s."vendorId", p."categoryId"
@@ -966,9 +964,8 @@ async function gmvSalesExport(
     FROM sub_orders s
     INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
     LEFT JOIN vendors v ON v.id = s."vendorId" AND v."deletedAt" IS NULL
-    WHERE s."deletedAt" IS NULL
-      AND o."createdAt" BETWEEN :from AND :to
-      AND ${REPORTABLE_ORDER_SQL}
+    WHERE o."createdAt" BETWEEN :from AND :to
+      AND ${GMV_SUB_ORDER_SQL}
       AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
     GROUP BY s."vendorId"
   `;

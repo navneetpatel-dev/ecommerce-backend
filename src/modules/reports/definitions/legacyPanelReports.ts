@@ -20,6 +20,8 @@ import {
 } from '../engine/queryHelpers';
 import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
 import { roundMoney } from '@modules/pricing/money';
+import { GMV_SUB_ORDER_SQL, sqlGmvPaise } from '@modules/pricing/frozenMoneySql';
+import { PAYMENT_STATUS } from '@core/constants/statuses';
 
 const WALLET_LIABILITY_KEYSET: KeysetOrderCol[] = [
   { column: 'balance', direction: 'DESC' },
@@ -417,8 +419,6 @@ async function cashbackWriteOffExport(
 async function platformAnalyticsQuery(filters: ReportFilters) {
   assertReportRange(filters);
   const [rangeStats] = await sequelize.query<{
-    gmv: string;
-    paidGmv: string;
     orderCount: string;
     customerCount: string;
     cancelledCount: string;
@@ -426,8 +426,6 @@ async function platformAnalyticsQuery(filters: ReportFilters) {
   }>(
     `
     SELECT
-      COALESCE(SUM(o."totalAmount"), 0)::numeric AS gmv,
-      COALESCE(SUM(o."totalAmount") FILTER (WHERE o."paymentStatus" = 'PAID'), 0)::numeric AS "paidGmv",
       COUNT(*)::int AS "orderCount",
       COUNT(DISTINCT o."userId")::int AS "customerCount",
       COUNT(*) FILTER (WHERE o.status = 'CANCELLED')::int AS "cancelledCount",
@@ -441,33 +439,56 @@ async function platformAnalyticsQuery(filters: ReportFilters) {
       type: QueryTypes.SELECT,
     },
   );
+  const [gmvStats] = await sequelize.query<{
+    gmvPaise: string;
+    paidGmvPaise: string;
+    gmvOrderCount: string;
+  }>(
+    `
+    SELECT
+      COALESCE(SUM(${sqlGmvPaise('s')}), 0)::bigint AS "gmvPaise",
+      COALESCE(SUM(${sqlGmvPaise('s')}) FILTER (
+        WHERE o."paymentStatus" = '${PAYMENT_STATUS.PAID}'
+      ), 0)::bigint AS "paidGmvPaise",
+      COUNT(DISTINCT o.id)::int AS "gmvOrderCount"
+    FROM sub_orders s
+    INNER JOIN orders o ON o.id = s."orderId"
+    WHERE o."createdAt" BETWEEN :from AND :to
+      AND ${GMV_SUB_ORDER_SQL}
+    `,
+    {
+      replacements: { from: filters.from, to: filters.to },
+      type: QueryTypes.SELECT,
+    },
+  );
   const stats = rangeStats ?? {
-    gmv: '0',
-    paidGmv: '0',
     orderCount: '0',
     customerCount: '0',
     cancelledCount: '0',
     returnCount: '0',
   };
   const orderCount = Number(stats.orderCount ?? 0);
-  const gmv = Number(stats.gmv ?? 0);
-  const paidGmv = Number(stats.paidGmv ?? 0);
-  const aov = orderCount > 0 ? roundMoney(gmv / orderCount) : 0;
+  const gmvPaise = Number(gmvStats?.gmvPaise ?? 0);
+  const gmvOrderCount = Number(gmvStats?.gmvOrderCount ?? 0);
+  const gmv = fromPaise(gmvPaise);
+  const paidGmv = fromPaise(Number(gmvStats?.paidGmvPaise ?? 0));
+  // AOV averages over the orders that contribute GMV, as on the admin dashboard.
+  const aov = gmvOrderCount > 0 ? fromPaise(Math.round(gmvPaise / gmvOrderCount)) : 0;
   const cancelRate =
     orderCount > 0
       ? Math.round((Number(stats.cancelledCount ?? 0) / orderCount) * 10_000) / 100
       : 0;
 
-  const orderVolumeRows = await sequelize.query<{ date: string; count: string; revenue: string }>(
-    `SELECT to_char(date_trunc('day', "createdAt"), 'YYYY-MM-DD') AS date,
-            COUNT(*)::int AS count,
-            COALESCE(SUM("totalAmount"), 0)::numeric AS revenue
-     FROM orders
-     WHERE "createdAt" BETWEEN :from AND :to
-       AND status <> 'CANCELLED'
-       AND "deletedAt" IS NULL
-     GROUP BY date_trunc('day', "createdAt")
-     ORDER BY date_trunc('day', "createdAt") ASC`,
+  const orderVolumeRows = await sequelize.query<{ date: string; count: string; revenuePaise: string }>(
+    `SELECT to_char(date_trunc('day', o."createdAt"), 'YYYY-MM-DD') AS date,
+            COUNT(DISTINCT o.id)::int AS count,
+            COALESCE(SUM(${sqlGmvPaise('s')}), 0)::bigint AS "revenuePaise"
+     FROM sub_orders s
+     INNER JOIN orders o ON o.id = s."orderId"
+     WHERE o."createdAt" BETWEEN :from AND :to
+       AND ${GMV_SUB_ORDER_SQL}
+     GROUP BY date_trunc('day', o."createdAt")
+     ORDER BY date_trunc('day', o."createdAt") ASC`,
     {
       replacements: { from: filters.from, to: filters.to },
       type: QueryTypes.SELECT,
@@ -484,7 +505,7 @@ async function platformAnalyticsQuery(filters: ReportFilters) {
     ...orderVolumeRows.map((row) => ({
       metric: `Volume ${row.date}`,
       value: Number(row.count),
-      extra: Number(row.revenue),
+      extra: fromPaise(Number(row.revenuePaise)),
     })),
   ];
   return { rows, total: rows.length };

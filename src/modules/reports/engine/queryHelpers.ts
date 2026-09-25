@@ -157,7 +157,11 @@ export async function computeReconciliationSummary(filters: {
       SELECT
         COALESCE(SUM(${taxExpr}), 0)::bigint AS "taxPaise",
         COALESCE(SUM(GREATEST(0, (${shipCost}) - (${shipDisc}))), 0)::bigint AS "shippingPaise",
-        COALESCE(SUM(${subtotalExpr}), 0)::bigint AS "gmvPaise",
+        -- GMV counts only sub-orders that were not cancelled (GMV_SUB_ORDER_SQL);
+        -- tax, shipping and discounts above/below keep every scoped sub-order.
+        COALESCE(SUM(${subtotalExpr}) FILTER (
+          WHERE s."status" <> '${ORDER_STATUS.CANCELLED}'
+        ), 0)::bigint AS "gmvPaise",
         COALESCE(SUM(${merchDiscExpr}), 0)::bigint AS "merchandiseDiscountPaise"
       FROM scoped_subs s
     ),

@@ -7,10 +7,10 @@ import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { fromPaise } from '@modules/pricing/money';
 import {
-  sqlVendorNetPayoutPaise,
-  sqlFrozenPaise,
+  GMV_SUB_ORDER_SQL,
+  sqlGmvPaise,
   sqlLineSubtotalPaise,
-  REPORTABLE_ORDER_SQL,
+  sqlVendorNetPayoutPaise,
 } from '@modules/pricing/frozenMoneySql';
 import {
   deleteS3ObjectIfReplaced,
@@ -801,13 +801,14 @@ export class VendorsService {
         type: QueryTypes.SELECT,
       },
     );
-    const [month] = await sequelize.query<{ revenue: string | null }>(
-      `SELECT COALESCE(SUM(subtotal), 0)::numeric AS revenue
-       FROM sub_orders
-       WHERE "vendorId" = :vendorId
-         AND status <> :cancelled
-         AND "createdAt" >= date_trunc('month', NOW())`,
-      { replacements: { vendorId, cancelled: ORDER_STATUS.CANCELLED }, type: QueryTypes.SELECT },
+    const [month] = await sequelize.query<{ revenuePaise: string | null }>(
+      `SELECT COALESCE(SUM(${sqlGmvPaise('s')}), 0)::bigint AS "revenuePaise"
+       FROM sub_orders s
+       INNER JOIN orders o ON o.id = s."orderId"
+       WHERE s."vendorId" = :vendorId
+         AND o."createdAt" >= date_trunc('month', NOW())
+         AND ${GMV_SUB_ORDER_SQL}`,
+      { replacements: { vendorId }, type: QueryTypes.SELECT },
     );
     // Same net-payout definition the admin settlement report uses, so the two agree.
     const [payout] = await sequelize.query<{ pendingPaise: string | null }>(
@@ -822,7 +823,7 @@ export class VendorsService {
     return {
       todayOrders: Number(today?.orders ?? 0),
       pendingShipments: Number(pending?.shipments ?? 0),
-      monthRevenue: Number(month?.revenue ?? 0),
+      monthRevenue: fromPaise(Number(month?.revenuePaise ?? 0)),
       pendingPayouts: fromPaise(Number(payout?.pendingPaise ?? 0)),
       performanceScore: vendor.performanceScore == null ? null : Number(vendor.performanceScore),
     };
@@ -853,21 +854,18 @@ export class VendorsService {
     from.setUTCDate(from.getUTCDate() - (windowDays - 1));
     from.setUTCHours(0, 0, 0, 0);
 
-    const subtotalPaiseExpr = sqlFrozenPaise('s', 'subtotalPaise', 'subtotal');
-
     const revenueRows = await sequelize.query<{ day: string; revenuePaise: string }>(
       `WITH days AS (
          SELECT generate_series(:from::date, :to::date, interval '1 day')::date AS day
        ),
        daily_revenue AS (
          SELECT date_trunc('day', o."createdAt")::date AS day,
-                SUM(${subtotalPaiseExpr}) AS "revenuePaise"
+                SUM(${sqlGmvPaise('s')}) AS "revenuePaise"
          FROM sub_orders s
-         INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
+         INNER JOIN orders o ON o.id = s."orderId"
          WHERE s."vendorId" = :vendorId
-           AND s."deletedAt" IS NULL
            AND o."createdAt" BETWEEN :from AND :to
-           AND ${REPORTABLE_ORDER_SQL}
+           AND ${GMV_SUB_ORDER_SQL}
          GROUP BY 1
        )
        SELECT d.day::text AS day, COALESCE(r."revenuePaise", 0)::bigint AS "revenuePaise"
@@ -888,13 +886,13 @@ export class VendorsService {
               SUM(oi.quantity)::int AS "unitsSold",
               SUM(${sqlLineSubtotalPaise('oi')})::bigint AS "revenuePaise"
        FROM order_items oi
-       INNER JOIN sub_orders s ON s.id = oi."subOrderId" AND s."deletedAt" IS NULL
-       INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
+       INNER JOIN sub_orders s ON s.id = oi."subOrderId"
+       INNER JOIN orders o ON o.id = s."orderId"
        INNER JOIN product_variants pv ON pv.id = oi."variantId"
        WHERE s."vendorId" = :vendorId
          AND oi."deletedAt" IS NULL
          AND o."createdAt" BETWEEN :from AND :to
-         AND ${REPORTABLE_ORDER_SQL}
+         AND ${GMV_SUB_ORDER_SQL}
        GROUP BY pv."productId"
        ORDER BY "revenuePaise" DESC
        LIMIT 10`,
