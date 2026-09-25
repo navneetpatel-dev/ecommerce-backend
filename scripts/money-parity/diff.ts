@@ -4,6 +4,10 @@
  * refactor that must not change numbers can assert an empty diff.
  *
  *   npx tsx --tsconfig tsconfig.json scripts/money-parity/diff.ts before.json after.json
+ *
+ * Pass --unordered to compare arrays of rows as multisets. Use it after a change that
+ * rewrites rows (a backfill migration): Postgres may then return rows that tie on the
+ * report's ORDER BY in a different order, which is not a money difference.
  */
 import fs from 'node:fs';
 
@@ -21,13 +25,39 @@ function leaves(value: Json, prefix: string, out: Map<string, Json>): void {
   }
 }
 
-function main(): void {
-  const [beforePath, afterPath] = process.argv.slice(2);
-  if (!beforePath || !afterPath) {
-    throw new Error('usage: diff.ts <before.json> <after.json>');
+/** Sorts every array of objects by content so row order stops mattering. */
+function unorder(value: Json): Json {
+  if (Array.isArray(value)) {
+    const items = value.map(unorder);
+    if (items.every((item) => item !== null && typeof item === 'object')) {
+      return items
+        .map((item) => [JSON.stringify(item), item] as const)
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([, item]) => item);
+    }
+    return items;
   }
-  const before = JSON.parse(fs.readFileSync(beforePath, 'utf8')) as Record<string, Json>;
-  const after = JSON.parse(fs.readFileSync(afterPath, 'utf8')) as Record<string, Json>;
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, Json>).map(([key, child]) => [key, unorder(child)]),
+    );
+  }
+  return value;
+}
+
+function main(): void {
+  const args = process.argv.slice(2);
+  const unordered = args.includes('--unordered');
+  const [beforePath, afterPath] = args.filter((arg) => !arg.startsWith('--'));
+  if (!beforePath || !afterPath) {
+    throw new Error('usage: diff.ts [--unordered] <before.json> <after.json>');
+  }
+  const read = (path: string) => {
+    const parsed = JSON.parse(fs.readFileSync(path, 'utf8')) as Record<string, Json>;
+    return unordered ? (unorder(parsed) as Record<string, Json>) : parsed;
+  };
+  const before = read(beforePath);
+  const after = read(afterPath);
 
   let changed = 0;
   const surfaces = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort();

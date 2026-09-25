@@ -27,6 +27,10 @@ npx tsx --tsconfig tsconfig.json scripts/money-parity/diff.ts before.json after.
 `diff.ts` exits 1 when anything differs, so a refactor that must not change numbers can assert
 an empty diff.
 
+After a migration that rewrites rows (a backfill), pass `--unordered`. Postgres may then return
+rows that tie on a report's `ORDER BY` in a different order; `--unordered` compares arrays of rows
+as multisets, so only real value changes remain.
+
 ## Keep the comparison fair
 
 - **Snapshot from a fresh copy each time.** The test suite writes fixtures into whatever
