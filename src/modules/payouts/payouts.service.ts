@@ -219,7 +219,7 @@ export class PayoutsService {
           }> = [];
           for (const row of locked) {
             const netPaise = vendorNetPayoutPaise(row);
-            const commissionPaise = frozenPaise(row.commissionAmountPaise, row.commissionAmount);
+            const commissionPaise = frozenPaise(row.commissionAmountPaise);
             commissionTaxablePaise += commissionPaise;
             // Section 194-O: TDS on gross vendor payout (net before TDS).
             const grossPayoutPaise = netPaise;

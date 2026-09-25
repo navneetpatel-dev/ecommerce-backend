@@ -23,7 +23,7 @@ function hoursBetween(from: Date, to: Date): number {
   return Math.round(((to.getTime() - from.getTime()) / 3_600_000) * 100) / 100;
 }
 
-const TAXABLE_PAISE_SQL = sqlFrozenPaise('oi', 'taxableAmountPaise', 'taxableAmount');
+const TAXABLE_PAISE_SQL = sqlFrozenPaise('oi', 'taxableAmountPaise');
 
 async function productPerformance(filters: ReportFilters) {
   assertReportRange(filters);

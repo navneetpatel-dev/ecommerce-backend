@@ -124,14 +124,14 @@ export async function computeReconciliationSummary(filters: {
   vendorDiscountPaise: number;
 }> {
   const vendorId = filters.vendorId ?? null;
-  const taxExpr = sqlFrozenPaise('s', 'taxAmountPaise', 'taxAmount');
-  const shipCost = sqlFrozenPaise('s', 'shippingCostPaise', 'shippingCost');
-  const shipDisc = sqlFrozenPaise('s', 'shippingDiscountAmountPaise', 'shippingDiscountAmount');
-  const subtotalExpr = sqlFrozenPaise('s', 'subtotalPaise', 'subtotal');
-  const merchDiscExpr = sqlFrozenPaise('s', 'discountAmountPaise', 'discountAmount');
-  const commissionExpr = sqlFrozenPaise('cl', 'commissionAmountPaise', 'commissionAmount');
+  const taxExpr = sqlFrozenPaise('s', 'taxAmountPaise');
+  const shipCost = sqlFrozenPaise('s', 'shippingCostPaise');
+  const shipDisc = sqlFrozenPaise('s', 'shippingDiscountAmountPaise');
+  const subtotalExpr = sqlFrozenPaise('s', 'subtotalPaise');
+  const merchDiscExpr = sqlFrozenPaise('s', 'discountAmountPaise');
+  const commissionExpr = sqlFrozenPaise('cl', 'commissionAmountPaise');
   const netExpr = sqlVendorNetPayoutPaise('cl');
-  const ledgerDisc = sqlFrozenPaise('cl', 'discountAmountPaise', 'discountAmount');
+  const ledgerDisc = sqlFrozenPaise('cl', 'discountAmountPaise');
 
   const [rows] = await sequelize.query(
     `

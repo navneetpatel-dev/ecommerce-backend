@@ -451,7 +451,7 @@ module.exports = {
           const orderItemId = uuidv4();
           orderItems.push({
             id: orderItemId, subOrderId, variantId: variant.id,
-            productName: product.name, quantity, unitPrice,
+            productName: product.name, quantity, unitPricePaise: Math.round(unitPrice * 100),
             createdAt: orderDate, updatedAt: orderDate,
           });
 
@@ -473,8 +473,9 @@ module.exports = {
 
         subOrders.push({
           id: subOrderId, orderId, vendorId: vendor.id, status: orderStatus,
-          subtotal: subOrderTotal,
-          commissionAmount: Math.round(subOrderTotal * (vendor.commissionRate / 100) * 100) / 100,
+          // Money is stored in paise only (20260925000005 retired the rupee columns).
+          subtotalPaise: Math.round(subOrderTotal * 100),
+          commissionAmountPaise: Math.round(subOrderTotal * (vendor.commissionRate / 100) * 100),
           trackingId: isShipped ? `TRK${String(i * 10 + orderVendors.indexOf(vendor)).padStart(10, '0')}` : null,
           createdAt: orderDate, updatedAt: orderDate,
         });
@@ -498,8 +499,8 @@ module.exports = {
         if (orderStatus === 'DELIVERED') {
           commissionLedgers.push({
             id: uuidv4(), vendorId: vendor.id, subOrderId,
-            saleAmount: subOrderTotal, commissionRate: vendor.commissionRate,
-            commissionAmount: Math.round(subOrderTotal * (vendor.commissionRate / 100) * 100) / 100,
+            saleAmountPaise: Math.round(subOrderTotal * 100), commissionRate: vendor.commissionRate,
+            commissionAmountPaise: Math.round(subOrderTotal * (vendor.commissionRate / 100) * 100),
             status: randomElement(['PENDING', 'SETTLED', 'SETTLED']),
             createdAt: new Date(orderDate.getTime() + 8 * 24 * 60 * 60 * 1000),
             updatedAt: new Date(orderDate.getTime() + 8 * 24 * 60 * 60 * 1000),

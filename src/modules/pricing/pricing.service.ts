@@ -99,39 +99,26 @@ export class PricingService {
   frozenLineFromOrderItem(row: {
     id: string;
     quantity: number;
-    unitPrice: number;
-    discountAmount?: number | null;
-    taxableAmount?: number | null;
-    taxAmount?: number | null;
     taxBreakdown?: { cgst?: number; sgst?: number; igst?: number; gstPercentage?: number } | null;
-    commissionAmount?: number | null;
-    tcsAmount?: number | null;
-    netPayoutAmount?: number | null;
-    unitPricePaise?: number | null;
-    discountAmountPaise?: number | null;
-    taxableAmountPaise?: number | null;
-    taxAmountPaise?: number | null;
-    commissionAmountPaise?: number | null;
-    tcsAmountPaise?: number | null;
-    netPayoutAmountPaise?: number | null;
+    unitPricePaise: number;
+    discountAmountPaise: number;
+    taxableAmountPaise: number;
+    taxAmountPaise: number;
+    commissionAmountPaise: number;
+    tcsAmountPaise: number;
+    netPayoutAmountPaise: number;
   }): PricingLineBreakdown {
     const quantity = Number(row.quantity);
-    // Paise columns are the stored value (NULL = pre-snapshot row); see frozenPaise.
-    const unitPricePaise = frozenPaise(row.unitPricePaise, row.unitPrice);
+    // The paise columns are the only stored money value; see frozenPaise.
+    const unitPricePaise = frozenPaise(row.unitPricePaise);
     const lineSubtotalPaise = unitPricePaise * quantity;
-    const discountPaise = frozenPaise(row.discountAmountPaise, row.discountAmount);
-    const taxablePaise =
-      row.taxableAmountPaise == null && row.taxableAmount == null
-        ? Math.max(0, lineSubtotalPaise - discountPaise)
-        : frozenPaise(row.taxableAmountPaise, row.taxableAmount);
-    const taxTotalPaise = frozenPaise(row.taxAmountPaise, row.taxAmount);
+    const discountPaise = frozenPaise(row.discountAmountPaise);
+    const taxablePaise = frozenPaise(row.taxableAmountPaise);
+    const taxTotalPaise = frozenPaise(row.taxAmountPaise);
     const tb = row.taxBreakdown ?? {};
-    const commissionPaise = frozenPaise(row.commissionAmountPaise, row.commissionAmount);
-    const tcsPaise = frozenPaise(row.tcsAmountPaise, row.tcsAmount);
-    const netPayoutPaise =
-      row.netPayoutAmountPaise == null && row.netPayoutAmount == null
-        ? Math.max(0, taxablePaise - commissionPaise - tcsPaise)
-        : frozenPaise(row.netPayoutAmountPaise, row.netPayoutAmount);
+    const commissionPaise = frozenPaise(row.commissionAmountPaise);
+    const tcsPaise = frozenPaise(row.tcsAmountPaise);
+    const netPayoutPaise = frozenPaise(row.netPayoutAmountPaise);
     return {
       key: row.id,
       quantity,

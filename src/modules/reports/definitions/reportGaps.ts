@@ -51,8 +51,8 @@ async function taxInvoiceRegister(filters: ReportFilters) {
       COALESCE(v."gstNumber", '') AS "vendorGstin",
       so."taxInvoiceNumber" AS "taxInvoiceNumber",
       so."taxInvoiceIssuedAt" AS "taxInvoiceIssuedAt",
-      COALESCE(so."taxableAmount", 0)::float AS taxable,
-      COALESCE(so."taxAmount", 0)::float AS tax,
+      (so."taxableAmountPaise" / 100.0)::float AS taxable,
+      (so."taxAmountPaise" / 100.0)::float AS tax,
       COALESCE(so."customerTotal", 0)::float AS total,
       o."paymentMethod"::text AS "paymentMethod",
       o."paymentStatus"::text AS "paymentStatus",
@@ -116,8 +116,8 @@ async function taxInvoiceRegisterExport(
       COALESCE(v."gstNumber", '') AS "vendorGstin",
       so."taxInvoiceNumber" AS "taxInvoiceNumber",
       so."taxInvoiceIssuedAt" AS "taxInvoiceIssuedAt",
-      COALESCE(so."taxableAmount", 0)::float AS taxable,
-      COALESCE(so."taxAmount", 0)::float AS tax,
+      (so."taxableAmountPaise" / 100.0)::float AS taxable,
+      (so."taxAmountPaise" / 100.0)::float AS tax,
       COALESCE(so."customerTotal", 0)::float AS total,
       o."paymentMethod"::text AS "paymentMethod",
       o."paymentStatus"::text AS "paymentStatus",
@@ -161,8 +161,8 @@ function b2bGstinSalesRegisterSelectSql(vendorFilter: string): string {
       COALESCE(NULLIF(TRIM(a.gstin), ''), '') AS "buyerGstin",
       u.name AS "buyerName",
       COALESCE(a.state, '') AS "placeOfSupplyState",
-      COALESCE(so."taxableAmount", 0)::float AS taxable,
-      COALESCE(so."taxAmount", 0)::float AS tax,
+      (so."taxableAmountPaise" / 100.0)::float AS taxable,
+      (so."taxAmountPaise" / 100.0)::float AS tax,
       COALESCE(so."customerTotal", 0)::float AS total
     FROM sub_orders so
     INNER JOIN orders o ON o.id = so."orderId" AND o."deletedAt" IS NULL
@@ -226,8 +226,8 @@ async function b2bGstinSalesRegisterExport(
 
 async function gstr1Filing(filters: ReportFilters) {
   assertReportRange(filters);
-  const taxExpr = sqlFrozenPaise('so', 'taxAmountPaise', 'taxAmount');
-  const taxableExpr = sqlFrozenPaise('so', 'taxableAmountPaise', 'taxableAmount');
+  const taxExpr = sqlFrozenPaise('so', 'taxAmountPaise');
+  const taxableExpr = sqlFrozenPaise('so', 'taxableAmountPaise');
   const vendorFilter = `AND (:vendorId::uuid IS NULL OR so."vendorId" = :vendorId)`;
 
   const selectSql = `
@@ -325,8 +325,8 @@ async function gstr1Filing(filters: ReportFilters) {
 
 async function gstr3bSummary(filters: ReportFilters) {
   assertReportRange(filters);
-  const taxableExpr = sqlFrozenPaise('so', 'taxableAmountPaise', 'taxableAmount');
-  const taxExpr = sqlFrozenPaise('so', 'taxAmountPaise', 'taxAmount');
+  const taxableExpr = sqlFrozenPaise('so', 'taxableAmountPaise');
+  const taxExpr = sqlFrozenPaise('so', 'taxAmountPaise');
   const vendorFilter = `AND (:vendorId::uuid IS NULL OR so."vendorId" = :vendorId)`;
 
   const [rows] = await sequelize.query(
@@ -479,7 +479,7 @@ async function shippingLogistics(filters: ReportFilters) {
       so."orderId" AS "orderId",
       so."vendorId" AS "vendorId",
       v."businessName" AS "vendorName",
-      COALESCE(so."shippingCost", 0)::float AS "shippingCost",
+      (so."shippingCostPaise" / 100.0)::float AS "shippingCost",
       COALESCE(so."shippingCharged", 0)::float AS "shippingCharged",
       COALESCE(sh.carrier, '') AS carrier,
       COALESCE(sh.status::text, 'NONE') AS "shipmentStatus",

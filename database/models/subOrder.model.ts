@@ -1,11 +1,12 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import { paiseBackedRupees } from '@modules/pricing/paiseBackedRupees';
 
 export class SubOrder extends Model<InferAttributes<SubOrder>, InferCreationAttributes<SubOrder>> {
   declare id: CreationOptional<string>;
   declare orderId: string;
   declare vendorId: string | null;
   declare status: 'PENDING' | 'CONFIRMED' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED' | 'RETURNED';
-  declare subtotal: number;
+  declare subtotal: CreationOptional<number>;
   declare shippingCost: CreationOptional<number>;
   declare shippingDiscountAmount: CreationOptional<number>;
   /** Net shipping charged to the customer. */
@@ -19,16 +20,16 @@ export class SubOrder extends Model<InferAttributes<SubOrder>, InferCreationAttr
   declare commissionAmount: CreationOptional<number>;
   declare tcsAmount: CreationOptional<number>;
   declare netPayoutAmount: CreationOptional<number>;
-  /** Frozen paise snapshots: the stored money value. NULL = written before the snapshot existed. */
-  declare subtotalPaise: CreationOptional<number | null>;
-  declare shippingCostPaise: CreationOptional<number | null>;
-  declare shippingDiscountAmountPaise: CreationOptional<number | null>;
-  declare taxAmountPaise: CreationOptional<number | null>;
-  declare taxableAmountPaise: CreationOptional<number | null>;
-  declare discountAmountPaise: CreationOptional<number | null>;
-  declare commissionAmountPaise: CreationOptional<number | null>;
-  declare tcsAmountPaise: CreationOptional<number | null>;
-  declare netPayoutAmountPaise: CreationOptional<number | null>;
+  /** Frozen paise snapshots: the only stored money value. The rupee names above read from these. */
+  declare subtotalPaise: number;
+  declare shippingCostPaise: CreationOptional<number>;
+  declare shippingDiscountAmountPaise: CreationOptional<number>;
+  declare taxAmountPaise: CreationOptional<number>;
+  declare taxableAmountPaise: CreationOptional<number>;
+  declare discountAmountPaise: CreationOptional<number>;
+  declare commissionAmountPaise: CreationOptional<number>;
+  declare tcsAmountPaise: CreationOptional<number>;
+  declare netPayoutAmountPaise: CreationOptional<number>;
   declare roundingAdjustmentPaise: CreationOptional<number>;
   /** Vendor-scoped GST tax invoice number allocated at order placement. */
   declare taxInvoiceNumber: CreationOptional<string | null>;
@@ -61,27 +62,27 @@ export const initSubOrderModel = (sequelize: Sequelize) => {
         type: DataTypes.ENUM('PENDING', 'CONFIRMED', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'RETURNED'),
         defaultValue: 'PENDING',
       },
-      subtotal: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
-      shippingCost: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
-      shippingDiscountAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      subtotal: paiseBackedRupees('subtotalPaise'),
+      shippingCost: paiseBackedRupees('shippingCostPaise'),
+      shippingDiscountAmount: paiseBackedRupees('shippingDiscountAmountPaise'),
       shippingCharged: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       customerTotal: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
-      taxAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
-      taxableAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      taxAmount: paiseBackedRupees('taxAmountPaise'),
+      taxableAmount: paiseBackedRupees('taxableAmountPaise'),
       taxBreakdown: { type: DataTypes.JSONB, allowNull: true },
-      discountAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
-      commissionAmount: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
-      tcsAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
-      netPayoutAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
-      subtotalPaise: { type: DataTypes.BIGINT, allowNull: true },
-      shippingCostPaise: { type: DataTypes.BIGINT, allowNull: true },
-      shippingDiscountAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
-      taxAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
-      taxableAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
-      discountAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
-      commissionAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
-      tcsAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
-      netPayoutAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
+      discountAmount: paiseBackedRupees('discountAmountPaise'),
+      commissionAmount: paiseBackedRupees('commissionAmountPaise'),
+      tcsAmount: paiseBackedRupees('tcsAmountPaise'),
+      netPayoutAmount: paiseBackedRupees('netPayoutAmountPaise'),
+      subtotalPaise: { type: DataTypes.BIGINT, allowNull: false },
+      shippingCostPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      shippingDiscountAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      taxAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      taxableAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      discountAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      commissionAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      tcsAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      netPayoutAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       roundingAdjustmentPaise: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
       taxInvoiceNumber: { type: DataTypes.STRING(64), allowNull: true, unique: true },
       taxInvoiceIssuedAt: { type: DataTypes.DATE, allowNull: true },

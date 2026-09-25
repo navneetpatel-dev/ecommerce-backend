@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import { paiseBackedRupees } from '@modules/pricing/paiseBackedRupees';
 
 export class OrderItem extends Model<InferAttributes<OrderItem>, InferCreationAttributes<OrderItem>> {
   declare id: CreationOptional<string>;
@@ -6,7 +7,7 @@ export class OrderItem extends Model<InferAttributes<OrderItem>, InferCreationAt
   declare variantId: string;
   declare productName: string;
   declare quantity: number;
-  declare unitPrice: number;
+  declare unitPrice: CreationOptional<number>;
   /** Pre-discount extended price frozen at checkout. */
   declare lineSubtotal: CreationOptional<number>;
   /** Customer line total after discount, including tax. */
@@ -18,13 +19,14 @@ export class OrderItem extends Model<InferAttributes<OrderItem>, InferCreationAt
   declare commissionAmount: CreationOptional<number>;
   declare tcsAmount: CreationOptional<number>;
   declare netPayoutAmount: CreationOptional<number>;
-  declare unitPricePaise: CreationOptional<number | null>;
-  declare discountAmountPaise: CreationOptional<number | null>;
-  declare taxableAmountPaise: CreationOptional<number | null>;
-  declare taxAmountPaise: CreationOptional<number | null>;
-  declare commissionAmountPaise: CreationOptional<number | null>;
-  declare tcsAmountPaise: CreationOptional<number | null>;
-  declare netPayoutAmountPaise: CreationOptional<number | null>;
+  /** Frozen paise snapshots: the only stored money value. The rupee names above read from these. */
+  declare unitPricePaise: number;
+  declare discountAmountPaise: CreationOptional<number>;
+  declare taxableAmountPaise: CreationOptional<number>;
+  declare taxAmountPaise: CreationOptional<number>;
+  declare commissionAmountPaise: CreationOptional<number>;
+  declare tcsAmountPaise: CreationOptional<number>;
+  declare netPayoutAmountPaise: CreationOptional<number>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -46,23 +48,23 @@ export const initOrderItemModel = (sequelize: Sequelize) => {
       variantId: { type: DataTypes.UUID, allowNull: false },
       productName: { type: DataTypes.STRING, allowNull: false },
       quantity: { type: DataTypes.INTEGER, allowNull: false },
-      unitPrice: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
+      unitPrice: paiseBackedRupees('unitPricePaise'),
       lineSubtotal: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       lineTotal: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
-      discountAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
-      taxableAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
-      taxAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      discountAmount: paiseBackedRupees('discountAmountPaise'),
+      taxableAmount: paiseBackedRupees('taxableAmountPaise'),
+      taxAmount: paiseBackedRupees('taxAmountPaise'),
       taxBreakdown: { type: DataTypes.JSONB, allowNull: true },
-      commissionAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
-      tcsAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
-      netPayoutAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
-      unitPricePaise: { type: DataTypes.BIGINT, allowNull: true },
-      discountAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
-      taxableAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
-      taxAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
-      commissionAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
-      tcsAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
-      netPayoutAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
+      commissionAmount: paiseBackedRupees('commissionAmountPaise'),
+      tcsAmount: paiseBackedRupees('tcsAmountPaise'),
+      netPayoutAmount: paiseBackedRupees('netPayoutAmountPaise'),
+      unitPricePaise: { type: DataTypes.BIGINT, allowNull: false },
+      discountAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      taxableAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      taxAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      commissionAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      tcsAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      netPayoutAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

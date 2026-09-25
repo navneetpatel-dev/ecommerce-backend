@@ -51,7 +51,7 @@ function periodKey(period: string | null | undefined, date: Date): string {
   return `${y}-${m}`;
 }
 
-const DISCOUNT_PAISE_SQL = sqlFrozenPaise('cl', 'discountAmountPaise', 'discountAmount');
+const DISCOUNT_PAISE_SQL = sqlFrozenPaise('cl', 'discountAmountPaise');
 
 async function vendorSales(filters: ReportFilters) {
   assertReportRange(filters);
@@ -79,10 +79,10 @@ function mapVendorSalesRow(sub: SubOrder | Record<string, unknown>) {
     subOrderId: String(row.subOrderId ?? row.id ?? ''),
     orderId: String(row.orderId ?? ''),
     status: String(row.status ?? ''),
-    subtotal: fromPaise(frozenPaise(row.subtotalPaise, row.subtotal)),
-    taxAmount: fromPaise(frozenPaise(row.taxAmountPaise, row.taxAmount)),
-    discountAmount: fromPaise(frozenPaise(row.discountAmountPaise, row.discountAmount)),
-    netPayout: fromPaise(frozenPaise(row.netPayoutAmountPaise, row.netPayoutAmount)),
+    subtotal: fromPaise(frozenPaise(row.subtotalPaise)),
+    taxAmount: fromPaise(frozenPaise(row.taxAmountPaise)),
+    discountAmount: fromPaise(frozenPaise(row.discountAmountPaise)),
+    netPayout: fromPaise(frozenPaise(row.netPayoutAmountPaise)),
     createdAt: (row.order?.createdAt ?? row.createdAt) as Date,
   };
 }
@@ -99,13 +99,9 @@ function vendorSalesSelectSql(): string {
       s."orderId" AS "orderId",
       s.status AS status,
       s."subtotalPaise" AS "subtotalPaise",
-      s.subtotal AS subtotal,
       s."taxAmountPaise" AS "taxAmountPaise",
-      s."taxAmount" AS "taxAmount",
       s."discountAmountPaise" AS "discountAmountPaise",
-      s."discountAmount" AS "discountAmount",
       s."netPayoutAmountPaise" AS "netPayoutAmountPaise",
-      s."netPayoutAmount" AS "netPayoutAmount",
       o."createdAt" AS "createdAt"
     FROM sub_orders s
     INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
@@ -148,11 +144,11 @@ export function computeOrderItemGst(item: OrderItem): {
 } {
   const tb = (item.taxBreakdown ?? {}) as Record<string, unknown>;
   return {
-    taxable: fromPaise(frozenPaise(item.taxableAmountPaise, item.taxableAmount)),
+    taxable: fromPaise(frozenPaise(item.taxableAmountPaise)),
     cgst: Number(tb.cgst ?? 0),
     sgst: Number(tb.sgst ?? 0),
     igst: Number(tb.igst ?? 0),
-    tax: fromPaise(frozenPaise(item.taxAmountPaise, item.taxAmount)),
+    tax: fromPaise(frozenPaise(item.taxAmountPaise)),
   };
 }
 
@@ -479,10 +475,10 @@ function commissionLedgerSelectSql(): string {
       cl.id AS "ledgerId",
       cl."subOrderId" AS "subOrderId",
       cl.status AS status,
-      ${sqlFrozenPaise('cl', 'saleAmountPaise', 'saleAmount')} AS "salePaise",
+      ${sqlFrozenPaise('cl', 'saleAmountPaise')} AS "salePaise",
       cl."commissionRate" AS "commissionRate",
-      ${sqlFrozenPaise('cl', 'commissionAmountPaise', 'commissionAmount')} AS "commissionPaise",
-      ${sqlFrozenPaise('cl', 'tcsAmountPaise', 'tcsAmount')} AS "tcsPaise",
+      ${sqlFrozenPaise('cl', 'commissionAmountPaise')} AS "commissionPaise",
+      ${sqlFrozenPaise('cl', 'tcsAmountPaise')} AS "tcsPaise",
       ${sqlVendorNetPayoutPaise('cl')} AS "netPaise",
       cl."createdAt" AS "createdAt"
     FROM commission_ledgers cl
@@ -645,12 +641,12 @@ async function vendorCommissionDeducted(filters: ReportFilters) {
     rows: rows.map((ledger) => ({
       subOrderId: ledger.subOrderId,
       status: ledger.status,
-      saleAmount: fromPaise(frozenPaise(ledger.saleAmountPaise, ledger.saleAmount)),
+      saleAmount: fromPaise(frozenPaise(ledger.saleAmountPaise)),
       commissionRate: Number(ledger.commissionRate ?? 0),
       commissionAmount: fromPaise(
-        frozenPaise(ledger.commissionAmountPaise, ledger.commissionAmount),
+        frozenPaise(ledger.commissionAmountPaise),
       ),
-      tcsAmount: fromPaise(frozenPaise(ledger.tcsAmountPaise, ledger.tcsAmount)),
+      tcsAmount: fromPaise(frozenPaise(ledger.tcsAmountPaise)),
       netPayout: fromPaise(vendorNetPayoutPaise(ledger)),
       createdAt: ledger.createdAt,
     })),
@@ -668,10 +664,7 @@ async function vendorDiscountCost(filters: ReportFilters) {
     ...scope,
     createdAt: dateBetween(filters.from, filters.to),
     status: { [Op.ne]: COMMISSION_STATUS.CLAWED_BACK },
-    [Op.or]: [
-      { discountAmountPaise: { [Op.gt]: 0 } },
-      { discountAmountPaise: null, discountAmount: { [Op.gt]: 0 } },
-    ],
+    discountAmountPaise: { [Op.gt]: 0 },
   };
 
   const vendorClause = vendorId ? 'AND cl."vendorId" = :vendorId' : '';
@@ -718,7 +711,7 @@ async function vendorDiscountCost(filters: ReportFilters) {
 
   return {
     rows: rows.map((ledger) => {
-      const disc = frozenPaise(ledger.discountAmountPaise, ledger.discountAmount);
+      const disc = frozenPaise(ledger.discountAmountPaise);
       const bearer =
         ledger.discountBearer === DISCOUNT_BEARER.VENDOR
           ? DISCOUNT_BEARER.VENDOR
