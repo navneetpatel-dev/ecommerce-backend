@@ -26,7 +26,7 @@ import {
   type AppliedCouponBreakdownEntry,
   type CartLineForCoupon,
 } from '@modules/coupons/couponEngine';
-import { fromPaise, roundMoney, toPaise } from '@modules/pricing/money';
+import { fromPaise, roundMoney, sumRupees, toPaise } from '@modules/pricing/money';
 import { splitTaxAmount } from '@modules/pricing/pricing.engine';
 import { checkoutAmountDue, combinedDiscount, lineTotal } from '@modules/pricing/displayMoney';
 import {
@@ -455,9 +455,7 @@ export class CheckoutService {
       };
     });
 
-    const merchandiseGrandTotal = roundMoney(
-      vendorBreakdowns.reduce((sum, row) => sum + row.total, 0),
-    );
+    const merchandiseGrandTotal = sumRupees(vendorBreakdowns.map((row) => row.total));
     // Flat platform fee, not tied to any vendor — added on top the same way
     // shipping/tax already flow into grandTotal, so it participates in the
     // wallet/COD/Razorpay math below without touching those computations.
@@ -598,17 +596,18 @@ export class CheckoutService {
         settings,
       });
 
-      let merchandiseSubtotal = 0;
-      let orderTaxTotal = 0;
-      let orderShippingTotal = 0;
+      // Summed from the engine's paise breakdown, so the order totals are exact.
+      let merchandisePaise = 0;
+      let orderTaxPaise = 0;
+      let orderShippingPaise = 0;
       for (const priced of Object.values(pricedByVendor)) {
-        merchandiseSubtotal += priced.rupees.subtotal;
-        orderTaxTotal += priced.rupees.tax.total;
-        orderShippingTotal += priced.rupees.shippingCharged;
+        merchandisePaise += priced.paise.subtotalPaise;
+        orderTaxPaise += priced.paise.tax.total;
+        orderShippingPaise += priced.paise.shippingChargedPaise;
       }
-      merchandiseSubtotal = roundMoney(merchandiseSubtotal);
-      orderTaxTotal = roundMoney(orderTaxTotal);
-      orderShippingTotal = roundMoney(orderShippingTotal);
+      const merchandiseSubtotal = fromPaise(merchandisePaise);
+      const orderTaxTotal = fromPaise(orderTaxPaise);
+      const orderShippingTotal = fromPaise(orderShippingPaise);
 
       // Flat platform fee, not part of any vendor's priced rows — added on top
       // the same way the quote adds it to grandTotal, so it flows into COD

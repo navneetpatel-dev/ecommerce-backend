@@ -20,7 +20,7 @@ import {
   type PdfTotalsLine,
 } from '@core/pdf';
 import { invoiceLineTaxBreakdown } from '@modules/pricing/displayMoney';
-import { coerceRupees, roundMoney } from '@modules/pricing/money';
+import { coerceRupees, roundMoney, sumRupees } from '@modules/pricing/money';
 import { TAX_INVOICE_COPY as COPY } from './reports.constants';
 
 export type TaxInvoiceAddress = {
@@ -204,7 +204,7 @@ export function toTaxInvoiceSourceFromSubOrder(
   }
   const items = mapSubOrderItems(subOrder, hsnByCategory);
   const vendor = subOrder.vendor;
-  const lineTotal = items.reduce((sum, item) => sum + lineAmount(item), 0);
+  const lineTotal = sumRupees(items.map(lineAmount));
   const totalAmount = roundMoney(
     subOrder.customerTotal != null ? subOrder.customerTotal : lineTotal,
   );

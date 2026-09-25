@@ -19,6 +19,17 @@ export function coerceRupees(value: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/**
+ * Sum rupee amounts exactly: each value is taken to paise, the integers are added,
+ * and the total converts back once. Adding rupee decimals directly drifts
+ * (0.1 + 0.2 = 0.30000000000000004), which breaks equality and "> 0" checks.
+ */
+export function sumRupees(values: Iterable<unknown>): number {
+  let paise = 0;
+  for (const value of values) paise += toPaise(coerceRupees(value));
+  return fromPaise(paise);
+}
+
 /** Round to 2 decimal places (rupees), preserving stored DECIMAL values. */
 export function roundMoney(value: unknown): number {
   return fromPaise(toPaise(coerceRupees(value)));

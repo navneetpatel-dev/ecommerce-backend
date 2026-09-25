@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import { paiseBackedRupees } from '@modules/pricing/paiseBackedRupees';
 import {
   REFUND_METHOD_VALUES,
   REFUND_STATUS,
@@ -29,7 +30,9 @@ export class ReturnRequest extends Model<InferAttributes<ReturnRequest>, InferCr
   declare refundStatus: CreationOptional<RefundStatus>;
   declare refundAmount: number | null;
   declare refundTaxAmount: CreationOptional<number | null>;
-  /** Merchandise (pre-tax item) part of the refund, frozen from PricingEngine at approval. */
+  /** Merchandise (pre-tax item) part of the refund, frozen from PricingEngine at approval. NULL until approved. */
+  declare refundMerchandiseAmountPaise: CreationOptional<number | null>;
+  /** Rupee view of `refundMerchandiseAmountPaise`. */
   declare refundMerchandiseAmount: CreationOptional<number | null>;
   declare refundCommissionAmount: CreationOptional<number | null>;
   declare refundTcsAmount: CreationOptional<number | null>;
@@ -108,7 +111,8 @@ export const initReturnRequestModel = (sequelize: Sequelize) => {
       razorpayRefundAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       shippingRefundAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       returnShippingFeeAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
-      refundMerchandiseAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+      refundMerchandiseAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
+      refundMerchandiseAmount: paiseBackedRupees('refundMerchandiseAmountPaise'),
       razorpayRefundId: { type: DataTypes.STRING, allowNull: true },
       refundAttemptCount: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
       lastRefundAttemptAt: { type: DataTypes.DATE, allowNull: true },

@@ -13,7 +13,7 @@ import {
   WALLET_POINT_SOURCE,
   type DiscountBearer,
 } from '@core/constants/statuses';
-import { toPaise, fromPaise, roundMoney } from '@modules/pricing/money';
+import { fromPaise, roundMoney, sumRupees, toPaise } from '@modules/pricing/money';
 import { frozenPaise } from '@modules/pricing/frozenMoneySql';
 import { walletService } from '@modules/wallet/wallet.service';
 import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
@@ -59,7 +59,7 @@ export async function creditPendingCashbackForOrder(
     // suborder's share" on every cancellation compounds against an already-shrunk balance and
     // under-reduces it after two or more partial cancellations.
     const merchandiseBase = Number(order.merchandiseSubtotal ?? 0);
-    const deliveredMerchandise = relevant.reduce((sum, s) => sum + Number(s.subtotal ?? 0), 0);
+    const deliveredMerchandise = sumRupees(relevant.map((s) => s.subtotal));
     const proratedPending =
       merchandiseBase > 0
         ? roundMoney(pending * Math.min(1, deliveredMerchandise / merchandiseBase))

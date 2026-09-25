@@ -19,6 +19,7 @@ import { WalletLedger } from '@database/models/walletLedger.model';
 import { WalletWriteOff } from '@database/models/walletWriteOff.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { CreditNote } from '@database/models/creditNote.model';
+import { ValidationError } from '@core/errors/ValidationError';
 import { DebitNote } from '@database/models/debitNote.model';
 import { Address } from '@database/models/address.model';
 import { ProductVariant } from '@database/models/productVariant.model';
@@ -436,6 +437,9 @@ describe('consolidated refund scenarios (seeded)', () => {
     assert.equal(Number(approved.shippingRefundAmount), 0);
     assert.equal(Number(approved.returnShippingFeeAmount), 50);
     assert.equal(Number(approved.refundMerchandiseAmount), 100);
+    // Stored in paise only; the rupee name reads from it.
+    const stored = await ReturnRequest.findByPk(rr.id);
+    assert.equal(Number(stored?.refundMerchandiseAmountPaise), 10000);
     // 100 + 18 - 50 = 68
     assert.ok(Math.abs(Number(approved.refundAmount) - 68) < 0.02);
     assert.equal(await walletService.getBalance(customer.id), Number(approved.refundAmount));
@@ -540,6 +544,47 @@ describe('consolidated refund scenarios (seeded)', () => {
 
     createRefund.mock.restore();
     void order;
+  });
+
+  it('3b. Credit note is refused, not issued for ₹0, when approval amounts are missing', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    const paymentId = `pay_${randomUUID().slice(0, 10)}`;
+    const { item } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.RAZORPAY,
+      totalAmount: 118,
+      shippingCharged: 0,
+      lineTaxable: 100,
+      lineTax: 18,
+      razorpayPaymentId: paymentId,
+      razorpayAmountPaid: 118,
+    });
+    const createRefund = mock.method(paymentsService, 'createRazorpayRefund', async () => 'rfnd_test_3b');
+
+    const rr = await returnsService.create(customer.id, {
+      orderItemId: item.id,
+      reasonCode: RETURN_REASON.DAMAGED,
+      reason: 'Damaged',
+    });
+    const approved = await returnsService.transition(rr.id, RETURN_STATUS.APPROVED, customer.id);
+    // Simulate an approval that never froze its merchandise figure.
+    await ReturnRequest.update({ refundMerchandiseAmountPaise: null }, { where: { id: rr.id } });
+
+    await assert.rejects(
+      returnsService.markRazorpayRefundProcessed({
+        razorpayRefundId: 'rfnd_test_3b',
+        paymentId,
+        amountPaise: toPaise(Number(approved.refundAmount)),
+        returnRequestId: rr.id,
+      }),
+      (err: unknown) => err instanceof ValidationError,
+    );
+    assert.equal(await CreditNote.count({ where: { returnRequestId: rr.id } }), 0);
+
+    createRefund.mock.restore();
   });
 
   it('4–5. Wallet full vs partial remainder math with debit in same txn', async (t) => {

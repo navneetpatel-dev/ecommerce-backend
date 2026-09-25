@@ -30,7 +30,7 @@ import { shippingService } from '@modules/shipping/shipping.service';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { OTP_TTL_MINUTES, otpService } from '@modules/auth/otp.service';
 import { settingsService } from '@modules/settings/settings.service';
-import { roundMoney } from '@modules/pricing/money';
+import { fromPaise, roundMoney, sumRupees, toPaise } from '@modules/pricing/money';
 import { emitShipmentLocation } from '@realtime/socket';
 import type {
   BulkAssignShipmentsRequest,
@@ -687,9 +687,9 @@ export class DeliveryAgentsService {
         ],
       },
     });
-    const totalCodCollected = codCollectedAllTime.reduce((sum, s) => sum + Number(s.codAmount ?? 0), 0);
-    const totalDeposited = depositedOrPending.reduce((sum, d) => sum + Number(d.amount ?? 0), 0);
-    const codCashInHand = Math.max(0, Math.round((totalCodCollected - totalDeposited) * 100) / 100);
+    const totalCodCollectedPaise = toPaise(sumRupees(codCollectedAllTime.map((s) => s.codAmount)));
+    const totalDepositedPaise = toPaise(sumRupees(depositedOrPending.map((d) => d.amount)));
+    const codCashInHand = fromPaise(Math.max(0, totalCodCollectedPaise - totalDepositedPaise));
     const onTimePercent = attemptedToday > 0 ? Math.round((deliveredToday / attemptedToday) * 100) : 0;
     const perTaskEarning = Number(settings.deliveryAgentPerTaskEarning ?? 0);
     const [earningsTodayRows, pendingEarningsRows, pendingDeposits] = await Promise.all([
@@ -703,8 +703,8 @@ export class DeliveryAgentsService {
       }),
       DeliveryCashDeposit.count({ where: { deliveryAgentId, status: 'PENDING' } }),
     ]);
-    const earningsToday = roundMoney(earningsTodayRows.reduce((sum, r) => sum + Number(r.amount), 0));
-    const pendingEarnings = roundMoney(pendingEarningsRows.reduce((sum, r) => sum + Number(r.amount), 0));
+    const earningsToday = sumRupees(earningsTodayRows.map((r) => r.amount));
+    const pendingEarnings = sumRupees(pendingEarningsRows.map((r) => r.amount));
     const pendingEarningsCount = pendingEarningsRows.length;
 
     return {

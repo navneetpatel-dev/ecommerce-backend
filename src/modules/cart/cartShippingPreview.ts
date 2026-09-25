@@ -1,4 +1,4 @@
-import { roundMoney } from '@modules/pricing/money';
+import { roundMoney, sumRupees } from '@modules/pricing/money';
 import { type CartLineForCoupon } from '@modules/coupons/coupon.utils';
 import { shippingService } from '@modules/shipping/shipping.service';
 import { resolveVendorShippingQuote } from '@modules/shipping/vendorShippingQuote';
@@ -57,7 +57,7 @@ export async function resolveCartShippingPreviewForCoupon(
   }
 
   return {
-    total: roundMoney(Object.values(byVendorShipping).reduce((sum, amount) => sum + amount, 0)),
+    total: sumRupees(Object.values(byVendorShipping)),
     byVendor: byVendorShipping,
   };
 }

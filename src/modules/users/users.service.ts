@@ -36,6 +36,7 @@ import { PERMISSIONS, type PermissionKey } from '@core/permissions/permissionKey
 import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { ValidationError } from '@core/errors/ValidationError';
 import { logAudit } from '@modules/audit/audit.service';
+import { sumRupees, toPaise } from '@modules/pricing/money';
 import type {
   UpdateUserProfileRequest,
   UpdateUserStatusRequest,
@@ -163,10 +164,11 @@ async function assertSelfDeletionAllowed(
         `You have ${activePickups} scheduled return pickups — settle these before deleting your account`,
       );
     }
-    const collected = collectedRows.reduce((sum, row) => sum + Number(row.codAmount ?? 0), 0);
-    const deposited = verifiedDeposits.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
-    const outstanding = collected - deposited;
-    if (outstanding > 0) {
+    // Compared in paise: a float difference of rupee sums can be a hair above 0
+    // (0.1 + 0.2 − 0.3) and would block an agent who owes nothing.
+    const collectedPaise = toPaise(sumRupees(collectedRows.map((row) => row.codAmount)));
+    const depositedPaise = toPaise(sumRupees(verifiedDeposits.map((row) => row.amount)));
+    if (collectedPaise > depositedPaise) {
       throw new ForbiddenError(
         'You have outstanding undeposited COD cash — settle this before deleting your account',
       );
