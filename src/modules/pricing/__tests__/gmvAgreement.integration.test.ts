@@ -21,6 +21,7 @@ import { SubOrder } from '@database/models/subOrder.model';
 import { User } from '@database/models/user.model';
 import { Vendor } from '@database/models/vendor.model';
 import { ORDER_STATUS, PAYMENT_METHOD, PAYMENT_STATUS, ROLES } from '@core/constants/statuses';
+import { GMV_SUB_ORDER_SQL } from '../frozenMoneySql';
 import { adminService } from '@modules/admin/admin.service';
 import { vendorsService } from '@modules/vendors/vendors.service';
 import { computeReconciliationSummary } from '@modules/reports/engine/queryHelpers';
@@ -34,6 +35,7 @@ let dbReady = false;
 let vendorId = '';
 let categoryId = '';
 const created = { users: [] as string[], vendors: [] as string[], orders: [] as string[] };
+let seedBase: { userId: string; addressId: string; variantId: string } | null = null;
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -188,6 +190,7 @@ describe('GMV agreement across surfaces', () => {
       deletedBy: null,
     });
     const base = { userId: user.id, addressId: address.id, variantId: variant.id };
+    seedBase = base;
 
     // Counts: the delivered sub-order (₹1,000). Not: its cancelled sibling (₹300).
     await seedOrder({
@@ -285,5 +288,38 @@ describe('GMV agreement across surfaces', () => {
     });
     const gmvRow = report.rows.find((row) => row.metric === 'GMV (in range)');
     assert.equal(gmvRow?.value, fromPaise(windowRecon.gmvPaise), 'platform-analytics report');
+  });
+
+  it('admin order count covers exactly the orders GMV counts', async (t) => {
+    if (!dbReady || !seedBase) return t.skip('database unavailable');
+    // A cancelled order still PAID while its refund is pending must not count either.
+    await seedOrder({
+      ...seedBase,
+      paymentMethod: PAYMENT_METHOD.RAZORPAY,
+      paymentStatus: PAYMENT_STATUS.PAID,
+      status: ORDER_STATUS.CANCELLED,
+      subOrders: [{ status: ORDER_STATUS.CANCELLED, unitPrice: 400, quantity: 1 }],
+    });
+
+    // The rule the dashboard counts with, applied to this file's orders only (other
+    // test files write orders to the same database concurrently).
+    const counted = await sequelize.query<{ id: string }>(
+      `SELECT DISTINCT o.id
+       FROM sub_orders s
+       INNER JOIN orders o ON o.id = s."orderId"
+       WHERE o.id IN (:ids) AND ${GMV_SUB_ORDER_SQL}`,
+      { replacements: { ids: created.orders }, type: QueryTypes.SELECT },
+    );
+    // Of paid, COD, unpaid, failed and cancelled-but-PAID: only paid and COD count.
+    assert.equal(counted.length, 2);
+
+    // totalOrders comes from the same query as GMV, so AOV = GMV / totalOrders.
+    const analytics = await adminService.getPlatformAnalytics();
+    assert.ok(analytics.totalOrders > 0);
+    assert.equal(
+      toPaise(analytics.aov),
+      Math.round(toPaise(analytics.gmv) / analytics.totalOrders),
+      'AOV averages over the counted orders',
+    );
   });
 });

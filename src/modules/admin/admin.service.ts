@@ -72,13 +72,16 @@ function sharePercent(rowPaise: unknown, totalPaise: unknown): number {
 }
 
 /**
- * Platform GMV, paid GMV and AOV from the one GMV definition the settlement
- * reports use (see GMV_SUB_ORDER_SQL). AOV averages over the orders that
- * contribute GMV, not over every order row.
+ * Platform GMV, paid GMV, order count and AOV from the one GMV definition the
+ * settlement reports use (see GMV_SUB_ORDER_SQL). `orderCount` is the orders that
+ * contribute GMV — paid online orders and placed COD orders, never unpaid, failed
+ * or cancelled ones — so the dashboard's order total, AOV and GMV describe the
+ * same set of orders.
  */
 async function queryGmvTotals(): Promise<{
   gmvPaise: number;
   paidGmvPaise: number;
+  orderCount: number;
   aovPaise: number | null;
 }> {
   const [row] = await sequelize.query<{
@@ -102,15 +105,15 @@ async function queryGmvTotals(): Promise<{
   return {
     gmvPaise,
     paidGmvPaise: Number(row?.paidGmvPaise ?? 0),
+    orderCount,
     aovPaise: orderCount > 0 ? Math.round(gmvPaise / orderCount) : null,
   };
 }
 
 export const adminService = {
   async getDashboardMetrics(): Promise<DashboardMetrics> {
-    const [totalOrders, totalVendors, totalCustomers, pendingApprovals, revenue] =
+    const [totalVendors, totalCustomers, pendingApprovals, revenue] =
       await Promise.all([
-        Order.count(),
         Vendor.count(),
         User.count({
           include: [{
@@ -124,7 +127,7 @@ export const adminService = {
       ]);
 
     return {
-      totalOrders,
+      totalOrders: revenue.orderCount,
       totalRevenue: fromPaise(revenue.gmvPaise),
       totalVendors,
       totalCustomers,
@@ -135,7 +138,7 @@ export const adminService = {
   async getPlatformAnalytics(): Promise<PlatformAnalytics> {
     const [
       gmvTotals,
-      totalOrders,
+      allOrders,
       totalVendors,
       totalCustomers,
       cancelledOrders,
@@ -259,34 +262,33 @@ export const adminService = {
         revenueCurrentPaise: string;
         revenuePreviousPaise: string;
       }>(
+        // Last 14 days vs the 14 before, over the same orders GMV counts: an
+        // unpaid, failed or cancelled checkout is neither an order nor revenue.
         `SELECT
-           COUNT(*) FILTER (WHERE "createdAt" >= NOW() - INTERVAL '14 days')::int AS "ordersCurrent",
-           COUNT(*) FILTER (
-             WHERE "createdAt" >= NOW() - INTERVAL '28 days'
-               AND "createdAt" < NOW() - INTERVAL '14 days'
-           )::int AS "ordersPrevious",
-           (
-             SELECT COALESCE(SUM(${sqlGmvPaise('s')}), 0)
-             FROM sub_orders s
-             INNER JOIN orders o ON o.id = s."orderId"
+           COUNT(DISTINCT o.id) FILTER (
              WHERE o."createdAt" >= NOW() - INTERVAL '14 days'
-               AND ${GMV_SUB_ORDER_SQL}
-           )::bigint AS "revenueCurrentPaise",
-           (
-             SELECT COALESCE(SUM(${sqlGmvPaise('s')}), 0)
-             FROM sub_orders s
-             INNER JOIN orders o ON o.id = s."orderId"
-             WHERE o."createdAt" >= NOW() - INTERVAL '28 days'
-               AND o."createdAt" < NOW() - INTERVAL '14 days'
-               AND ${GMV_SUB_ORDER_SQL}
-           )::bigint AS "revenuePreviousPaise"
-         FROM orders
-         WHERE status <> 'CANCELLED' AND "deletedAt" IS NULL`,
+           )::int AS "ordersCurrent",
+           COUNT(DISTINCT o.id) FILTER (
+             WHERE o."createdAt" < NOW() - INTERVAL '14 days'
+           )::int AS "ordersPrevious",
+           COALESCE(SUM(${sqlGmvPaise('s')}) FILTER (
+             WHERE o."createdAt" >= NOW() - INTERVAL '14 days'
+           ), 0)::bigint AS "revenueCurrentPaise",
+           COALESCE(SUM(${sqlGmvPaise('s')}) FILTER (
+             WHERE o."createdAt" < NOW() - INTERVAL '14 days'
+           ), 0)::bigint AS "revenuePreviousPaise"
+         FROM sub_orders s
+         INNER JOIN orders o ON o.id = s."orderId"
+         WHERE o."createdAt" >= NOW() - INTERVAL '28 days'
+           AND ${GMV_SUB_ORDER_SQL}`,
         { type: QueryTypes.SELECT },
       ),
     ]);
 
-    const orderTotal = Number(totalOrders ?? 0);
+    // Cancellation and return rates keep every placed order row as their base: a
+    // cancelled order is exactly what the rate measures, so it cannot come from
+    // the GMV order set, which excludes cancellations.
+    const orderRows = Number(allOrders ?? 0);
     const cancelled = Number(cancelledOrders ?? 0);
     const returns = Number(returnCount ?? 0);
     const growth = growthRows[0];
@@ -299,11 +301,11 @@ export const adminService = {
       gmv: fromPaise(gmvTotals.gmvPaise),
       paidGmv: fromPaise(gmvTotals.paidGmvPaise),
       aov: gmvTotals.aovPaise == null ? 0 : fromPaise(gmvTotals.aovPaise),
-      totalOrders: orderTotal,
+      totalOrders: gmvTotals.orderCount,
       totalCustomers: Number(totalCustomers ?? 0),
       totalVendors: Number(totalVendors ?? 0),
-      cancellationRate: orderTotal > 0 ? Number(((cancelled / orderTotal) * 100).toFixed(1)) : 0,
-      returnRate: orderTotal > 0 ? Number(((returns / orderTotal) * 100).toFixed(1)) : 0,
+      cancellationRate: orderRows > 0 ? Number(((cancelled / orderRows) * 100).toFixed(1)) : 0,
+      returnRate: orderRows > 0 ? Number(((returns / orderRows) * 100).toFixed(1)) : 0,
       pendingProducts: Number(pendingProducts ?? 0),
       pendingVendors: Number(pendingVendors ?? 0),
       pendingReviews: Number(pendingReviews ?? 0),
