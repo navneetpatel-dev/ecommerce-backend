@@ -21,8 +21,9 @@ import { env } from '@config/env';
 
 /**
  * Credits pending cashback once per order (idempotent via cashbackCreditedAt).
- * VENDOR-borne cashback writes a SETTLED CommissionLedger CashbackCost adjustment
- * against the coupon's vendor (Order.cashbackVendorId), never mutating the original commission row.
+ * VENDOR-borne cashback writes a PENDING CommissionLedger CashbackCost adjustment
+ * against the coupon's vendor (Order.cashbackVendorId), never mutating the original commission
+ * row. The next payout run deducts it from that vendor's payout.
  */
 export async function creditPendingCashbackForOrder(
   orderId: string,
@@ -96,15 +97,10 @@ export async function creditPendingCashbackForOrder(
     const bearer = (order.cashbackDiscountBearer as DiscountBearer | null) ?? DISCOUNT_BEARER.PLATFORM;
     if (bearer === DISCOUNT_BEARER.VENDOR) {
       const vendorId = order.cashbackVendorId ?? delivered.vendorId;
-      const subOrder =
-        vendorId && delivered.vendorId === vendorId
-          ? delivered
-          : vendorId
-            ? (await SubOrder.findOne({
-                where: { orderId: order.id, vendorId },
-                transaction,
-              })) ?? delivered
-            : delivered;
+      // A delivered sub-order of that vendor, never a cancelled one: the payout run only
+      // picks up ledgers on delivered sub-orders, so a cost on a cancelled one would
+      // never be deducted.
+      const subOrder = relevant.find((s) => s.vendorId === vendorId) ?? delivered;
       if (vendorId && subOrder) {
         const amountPaise = toPaise(proratedPending);
         await CommissionLedger.create(
@@ -122,7 +118,8 @@ export async function creditPendingCashbackForOrder(
             netPayoutAmountPaise: -amountPaise,
             shippingCollectedPaise: 0,
             referenceType: COMMISSION_REFERENCE_TYPE.CASHBACK_COST,
-            status: COMMISSION_STATUS.SETTLED,
+            // Pending, so the next payout run deducts it from the vendor's payout.
+            status: COMMISSION_STATUS.PENDING,
             createdBy: order.userId,
             updatedBy: order.userId,
             deletedBy: null,
@@ -226,7 +223,9 @@ export async function clawbackCashbackForReturn(input: {
             netPayoutAmountPaise: amountPaise,
             shippingCollectedPaise: 0,
             referenceType: COMMISSION_REFERENCE_TYPE.CASHBACK_COST_REVERSAL,
-            status: COMMISSION_STATUS.SETTLED,
+            // Pending, so the next payout run pays it back (or nets it against a cost
+            // that has not been deducted yet).
+            status: COMMISSION_STATUS.PENDING,
             createdBy: actorId,
             updatedBy: actorId,
             deletedBy: null,

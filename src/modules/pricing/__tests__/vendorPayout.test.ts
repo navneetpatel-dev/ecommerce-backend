@@ -39,6 +39,52 @@ describe('vendorPayoutBreakdown', () => {
   });
 });
 
+describe('vendorPayoutBreakdown with vendor-borne cashback', () => {
+  const rates = { tdsRatePercent: 1, commissionGstRatePercent: 18 };
+  const sale = { netPayoutAmountPaise: 89000, commissionAmountPaise: 10000, referenceType: null };
+  const cost = { netPayoutAmountPaise: -5000, commissionAmountPaise: -5000, referenceType: 'CashbackCost' };
+  const reversal = {
+    netPayoutAmountPaise: 5000,
+    commissionAmountPaise: 5000,
+    referenceType: 'CashbackCostReversal',
+  };
+
+  it('deducts the cost after TDS and GST, which it is outside of', () => {
+    const result = vendorPayoutBreakdown([sale, cost], rates);
+    assert.deepEqual(result.rows, [
+      { netPaise: 89000, tdsPaise: 890 },
+      { netPaise: -5000, tdsPaise: 0 },
+    ]);
+    // Commission GST is on the sale's ₹100 commission only.
+    assert.equal(result.commissionTaxablePaise, 10000);
+    assert.equal(result.commissionGstPaise, 1800);
+    // (89000 − 890) − 1800 − 5000
+    assert.equal(result.balancePaise, 81310);
+    assert.equal(result.payoutPaise, 81310);
+  });
+
+  it('nets a reversal against its cost', () => {
+    const withBoth = vendorPayoutBreakdown([sale, cost, reversal], rates);
+    const saleOnly = vendorPayoutBreakdown([sale], rates);
+    assert.equal(withBoth.payoutPaise, saleOnly.payoutPaise);
+  });
+
+  it('pays back a reversal on its own', () => {
+    const result = vendorPayoutBreakdown([reversal], rates);
+    assert.equal(result.commissionGstPaise, 0);
+    assert.equal(result.payoutPaise, 5000);
+  });
+
+  it('goes negative when the cost exceeds the sales, and pays nothing', () => {
+    const result = vendorPayoutBreakdown(
+      [{ netPayoutAmountPaise: 3000, commissionAmountPaise: 0, referenceType: null }, cost],
+      { tdsRatePercent: 0, commissionGstRatePercent: 18 },
+    );
+    assert.equal(result.balancePaise, -2000);
+    assert.equal(result.payoutPaise, 0);
+  });
+});
+
 describe('commissionGstPaise', () => {
   it('rounds GST on commission in paise and is zero for no commission', () => {
     assert.equal(commissionGstPaise(12345, 18), 2222);

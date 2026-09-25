@@ -812,12 +812,13 @@ export class VendorsService {
          AND ${GMV_SUB_ORDER_SQL}`,
       { replacements: { vendorId }, type: QueryTypes.SELECT },
     );
-    // What the vendor will be paid for pending commission: net less 194-O TDS and
-    // GST on commission — the payout run's own breakdown (pricing/vendorPayout).
+    // What the vendor will be paid for pending commission: net less 194-O TDS, GST on
+    // commission and vendor-borne cashback cost — the payout run's own breakdown
+    // (pricing/vendorPayout).
     const [pendingLedgers, settings] = await Promise.all([
       CommissionLedger.findAll({
         where: { vendorId, status: COMMISSION_STATUS.PENDING },
-        attributes: ['netPayoutAmountPaise', 'commissionAmountPaise'],
+        attributes: ['netPayoutAmountPaise', 'commissionAmountPaise', 'referenceType'],
       }),
       settingsService.getPlatformSettings(),
     ]);

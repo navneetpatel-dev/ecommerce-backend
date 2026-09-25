@@ -5,6 +5,11 @@ import type { Paise } from './money';
 export interface PayoutLedgerRow {
   netPayoutAmountPaise?: unknown;
   commissionAmountPaise?: unknown;
+  /**
+   * Null on a sale ledger. Set on an adjustment row — a vendor-borne cashback cost
+   * (negative) or its reversal (positive) — which is not a sale: no TDS, not commission.
+   */
+  referenceType?: string | null;
 }
 
 /** GST the platform charges on its marketplace commission (SAC 9985), in paise. */
@@ -18,24 +23,37 @@ export type VendorPayoutBreakdown = {
   rows: Array<{ netPaise: Paise; tdsPaise: Paise }>;
   commissionTaxablePaise: Paise;
   commissionGstPaise: Paise;
-  /** What the vendor is actually paid. */
+  /**
+   * Signed balance: sales after TDS and commission GST (at least zero), plus adjustment
+   * rows. Negative when the vendor's cashback cost exceeds what their sales earned —
+   * the payout run then carries the ledgers forward instead of paying.
+   */
+  balancePaise: Paise;
+  /** What the vendor is actually paid: the balance, never below zero. */
   payoutPaise: Paise;
 };
 
 /**
  * What a vendor is paid for a set of commission ledgers — the one definition the
  * payout run and the vendor dashboard share:
- * - each ledger's net payout, less Section 194-O TDS on that net;
- * - then less GST on the platform's commission across the ledgers.
+ * - each sale ledger's net payout, less Section 194-O TDS on that net;
+ * - less GST on the platform's commission across the sale ledgers;
+ * - plus adjustment rows as they stand: a vendor-borne cashback cost is deducted,
+ *   its reversal added back. Adjustments carry no TDS and are not commission.
  */
 export function vendorPayoutBreakdown(
   ledgers: PayoutLedgerRow[],
   rates: { tdsRatePercent: number; commissionGstRatePercent: number },
 ): VendorPayoutBreakdown {
   let afterTdsPaise = 0;
+  let adjustmentPaise = 0;
   let commissionTaxablePaise = 0;
   const rows = ledgers.map((ledger) => {
     const netPaise = vendorNetPayoutPaise(ledger);
+    if (ledger.referenceType) {
+      adjustmentPaise += netPaise;
+      return { netPaise, tdsPaise: 0 };
+    }
     const tdsPaise =
       rates.tdsRatePercent > 0 ? Math.round((netPaise * rates.tdsRatePercent) / 100) : 0;
     afterTdsPaise += Math.max(0, netPaise - tdsPaise);
@@ -43,11 +61,15 @@ export function vendorPayoutBreakdown(
     return { netPaise, tdsPaise };
   });
   const gstPaise = commissionGstPaise(commissionTaxablePaise, rates.commissionGstRatePercent);
+  // Sales never go below zero on their own (as before adjustments existed); only a
+  // cashback cost larger than the sales can make the balance negative.
+  const balancePaise = Math.max(0, afterTdsPaise - gstPaise) + adjustmentPaise;
   return {
     rows,
     commissionTaxablePaise,
     commissionGstPaise: gstPaise,
-    payoutPaise: Math.max(0, afterTdsPaise - gstPaise),
+    balancePaise,
+    payoutPaise: Math.max(0, balancePaise),
   };
 }
 
