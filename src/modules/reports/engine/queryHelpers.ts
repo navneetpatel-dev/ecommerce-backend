@@ -4,7 +4,11 @@ import { ERROR_MESSAGES } from '@core/constants/errors';
 import { paginationOffset } from '@core/http/pagination';
 import { reportExportConfig } from '../reportExportConfig';
 import { fromPaise, toPaise } from '@modules/pricing/money';
-import { REPORTABLE_ORDER_SQL, sqlFrozenPaise } from '@modules/pricing/frozenMoneySql';
+import {
+  REPORTABLE_ORDER_SQL,
+  sqlFrozenPaise,
+  sqlVendorNetPayoutPaise,
+} from '@modules/pricing/frozenMoneySql';
 import {
   COMMISSION_STATUS,
   PAYMENT_STATUS,
@@ -124,17 +128,7 @@ export async function computeReconciliationSummary(filters: {
   const subtotalExpr = sqlFrozenPaise('s', 'subtotalPaise', 'subtotal');
   const merchDiscExpr = sqlFrozenPaise('s', 'discountAmountPaise', 'discountAmount');
   const commissionExpr = sqlFrozenPaise('cl', 'commissionAmountPaise', 'commissionAmount');
-  const netExpr = `CASE
-    WHEN COALESCE(cl."netPayoutAmountPaise", 0) <> 0 THEN cl."netPayoutAmountPaise"
-    ELSE ROUND(
-      (
-        CASE
-          WHEN cl."netPayoutAmount" IS NOT NULL THEN cl."netPayoutAmount"::numeric
-          ELSE COALESCE(cl."saleAmount", 0)::numeric - COALESCE(cl."commissionAmount", 0)::numeric
-        END
-      ) * 100
-    )::bigint
-  END`;
+  const netExpr = sqlVendorNetPayoutPaise('cl');
   const ledgerDisc = sqlFrozenPaise('cl', 'discountAmountPaise', 'discountAmount');
 
   const [rows] = await sequelize.query(

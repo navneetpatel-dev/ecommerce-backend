@@ -41,12 +41,40 @@ export const REPORTABLE_ORDER_SQL = `(
   )
 )`;
 
+/** The commission_ledgers columns `vendorNetPayoutPaise` reads. */
+export interface VendorNetPayoutSource {
+  netPayoutAmountPaise?: unknown;
+  netPayoutAmount?: unknown;
+  saleAmount?: unknown;
+  commissionAmount?: unknown;
+  tcsAmount?: unknown;
+}
+
 /**
- * Vendor net payout in paise from a commission_ledgers row.
+ * Vendor net payout in paise from a commission_ledgers row — the one definition
+ * payouts, settlement reports and vendor dashboards share. TS twin of
+ * `sqlVendorNetPayoutPaise`; the two must stay in lockstep.
  *
- * Prefers the frozen paise column, then the frozen rupee column. The last-resort
- * `saleAmount - commissionAmount` omits TCS, so it is only reached for pre-engine
- * rows that never had a TCS component.
+ * Prefers the frozen paise column, then the frozen rupee column, then derives
+ * `sale − commission − TCS` for pre-engine rows that have neither.
+ */
+export function vendorNetPayoutPaise(row: VendorNetPayoutSource): number {
+  const paise = Number(row.netPayoutAmountPaise ?? 0);
+  if (paise !== 0) return paise;
+  if (row.netPayoutAmount != null) return toPaise(Number(row.netPayoutAmount));
+  return (
+    toPaise(Number(row.saleAmount ?? 0)) -
+    toPaise(Number(row.commissionAmount ?? 0)) -
+    toPaise(Number(row.tcsAmount ?? 0))
+  );
+}
+
+/**
+ * Vendor net payout in paise from a commission_ledgers row (SQL twin of
+ * `vendorNetPayoutPaise`).
+ *
+ * Prefers the frozen paise column, then the frozen rupee column, then derives
+ * `sale − commission − TCS` for pre-engine rows that have neither.
  */
 export function sqlVendorNetPayoutPaise(alias: string): string {
   return `CASE
@@ -62,4 +90,27 @@ export function sqlVendorNetPayoutPaise(alias: string): string {
       ) * 100
     )::bigint
   END`;
+}
+
+/**
+ * Pre-discount merchandise value of one order line, in paise (alias = order_items).
+ * Returns rewrite `lineSubtotal`, so this is net of returned quantity; pre-engine
+ * rows without `lineSubtotal` fall back to `unitPrice × quantity`. Per sub-order
+ * these lines sum to `sqlGmvPaise` of that sub-order.
+ */
+export function sqlLineSubtotalPaise(alias: string): string {
+  return `ROUND(
+    COALESCE(${alias}."lineSubtotal", ${alias}."unitPrice" * ${alias}."quantity", 0)::numeric * 100
+  )::bigint`;
+}
+
+/**
+ * GMV of one sub-order in paise (alias = sub_orders): its frozen merchandise
+ * subtotal, before discounts, tax and shipping. This is the GMV the settlement
+ * reports publish; the admin dashboard, vendor rankings and trend charts must
+ * sum this same expression over `REPORTABLE_ORDER_SQL` orders so every surface
+ * shows one number.
+ */
+export function sqlGmvPaise(alias: string): string {
+  return sqlFrozenPaise(alias, 'subtotalPaise', 'subtotal');
 }

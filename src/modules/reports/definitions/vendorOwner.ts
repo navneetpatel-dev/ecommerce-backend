@@ -14,6 +14,7 @@ import { TaxRule } from '@database/models/taxRule.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
 import { createOffsetExportQuery } from '../engine/export/createOffsetExportQuery';
+import { vendorNetPayoutPaise } from '@modules/pricing/frozenMoneySql';
 import {
   assertReportRange,
   frozenPaise,
@@ -666,14 +667,7 @@ async function vendorCommissionDeducted(filters: ReportFilters) {
         frozenPaise(ledger.commissionAmountPaise, ledger.commissionAmount),
       ),
       tcsAmount: fromPaise(frozenPaise(ledger.tcsAmountPaise, ledger.tcsAmount)),
-      netPayout: fromPaise(
-        frozenPaise(
-          ledger.netPayoutAmountPaise,
-          ledger.netPayoutAmount != null
-            ? ledger.netPayoutAmount
-            : Number(ledger.saleAmount) - Number(ledger.commissionAmount),
-        ),
-      ),
+      netPayout: fromPaise(vendorNetPayoutPaise(ledger)),
       createdAt: ledger.createdAt,
     })),
     total,

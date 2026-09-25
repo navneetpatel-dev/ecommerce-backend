@@ -28,6 +28,7 @@ import { logger } from '@core/logger';
 import { Op } from 'sequelize';
 import { settingsService } from '@modules/settings/settings.service';
 import { fromPaise, toPaise, roundMoney } from '@modules/pricing/money';
+import { vendorNetPayoutPaise } from '@modules/pricing/frozenMoneySql';
 import {
   computeCommissionGstPaise,
   createCommissionInvoiceForPayout,
@@ -176,18 +177,15 @@ export class PayoutsService {
       where: { status: COMMISSION_STATUS.PENDING },
       include: [subOrderInclude],
     });
-    const grouped = new Map<string, { amount: number; start: Date; end: Date; rows: CommissionLedger[] }>();
+    const grouped = new Map<string, { amountPaise: number; start: Date; end: Date; rows: CommissionLedger[] }>();
     for (const ledger of ledgers) {
       const current = grouped.get(ledger.vendorId) ?? {
-        amount: 0,
+        amountPaise: 0,
         start: ledger.createdAt,
         end: ledger.createdAt,
         rows: [],
       };
-      current.amount +=
-        ledger.netPayoutAmount != null
-          ? Number(ledger.netPayoutAmount)
-          : Number(ledger.saleAmount) - Number(ledger.commissionAmount);
+      current.amountPaise += vendorNetPayoutPaise(ledger);
       current.start = current.start < ledger.createdAt ? current.start : ledger.createdAt;
       current.end = current.end > ledger.createdAt ? current.end : ledger.createdAt;
       current.rows.push(ledger);
@@ -220,14 +218,7 @@ export class PayoutsService {
             tdsAmountPaise: number;
           }> = [];
           for (const row of locked) {
-            const netPaise =
-              row.netPayoutAmountPaise != null && Number(row.netPayoutAmountPaise) > 0
-                ? Number(row.netPayoutAmountPaise)
-                : toPaise(
-                    row.netPayoutAmount != null
-                      ? Number(row.netPayoutAmount)
-                      : Number(row.saleAmount) - Number(row.commissionAmount),
-                  );
+            const netPaise = vendorNetPayoutPaise(row);
             const commissionPaise =
               row.commissionAmountPaise != null && Number(row.commissionAmountPaise) > 0
                 ? Number(row.commissionAmountPaise)
@@ -323,7 +314,7 @@ export class PayoutsService {
         logger.warn('Payout processing failed for vendor', { vendorId, reason });
         const failed = await Payout.create({
           vendorId,
-          amount: group.amount,
+          amount: fromPaise(group.amountPaise),
           periodStart: group.start,
           periodEnd: group.end,
           status: PAYOUT_STATUS.FAILED,

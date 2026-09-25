@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { frozenPaise, sqlFrozenPaise, sqlVendorNetPayoutPaise, REPORTABLE_ORDER_SQL } from '../frozenMoneySql';
+import {
+  frozenPaise,
+  sqlFrozenPaise,
+  sqlVendorNetPayoutPaise,
+  vendorNetPayoutPaise,
+  REPORTABLE_ORDER_SQL,
+} from '../frozenMoneySql';
 
 function squash(sql: string): string {
   return sql.replace(/\s+/g, ' ').trim();
@@ -56,6 +62,44 @@ describe('sqlVendorNetPayoutPaise', () => {
   it('prefers the frozen paise column', () => {
     const sql = squash(sqlVendorNetPayoutPaise('cl'));
     assert.match(sql, /^CASE WHEN COALESCE\(cl\."netPayoutAmountPaise", 0\) <> 0/);
+  });
+});
+
+describe('vendorNetPayoutPaise', () => {
+  it('prefers the frozen paise column', () => {
+    assert.equal(
+      vendorNetPayoutPaise({ netPayoutAmountPaise: 81234, netPayoutAmount: 1, saleAmount: 999 }),
+      81234,
+    );
+  });
+
+  it('falls back to the frozen rupee column', () => {
+    assert.equal(
+      vendorNetPayoutPaise({ netPayoutAmountPaise: 0, netPayoutAmount: '812.34', saleAmount: 999 }),
+      81234,
+    );
+  });
+
+  it('derives sale − commission − TCS for pre-engine rows', () => {
+    // Payouts, settlement summary, vendor summary and the vendor commission report
+    // each used to derive this without TCS, so they paid and reported different nets.
+    assert.equal(
+      vendorNetPayoutPaise({
+        netPayoutAmountPaise: 0,
+        netPayoutAmount: null,
+        saleAmount: '1000.00',
+        commissionAmount: '100.00',
+        tcsAmount: '10.00',
+      }),
+      89000,
+    );
+  });
+
+  it('treats missing TCS on a pre-engine row as zero', () => {
+    assert.equal(
+      vendorNetPayoutPaise({ netPayoutAmount: null, saleAmount: 500, commissionAmount: 50 }),
+      45000,
+    );
   });
 });
 

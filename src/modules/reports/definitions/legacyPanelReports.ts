@@ -14,6 +14,7 @@ import {
   computeReconciliationSummary,
   fromPaise,
   sqlFrozenPaise,
+  sqlVendorNetPayoutPaise,
   COMMISSION_STATUS,
   DISCOUNT_BEARER,
 } from '../engine/queryHelpers';
@@ -515,17 +516,7 @@ async function vendorSummaryQuery(filters: ReportFilters) {
   if (!vendorId) return emptyPage(filters);
 
   const commissionExpr = sqlFrozenPaise('cl', 'commissionAmountPaise', 'commissionAmount');
-  const netExpr = `CASE
-    WHEN COALESCE(cl."netPayoutAmountPaise", 0) <> 0 THEN cl."netPayoutAmountPaise"
-    ELSE ROUND(
-      (
-        CASE
-          WHEN cl."netPayoutAmount" IS NOT NULL THEN cl."netPayoutAmount"::numeric
-          ELSE COALESCE(cl."saleAmount", 0)::numeric - COALESCE(cl."commissionAmount", 0)::numeric
-        END
-      ) * 100
-    )::bigint
-  END`;
+  const netExpr = sqlVendorNetPayoutPaise('cl');
   const taxableExpr = sqlFrozenPaise('cl', 'taxableAmountPaise', 'taxableAmount');
   const tcsExpr = sqlFrozenPaise('cl', 'tcsAmountPaise', 'tcsAmount');
   const discountExpr = sqlFrozenPaise('cl', 'discountAmountPaise', 'discountAmount');
