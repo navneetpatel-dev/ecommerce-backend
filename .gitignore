@@ -1,7 +1,8 @@
 node_modules/
 dist/
 logs/
-uploads/
+# Local disk dump at repo root only — do not ignore src/modules/uploads
+/uploads/
 storage/
 .env
 *.log
