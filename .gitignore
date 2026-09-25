@@ -1,6 +1,7 @@
 node_modules/
 dist/
 logs/
+# Local disk dumps at repo root only — do not ignore src/modules/uploads (or any source folder)
 /uploads/
 /storage/
 .env
