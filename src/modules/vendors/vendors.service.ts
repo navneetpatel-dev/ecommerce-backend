@@ -6,11 +6,13 @@ import { ROLES, VENDOR_STATUS, ORDER_STATUS, COMMISSION_STATUS, PRODUCT_STATUS }
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { fromPaise } from '@modules/pricing/money';
+import { payoutRatesFromSettings, vendorPayoutBreakdown } from '@modules/pricing/vendorPayout';
+import { settingsService } from '@modules/settings/settings.service';
+import { CommissionLedger } from '@database/models/commissionLedger.model';
 import {
   GMV_SUB_ORDER_SQL,
   sqlGmvPaise,
   sqlLineSubtotalPaise,
-  sqlVendorNetPayoutPaise,
 } from '@modules/pricing/frozenMoneySql';
 import {
   deleteS3ObjectIfReplaced,
@@ -810,21 +812,21 @@ export class VendorsService {
          AND ${GMV_SUB_ORDER_SQL}`,
       { replacements: { vendorId }, type: QueryTypes.SELECT },
     );
-    // Same net-payout definition the admin settlement report uses, so the two agree.
-    const [payout] = await sequelize.query<{ pendingPaise: string | null }>(
-      `SELECT COALESCE(SUM(${sqlVendorNetPayoutPaise('cl')}), 0)::bigint AS "pendingPaise"
-       FROM commission_ledgers cl
-       WHERE cl."vendorId" = :vendorId AND cl.status = :pending`,
-      {
-        replacements: { vendorId, pending: COMMISSION_STATUS.PENDING },
-        type: QueryTypes.SELECT,
-      },
-    );
+    // What the vendor will be paid for pending commission: net less 194-O TDS and
+    // GST on commission — the payout run's own breakdown (pricing/vendorPayout).
+    const [pendingLedgers, settings] = await Promise.all([
+      CommissionLedger.findAll({
+        where: { vendorId, status: COMMISSION_STATUS.PENDING },
+        attributes: ['netPayoutAmountPaise', 'commissionAmountPaise'],
+      }),
+      settingsService.getPlatformSettings(),
+    ]);
+    const pendingPayout = vendorPayoutBreakdown(pendingLedgers, payoutRatesFromSettings(settings));
     return {
       todayOrders: Number(today?.orders ?? 0),
       pendingShipments: Number(pending?.shipments ?? 0),
       monthRevenue: fromPaise(Number(month?.revenuePaise ?? 0)),
-      pendingPayouts: fromPaise(Number(payout?.pendingPaise ?? 0)),
+      pendingPayouts: fromPaise(pendingPayout.payoutPaise),
       performanceScore: vendor.performanceScore == null ? null : Number(vendor.performanceScore),
     };
   }

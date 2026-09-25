@@ -305,4 +305,24 @@ describe('report money scope', () => {
     // ₹994 order awaiting its refund have nothing accounted against them.
     assert.equal(fromPaise(recon.customerPaymentsPaise), 1230);
   });
+
+  it('GST reports leave out a cancelled sub-order and their CGST + SGST add up to the tax', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const scoped = { ...range, vendorId, page: 1, limit: 100 };
+
+    const state = await getReportDefinition('state-tax-collection')!.query(scoped);
+    const ka = state.rows.find((row) => row.state === 'KA');
+    // Live sub-order only (₹180), not the cancelled one's ₹54. No stored breakdown on
+    // these rows, so the paise tax is split: ₹90 + ₹90.
+    assert.equal(ka?.taxTotal, 180);
+    assert.equal(ka?.cgst, 90);
+    assert.equal(ka?.sgst, 90);
+    assert.equal(ka?.igst, 0);
+
+    const hsn = await getReportDefinition('hsn-sales-summary')!.query(scoped);
+    const totalTax = hsn.rows.reduce((sum, row) => sum + toPaise(Number(row.tax)), 0);
+    const totalTaxable = hsn.rows.reduce((sum, row) => sum + toPaise(Number(row.taxable)), 0);
+    assert.equal(fromPaise(totalTax), 180);
+    assert.equal(fromPaise(totalTaxable), 1000);
+  });
 });

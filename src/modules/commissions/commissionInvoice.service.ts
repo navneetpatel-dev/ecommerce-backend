@@ -4,6 +4,7 @@ import { CommissionInvoice } from '@database/models/commissionInvoice.model';
 import { Vendor } from '@database/models/vendor.model';
 import { fromPaise } from '@modules/pricing/money';
 import { splitTaxAmount } from '@modules/pricing/pricing.engine';
+import { commissionGstPaise } from '@modules/pricing/vendorPayout';
 import {
   nextVendorDocumentNumber,
   VENDOR_DOCUMENT_KIND,
@@ -20,20 +21,6 @@ function sameState(a: string | null | undefined, b: string | null | undefined): 
   // Until platform state is configured, default to CGST/SGST (not forced IGST).
   if (!left && right) return true;
   return Boolean(left && right && left === right);
-}
-
-/** Compute GST on commission taxable (paise) using current platform settings. */
-export async function computeCommissionGstPaise(commissionTaxablePaise: number): Promise<{
-  gstRate: number;
-  gstPaise: number;
-}> {
-  const settings = await settingsService.getPlatformSettings();
-  // settings.commissionGstRatePercent always has a DB default (see settings.service.ts DEFAULTS);
-  // this fallback should never actually trigger.
-  const gstRate = Number(settings.commissionGstRatePercent ?? 18);
-  const gstPaise =
-    commissionTaxablePaise > 0 ? Math.round((commissionTaxablePaise * gstRate) / 100) : 0;
-  return { gstRate, gstPaise };
 }
 
 export type CreateCommissionInvoiceInput = {
@@ -78,7 +65,7 @@ export async function createCommissionInvoiceForPayout(
     transaction,
   });
   const intra = sameState(settings.platformState, vendor?.state);
-  const gstPaise = Math.round((input.commissionTaxablePaise * gstRate) / 100);
+  const gstPaise = commissionGstPaise(input.commissionTaxablePaise, gstRate);
   const { cgst: cgstPaise, sgst: sgstPaise, igst: igstPaise } = splitTaxAmount(gstPaise, intra);
 
   return CommissionInvoice.create(
