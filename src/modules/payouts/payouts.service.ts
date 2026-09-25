@@ -28,11 +28,9 @@ import { logger } from '@core/logger';
 import { Op } from 'sequelize';
 import { settingsService } from '@modules/settings/settings.service';
 import { fromPaise, roundMoney } from '@modules/pricing/money';
-import { frozenPaise, vendorNetPayoutPaise } from '@modules/pricing/frozenMoneySql';
-import {
-  computeCommissionGstPaise,
-  createCommissionInvoiceForPayout,
-} from '@modules/commissions/commissionInvoice.service';
+import { vendorNetPayoutPaise } from '@modules/pricing/frozenMoneySql';
+import { payoutRatesFromSettings, vendorPayoutBreakdown } from '@modules/pricing/vendorPayout';
+import { createCommissionInvoiceForPayout } from '@modules/commissions/commissionInvoice.service';
 import { logAudit } from '@modules/audit/audit.service';
 import type { MarkPayoutFailedRequest, MarkPayoutPaidRequest } from './payouts.dto';
 
@@ -170,7 +168,8 @@ export class PayoutsService {
 
   async process(actorId: string) {
     const settings = await settingsService.getPlatformSettings();
-    const tdsRate = Number(settings.tdsRatePercent ?? 0);
+    const payoutRates = payoutRatesFromSettings(settings);
+    const tdsRate = payoutRates.tdsRatePercent;
     const windowCutoff = payoutReturnWindowCutoff(Number(settings.defaultReturnWindow ?? 7));
     const subOrderInclude = payoutEligibleSubOrderInclude(windowCutoff);
     const ledgers = await CommissionLedger.findAll({
@@ -209,41 +208,29 @@ export class PayoutsService {
             throw new Error('No pending commission ledgers');
           }
 
-          let amountPaise = 0;
-          let commissionTaxablePaise = 0;
+          // Net less 194-O TDS per ledger, less GST on commission — the same
+          // breakdown the vendor dashboard shows as pending (pricing/vendorPayout).
+          const breakdown = vendorPayoutBreakdown(locked, payoutRates);
+          const amountPaise = breakdown.payoutPaise;
+          const commissionTaxablePaise = breakdown.commissionTaxablePaise;
           const tdsRows: Array<{
             orderId: string;
             subOrderId: string;
             taxableAmountPaise: number;
             tdsAmountPaise: number;
           }> = [];
-          for (const row of locked) {
-            const netPaise = vendorNetPayoutPaise(row);
-            const commissionPaise = frozenPaise(row.commissionAmountPaise);
-            commissionTaxablePaise += commissionPaise;
-            // Section 194-O: TDS on gross vendor payout (net before TDS).
-            const grossPayoutPaise = netPaise;
-            const tdsPaise =
-              tdsRate > 0 ? Math.round((grossPayoutPaise * tdsRate) / 100) : 0;
-            amountPaise += Math.max(0, netPaise - tdsPaise);
-
-            if (tdsPaise > 0) {
-              const subOrder = (row as any).SubOrder as SubOrder | undefined;
-              if (subOrder?.orderId) {
-                tdsRows.push({
-                  orderId: subOrder.orderId,
-                  subOrderId: row.subOrderId,
-                  taxableAmountPaise: grossPayoutPaise,
-                  tdsAmountPaise: tdsPaise,
-                });
-              }
+          locked.forEach((row, index) => {
+            const { netPaise, tdsPaise } = breakdown.rows[index]!;
+            const subOrder = (row as any).SubOrder as SubOrder | undefined;
+            if (tdsPaise > 0 && subOrder?.orderId) {
+              tdsRows.push({
+                orderId: subOrder.orderId,
+                subOrderId: row.subOrderId,
+                taxableAmountPaise: netPaise,
+                tdsAmountPaise: tdsPaise,
+              });
             }
-          }
-
-          // Deduct GST on marketplace commission from vendor settlement.
-          const { gstPaise: commissionGstPaise } =
-            await computeCommissionGstPaise(commissionTaxablePaise);
-          amountPaise = Math.max(0, amountPaise - commissionGstPaise);
+          });
 
           const amount = fromPaise(amountPaise);
           const payoutRow = await Payout.create(

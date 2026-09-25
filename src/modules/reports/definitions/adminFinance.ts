@@ -183,84 +183,23 @@ async function tds194oSummary(filters: ReportFilters) {
 
 async function hsnSalesSummary(filters: ReportFilters) {
   assertReportRange(filters);
-  const taxableExpr = sqlFrozenPaise('oi', 'taxableAmountPaise');
-  const taxExpr = sqlFrozenPaise('oi', 'taxAmountPaise');
-
-  const selectSql = `
-    SELECT
-      COALESCE(hsn."hsnCode", 'UNKNOWN') AS "hsnCode",
-      SUM(oi.quantity)::int AS qty,
-      SUM(${taxableExpr})::bigint AS "taxablePaise",
-      SUM(${taxExpr})::bigint AS "taxPaise"
-    FROM order_items oi
-    INNER JOIN sub_orders s ON s.id = oi."subOrderId" AND s."deletedAt" IS NULL
-    INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
-    INNER JOIN product_variants pv ON pv.id = oi."variantId" AND pv."deletedAt" IS NULL
-    INNER JOIN products p ON p.id = pv."productId" AND p."deletedAt" IS NULL
-    LEFT JOIN (
-      SELECT DISTINCT ON (tr."categoryId")
-        tr."categoryId",
-        tr."hsnCode"
-      FROM tax_rules tr
-      WHERE tr."deletedAt" IS NULL
-        AND tr."hsnCode" IS NOT NULL
-      ORDER BY tr."categoryId", tr."updatedAt" DESC NULLS LAST
-    ) hsn ON hsn."categoryId" = p."categoryId"
-    WHERE oi."deletedAt" IS NULL
-      AND o."createdAt" BETWEEN :from AND :to
-      AND ${REPORTABLE_ORDER_SQL}
-      AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
-      AND (:categoryId::uuid IS NULL OR p."categoryId" = :categoryId)
-    GROUP BY COALESCE(hsn."hsnCode", 'UNKNOWN')
-  `;
-
   return pagedSqlQuery({
-    selectSql,
+    selectSql: hsnSalesSelectSql(),
     orderBySql: `"hsnCode" ASC`,
     replacements: sqlReplacements(filters),
     filters,
-    mapRow: (row) => ({
-      hsnCode: String(row.hsnCode ?? 'UNKNOWN'),
-      qty: Number(row.qty ?? 0),
-      taxable: fromPaise(Number(row.taxablePaise ?? 0)),
-      tax: fromPaise(Number(row.taxPaise ?? 0)),
-    }),
+    mapRow: mapHsnSalesRow,
   });
 }
 
 async function stateTaxCollection(filters: ReportFilters) {
   assertReportRange(filters);
-  const taxTotalExpr = sqlFrozenPaise('s', 'taxAmountPaise');
-
-  const selectSql = `
-    SELECT
-      COALESCE(NULLIF(a.state, ''), 'UNKNOWN') AS state,
-      SUM(COALESCE((s."taxBreakdown"->>'cgst')::numeric, 0)) AS cgst,
-      SUM(COALESCE((s."taxBreakdown"->>'sgst')::numeric, 0)) AS sgst,
-      SUM(COALESCE((s."taxBreakdown"->>'igst')::numeric, 0)) AS igst,
-      SUM(${taxTotalExpr})::bigint AS "taxTotalPaise"
-    FROM sub_orders s
-    INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
-    LEFT JOIN addresses a ON a.id = o."shippingAddressId" AND a."deletedAt" IS NULL
-    WHERE s."deletedAt" IS NULL
-      AND o."createdAt" BETWEEN :from AND :to
-      AND ${REPORTABLE_ORDER_SQL}
-      AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
-    GROUP BY COALESCE(NULLIF(a.state, ''), 'UNKNOWN')
-  `;
-
   return pagedSqlQuery({
-    selectSql,
+    selectSql: stateTaxSelectSql(),
     orderBySql: `state ASC`,
     replacements: sqlReplacements(filters),
     filters,
-    mapRow: (row) => ({
-      state: String(row.state ?? 'UNKNOWN'),
-      cgst: Math.round(Number(row.cgst ?? 0) * 100) / 100,
-      sgst: Math.round(Number(row.sgst ?? 0) * 100) / 100,
-      igst: Math.round(Number(row.igst ?? 0) * 100) / 100,
-      taxTotal: fromPaise(Number(row.taxTotalPaise ?? 0)),
-    }),
+    mapRow: mapStateTaxRow,
   });
 }
 
@@ -342,7 +281,8 @@ function hsnSalesSelectSql(): string {
     ) hsn ON hsn."categoryId" = p."categoryId"
     WHERE oi."deletedAt" IS NULL
       AND o."createdAt" BETWEEN :from AND :to
-      AND ${REPORTABLE_ORDER_SQL}
+      -- A cancelled sub-order's items were refunded: not sales, same rule as GMV.
+      AND ${GMV_SUB_ORDER_SQL}
       AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
       AND (:categoryId::uuid IS NULL OR p."categoryId" = :categoryId)
     GROUP BY COALESCE(hsn."hsnCode", 'UNKNOWN')
@@ -376,32 +316,72 @@ async function hsnSalesExport(
   return { rows: page.rows, nextCursor: page.nextCursor };
 }
 
+/**
+ * GST by customer state. The stored per-sub-order breakdown (rupees, from checkout)
+ * is used while it still adds up to the sub-order's tax; once a return has reduced
+ * the tax it no longer does, and the paise tax is split the way splitTaxAmount
+ * splits it (IGST when the breakdown had IGST, else CGST = floor(half), SGST = rest).
+ * Either way CGST + SGST + IGST equals the tax total in the same row.
+ */
 function stateTaxSelectSql(): string {
-  const taxTotalExpr = sqlFrozenPaise('s', 'taxAmountPaise');
+  const taxExpr = sqlFrozenPaise('s', 'taxAmountPaise');
+  const stored = (key: string) =>
+    `ROUND(COALESCE((s."taxBreakdown"->>'${key}')::numeric, 0) * 100)::bigint`;
   return `
+    WITH sub_tax AS (
+      SELECT
+        COALESCE(NULLIF(a.state, ''), 'UNKNOWN') AS state,
+        ${taxExpr} AS tax,
+        ${stored('cgst')} AS "cgst0",
+        ${stored('sgst')} AS "sgst0",
+        ${stored('igst')} AS "igst0"
+      FROM sub_orders s
+      INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
+      LEFT JOIN addresses a ON a.id = o."shippingAddressId" AND a."deletedAt" IS NULL
+      WHERE s."deletedAt" IS NULL
+        AND o."createdAt" BETWEEN :from AND :to
+        -- A cancelled sub-order's tax was refunded, same rule as GMV and settlement.
+        AND ${GMV_SUB_ORDER_SQL}
+        AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
+    ),
+    split AS (
+      SELECT
+        state,
+        tax,
+        CASE
+          WHEN "cgst0" + "sgst0" + "igst0" = tax THEN "cgst0"
+          WHEN "igst0" > 0 THEN 0
+          ELSE tax / 2
+        END AS cgst,
+        CASE
+          WHEN "cgst0" + "sgst0" + "igst0" = tax THEN "sgst0"
+          WHEN "igst0" > 0 THEN 0
+          ELSE tax - tax / 2
+        END AS sgst,
+        CASE
+          WHEN "cgst0" + "sgst0" + "igst0" = tax THEN "igst0"
+          WHEN "igst0" > 0 THEN tax
+          ELSE 0
+        END AS igst
+      FROM sub_tax
+    )
     SELECT
-      COALESCE(NULLIF(a.state, ''), 'UNKNOWN') AS state,
-      SUM(COALESCE((s."taxBreakdown"->>'cgst')::numeric, 0)) AS cgst,
-      SUM(COALESCE((s."taxBreakdown"->>'sgst')::numeric, 0)) AS sgst,
-      SUM(COALESCE((s."taxBreakdown"->>'igst')::numeric, 0)) AS igst,
-      SUM(${taxTotalExpr})::bigint AS "taxTotalPaise"
-    FROM sub_orders s
-    INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
-    LEFT JOIN addresses a ON a.id = o."shippingAddressId" AND a."deletedAt" IS NULL
-    WHERE s."deletedAt" IS NULL
-      AND o."createdAt" BETWEEN :from AND :to
-      AND ${REPORTABLE_ORDER_SQL}
-      AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
-    GROUP BY COALESCE(NULLIF(a.state, ''), 'UNKNOWN')
+      state,
+      SUM(cgst)::bigint AS "cgstPaise",
+      SUM(sgst)::bigint AS "sgstPaise",
+      SUM(igst)::bigint AS "igstPaise",
+      SUM(tax)::bigint AS "taxTotalPaise"
+    FROM split
+    GROUP BY state
   `;
 }
 
 function mapStateTaxRow(row: Record<string, unknown>) {
   return {
     state: String(row.state ?? 'UNKNOWN'),
-    cgst: Math.round(Number(row.cgst ?? 0) * 100) / 100,
-    sgst: Math.round(Number(row.sgst ?? 0) * 100) / 100,
-    igst: Math.round(Number(row.igst ?? 0) * 100) / 100,
+    cgst: fromPaise(Number(row.cgstPaise ?? 0)),
+    sgst: fromPaise(Number(row.sgstPaise ?? 0)),
+    igst: fromPaise(Number(row.igstPaise ?? 0)),
     taxTotal: fromPaise(Number(row.taxTotalPaise ?? 0)),
   };
 }
