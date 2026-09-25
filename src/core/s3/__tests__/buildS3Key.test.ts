@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { buildS3EntityPrefix, buildS3Key, extensionFromFilename } from '@core/s3/buildS3Key';
+import { buildS3EntityPrefix, buildS3Key, extensionFromFilename, parseS3Key } from '@core/s3/buildS3Key';
 import { S3_ENTITY_TYPES, S3_PURPOSES } from '@core/s3/constants';
 
 describe('buildS3Key', () => {
@@ -40,6 +40,35 @@ describe('buildS3Key entity id guard', () => {
         entityId,
       );
       assert.throws(() => buildS3EntityPrefix(S3_ENTITY_TYPES.VENDORS, entityId), /entityId may only contain/);
+    }
+  });
+});
+
+describe('parseS3Key', () => {
+  const productId = '11111111-1111-4111-8111-111111111111';
+
+  it('reads back the entity and purpose of a key buildS3Key issued', () => {
+    const key = buildS3Key(S3_ENTITY_TYPES.PRODUCTS, productId, S3_PURPOSES.IMAGES, 'a.png');
+    assert.deepEqual(parseS3Key(key), {
+      entityType: S3_ENTITY_TYPES.PRODUCTS,
+      entityId: productId,
+      purpose: S3_PURPOSES.IMAGES,
+    });
+  });
+
+  it('rejects keys it did not issue', () => {
+    const key = buildS3Key(S3_ENTITY_TYPES.PRODUCTS, productId, S3_PURPOSES.IMAGES, 'a.png');
+    const [env, , , , file] = key.split('/');
+    for (const bad of [
+      `other-env/products/${productId}/images/${file}`,
+      `${env}/products/${productId}/kyc/${file}`,
+      `${env}/unknown/${productId}/images/${file}`,
+      `${env}/products/../images/${file}`,
+      `${env}/products/${productId}/images/../../x.png`,
+      `${env}/products/${productId}/images`,
+      '',
+    ]) {
+      assert.equal(parseS3Key(bad), null, bad);
     }
   });
 });

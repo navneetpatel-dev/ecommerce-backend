@@ -89,3 +89,6 @@ export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 export const MAX_VIDEO_UPLOAD_BYTES = 50 * 1024 * 1024;
 export const MAX_BULK_UPLOAD_FILES = 20;
 export const S3_ORPHAN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/** How long a draft-id claim (upload_drafts) is kept — well past the orphan window. */
+export const UPLOAD_DRAFT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;

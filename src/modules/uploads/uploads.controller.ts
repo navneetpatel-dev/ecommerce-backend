@@ -6,6 +6,7 @@ import type {
   PresignSingleRequest,
   UploadBulkRequest,
   UploadSingleRequest,
+  VerifyUploadRequest,
 } from './uploads.dto';
 import { uploadsService } from './uploads.service';
 
@@ -42,4 +43,10 @@ export const uploadBulk = asyncHandler(async (req: Request, res: Response) => {
   const dto = req.body as UploadBulkRequest;
   const result = await uploadsService.uploadBulk(uploadActor(req), dto);
   res.status(201).json(ok(result));
+});
+
+export const verifyUpload = asyncHandler(async (req: Request, res: Response) => {
+  const dto = req.body as VerifyUploadRequest;
+  const result = await uploadsService.verifyUpload(uploadActor(req), dto);
+  res.status(200).json(ok(result));
 });

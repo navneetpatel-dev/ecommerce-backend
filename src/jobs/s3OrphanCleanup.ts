@@ -1,7 +1,8 @@
 import { env } from '@config/env';
 import { deleteObjects, extractS3KeyFromUrl, isS3Configured, listObjectsByPrefix } from '@config/s3';
 import { logger } from '@core/logger';
-import { S3_ORPHAN_MAX_AGE_MS } from '@core/s3';
+import { S3_ORPHAN_MAX_AGE_MS, UPLOAD_DRAFT_RETENTION_MS } from '@core/s3';
+import { sequelize } from '@config/db';
 import { Product } from '@database/models/product.model';
 import { ProductImage } from '@database/models/productImage.model';
 import { Vendor } from '@database/models/vendor.model';
@@ -99,6 +100,20 @@ async function loadReferencedKeys(): Promise<Set<string>> {
 }
 
 /**
+ * Forget draft-id claims (upload_drafts) once they are well past the orphan window:
+ * by then the draft's files are either referenced by a real record or deleted.
+ */
+async function pruneUploadDraftClaims(dryRun: boolean): Promise<number> {
+  const cutoff = new Date(Date.now() - UPLOAD_DRAFT_RETENTION_MS);
+  if (dryRun) return 0;
+  const [, affected] = await sequelize.query(
+    `DELETE FROM upload_drafts WHERE "createdAt" < :cutoff`,
+    { replacements: { cutoff } },
+  );
+  return Number((affected as { rowCount?: number } | undefined)?.rowCount ?? 0);
+}
+
+/**
  * Deletes S3 objects older than 24h under the current env prefix that are not
  * referenced by any media URL / fileKey in the database (abandoned Phase-1 uploads).
  */
@@ -106,6 +121,8 @@ export async function runS3OrphanCleanup(
   options: S3OrphanCleanupOptions = {},
 ): Promise<{ scanned: number; deleted: number; dryRun: boolean }> {
   const dryRun = options.dryRun ?? env.S3_ORPHAN_CLEANUP_DRY_RUN;
+  const prunedDrafts = await pruneUploadDraftClaims(dryRun);
+  if (prunedDrafts > 0) logger.info('Upload draft claims pruned', { prunedDrafts });
 
   if (!isS3Configured()) {
     logger.info('S3 orphan cleanup skipped — S3 not configured');

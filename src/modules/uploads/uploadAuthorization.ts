@@ -1,6 +1,7 @@
+import { AppError } from '@core/errors';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ROLES } from '@core/constants/statuses';
-import { ERROR_MESSAGES } from '@core/constants/errors';
+import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { PERMISSIONS, type PermissionKey } from '@core/permissions/permissionKeys';
 import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { sequelize } from '@config/db';
@@ -127,6 +128,54 @@ async function bugReportExists(bugReportId: string): Promise<boolean> {
   return Boolean(row);
 }
 
+/** New draft ids one user may start uploading under in 24 hours. */
+export const MAX_NEW_UPLOAD_DRAFTS_PER_DAY = 50;
+
+async function draftOwner(entityType: S3EntityType, entityId: string): Promise<string | null> {
+  const [row] = await sequelize.query<{ userId: string }>(
+    `SELECT "userId" FROM upload_drafts WHERE "entityType" = :entityType AND "entityId" = :entityId`,
+    { replacements: { entityType, entityId }, type: QueryTypes.SELECT },
+  );
+  return row?.userId ?? null;
+}
+
+/**
+ * A draft id (a record not created yet) belongs to the first user who uploads
+ * under it; anyone else is refused. Starting a draft counts towards a daily cap,
+ * which bounds how much a single account can park in S3 before orphan cleanup.
+ */
+async function claimUploadDraft(
+  entityType: S3EntityType,
+  entityId: string,
+  userId: string,
+): Promise<void> {
+  const owner = await draftOwner(entityType, entityId);
+  if (owner) {
+    if (owner !== userId) throw new ForbiddenError(ERROR_MESSAGES.UPLOAD_FORBIDDEN);
+    return;
+  }
+
+  const [recent] = await sequelize.query<{ count: string }>(
+    `SELECT COUNT(*)::int AS count FROM upload_drafts
+     WHERE "userId" = :userId AND "createdAt" > NOW() - INTERVAL '1 day'`,
+    { replacements: { userId }, type: QueryTypes.SELECT },
+  );
+  if (Number(recent?.count ?? 0) >= MAX_NEW_UPLOAD_DRAFTS_PER_DAY) {
+    throw new AppError(ERROR_MESSAGES.UPLOAD_DRAFT_LIMIT, 429, ERROR_CODES.UPLOAD_DRAFT_LIMIT);
+  }
+
+  await sequelize.query(
+    `INSERT INTO upload_drafts ("entityType", "entityId", "userId")
+     VALUES (:entityType, :entityId, :userId)
+     ON CONFLICT ("entityType", "entityId") DO NOTHING`,
+    { replacements: { entityType, entityId, userId } },
+  );
+  // Two users racing for one id: the unique index lets exactly one insert win.
+  if ((await draftOwner(entityType, entityId)) !== userId) {
+    throw new ForbiddenError(ERROR_MESSAGES.UPLOAD_FORBIDDEN);
+  }
+}
+
 /** KYC objects are private — no public CDN access. */
 export function isPrivateUploadPurpose(purpose: S3Purpose): boolean {
   return purpose === S3_PURPOSES.KYC;
@@ -134,7 +183,8 @@ export function isPrivateUploadPurpose(purpose: S3Purpose): boolean {
 
 /**
  * Ensures the authenticated user may Phase-1 upload under the given entity prefix.
- * Draft entityIds (no DB row yet) are allowed when the role matches the upload intent.
+ * Draft entityIds (no DB row yet) are allowed when the role matches the upload intent,
+ * and belong to the first user who uploads under them (see claimUploadDraft).
  */
 export async function assertUploadAllowed(
   actor: UploadActor,
@@ -190,6 +240,7 @@ export async function assertUploadAllowed(
       const exists = await productExists(entityId);
       if (!exists) {
         // Draft product id before create — vendor Phase-1 gallery uploads.
+        await claimUploadDraft(entityType, entityId, actor.id);
         return;
       }
 
@@ -233,6 +284,7 @@ export async function assertUploadAllowed(
       const exists = await returnExists(entityId);
       if (!exists) {
         // Draft return id before create — customer Phase-1 photo uploads.
+        await claimUploadDraft(entityType, entityId, actor.id);
         return;
       }
 
@@ -264,6 +316,7 @@ export async function assertUploadAllowed(
       const exists = await ticketExists(entityId);
       if (!exists) {
         // Draft ticket id before create — authenticated Phase-1 attachment uploads.
+        await claimUploadDraft(entityType, entityId, actor.id);
         return;
       }
 
@@ -283,6 +336,7 @@ export async function assertUploadAllowed(
       const exists = await bugReportExists(entityId);
       if (!exists) {
         // Draft bug-report id before create — authenticated Phase-1 attachment uploads.
+        await claimUploadDraft(entityType, entityId, actor.id);
         return;
       }
 

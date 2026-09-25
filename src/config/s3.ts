@@ -127,6 +127,32 @@ export async function signedPutObjectUrl(
   );
 }
 
+/**
+ * An uploaded object's stored Content-Type and its first `byteCount` bytes (one
+ * ranged GET) — enough to check the file's signature without downloading it.
+ */
+export async function readObjectHead(
+  key: string,
+  byteCount: number,
+): Promise<{ contentType: string; bytes: Buffer } | null> {
+  if (!s3Client) {
+    throw new AppError(ERROR_MESSAGES.S3_NOT_CONFIGURED, 503, ERROR_CODES.S3_NOT_CONFIGURED);
+  }
+  try {
+    const result = await s3Client.send(
+      new GetObjectCommand({ Bucket: S3_BUCKET, Key: key, Range: `bytes=0-${byteCount - 1}` }),
+    );
+    const bytes = result.Body
+      ? Buffer.from(await result.Body.transformToByteArray())
+      : Buffer.alloc(0);
+    return { contentType: result.ContentType ?? '', bytes };
+  } catch (error) {
+    const name = error && typeof error === 'object' && 'name' in error ? String(error.name) : '';
+    if (name === 'NoSuchKey' || name === 'NotFound') return null;
+    rethrowS3Error(error);
+  }
+}
+
 /** Server-side copy used to rebase draft-UUID uploads onto the final entity id. */
 export async function copyObject(sourceKey: string, destKey: string): Promise<void> {
   if (!s3Client) return;
