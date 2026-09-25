@@ -9,7 +9,7 @@ import { Cart } from '@database/models/cart.model';
 import { sequelize } from '@database/models';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { resolveItemAvailability, isProductCustomerVisible } from '@core/catalog/customerVisibility';
-import { productDiscountPercent, productShowMrp } from '@modules/pricing/displayMoney';
+import { productDiscountPercent, productShowMrp, wishlistPriceDrop } from '@modules/pricing/displayMoney';
 import { roundMoney } from '@modules/pricing/money';
 import { MAX_CART_LINE_QUANTITY } from '@modules/cart/cart.constants';
 
@@ -80,10 +80,12 @@ export class WishlistService {
       items: items.map((item) => {
         const plain = item.get({ plain: true }) as any;
         const product = mapWishlistProduct(plain.product);
+        const priceAtAdd = roundMoney(plain.priceAtAdd);
         return {
           id: plain.id,
           productId: plain.productId,
-          priceAtAdd: Number(plain.priceAtAdd ?? 0),
+          priceAtAdd,
+          priceDropAmount: product ? wishlistPriceDrop(priceAtAdd, product.basePrice) : null,
           isAvailable: product?.isAvailable ?? false,
           unavailableReason: product?.unavailableReason ?? null,
           product,

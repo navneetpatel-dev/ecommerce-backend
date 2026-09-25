@@ -241,3 +241,12 @@ export function cashDepositDiscrepancy(
     hasDiscrepancy: Math.abs(gapPaise) > CASH_DEPOSIT_TOLERANCE_PAISE,
   };
 }
+
+/**
+ * How much a wishlisted product's list price has fallen since it was saved, or
+ * null when it has not fallen. Drives the wishlist "Price dropped" badge.
+ */
+export function wishlistPriceDrop(priceAtAdd: unknown, currentPrice: unknown): number | null {
+  const dropPaise = toPaise(coerceRupees(priceAtAdd)) - toPaise(coerceRupees(currentPrice));
+  return dropPaise > 0 ? fromPaise(dropPaise) : null;
+}

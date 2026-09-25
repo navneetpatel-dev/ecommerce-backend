@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import {
   cashDepositDiscrepancy,
   checkoutAmountDue,
+  wishlistPriceDrop,
   inventoryValuation,
   invoiceLineTaxBreakdown,
   lineSubtotal,
@@ -138,5 +139,17 @@ describe('cashDepositDiscrepancy', () => {
     assert.equal(cashDepositDiscrepancy(0.3, 0.1 + 0.2).hasDiscrepancy, false);
     assert.equal(cashDepositDiscrepancy(100.01, 100).hasDiscrepancy, false);
     assert.equal(cashDepositDiscrepancy(100.02, 100).hasDiscrepancy, true);
+  });
+});
+
+describe('wishlistPriceDrop', () => {
+  it('returns the fall since the item was saved', () => {
+    assert.equal(wishlistPriceDrop('1299.00', '999.50'), 299.5);
+    assert.equal(wishlistPriceDrop(0.3, 0.1), 0.2);
+  });
+
+  it('returns null when the price held or rose', () => {
+    assert.equal(wishlistPriceDrop(999, 999), null);
+    assert.equal(wishlistPriceDrop(999, 1099), null);
   });
 });
