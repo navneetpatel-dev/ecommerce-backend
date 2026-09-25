@@ -30,3 +30,16 @@ describe('buildS3Key', () => {
     assert.equal(extensionFromFilename('noext'), 'bin');
   });
 });
+
+describe('buildS3Key entity id guard', () => {
+  it('rejects an entity id that could escape its own prefix', () => {
+    for (const entityId of ['a/../b', 'vendor-1/kyc', '..', 'id with space', 'a.b']) {
+      assert.throws(
+        () => buildS3Key(S3_ENTITY_TYPES.PRODUCTS, entityId, S3_PURPOSES.IMAGES, 'x.png'),
+        /entityId may only contain/,
+        entityId,
+      );
+      assert.throws(() => buildS3EntityPrefix(S3_ENTITY_TYPES.VENDORS, entityId), /entityId may only contain/);
+    }
+  });
+});

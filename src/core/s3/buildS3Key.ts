@@ -20,10 +20,7 @@ export function buildS3Key(
   filename: string,
 ): string {
   assertValidEntityPurpose(entityType, purpose);
-  const id = entityId.trim();
-  if (!id) {
-    throw new Error('entityId is required for buildS3Key');
-  }
+  const id = safeEntityId(entityId);
 
   const ext = extensionFromFilename(filename);
   return `${env.NODE_ENV}/${entityType}/${id}/${purpose}/${randomUUID()}.${ext}`;
@@ -31,11 +28,23 @@ export function buildS3Key(
 
 /** Prefix covering all objects for a parent entity (cascade delete). */
 export function buildS3EntityPrefix(entityType: S3EntityType, entityId: string): string {
+  const id = safeEntityId(entityId);
+  return `${env.NODE_ENV}/${entityType}/${id}/`;
+}
+
+/**
+ * The entity id becomes a key segment, so it must not be able to leave its own
+ * prefix: `abc/../<other-id>` or `abc/purpose/x` would write under another entity.
+ */
+function safeEntityId(entityId: string): string {
   const id = entityId.trim();
   if (!id) {
-    throw new Error('entityId is required for buildS3EntityPrefix');
+    throw new Error('entityId is required to build an S3 key');
   }
-  return `${env.NODE_ENV}/${entityType}/${id}/`;
+  if (!/^[A-Za-z0-9_-]+$/.test(id)) {
+    throw new Error('entityId may only contain letters, digits, "-" and "_"');
+  }
+  return id;
 }
 
 export function assertValidEntityPurpose(entityType: S3EntityType, purpose: S3Purpose): void {

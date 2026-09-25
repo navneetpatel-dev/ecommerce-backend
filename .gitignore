@@ -1,9 +1,9 @@
 node_modules/
 dist/
 logs/
-# Local disk dump at repo root only — do not ignore src/modules/uploads
+# Local disk dumps at repo root only — do not ignore src/modules/uploads (or any source folder)
 /uploads/
-storage/
+/storage/
 .env
 *.log
 .DS_Store

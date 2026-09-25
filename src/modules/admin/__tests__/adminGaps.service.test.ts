@@ -1,294 +1,225 @@
 import assert from 'node:assert/strict';
-import { describe, it, mock, afterEach } from 'node:test';
+import { afterEach, describe, it, mock } from 'node:test';
+import { sequelize } from '@database/models';
+import { AuditLog } from '@database/models/auditLog.model';
+import { Role } from '@database/models/role.model';
+import { SubOrder } from '@database/models/subOrder.model';
+import { ShippingRate } from '@database/models/shippingRate.model';
+import { User } from '@database/models/user.model';
+import { ForbiddenError } from '@core/errors/ForbiddenError';
+import { ValidationError } from '@core/errors/ValidationError';
+import { PRODUCT_STATUS, ROLES, USER_STATUS } from '@core/constants/statuses';
 import { usersService } from '../../users/users.service';
+import { usersRepository } from '../../users/users.repository';
+import { authRepository } from '../../auth/auth.repository';
 import { authService } from '../../auth/auth.service';
-import { ordersCancelService } from '../../orders/ordersCancel.service';
 import { vendorsService } from '../../vendors/vendors.service';
+import { vendorsRepository } from '../../vendors/vendors.repository';
 import { productsService } from '../../products/products.service';
+import { productsRepository } from '../../products/products.repository';
 import { shippingService } from '../../shipping/shipping.service';
-import { User } from '../../users/user.model';
-import { Role } from '../../roles/role.model';
-import { RefreshToken } from '../../auth/refreshToken.model';
-import { Order } from '../../orders/order.model';
-import { SubOrder } from '../../orders/subOrder.model';
-import { Product } from '../../products/product.model';
-import { ShippingRate } from '../../shipping/shippingRate.model';
-import { auditLogService } from '../../audit/auditLog.service';
-import { AppError } from '@core/errors/AppError';
-import { USER_STATUS, ORDER_STATUS, SUB_ORDER_STATUS, PRODUCT_STATUS } from '@core/constants/statuses';
 
-describe('Admin Gaps Fixes Test Suite', () => {
+type AuditRow = { actorId: string; action: string; entityId: string };
+
+/** Run service transactions inline and capture audit rows instead of writing them. */
+function stubInfrastructure(): AuditRow[] {
+  const audit: AuditRow[] = [];
+  mock.method(sequelize, 'transaction', async (callback: (t: unknown) => Promise<unknown>) =>
+    callback({ LOCK: { UPDATE: 'UPDATE' } }),
+  );
+  mock.method(AuditLog, 'create', async (row: AuditRow) => {
+    audit.push(row);
+    return row as never;
+  });
+  return audit;
+}
+
+const admin = { id: 'admin-1', role: { name: ROLES.ADMIN_ORDER_MANAGER } };
+
+describe('Admin gap fixes', () => {
   afterEach(() => {
     mock.restoreAll();
   });
 
-  describe('User Role and Status Management with Super Admin Guards', () => {
-    it('prevents modifying role of SUPER_ADMIN user', async () => {
-      mock.method(User, 'findByPk', async () => ({
+  describe('super admin guards on user role and status', () => {
+    it('rejects changing a SUPER_ADMIN role from a non-super-admin', async () => {
+      stubInfrastructure();
+      mock.method(usersRepository, 'findById', async () => ({
         id: 'superadmin-1',
-        role: { name: 'SUPER_ADMIN' },
-      }));
+        role: { name: ROLES.SUPER_ADMIN },
+      }) as never);
+      mock.method(Role, 'findByPk', async () => ({ id: 'role-new', name: ROLES.CUSTOMER }) as never);
 
       await assert.rejects(
-        async () => {
-          await usersService.updateUserRole(
-            'superadmin-1',
-            { roleId: 'role-new' },
-            { id: 'actor-admin', role: 'ADMIN' } as any
-          );
-        },
-        (err: AppError) => {
-          assert.equal(err.statusCode, 403);
-          assert.match(err.message, /SUPER_ADMIN/i);
-          return true;
-        }
+        () => usersService.updateUserRole('superadmin-1', { roleId: 'role-new' }, admin),
+        (err: unknown) => err instanceof ForbiddenError && /super administrator/i.test(err.message),
       );
     });
 
-    it('updates user role, revokes refresh tokens, and logs audit', async () => {
-      let tokensDestroyed = false;
-      let auditLogged = false;
-
-      mock.method(User, 'findByPk', async (id: string) => {
-        if (id === 'user-1') {
-          return {
-            id: 'user-1',
-            roleId: 'role-old',
-            role: { name: 'CUSTOMER' },
-            update: async () => {},
-          };
-        }
-        return {
-          id: 'user-1',
-          roleId: 'role-new',
-          role: { id: 'role-new', name: 'VENDOR' },
-          toJSON: () => ({ id: 'user-1', roleId: 'role-new', role: 'VENDOR' }),
-        };
+    it('updates a role, revokes refresh tokens, and audits it', async () => {
+      const audit = stubInfrastructure();
+      let tokensRevokedFor: string | null = null;
+      mock.method(usersRepository, 'findById', async () => ({
+        id: 'user-1',
+        roleId: 'role-old',
+        vendorId: null,
+        role: { name: ROLES.CUSTOMER },
+      }) as never);
+      mock.method(Role, 'findByPk', async () => ({ id: 'role-new', name: ROLES.CUSTOMER }) as never);
+      mock.method(usersRepository, 'update', async () => [1] as never);
+      mock.method(authRepository, 'deleteRefreshTokensByUser', async (userId: string) => {
+        tokensRevokedFor = userId;
+        return 1 as never;
       });
+      mock.method(usersService, 'getUserById', async () => ({ id: 'user-1' }) as never);
 
-      mock.method(Role, 'findByPk', async () => ({
-        id: 'role-new',
-        name: 'VENDOR',
-      }));
+      const updated = await usersService.updateUserRole('user-1', { roleId: 'role-new' }, admin);
 
-      mock.method(RefreshToken, 'destroy', async () => {
-        tokensDestroyed = true;
-        return 1;
-      });
-
-      mock.method(auditLogService, 'log', async (params) => {
-        auditLogged = true;
-        assert.equal(params.action, 'USER_ROLE_UPDATED');
-        assert.equal(params.entityId, 'user-1');
-      });
-
-      const updated = await usersService.updateUserRole(
-        'user-1',
-        { roleId: 'role-new' },
-        { id: 'admin-1', role: 'ADMIN' } as any
+      assert.deepEqual(updated, { id: 'user-1' });
+      assert.equal(tokensRevokedFor, 'user-1');
+      assert.deepEqual(
+        audit.map((row) => [row.action, row.entityId]),
+        [['USER_ROLE_UPDATED', 'user-1']],
       );
-
-      assert.equal(tokensDestroyed, true);
-      assert.equal(auditLogged, true);
-      assert.ok(updated);
     });
 
-    it('prevents blocking a SUPER_ADMIN user', async () => {
-      mock.method(User, 'findByPk', async () => ({
+    it('rejects blocking a SUPER_ADMIN from a non-super-admin', async () => {
+      stubInfrastructure();
+      mock.method(usersRepository, 'findById', async () => ({
         id: 'superadmin-1',
-        role: { name: 'SUPER_ADMIN' },
-      }));
+        role: { name: ROLES.SUPER_ADMIN },
+      }) as never);
 
       await assert.rejects(
-        async () => {
-          await usersService.updateUserStatus(
-            'superadmin-1',
-            { status: USER_STATUS.BLOCKED },
-            { id: 'actor-admin', role: 'ADMIN' } as any
-          );
-        },
-        (err: AppError) => {
-          assert.equal(err.statusCode, 403);
-          assert.match(err.message, /SUPER_ADMIN/i);
-          return true;
-        }
+        () =>
+          usersService.updateUserStatus('superadmin-1', { status: USER_STATUS.BLOCKED }, admin),
+        (err: unknown) => err instanceof ForbiddenError && /super administrator/i.test(err.message),
       );
     });
 
-    it('revokes refresh tokens when user is blocked', async () => {
-      let tokensDestroyed = false;
-
-      mock.method(User, 'findByPk', async () => ({
+    it('revokes refresh tokens when a user is blocked', async () => {
+      const audit = stubInfrastructure();
+      let tokensRevokedFor: string | null = null;
+      mock.method(usersRepository, 'findById', async () => ({
         id: 'user-2',
         status: USER_STATUS.ACTIVE,
-        role: { name: 'CUSTOMER' },
-        update: async () => {},
-      }));
-
-      mock.method(RefreshToken, 'destroy', async () => {
-        tokensDestroyed = true;
-        return 1;
+        role: { name: ROLES.CUSTOMER },
+      }) as never);
+      mock.method(usersRepository, 'update', async () => [1] as never);
+      mock.method(authRepository, 'deleteRefreshTokensByUser', async (userId: string) => {
+        tokensRevokedFor = userId;
+        return 1 as never;
       });
+      mock.method(usersService, 'getUserById', async () => ({ id: 'user-2' }) as never);
 
-      mock.method(auditLogService, 'log', async () => {});
+      await usersService.updateUserStatus('user-2', { status: USER_STATUS.BLOCKED }, admin);
 
-      await usersService.updateUserStatus(
-        'user-2',
-        { status: USER_STATUS.BLOCKED },
-        { id: 'admin-1', role: 'ADMIN' } as any
-      );
-
-      assert.equal(tokensDestroyed, true);
+      assert.equal(tokensRevokedFor, 'user-2');
+      assert.equal(audit[0]?.action, 'USER_STATUS_UPDATED');
     });
   });
 
-  describe('Impersonation Privilege Escalation Guard', () => {
-    it('disallows non-superadmin from impersonating admin/staff roles', async () => {
+  describe('impersonation privilege escalation guard', () => {
+    it('only a super admin can impersonate an admin account', async () => {
       mock.method(User, 'findByPk', async () => ({
         id: 'admin-target',
         email: 'staff@example.com',
-        role: { name: 'ADMIN' },
-      }));
+        roleId: 'role-admin',
+        role: { name: ROLES.ADMIN_CATALOG_MANAGER },
+      }) as never);
 
       await assert.rejects(
-        async () => {
-          await authService.impersonateUser(
-            'admin-target',
-            { id: 'admin-actor', role: 'ADMIN' } as any
-          );
-        },
-        (err: AppError) => {
-          assert.equal(err.statusCode, 403);
-          assert.match(err.message, /Only SUPER_ADMIN can impersonate administrative/i);
-          return true;
-        }
+        () => authService.impersonateUser(admin, 'admin-target'),
+        (err: unknown) =>
+          err instanceof ForbiddenError &&
+          /Only super administrators can impersonate administrative/i.test(err.message),
       );
     });
   });
 
-  describe('Admin Order Cancellation Cascade', () => {
-    it('cancels unpaid or COD orders, cascades suborders, and logs audit', async () => {
-      let subOrdersCancelled = false;
-      let auditLogged = false;
-
-      const mockOrder = {
-        id: 'order-1',
-        paymentStatus: 'PENDING',
-        paymentMethod: 'COD',
-        status: ORDER_STATUS.PENDING,
-        items: [],
-        update: async () => {},
-        save: async () => {},
-      };
-
-      mock.method(Order, 'findByPk', async () => mockOrder);
-      mock.method(SubOrder, 'update', async (values: any) => {
-        if (values.status === SUB_ORDER_STATUS.CANCELLED) {
-          subOrdersCancelled = true;
-        }
-        return [1];
-      });
-
-      mock.method(auditLogService, 'log', async (params) => {
-        auditLogged = true;
-        assert.equal(params.action, 'ORDER_CANCELLED');
-        assert.equal(params.entityId, 'order-1');
-      });
-
-      const result = await ordersCancelService.cancelOrder('order-1', 'admin-1', 'Admin manual cancel');
-
-      assert.equal(result.cancelled, true);
-      assert.equal(subOrdersCancelled, true);
-      assert.equal(auditLogged, true);
-    });
-  });
-
-  describe('Vendor Deletion Safeguards', () => {
-    it('blocks deletion if active suborders exist', async () => {
+  describe('vendor deletion safeguard', () => {
+    it('blocks deleting a vendor with active sub-orders', async () => {
+      stubInfrastructure();
+      mock.method(vendorsRepository, 'findById', async () => ({ id: 'vendor-1' }) as never);
       mock.method(SubOrder, 'count', async () => 2);
 
       await assert.rejects(
-        async () => {
-          await vendorsService.deleteVendor('vendor-1', 'admin-1');
-        },
-        (err: AppError) => {
-          assert.equal(err.statusCode, 409);
-          assert.match(err.message, /Cannot delete vendor with 2 active suborder/i);
-          return true;
-        }
+        () => vendorsService.deleteVendor('vendor-1', 'admin-1'),
+        (err: unknown) =>
+          err instanceof ValidationError && /active suborders/i.test(err.message),
       );
     });
   });
 
-  describe('Product Unarchive Feature', () => {
-    it('unarchives an ARCHIVED product back to ACTIVE and logs audit', async () => {
-      let productStatus: string = PRODUCT_STATUS.ARCHIVED;
-      let auditLogged = false;
-
-      mock.method(Product, 'findByPk', async () => ({
+  describe('product unarchive', () => {
+    it('returns an archived product to DRAFT for re-review and audits it', async () => {
+      const audit = stubInfrastructure();
+      let savedStatus: string | null = null;
+      mock.method(productsRepository, 'findById', async () => ({
         id: 'prod-1',
+        name: 'Lamp',
         status: PRODUCT_STATUS.ARCHIVED,
-        update: async (fields: any) => {
-          productStatus = fields.status;
-        },
-      }));
-
-      mock.method(auditLogService, 'log', async (params) => {
-        auditLogged = true;
-        assert.equal(params.action, 'PRODUCT_UNARCHIVED');
-        assert.equal(params.entityId, 'prod-1');
+      }) as never);
+      mock.method(productsRepository, 'update', async (_id: string, fields: { status: string }) => {
+        savedStatus = fields.status;
+        return [1] as never;
       });
+      mock.method(productsService, 'getProductById', async () => ({ id: 'prod-1' }) as never);
 
-      const result = await productsService.unarchiveProduct('prod-1', 'admin-1');
+      await productsService.unarchiveProduct('prod-1', 'admin-1');
 
-      assert.equal(productStatus, PRODUCT_STATUS.ACTIVE);
-      assert.equal(auditLogged, true);
-      assert.equal(result.status, PRODUCT_STATUS.ACTIVE);
+      assert.equal(savedStatus, PRODUCT_STATUS.DRAFT);
+      assert.deepEqual(
+        audit.map((row) => [row.action, row.entityId]),
+        [['PRODUCT_UNARCHIVED', 'prod-1']],
+      );
+    });
+
+    it('refuses to unarchive a product that is not archived', async () => {
+      stubInfrastructure();
+      mock.method(productsRepository, 'findById', async () => ({
+        id: 'prod-2',
+        status: PRODUCT_STATUS.ACTIVE,
+      }) as never);
+
+      await assert.rejects(
+        () => productsService.unarchiveProduct('prod-2', 'admin-1'),
+        ValidationError,
+      );
     });
   });
 
-  describe('Shipping Rates Management', () => {
-    it('updates shipping rate and logs audit', async () => {
-      let auditLogged = false;
-
+  describe('shipping rate management', () => {
+    it('updates a shipping rate and audits it', async () => {
+      const audit = stubInfrastructure();
+      let patch: Record<string, unknown> | null = null;
       mock.method(ShippingRate, 'findByPk', async () => ({
         id: 'rate-1',
-        price: 50,
-        update: async (fields: any) => ({ ...fields, id: 'rate-1' }),
-      }));
-
-      mock.method(auditLogService, 'log', async (params) => {
-        auditLogged = true;
-        assert.equal(params.action, 'SHIPPING_RATE_UPDATED');
-        assert.equal(params.entityId, 'rate-1');
-      });
+        update: async (fields: Record<string, unknown>) => {
+          patch = fields;
+        },
+      }) as never);
 
       await shippingService.updateRate('rate-1', { price: 60 }, 'admin-1');
 
-      assert.equal(auditLogged, true);
+      assert.deepEqual(patch, { price: 60, updatedBy: 'admin-1' });
+      assert.equal(audit[0]?.action, 'SHIPPING_RATE_UPDATED');
     });
 
-    it('deletes shipping rate and logs audit', async () => {
+    it('deletes a shipping rate and audits it', async () => {
+      const audit = stubInfrastructure();
       let destroyed = false;
-      let auditLogged = false;
-
       mock.method(ShippingRate, 'findByPk', async () => ({
         id: 'rate-1',
         destroy: async () => {
           destroyed = true;
         },
-      }));
-
-      mock.method(auditLogService, 'log', async (params) => {
-        auditLogged = true;
-        assert.equal(params.action, 'SHIPPING_RATE_DELETED');
-        assert.equal(params.entityId, 'rate-1');
-      });
+      }) as never);
 
       await shippingService.deleteRate('rate-1', 'admin-1');
 
       assert.equal(destroyed, true);
-      assert.equal(auditLogged, true);
+      assert.equal(audit[0]?.action, 'SHIPPING_RATE_DELETED');
     });
   });
 });

@@ -71,10 +71,19 @@ export const initTcsLedgerModel = (sequelize: Sequelize) => {
       timestamps: true,
       paranoid: true,
       indexes: [
+        // One collection per sub-order; one return adjustment per return request
+        // (a sub-order can have several returns). See migration 20260925000003.
         {
           unique: true,
-          fields: ['subOrderId', 'entryType'],
-          name: 'tcs_ledgers_sub_order_entry_type_unique',
+          fields: ['subOrderId'],
+          name: 'tcs_ledgers_collection_sub_order_unique',
+          where: { entryType: 'COLLECTION', deletedAt: null },
+        },
+        {
+          unique: true,
+          fields: ['returnRequestId'],
+          name: 'tcs_ledgers_return_adjustment_unique',
+          where: { entryType: 'RETURN_ADJUSTMENT', deletedAt: null },
         },
       ],
     },
