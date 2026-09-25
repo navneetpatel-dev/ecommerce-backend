@@ -19,8 +19,8 @@ import { ERROR_MESSAGES } from '@core/constants/errors';
 import { cartService } from '@modules/cart/cart.service';
 import { destroyCouponUsageForOrder } from '@modules/coupons/couponEngine';
 import { paymentsService } from '@modules/payments/payments.service';
-import { checkoutAmountDue } from '@modules/pricing/displayMoney';
-import { roundMoney, toPaise } from '@modules/pricing/money';
+import { fromPaise, toPaise } from '@modules/pricing/money';
+import { orderRazorpayPaidPaise } from '@modules/pricing/refundSplit';
 import { rollbackOrderWalletIfNeeded } from '@modules/wallet/walletOrderRollback';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { logAudit } from '@modules/audit/audit.service';
@@ -81,10 +81,7 @@ export async function cancelPaidOrder(
     if (!orderResult) throw new NotFoundError('Order');
     const order = orderResult as OrderForCancel;
 
-    razorpayDue = roundMoney(
-      Number(order.razorpayAmountPaid) ||
-        checkoutAmountDue(Number(order.totalAmount), Number(order.walletAmountUsed ?? 0)),
-    );
+    razorpayDue = fromPaise(orderRazorpayPaidPaise(order));
     razorpayPaymentId = order.razorpayPaymentId;
 
     if (!allSubOrdersCancellable(order.subOrders ?? [])) {

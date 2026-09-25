@@ -13,12 +13,35 @@ import {
 import { WalletRechargeOrder } from '@database/models/walletRechargeOrder.model';
 import { User } from '@database/models/user.model';
 import { settingsService } from '@modules/settings/settings.service';
-import { roundMoney } from '@modules/pricing/money';
+import { fromPaise, toPaise } from '@modules/pricing/money';
+import { splitTaxAmount } from '@modules/pricing/pricing.engine';
 
 function nextInvoiceNumber(): string {
   const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const suffix = Math.floor(Math.random() * 900000 + 100000);
   return `WRC-${stamp}-${suffix}`;
+}
+
+/**
+ * GST inside a recharge amount (the amount is tax-inclusive), worked out in paise:
+ * taxable + CGST + SGST is exactly the amount paid. Halving the tax in rupees and
+ * rounding each half added a paisa whenever the tax had odd paise
+ * (₹100 at 18%: ₹7.63 + ₹7.63 on ₹15.25 of tax).
+ */
+export function walletRechargeGstSplit(
+  amountInr: unknown,
+  gstRatePercent: number,
+): { taxableAmount: number; cgst: number; sgst: number; igst: number } {
+  const amountPaise = toPaise(Number(amountInr ?? 0));
+  const taxablePaise =
+    gstRatePercent > 0 ? Math.round((amountPaise * 100) / (100 + gstRatePercent)) : amountPaise;
+  const { cgst, sgst, igst } = splitTaxAmount(amountPaise - taxablePaise, true);
+  return {
+    taxableAmount: fromPaise(taxablePaise),
+    cgst: fromPaise(cgst),
+    sgst: fromPaise(sgst),
+    igst: fromPaise(igst),
+  };
 }
 
 export async function ensureWalletRechargeInvoice(rechargeId: string): Promise<{
@@ -45,22 +68,16 @@ export async function ensureWalletRechargeInvoice(rechargeId: string): Promise<{
 
   const settings = await settingsService.getPlatformSettings();
   const gstRate = Number(settings.commissionGstRatePercent ?? 0);
-  const amount = roundMoney(recharge.amountInr);
-  const taxableAmount = gstRate > 0 ? roundMoney(amount / (1 + gstRate / 100)) : amount;
-  const taxTotal = roundMoney(amount - taxableAmount);
-  const half = roundMoney(taxTotal / 2);
+  const split = walletRechargeGstSplit(recharge.amountInr, gstRate);
 
   const invoiceNumber = nextInvoiceNumber();
   await recharge.update({
     invoiceNumber,
-    taxableAmount,
-    cgst: half,
-    sgst: half,
-    igst: 0,
+    ...split,
     invoiceGeneratedAt: new Date(),
   });
 
-  return { invoiceNumber, taxableAmount, cgst: half, sgst: half, igst: 0 };
+  return { invoiceNumber, ...split };
 }
 
 export async function getWalletRechargeInvoicePdf(
