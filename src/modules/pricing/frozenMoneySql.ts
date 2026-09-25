@@ -32,14 +32,22 @@ export function sqlFrozenPaise(alias: string, paiseCol: string, rupeeCol: string
 /**
  * Orders that count toward GMV / tax / recon reports (alias `o` = orders):
  * - Razorpay (etc.) once PAID
- * - COD once placed (not cancelled / failed), even while paymentStatus is still PENDING
+ * - COD once placed (not failed / refunded), even while paymentStatus is still PENDING
+ *
+ * A cancelled order never counts, whatever its paymentStatus. A prepaid order
+ * stays PAID after cancellation until Razorpay reports the refund processed (and
+ * forever if the refund call failed); every sub-order is already cancelled, so
+ * counting the order would only leave its payment in "customer payments" with
+ * nothing accounted against it.
  */
 export const REPORTABLE_ORDER_SQL = `(
-  o."paymentStatus" = '${PAYMENT_STATUS.PAID}'
-  OR (
-    o."paymentMethod" = '${PAYMENT_METHOD.COD}'
-    AND o."paymentStatus" NOT IN ('${PAYMENT_STATUS.FAILED}', '${PAYMENT_STATUS.REFUNDED}')
-    AND o."status" <> '${ORDER_STATUS.CANCELLED}'
+  o."status" <> '${ORDER_STATUS.CANCELLED}'
+  AND (
+    o."paymentStatus" = '${PAYMENT_STATUS.PAID}'
+    OR (
+      o."paymentMethod" = '${PAYMENT_METHOD.COD}'
+      AND o."paymentStatus" NOT IN ('${PAYMENT_STATUS.FAILED}', '${PAYMENT_STATUS.REFUNDED}')
+    )
   )
 )`;
 
@@ -132,17 +140,26 @@ export const GMV_SUB_ORDER_SQL = `(
 )`;
 
 /**
- * What the customer was charged for one order, in paise (alias = orders): the
- * checkout total frozen in `originalTotalAmount`, falling back to `totalAmount`
- * for orders placed before that column existed. Returns and cancellations are
- * reported separately, so this stays the gross charge. Settlement "customer
+ * What the customer paid for one order and kept paying for, in paise (alias =
+ * orders): the checkout total frozen in `originalTotalAmount` (falling back to
+ * `totalAmount` for orders placed before that column existed), less every
+ * cancelled sub-order's `customerTotal` — the amount the cancel flow refunds
+ * (`subtotal` for rows without one). A cancelled sub-order is already out of
+ * GMV, tax, shipping and the ledgers, so its payment leaves here too. Return
+ * refunds are reported separately through credit notes. Settlement "customer
  * payments", customer analytics "total spent" and coupon "revenue impact" all
  * sum this over `REPORTABLE_ORDER_SQL` orders.
  */
 export function sqlOrderPaymentPaise(alias: string): string {
-  return `CASE
+  return `GREATEST(0, (CASE
     WHEN COALESCE(${alias}."originalTotalAmount", 0) > 0
       THEN ROUND(${alias}."originalTotalAmount"::numeric * 100)::bigint
     ELSE ROUND(COALESCE(${alias}."totalAmount", 0)::numeric * 100)::bigint
-  END`;
+  END) - COALESCE((
+    SELECT SUM(ROUND(COALESCE(cs."customerTotal", cs."subtotal", 0)::numeric * 100))::bigint
+    FROM sub_orders cs
+    WHERE cs."orderId" = ${alias}.id
+      AND cs."status" = '${ORDER_STATUS.CANCELLED}'
+      AND cs."deletedAt" IS NULL
+  ), 0))`;
 }

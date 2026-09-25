@@ -545,6 +545,28 @@ export class PaymentsService {
       return;
     }
 
+    if (orderId && notes.reason === 'SUBORDER_CANCEL') {
+      // Cancelling the last live sub-order cancels the whole order and records its
+      // refund as `cancelRazorpayRefundId`; once that refund lands the order is
+      // settled. Refunds for earlier partial cancellations match nothing here.
+      // Either way this is never a return refund, so don't fall through to the
+      // return matcher (it pairs refunds to returns by amount).
+      await Order.update(
+        {
+          paymentStatus: PAYMENT_STATUS.REFUNDED,
+          cancelRefundStatus: 'COMPLETED' as const,
+        },
+        {
+          where: {
+            id: orderId,
+            status: ORDER_STATUS.CANCELLED,
+            cancelRazorpayRefundId: refund.id,
+          },
+        },
+      );
+      return;
+    }
+
     const returnRequestId =
       typeof notes.returnRequestId === 'string' ? notes.returnRequestId : null;
 

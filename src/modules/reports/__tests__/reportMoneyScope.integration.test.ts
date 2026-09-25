@@ -2,11 +2,14 @@
  * Money on the customer-analytics report, coupon analytics and the settlement
  * reconciliation counts only what was actually charged and kept:
  * - unpaid and failed orders are not customer spend or coupon revenue;
- * - a cancelled sub-order leaves settlement tax and shipping, as it leaves GMV.
+ * - a cancelled sub-order leaves settlement tax and shipping, as it leaves GMV,
+ *   and its refunded customer total leaves the order's payment;
+ * - a fully cancelled order still PAID while its Razorpay refund is pending
+ *   counts nowhere.
  *
  * Seeds one customer and vendor: a paid order with a live and a cancelled
- * sub-order (coupon applied), an unpaid order and a failed order (same coupon).
- * Skips when Postgres is unreachable.
+ * sub-order (coupon applied), an unpaid order, a failed order, and a cancelled
+ * order awaiting its refund (same coupon). Skips when Postgres is unreachable.
  */
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
@@ -87,6 +90,7 @@ async function seedOrder(params: {
       status: spec.status,
       subtotal: spec.subtotal,
       subtotalPaise: toPaise(spec.subtotal),
+      customerTotal: spec.subtotal + spec.tax + spec.shipping,
       shippingCost: spec.shipping,
       shippingCostPaise: toPaise(spec.shipping),
       shippingDiscountAmount: 0,
@@ -209,7 +213,8 @@ describe('report money scope', () => {
     });
     const base = { addressId: address.id, variantId: variant.id };
 
-    // Paid: ₹1,000 + ₹180 tax + ₹50 shipping live, ₹300 + ₹54 + ₹40 cancelled → charged ₹1,624.
+    // Paid: ₹1,000 + ₹180 tax + ₹50 shipping live, ₹300 + ₹54 + ₹40 cancelled → charged
+    // ₹1,624, of which the cancelled ₹394 was refunded → kept ₹1,230.
     await seedOrder({
       ...base,
       paymentMethod: PAYMENT_METHOD.RAZORPAY,
@@ -238,6 +243,15 @@ describe('report money scope', () => {
       couponDiscount: 50,
       subOrders: [{ status: ORDER_STATUS.PENDING, subtotal: 900, tax: 162, shipping: 50 }],
     });
+    // Cancelled after payment: stays PAID until Razorpay reports the refund processed.
+    await seedOrder({
+      ...base,
+      paymentMethod: PAYMENT_METHOD.RAZORPAY,
+      paymentStatus: PAYMENT_STATUS.PAID,
+      status: ORDER_STATUS.CANCELLED,
+      couponDiscount: 50,
+      subOrders: [{ status: ORDER_STATUS.CANCELLED, subtotal: 800, tax: 144, shipping: 50 }],
+    });
   });
 
   after(async () => {
@@ -257,7 +271,7 @@ describe('report money scope', () => {
     await Vendor.destroy({ where: { id: vendorId }, force: true });
   });
 
-  it('customer analytics counts only charged orders', async (t) => {
+  it('customer analytics counts only charged and kept orders', async (t) => {
     if (!dbReady) return t.skip('database unavailable');
     const report = await getReportDefinition('customer-analytics')!.query({
       ...range,
@@ -266,13 +280,13 @@ describe('report money scope', () => {
     });
     const row = report.rows.find((r) => r.userId === customerId);
     assert.equal(row?.orderCount, 1);
-    assert.equal(row?.totalSpent, 1624);
+    assert.equal(row?.totalSpent, 1230);
   });
 
-  it('coupon analytics counts only charged orders', async (t) => {
+  it('coupon analytics counts only charged and kept orders', async (t) => {
     if (!dbReady) return t.skip('database unavailable');
     const analytics = await couponsService.analytics(couponId);
-    assert.equal(analytics.revenueImpact, 1624);
+    assert.equal(analytics.revenueImpact, 1230);
     assert.equal(analytics.totalDiscount, 50);
   });
 
@@ -282,5 +296,13 @@ describe('report money scope', () => {
     assert.equal(fromPaise(recon.gmvPaise), 1000);
     assert.equal(fromPaise(recon.taxCollectedPaise), 180);
     assert.equal(fromPaise(recon.shippingCollectedPaise), 50);
+  });
+
+  it('settlement customer payments drop cancelled sub-orders and cancelled orders', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const recon = await computeReconciliationSummary({ ...range, vendorId });
+    // Live sub-order only: ₹1,000 + ₹180 + ₹50. The cancelled ₹394 part and the
+    // ₹994 order awaiting its refund have nothing accounted against them.
+    assert.equal(fromPaise(recon.customerPaymentsPaise), 1230);
   });
 });

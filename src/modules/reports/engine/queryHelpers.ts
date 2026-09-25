@@ -68,18 +68,19 @@ export function reportPageParams(filters: ReportFilters): {
 }
 
 /**
- * Orders that count toward GMV / tax / recon reports:
+ * Sequelize form of `REPORTABLE_ORDER_SQL` — keep the two in step:
  * - Razorpay (etc.) once PAID
- * - COD once placed (not cancelled / failed), even while paymentStatus is still PENDING
+ * - COD once placed (not failed / refunded), even while paymentStatus is still PENDING
+ * - never a cancelled order, even one still PAID while its refund is pending
  */
 export function reportableOrderWhere(from?: Date, to?: Date): Record<string, unknown> {
   const where: Record<string, unknown> = {
+    status: { [Op.ne]: ORDER_STATUS.CANCELLED },
     [Op.or]: [
       { paymentStatus: PAYMENT_STATUS.PAID },
       {
         paymentMethod: PAYMENT_METHOD.COD,
         paymentStatus: { [Op.notIn]: [PAYMENT_STATUS.FAILED, PAYMENT_STATUS.REFUNDED] },
-        status: { [Op.ne]: ORDER_STATUS.CANCELLED },
       },
     ],
   };
