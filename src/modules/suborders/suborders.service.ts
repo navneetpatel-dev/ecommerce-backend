@@ -19,8 +19,12 @@ import {
   REFUND_STATUS,
   WALLET_REFERENCE_TYPE,
 } from '@core/constants/statuses';
-import { checkoutAmountDue } from '@modules/pricing/displayMoney';
-import { roundMoney, toPaise } from '@modules/pricing/money';
+import { fromPaise, roundMoney, sumRupees, toPaise } from '@modules/pricing/money';
+import {
+  isWalletFundedOrder,
+  orderRazorpayPaidPaise,
+  walletShareOfRefundPaise,
+} from '@modules/pricing/refundSplit';
 import { mapSubOrder } from '@modules/orders/orderDisplayMappers';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { shippingService } from '@modules/shipping/shipping.service';
@@ -82,39 +86,16 @@ function assertSubOrderTransition(from: string, to: string) {
   }
 }
 
-function orderOriginalTotal(order: Order): number {
-  const walletUsed = Number(order.walletAmountUsed ?? 0);
-  return Math.max(
-    Number(order.originalTotalAmount ?? 0),
-    Number(order.razorpayAmountPaid ?? 0) + walletUsed,
-    Number(order.totalAmount ?? 0),
-    walletUsed,
-  );
-}
-
 /**
  * Non-wallet (cash/Razorpay/COD) share of a suborder refund. The wallet-funded
  * share is restored only by `rollbackOrderWalletIfNeeded` when the parent order
- * is fully cancelled — never credited here as WALLET_REFUND.
+ * is fully cancelled — never credited here as WALLET_REFUND. The split itself is
+ * the one returns use (pricing/refundSplit).
  */
 function suborderCancelCashShare(order: Order, customerRefund: number): number {
-  const walletUsed = Number(order.walletAmountUsed ?? 0);
-  const originalTotal = orderOriginalTotal(order);
-  const isCod = order.paymentMethod === PAYMENT_METHOD.COD;
-  const walletOnly =
-    walletUsed > 0 &&
-    Number(order.razorpayAmountPaid ?? 0) <= 0 &&
-    !order.razorpayPaymentId &&
-    !isCod;
-
-  if (walletOnly || (walletUsed > 0 && originalTotal > 0 && walletUsed >= originalTotal)) {
-    return 0;
-  }
-  if (walletUsed <= 0 || originalTotal <= 0) {
-    return roundMoney(customerRefund);
-  }
-  const walletShare = roundMoney(Math.min(customerRefund, (customerRefund * walletUsed) / originalTotal));
-  return roundMoney(customerRefund - walletShare);
+  if (isWalletFundedOrder(order)) return 0;
+  const refundPaise = toPaise(customerRefund);
+  return fromPaise(refundPaise - walletShareOfRefundPaise(order, refundPaise));
 }
 
 function mapSubOrderRow(row: SubOrder) {
@@ -274,34 +255,21 @@ export class SubordersService {
           ) {
             let cashShare: number;
             if (allCancelled && sisterSubOrders.length === 1) {
-              cashShare = roundMoney(
-                Number(parentOrder.razorpayAmountPaid) ||
-                  checkoutAmountDue(
-                    Number(parentOrder.totalAmount),
-                    Number(parentOrder.walletAmountUsed ?? 0),
-                  ),
-              );
+              cashShare = fromPaise(orderRazorpayPaidPaise(parentOrder));
             } else {
               cashShare = suborderCancelCashShare(parentOrder, customerRefund);
               if (parentOrder.paymentMethod !== PAYMENT_METHOD.COD) {
-                const razorpayPaid = roundMoney(
-                  Number(parentOrder.razorpayAmountPaid) ||
-                    checkoutAmountDue(
-                      orderOriginalTotal(parentOrder),
-                      Number(parentOrder.walletAmountUsed ?? 0),
-                    ),
-                );
-                const alreadyRefunded = sisterSubOrders
-                  .filter((s) => s.id !== id && s.status === ORDER_STATUS.CANCELLED)
-                  .reduce(
-                    (sum, s) =>
-                      sum +
+                const razorpayPaid = fromPaise(orderRazorpayPaidPaise(parentOrder));
+                const alreadyRefunded = sumRupees(
+                  sisterSubOrders
+                    .filter((s) => s.id !== id && s.status === ORDER_STATUS.CANCELLED)
+                    .map((s) =>
                       suborderCancelCashShare(
                         parentOrder,
                         roundMoney(Number(s.customerTotal ?? s.subtotal)),
                       ),
-                    0,
-                  );
+                    ),
+                );
                 const remaining = roundMoney(Math.max(0, razorpayPaid - alreadyRefunded));
                 cashShare = roundMoney(Math.min(cashShare, remaining));
               }

@@ -35,7 +35,6 @@ import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { fromPaise, roundMoney, sumRupees, toPaise } from '@modules/pricing/money';
 import { frozenPaise } from '@modules/pricing/frozenMoneySql';
 import {
-  checkoutAmountDue,
   lineSubtotal,
   lineTotal,
   recomputeOrderDisplayFields,
@@ -43,6 +42,11 @@ import {
   scaleTaxBreakdown,
 } from '@modules/pricing/displayMoney';
 import { splitTaxAmount } from '@modules/pricing/pricing.engine';
+import {
+  isWalletFundedOrder,
+  orderRazorpayPaidPaise,
+  walletShareOfRefundPaise,
+} from '@modules/pricing/refundSplit';
 import { pricingService } from '@modules/pricing/pricing.service';
 import {
   nextVendorDocumentNumber,
@@ -886,11 +890,6 @@ export class ReturnsService {
   ): Promise<{ walletRefund: number; razorpayRefund: number; refundMethod: 'RAZORPAY' | 'WALLET_CREDIT' }> {
     const walletUsed = Number(order.walletAmountUsed ?? 0);
     const isCod = order.paymentMethod === PAYMENT_METHOD.COD;
-    const originalTotal = Math.max(
-      Number(order.originalTotalAmount ?? 0),
-      Number(order.razorpayAmountPaid ?? 0) + walletUsed,
-      walletUsed,
-    );
 
     if (isCod) {
       return {
@@ -900,8 +899,8 @@ export class ReturnsService {
       };
     }
 
-    // Wallet-only checkout (no Razorpay charge).
-    if (walletUsed > 0 && Number(order.razorpayAmountPaid ?? 0) <= 0 && !order.razorpayPaymentId) {
+    // The wallet paid for all of it (wallet-only checkout, or wallet ≥ checkout total).
+    if (isWalletFundedOrder(order)) {
       return {
         walletRefund: customerRefund,
         razorpayRefund: 0,
@@ -909,19 +908,11 @@ export class ReturnsService {
       };
     }
 
-    if (walletUsed <= 0 || originalTotal <= 0) {
+    if (walletUsed <= 0) {
       return {
         walletRefund: 0,
         razorpayRefund: customerRefund,
         refundMethod: REFUND_METHOD.RAZORPAY,
-      };
-    }
-
-    if (walletUsed >= originalTotal) {
-      return {
-        walletRefund: customerRefund,
-        razorpayRefund: 0,
-        refundMethod: REFUND_METHOD.WALLET_CREDIT,
       };
     }
 
@@ -943,15 +934,13 @@ export class ReturnsService {
     const razorpayAlready = sumRupees(prior.map((r) => r.razorpayRefundAmount));
     const walletRemaining = roundMoney(Math.max(0, walletUsed - walletAlready));
     const razorpayRemaining = roundMoney(
-      Math.max(
-        0,
-        roundMoney(order.razorpayAmountPaid ?? checkoutAmountDue(originalTotal, walletUsed)) -
-          razorpayAlready,
-      ),
+      Math.max(0, fromPaise(orderRazorpayPaidPaise(order)) - razorpayAlready),
     );
 
-    let walletShare = roundMoney((customerRefund * walletUsed) / originalTotal);
-    walletShare = roundMoney(Math.min(walletShare, walletRemaining, customerRefund));
+    // Same wallet/cash proportion sub-order cancellations use (pricing/refundSplit),
+    // capped by what earlier returns on this order already gave back.
+    const walletProportionPaise = walletShareOfRefundPaise(order, toPaise(customerRefund));
+    let walletShare = roundMoney(Math.min(fromPaise(walletProportionPaise), walletRemaining));
     let razorpayShare = roundMoney(customerRefund - walletShare);
     if (razorpayShare > razorpayRemaining) {
       const overflow = razorpayShare - razorpayRemaining;
@@ -1017,13 +1006,16 @@ export class ReturnsService {
           issuedAt,
           t,
         );
-        const tb = (orderItem.taxBreakdown as Record<string, unknown> | null) ?? null;
-        const originalTaxPaise = frozenPaise(orderItem.taxAmountPaise);
-        const scale =
-          originalTaxPaise > 0 && taxPaise > 0 ? taxPaise / originalTaxPaise : 0;
-        const cgstPaise = Math.round(Number(tb?.cgst ?? 0) * scale);
-        const sgstPaise = Math.round(Number(tb?.sgst ?? 0) * scale);
-        const igstPaise = Math.round(Number(tb?.igst ?? 0) * scale);
+        // The line's breakdown only says intra- vs inter-state; the refunded tax is
+        // split in paise so CGST + SGST (or IGST) is exactly the credit note's tax.
+        // (Scaling the stored breakdown mixed units: it is in rupees, the note in paise.)
+        const itemTax = orderItem.taxBreakdown as { igst?: unknown } | null;
+        const subOrderTax = orderItem.subOrder.taxBreakdown as { igst?: unknown } | null;
+        const interState = Number(itemTax?.igst ?? 0) > 0 || Number(subOrderTax?.igst ?? 0) > 0;
+        const { cgst: cgstPaise, sgst: sgstPaise, igst: igstPaise } = splitTaxAmount(
+          taxPaise,
+          !interState,
+        );
         await CreditNote.create(
           {
             number: cnNumber,

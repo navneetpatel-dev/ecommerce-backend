@@ -409,6 +409,11 @@ describe('consolidated refund scenarios (seeded)', () => {
 
     const credit = await CreditNote.findOne({ where: { returnRequestId: rr.id } });
     assert.ok(credit);
+    // The GST split is in paise, like taxPaise, and adds up to it exactly: ₹18 tax on
+    // an intra-state line is CGST ₹9 + SGST ₹9 = 900 + 900 paise (it used to store 9 + 9).
+    const tb = credit.taxBreakdown as { cgst: number; sgst: number; igst: number };
+    assert.equal(Number(credit.taxPaise), 1800);
+    assert.deepEqual({ cgst: tb.cgst, sgst: tb.sgst, igst: tb.igst }, { cgst: 900, sgst: 900, igst: 0 });
     await assertReturnRefundPurchasedNonExpiring(customer.id, rr.id);
   });
 
