@@ -22,6 +22,8 @@ import { CreditNote } from '@database/models/creditNote.model';
 import { DebitNote } from '@database/models/debitNote.model';
 import { Address } from '@database/models/address.model';
 import { ProductVariant } from '@database/models/productVariant.model';
+import { Product } from '@database/models/product.model';
+import { resolveReturnWindowForCategory } from '@modules/products/pdpPolicy';
 import { PlatformSetting } from '@database/models/platformSetting.model';
 import { walletService } from '@modules/wallet/wallet.service';
 import { returnsService } from '@modules/returns/returns.service';
@@ -142,12 +144,26 @@ type SeedOrderOpts = {
   lineTax?: number;
 };
 
+/**
+ * A variant whose category accepts returns. Picking an arbitrary first row made the
+ * suite pass or fail by heap order: seed data has categories with returns disabled.
+ */
 async function resolveVariantId(): Promise<string> {
   if (sharedVariantId) return sharedVariantId;
-  const variant = await ProductVariant.findOne({ attributes: ['id'] });
-  if (!variant) throw new Error('No product_variants in DB — seed catalog first');
-  sharedVariantId = variant.id;
-  return sharedVariantId;
+  const variants = await ProductVariant.findAll({
+    attributes: ['id'],
+    include: [{ model: Product, as: 'product', attributes: ['categoryId'], required: true }],
+    order: [['id', 'ASC']],
+    limit: 200,
+  });
+  for (const variant of variants) {
+    const categoryId = (variant as ProductVariant & { product?: Product }).product?.categoryId;
+    if ((await resolveReturnWindowForCategory(categoryId)).returnsAllowed) {
+      sharedVariantId = variant.id;
+      return sharedVariantId;
+    }
+  }
+  throw new Error('No returnable product_variants in DB — seed catalog first');
 }
 
 async function seedFullOrder(opts: SeedOrderOpts) {
