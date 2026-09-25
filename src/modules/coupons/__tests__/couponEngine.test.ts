@@ -136,3 +136,36 @@ describe('LOYAL_CUSTOMER_MIN_PAID_ORDERS segment threshold', () => {
     assert.equal(result.valid, false);
   });
 });
+
+describe('min order value uses exact paise sums', () => {
+  afterEach(() => mock.restoreAll());
+
+  it('accepts a cart whose eligible lines total exactly the minimum', async () => {
+    // As floats, 0.70 + 0.10 is 0.7999999999999999 and failed a ₹0.80 minimum.
+    const result = await validateCoupon({
+      coupon: freeShippingCoupon({ minOrderValue: 0.8 }),
+      lines: [
+        { productId: 'p-1', categoryId: null, vendorId: 'vendor-1', unitPrice: 0.7, quantity: 1 },
+        { productId: 'p-2', categoryId: null, vendorId: 'vendor-1', unitPrice: 0.1, quantity: 1 },
+      ],
+      shippingTotal: 40,
+      shippingByVendor: { 'vendor-1': 40 },
+    });
+
+    assert.equal(result.valid, true);
+  });
+
+  it('computes a percentage discount from the rounded line subtotals', async () => {
+    const result = await validateCoupon({
+      coupon: freeShippingCoupon({ type: 'PERCENTAGE', value: 10 }),
+      lines: [
+        { productId: 'p-1', categoryId: null, vendorId: 'vendor-1', unitPrice: 19.99, quantity: 3 },
+        { productId: 'p-2', categoryId: null, vendorId: 'vendor-2', unitPrice: 0.1, quantity: 3 },
+      ],
+      shippingTotal: 0,
+    });
+
+    assert.equal(result.valid, true);
+    assert.equal(result.discount, 6.03);
+  });
+});

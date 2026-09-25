@@ -172,15 +172,13 @@ export class DeliveryAgentPayoutsService {
   /** Groups every PENDING earning by agent and opens one payout batch per agent. */
   async process(actorId: string) {
     const pending = await DeliveryAgentEarning.findAll({ where: { status: 'PENDING' } });
-    const grouped = new Map<string, { amount: number; start: Date; end: Date; ids: string[] }>();
+    const grouped = new Map<string, { start: Date; end: Date; ids: string[] }>();
     for (const row of pending) {
       const current = grouped.get(row.deliveryAgentId) ?? {
-        amount: 0,
         start: row.earnedAt,
         end: row.earnedAt,
         ids: [] as string[],
       };
-      current.amount += Number(row.amount);
       current.start = current.start < row.earnedAt ? current.start : row.earnedAt;
       current.end = current.end > row.earnedAt ? current.end : row.earnedAt;
       current.ids.push(row.id);

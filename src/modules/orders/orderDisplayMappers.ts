@@ -1,5 +1,6 @@
 import { coerceRupees, roundMoney } from '@modules/pricing/money';
 import {
+  checkoutAmountDue,
   combinedDiscount,
   lineTotal,
   orderAmountDue,
@@ -120,7 +121,9 @@ export function mapOrderResponse(order: Record<string, unknown>) {
   const totalAmount = roundMoney(plain.totalAmount);
   const walletAmountUsed = roundMoney(plain.walletAmountUsed);
   const originalTotalAmount = roundMoney(plain.originalTotalAmount ?? totalAmount);
-  const razorpayAmountPaid = roundMoney(plain.razorpayAmountPaid ?? Math.max(0, originalTotalAmount - walletAmountUsed));
+  const razorpayAmountPaid = roundMoney(
+    plain.razorpayAmountPaid ?? checkoutAmountDue(originalTotalAmount, walletAmountUsed),
+  );
   const rawSubOrders = (plain.subOrders as Record<string, unknown>[]) ?? [];
   const subOrders = rawSubOrders.map(mapSubOrder);
   const aggregates = recomputeOrderDisplayFields({

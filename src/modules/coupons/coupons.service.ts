@@ -1,4 +1,4 @@
-import { Op } from 'sequelize';
+import { Op, QueryTypes } from 'sequelize';
 import { Coupon } from '@database/models/coupon.model';
 import { CouponBatch } from '@database/models/couponBatch.model';
 import { CouponUsage } from '@database/models/couponUsage.model';
@@ -8,7 +8,6 @@ import { ProductVariant } from '@database/models/productVariant.model';
 import { Product } from '@database/models/product.model';
 import { Vendor } from '@database/models/vendor.model';
 import { User } from '@database/models/user.model';
-import { Order } from '@database/models/order.model';
 import { ShippingRate } from '@database/models/shippingRate.model';
 import { sequelize } from '@database/models';
 import { NotFoundError } from '@core/errors/NotFoundError';
@@ -23,7 +22,8 @@ import {
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { resolveItemAvailability, isProductCustomerVisible } from '@core/catalog/customerVisibility';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
-import { coerceRupees, roundMoney } from '@modules/pricing/money';
+import { coerceRupees, fromPaise, roundMoney } from '@modules/pricing/money';
+import { REPORTABLE_ORDER_SQL, sqlOrderPaymentPaise } from '@modules/pricing/frozenMoneySql';
 import {
   resolveCartShippingPreviewForCoupon,
   resolveProductShippingPreviewForCoupon,
@@ -38,6 +38,37 @@ import {
   type CartLineForCoupon,
 } from './couponEngine';
 import { generateCouponCode } from './coupon.utils';
+
+/**
+ * Discount given and customer payments on the orders that redeemed these coupons,
+ * counting only orders the settlement reports count (REPORTABLE_ORDER_SQL) and each
+ * order once even when it redeemed several of the coupons.
+ */
+async function couponUsageMoney(
+  couponIds: string[],
+): Promise<{ discountTotal: number; revenueImpact: number }> {
+  if (couponIds.length === 0) return { discountTotal: 0, revenueImpact: 0 };
+  const [row] = await sequelize.query<{ discountPaise: string; paymentPaise: string }>(
+    `WITH usages AS (
+       SELECT cu."orderId", SUM(ROUND(cu."discountApplied"::numeric * 100))::bigint AS "discountPaise"
+       FROM coupon_usages cu
+       WHERE cu."couponId" IN (:couponIds)
+         AND cu."deletedAt" IS NULL
+       GROUP BY cu."orderId"
+     )
+     SELECT
+       COALESCE(SUM(u."discountPaise"), 0)::bigint AS "discountPaise",
+       COALESCE(SUM(${sqlOrderPaymentPaise('o')}), 0)::bigint AS "paymentPaise"
+     FROM usages u
+     INNER JOIN orders o ON o.id = u."orderId" AND o."deletedAt" IS NULL
+     WHERE ${REPORTABLE_ORDER_SQL}`,
+    { replacements: { couponIds }, type: QueryTypes.SELECT },
+  );
+  return {
+    discountTotal: fromPaise(Number(row?.discountPaise ?? 0)),
+    revenueImpact: fromPaise(Number(row?.paymentPaise ?? 0)),
+  };
+}
 import type {
   BulkGenerateRequest,
   CreateCouponRequest,
@@ -416,20 +447,7 @@ export class CouponsService {
   }> {
     const coupon = await this.getById(id, opts);
     const usedCount = await CouponUsage.count({ where: { couponId: coupon.id } });
-    const totalDiscount =
-      (await CouponUsage.sum('discountApplied', { where: { couponId: coupon.id } })) ?? 0;
-
-    const usages = await CouponUsage.findAll({
-      where: { couponId: coupon.id },
-      attributes: ['orderId'],
-    });
-    const orderIds = [...new Set(usages.map((row) => row.orderId))];
-    let revenueImpact = 0;
-    if (orderIds.length > 0) {
-      revenueImpact = Number(
-        (await Order.sum('totalAmount', { where: { id: { [Op.in]: orderIds } } })) ?? 0,
-      );
-    }
+    const { discountTotal: totalDiscount, revenueImpact } = await couponUsageMoney([coupon.id]);
 
     const limit = coupon.usageLimitTotal == null ? null : Number(coupon.usageLimitTotal);
     const conversionRate =
@@ -631,28 +649,7 @@ export class CouponsService {
         ids.length === 0
           ? 0
           : await CouponUsage.count({ where: { couponId: { [Op.in]: ids } } });
-      const discountTotal =
-        ids.length === 0
-          ? 0
-          : Number(
-              (await CouponUsage.sum('discountApplied', {
-                where: { couponId: { [Op.in]: ids } },
-              })) ?? 0,
-            );
-
-      let revenueImpact = 0;
-      if (ids.length > 0) {
-        const usages = await CouponUsage.findAll({
-          where: { couponId: { [Op.in]: ids } },
-          attributes: ['orderId'],
-        });
-        const orderIds = [...new Set(usages.map((row) => row.orderId))];
-        if (orderIds.length > 0) {
-          revenueImpact = Number(
-            (await Order.sum('totalAmount', { where: { id: { [Op.in]: orderIds } } })) ?? 0,
-          );
-        }
-      }
+      const { discountTotal, revenueImpact } = await couponUsageMoney(ids);
 
       const expiresAt =
         coupons.length === 0

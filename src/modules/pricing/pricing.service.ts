@@ -1,4 +1,5 @@
 import { DISCOUNT_BEARER, type DiscountBearer } from '@core/constants/statuses';
+import { frozenPaise } from './frozenMoneySql';
 import {
   breakdownToRupees,
   computeSubOrderBreakdown,
@@ -115,38 +116,22 @@ export class PricingService {
     netPayoutAmountPaise?: number | null;
   }): PricingLineBreakdown {
     const quantity = Number(row.quantity);
-    const unitPricePaise =
-      row.unitPricePaise != null && Number(row.unitPricePaise) > 0
-        ? Number(row.unitPricePaise)
-        : toPaise(row.unitPrice);
+    // Paise columns are the stored value (NULL = pre-snapshot row); see frozenPaise.
+    const unitPricePaise = frozenPaise(row.unitPricePaise, row.unitPrice);
     const lineSubtotalPaise = unitPricePaise * quantity;
-    const discountPaise =
-      row.discountAmountPaise != null
-        ? Number(row.discountAmountPaise)
-        : toPaise(row.discountAmount ?? 0);
+    const discountPaise = frozenPaise(row.discountAmountPaise, row.discountAmount);
     const taxablePaise =
-      row.taxableAmountPaise != null && Number(row.taxableAmountPaise) > 0
-        ? Number(row.taxableAmountPaise)
-        : row.taxableAmount != null
-          ? toPaise(row.taxableAmount)
-          : Math.max(0, lineSubtotalPaise - discountPaise);
-    const taxTotalPaise =
-      row.taxAmountPaise != null && Number(row.taxAmountPaise) > 0
-        ? Number(row.taxAmountPaise)
-        : toPaise(row.taxAmount ?? 0);
+      row.taxableAmountPaise == null && row.taxableAmount == null
+        ? Math.max(0, lineSubtotalPaise - discountPaise)
+        : frozenPaise(row.taxableAmountPaise, row.taxableAmount);
+    const taxTotalPaise = frozenPaise(row.taxAmountPaise, row.taxAmount);
     const tb = row.taxBreakdown ?? {};
-    const commissionPaise =
-      row.commissionAmountPaise != null
-        ? Number(row.commissionAmountPaise)
-        : toPaise(row.commissionAmount ?? 0);
-    const tcsPaise =
-      row.tcsAmountPaise != null ? Number(row.tcsAmountPaise) : toPaise(row.tcsAmount ?? 0);
+    const commissionPaise = frozenPaise(row.commissionAmountPaise, row.commissionAmount);
+    const tcsPaise = frozenPaise(row.tcsAmountPaise, row.tcsAmount);
     const netPayoutPaise =
-      row.netPayoutAmountPaise != null && Number(row.netPayoutAmountPaise) > 0
-        ? Number(row.netPayoutAmountPaise)
-        : row.netPayoutAmount != null
-          ? toPaise(row.netPayoutAmount)
-          : Math.max(0, taxablePaise - commissionPaise - tcsPaise);
+      row.netPayoutAmountPaise == null && row.netPayoutAmount == null
+        ? Math.max(0, taxablePaise - commissionPaise - tcsPaise)
+        : frozenPaise(row.netPayoutAmountPaise, row.netPayoutAmount);
     return {
       key: row.id,
       quantity,

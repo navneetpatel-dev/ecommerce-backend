@@ -29,6 +29,8 @@ export class ReturnRequest extends Model<InferAttributes<ReturnRequest>, InferCr
   declare refundStatus: CreationOptional<RefundStatus>;
   declare refundAmount: number | null;
   declare refundTaxAmount: CreationOptional<number | null>;
+  /** Merchandise (pre-tax item) part of the refund, frozen from PricingEngine at approval. */
+  declare refundMerchandiseAmount: CreationOptional<number | null>;
   declare refundCommissionAmount: CreationOptional<number | null>;
   declare refundTcsAmount: CreationOptional<number | null>;
   declare refundNetClawback: CreationOptional<number | null>;
@@ -106,6 +108,7 @@ export const initReturnRequestModel = (sequelize: Sequelize) => {
       razorpayRefundAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       shippingRefundAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       returnShippingFeeAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      refundMerchandiseAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       razorpayRefundId: { type: DataTypes.STRING, allowNull: true },
       refundAttemptCount: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
       lastRefundAttemptAt: { type: DataTypes.DATE, allowNull: true },

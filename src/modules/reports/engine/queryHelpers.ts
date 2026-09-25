@@ -4,7 +4,12 @@ import { ERROR_MESSAGES } from '@core/constants/errors';
 import { paginationOffset } from '@core/http/pagination';
 import { reportExportConfig } from '../reportExportConfig';
 import { fromPaise, toPaise } from '@modules/pricing/money';
-import { REPORTABLE_ORDER_SQL, sqlFrozenPaise } from '@modules/pricing/frozenMoneySql';
+import {
+  REPORTABLE_ORDER_SQL,
+  sqlFrozenPaise,
+  sqlOrderPaymentPaise,
+  sqlVendorNetPayoutPaise,
+} from '@modules/pricing/frozenMoneySql';
 import {
   COMMISSION_STATUS,
   PAYMENT_STATUS,
@@ -124,17 +129,7 @@ export async function computeReconciliationSummary(filters: {
   const subtotalExpr = sqlFrozenPaise('s', 'subtotalPaise', 'subtotal');
   const merchDiscExpr = sqlFrozenPaise('s', 'discountAmountPaise', 'discountAmount');
   const commissionExpr = sqlFrozenPaise('cl', 'commissionAmountPaise', 'commissionAmount');
-  const netExpr = `CASE
-    WHEN COALESCE(cl."netPayoutAmountPaise", 0) <> 0 THEN cl."netPayoutAmountPaise"
-    ELSE ROUND(
-      (
-        CASE
-          WHEN cl."netPayoutAmount" IS NOT NULL THEN cl."netPayoutAmount"::numeric
-          ELSE COALESCE(cl."saleAmount", 0)::numeric - COALESCE(cl."commissionAmount", 0)::numeric
-        END
-      ) * 100
-    )::bigint
-  END`;
+  const netExpr = sqlVendorNetPayoutPaise('cl');
   const ledgerDisc = sqlFrozenPaise('cl', 'discountAmountPaise', 'discountAmount');
 
   const [rows] = await sequelize.query(
@@ -142,11 +137,7 @@ export async function computeReconciliationSummary(filters: {
     WITH reportable_orders AS (
       SELECT
         o.id,
-        CASE
-          WHEN COALESCE(o."originalTotalAmount", 0) > 0
-            THEN ROUND(o."originalTotalAmount"::numeric * 100)::bigint
-          ELSE ROUND(COALESCE(o."totalAmount", 0)::numeric * 100)::bigint
-        END AS "paymentPaise"
+        ${sqlOrderPaymentPaise('o')} AS "paymentPaise"
       FROM orders o
       WHERE o."deletedAt" IS NULL
         AND o."createdAt" BETWEEN :from AND :to
@@ -166,6 +157,9 @@ export async function computeReconciliationSummary(filters: {
         COALESCE(SUM(${subtotalExpr}), 0)::bigint AS "gmvPaise",
         COALESCE(SUM(${merchDiscExpr}), 0)::bigint AS "merchandiseDiscountPaise"
       FROM scoped_subs s
+      -- A cancelled sub-order was refunded and its commission/TCS ledgers deleted, so
+      -- it leaves GMV, tax, shipping and discounts too (same rule as GMV_SUB_ORDER_SQL).
+      WHERE s."status" <> '${ORDER_STATUS.CANCELLED}'
     ),
     ledger_totals AS (
       SELECT

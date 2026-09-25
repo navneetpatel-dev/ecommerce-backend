@@ -6,9 +6,13 @@ import { Review } from '@database/models/review.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { Role } from '@database/models/role.model';
 import { sequelize } from '@database/models';
-import { Op, QueryTypes } from 'sequelize';
+import { QueryTypes } from 'sequelize';
 import { fromPaise } from '@modules/pricing/money';
-import { REPORTABLE_ORDER_SQL, sqlFrozenPaise } from '@modules/pricing/frozenMoneySql';
+import {
+  GMV_SUB_ORDER_SQL,
+  sqlGmvPaise,
+  sqlLineSubtotalPaise,
+} from '@modules/pricing/frozenMoneySql';
 import {
   PRODUCT_STATUS,
   PAYMENT_STATUS,
@@ -67,6 +71,41 @@ function sharePercent(rowPaise: unknown, totalPaise: unknown): number {
   return Number(((row / total) * 100).toFixed(1));
 }
 
+/**
+ * Platform GMV, paid GMV and AOV from the one GMV definition the settlement
+ * reports use (see GMV_SUB_ORDER_SQL). AOV averages over the orders that
+ * contribute GMV, not over every order row.
+ */
+async function queryGmvTotals(): Promise<{
+  gmvPaise: number;
+  paidGmvPaise: number;
+  aovPaise: number | null;
+}> {
+  const [row] = await sequelize.query<{
+    gmvPaise: string;
+    paidGmvPaise: string;
+    orderCount: string;
+  }>(
+    `SELECT
+       COALESCE(SUM(${sqlGmvPaise('s')}), 0)::bigint AS "gmvPaise",
+       COALESCE(SUM(${sqlGmvPaise('s')}) FILTER (
+         WHERE o."paymentStatus" = '${PAYMENT_STATUS.PAID}'
+       ), 0)::bigint AS "paidGmvPaise",
+       COUNT(DISTINCT o.id)::int AS "orderCount"
+     FROM sub_orders s
+     INNER JOIN orders o ON o.id = s."orderId"
+     WHERE ${GMV_SUB_ORDER_SQL}`,
+    { type: QueryTypes.SELECT },
+  );
+  const gmvPaise = Number(row?.gmvPaise ?? 0);
+  const orderCount = Number(row?.orderCount ?? 0);
+  return {
+    gmvPaise,
+    paidGmvPaise: Number(row?.paidGmvPaise ?? 0),
+    aovPaise: orderCount > 0 ? Math.round(gmvPaise / orderCount) : null,
+  };
+}
+
 export const adminService = {
   async getDashboardMetrics(): Promise<DashboardMetrics> {
     const [totalOrders, totalVendors, totalCustomers, pendingApprovals, revenue] =
@@ -81,17 +120,12 @@ export const adminService = {
           }],
         }),
         Product.count({ where: { status: PRODUCT_STATUS.PENDING_APPROVAL } }),
-        Order.sum('totalAmount', {
-          where: {
-            paymentStatus: PAYMENT_STATUS.PAID,
-            status: { [Op.ne]: ORDER_STATUS.CANCELLED },
-          },
-        }),
+        queryGmvTotals(),
       ]);
 
     return {
       totalOrders,
-      totalRevenue: Number(revenue ?? 0),
+      totalRevenue: fromPaise(revenue.gmvPaise),
       totalVendors,
       totalCustomers,
       pendingApprovals,
@@ -100,8 +134,7 @@ export const adminService = {
 
   async getPlatformAnalytics(): Promise<PlatformAnalytics> {
     const [
-      paidGmv,
-      allGmv,
+      gmvTotals,
       totalOrders,
       totalVendors,
       totalCustomers,
@@ -118,13 +151,7 @@ export const adminService = {
       ratingRows,
       growthRows,
     ] = await Promise.all([
-      Order.sum('totalAmount', {
-        where: {
-          paymentStatus: PAYMENT_STATUS.PAID,
-          status: { [Op.ne]: ORDER_STATUS.CANCELLED },
-        },
-      }),
-      Order.sum('totalAmount'),
+      queryGmvTotals(),
       Order.count(),
       Vendor.count(),
       User.count({
@@ -151,15 +178,15 @@ export const adminService = {
       }>(
         `WITH vendor_revenue AS (
            SELECT v.id, v."businessName",
-                  COALESCE(SUM(${sqlFrozenPaise('so', 'subtotalPaise', 'subtotal')}), 0)::bigint AS "revenuePaise"
+                  COALESCE(SUM(g."gmvPaise"), 0)::bigint AS "revenuePaise"
            FROM vendors v
-           LEFT JOIN sub_orders so
-             ON so."vendorId" = v.id
-            AND so.status <> '${ORDER_STATUS.CANCELLED}'
-            AND so."deletedAt" IS NULL
-           LEFT JOIN orders o ON o.id = so."orderId" AND o."deletedAt" IS NULL
+           LEFT JOIN (
+             SELECT s."vendorId", ${sqlGmvPaise('s')} AS "gmvPaise"
+             FROM sub_orders s
+             INNER JOIN orders o ON o.id = s."orderId"
+             WHERE ${GMV_SUB_ORDER_SQL}
+           ) g ON g."vendorId" = v.id
            WHERE v."deletedAt" IS NULL
-             AND (so.id IS NULL OR ${REPORTABLE_ORDER_SQL})
            GROUP BY v.id, v."businessName"
          )
          SELECT id, "businessName", "revenuePaise",
@@ -172,18 +199,15 @@ export const adminService = {
       sequelize.query<{ id: string; name: string; revenuePaise: string; totalPaise: string }>(
         `WITH category_revenue AS (
            SELECT c.id, c.name,
-                  COALESCE(SUM(${sqlFrozenPaise('oi', 'taxableAmountPaise', 'taxableAmount')}), 0)::bigint AS "revenuePaise"
+                  COALESCE(SUM(${sqlLineSubtotalPaise('oi')}), 0)::bigint AS "revenuePaise"
            FROM categories c
            JOIN products p ON p."categoryId" = c.id
            JOIN product_variants pv ON pv."productId" = p.id
            JOIN order_items oi ON oi."variantId" = pv.id AND oi."deletedAt" IS NULL
-           JOIN sub_orders so
-             ON so.id = oi."subOrderId"
-            AND so.status <> '${ORDER_STATUS.CANCELLED}'
-            AND so."deletedAt" IS NULL
-           JOIN orders o ON o.id = so."orderId" AND o."deletedAt" IS NULL
+           JOIN sub_orders s ON s.id = oi."subOrderId"
+           JOIN orders o ON o.id = s."orderId"
            WHERE c."deletedAt" IS NULL
-             AND ${REPORTABLE_ORDER_SQL}
+             AND ${GMV_SUB_ORDER_SQL}
            GROUP BY c.id, c.name
          )
          SELECT id, name, "revenuePaise",
@@ -193,16 +217,16 @@ export const adminService = {
          LIMIT 8`,
         { type: QueryTypes.SELECT },
       ),
-      sequelize.query<{ date: string; count: string; revenue: string }>(
-        `SELECT to_char(date_trunc('day', "createdAt"), 'YYYY-MM-DD') AS date,
-                COUNT(*)::int AS count,
-                COALESCE(SUM("totalAmount"), 0)::numeric AS revenue
-         FROM orders
-         WHERE "createdAt" >= NOW() - INTERVAL '30 days'
-           AND status <> 'CANCELLED'
-           AND "deletedAt" IS NULL
-         GROUP BY date_trunc('day', "createdAt")
-         ORDER BY date_trunc('day', "createdAt") ASC`,
+      sequelize.query<{ date: string; count: string; revenuePaise: string }>(
+        `SELECT to_char(date_trunc('day', o."createdAt"), 'YYYY-MM-DD') AS date,
+                COUNT(DISTINCT o.id)::int AS count,
+                COALESCE(SUM(${sqlGmvPaise('s')}), 0)::bigint AS "revenuePaise"
+         FROM sub_orders s
+         INNER JOIN orders o ON o.id = s."orderId"
+         WHERE o."createdAt" >= NOW() - INTERVAL '30 days'
+           AND ${GMV_SUB_ORDER_SQL}
+         GROUP BY date_trunc('day', o."createdAt")
+         ORDER BY date_trunc('day', o."createdAt") ASC`,
         { type: QueryTypes.SELECT },
       ),
       sequelize.query<{ status: string; count: string }>(
@@ -232,8 +256,8 @@ export const adminService = {
       sequelize.query<{
         ordersCurrent: string;
         ordersPrevious: string;
-        revenueCurrent: string;
-        revenuePrevious: string;
+        revenueCurrentPaise: string;
+        revenuePreviousPaise: string;
       }>(
         `SELECT
            COUNT(*) FILTER (WHERE "createdAt" >= NOW() - INTERVAL '14 days')::int AS "ordersCurrent",
@@ -241,20 +265,27 @@ export const adminService = {
              WHERE "createdAt" >= NOW() - INTERVAL '28 days'
                AND "createdAt" < NOW() - INTERVAL '14 days'
            )::int AS "ordersPrevious",
-           COALESCE(SUM("totalAmount") FILTER (WHERE "createdAt" >= NOW() - INTERVAL '14 days'), 0)::numeric AS "revenueCurrent",
-           COALESCE(SUM("totalAmount") FILTER (
-             WHERE "createdAt" >= NOW() - INTERVAL '28 days'
-               AND "createdAt" < NOW() - INTERVAL '14 days'
-           ), 0)::numeric AS "revenuePrevious"
+           (
+             SELECT COALESCE(SUM(${sqlGmvPaise('s')}), 0)
+             FROM sub_orders s
+             INNER JOIN orders o ON o.id = s."orderId"
+             WHERE o."createdAt" >= NOW() - INTERVAL '14 days'
+               AND ${GMV_SUB_ORDER_SQL}
+           )::bigint AS "revenueCurrentPaise",
+           (
+             SELECT COALESCE(SUM(${sqlGmvPaise('s')}), 0)
+             FROM sub_orders s
+             INNER JOIN orders o ON o.id = s."orderId"
+             WHERE o."createdAt" >= NOW() - INTERVAL '28 days'
+               AND o."createdAt" < NOW() - INTERVAL '14 days'
+               AND ${GMV_SUB_ORDER_SQL}
+           )::bigint AS "revenuePreviousPaise"
          FROM orders
          WHERE status <> 'CANCELLED' AND "deletedAt" IS NULL`,
         { type: QueryTypes.SELECT },
       ),
     ]);
 
-    const paid = Number(paidGmv ?? 0);
-    const all = Number(allGmv ?? 0);
-    const gmv = paid || all;
     const orderTotal = Number(totalOrders ?? 0);
     const cancelled = Number(cancelledOrders ?? 0);
     const returns = Number(returnCount ?? 0);
@@ -265,9 +296,9 @@ export const adminService = {
     );
 
     return {
-      gmv,
-      paidGmv: paid,
-      aov: orderTotal > 0 ? Number((gmv / orderTotal).toFixed(2)) : 0,
+      gmv: fromPaise(gmvTotals.gmvPaise),
+      paidGmv: fromPaise(gmvTotals.paidGmvPaise),
+      aov: gmvTotals.aovPaise == null ? 0 : fromPaise(gmvTotals.aovPaise),
       totalOrders: orderTotal,
       totalCustomers: Number(totalCustomers ?? 0),
       totalVendors: Number(totalVendors ?? 0),
@@ -281,8 +312,8 @@ export const adminService = {
         Number(growth?.ordersPrevious ?? 0),
       ),
       revenueGrowthPct: pctChange(
-        Number(growth?.revenueCurrent ?? 0),
-        Number(growth?.revenuePrevious ?? 0),
+        Number(growth?.revenueCurrentPaise ?? 0),
+        Number(growth?.revenuePreviousPaise ?? 0),
       ),
       topVendors: topVendorRows.map((row) => ({
         id: row.id,
@@ -299,7 +330,7 @@ export const adminService = {
       orderVolume: orderVolumeRows.map((row) => ({
         date: row.date,
         count: Number(row.count ?? 0),
-        revenue: Number(row.revenue ?? 0),
+        revenue: fromPaise(Number(row.revenuePaise ?? 0)),
       })),
       ordersByStatus: ordersByStatusRows.map((row) => ({
         status: row.status,

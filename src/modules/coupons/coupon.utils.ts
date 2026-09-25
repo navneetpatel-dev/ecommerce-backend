@@ -1,5 +1,6 @@
 import type { Coupon, CouponConfig } from '@database/models/coupon.model';
 import { allocateProportionally, fromPaise, toPaise, roundMoney } from '@modules/pricing/money';
+import { lineSubtotal } from '@modules/pricing/displayMoney';
 
 export type CartLineForCoupon = {
   productId: string;
@@ -36,7 +37,15 @@ export function prorateDiscount(
 }
 
 export function lineAmount(line: CartLineForCoupon): number {
-  return Number(line.unitPrice) * Number(line.quantity);
+  return lineSubtotal(line.unitPrice, line.quantity);
+}
+
+/**
+ * Pre-discount value of the given lines, summed in paise. Float sums drift
+ * (0.70 + 0.10 = 0.7999…), which would fail an exact min-order-value check.
+ */
+export function linesSubtotal(lines: CartLineForCoupon[]): number {
+  return fromPaise(lines.reduce((sum, line) => sum + toPaise(lineAmount(line)), 0));
 }
 
 export function isLineExcluded(
@@ -102,7 +111,7 @@ export function computeTypeDiscount(
   eligibleLines: CartLineForCoupon[],
   shippingTotal: number,
 ): { discount: number; cashbackAmount: number; freeShipping: boolean; configInvalid?: boolean } {
-  const eligibleSubtotal = eligibleLines.reduce((sum, line) => sum + lineAmount(line), 0);
+  const eligibleSubtotal = linesSubtotal(eligibleLines);
   const value = Number(coupon.value ?? 0);
   const cap = coupon.maxDiscountCap != null ? Number(coupon.maxDiscountCap) : Infinity;
   const config = (coupon.config ?? {}) as CouponConfig;
@@ -181,12 +190,14 @@ export function computeTypeDiscount(
 export function vendorEligibleSubtotals(
   eligibleLines: CartLineForCoupon[],
 ): Record<string, number> {
-  const map: Record<string, number> = {};
+  const paiseByVendor: Record<string, number> = {};
   for (const line of eligibleLines) {
     const key = line.vendorId || 'platform';
-    map[key] = (map[key] ?? 0) + lineAmount(line);
+    paiseByVendor[key] = (paiseByVendor[key] ?? 0) + toPaise(lineAmount(line));
   }
-  return map;
+  return Object.fromEntries(
+    Object.entries(paiseByVendor).map(([key, paise]) => [key, fromPaise(paise)]),
+  );
 }
 
 export function generateCouponCode(prefix = 'CPN'): string {

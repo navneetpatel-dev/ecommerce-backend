@@ -18,13 +18,13 @@ export class OrderItem extends Model<InferAttributes<OrderItem>, InferCreationAt
   declare commissionAmount: CreationOptional<number>;
   declare tcsAmount: CreationOptional<number>;
   declare netPayoutAmount: CreationOptional<number>;
-  declare unitPricePaise: CreationOptional<number>;
-  declare discountAmountPaise: CreationOptional<number>;
-  declare taxableAmountPaise: CreationOptional<number>;
-  declare taxAmountPaise: CreationOptional<number>;
-  declare commissionAmountPaise: CreationOptional<number>;
-  declare tcsAmountPaise: CreationOptional<number>;
-  declare netPayoutAmountPaise: CreationOptional<number>;
+  declare unitPricePaise: CreationOptional<number | null>;
+  declare discountAmountPaise: CreationOptional<number | null>;
+  declare taxableAmountPaise: CreationOptional<number | null>;
+  declare taxAmountPaise: CreationOptional<number | null>;
+  declare commissionAmountPaise: CreationOptional<number | null>;
+  declare tcsAmountPaise: CreationOptional<number | null>;
+  declare netPayoutAmountPaise: CreationOptional<number | null>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -56,13 +56,13 @@ export const initOrderItemModel = (sequelize: Sequelize) => {
       commissionAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       tcsAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       netPayoutAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
-      unitPricePaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
-      discountAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
-      taxableAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
-      taxAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
-      commissionAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
-      tcsAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
-      netPayoutAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      unitPricePaise: { type: DataTypes.BIGINT, allowNull: true },
+      discountAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
+      taxableAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
+      taxAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
+      commissionAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
+      tcsAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
+      netPayoutAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

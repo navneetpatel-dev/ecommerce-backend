@@ -51,3 +51,42 @@ describe('WishlistService.moveToCart stock clamp', () => {
     assert.equal(cartItem.quantity, 3);
   });
 });
+
+describe('WishlistService.getWishlist price drop', () => {
+  afterEach(() => {
+    mock.restoreAll();
+  });
+
+  function item(priceAtAdd: string, basePrice: string) {
+    return {
+      get: () => ({
+        id: `wi-${priceAtAdd}-${basePrice}`,
+        productId: 'p-1',
+        priceAtAdd,
+        product: {
+          id: 'p-1',
+          status: 'ACTIVE',
+          basePrice,
+          compareAtPrice: null,
+          images: [],
+          variants: [],
+          stock: 5,
+          vendor: { id: 'v-1', status: 'APPROVED' },
+        },
+      }),
+    };
+  }
+
+  it('returns the server-computed drop, or null when the price did not fall', async () => {
+    mock.method(wishlistRepository, 'findByUserId', async () => ({ id: 'wl-1' }));
+    mock.method(WishlistItem, 'findAll', async () => [
+      item('1299.00', '999.50'),
+      item('999.00', '1099.00'),
+    ] as never);
+
+    const { items } = await wishlistService.getWishlist('user-1');
+
+    assert.equal(items[0]?.priceDropAmount, 299.5);
+    assert.equal(items[1]?.priceDropAmount, null);
+  });
+});

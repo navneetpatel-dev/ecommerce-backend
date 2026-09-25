@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  cashDepositDiscrepancy,
   checkoutAmountDue,
+  wishlistPriceDrop,
+  inventoryValuation,
   invoiceLineTaxBreakdown,
   lineSubtotal,
   lineTotal,
@@ -109,5 +112,44 @@ describe('displayMoney', () => {
       igst: 50,
       gstPercentage: 18,
     });
+  });
+});
+
+describe('inventoryValuation', () => {
+  it('values stock at the rounded list price', () => {
+    assert.equal(inventoryValuation('19.99', 3), 59.97);
+    assert.equal(inventoryValuation(0.1, 3), 0.3);
+    assert.equal(inventoryValuation(250, 0), 0);
+  });
+});
+
+describe('cashDepositDiscrepancy', () => {
+  it('reports the declared-minus-expected gap in rupees', () => {
+    assert.deepEqual(cashDepositDiscrepancy('950.00', '1000.50'), {
+      discrepancyAmount: -50.5,
+      hasDiscrepancy: true,
+    });
+    assert.deepEqual(cashDepositDiscrepancy(1000.75, 1000), {
+      discrepancyAmount: 0.75,
+      hasDiscrepancy: true,
+    });
+  });
+
+  it('treats a gap within one paisa as matching', () => {
+    assert.equal(cashDepositDiscrepancy(0.3, 0.1 + 0.2).hasDiscrepancy, false);
+    assert.equal(cashDepositDiscrepancy(100.01, 100).hasDiscrepancy, false);
+    assert.equal(cashDepositDiscrepancy(100.02, 100).hasDiscrepancy, true);
+  });
+});
+
+describe('wishlistPriceDrop', () => {
+  it('returns the fall since the item was saved', () => {
+    assert.equal(wishlistPriceDrop('1299.00', '999.50'), 299.5);
+    assert.equal(wishlistPriceDrop(0.3, 0.1), 0.2);
+  });
+
+  it('returns null when the price held or rose', () => {
+    assert.equal(wishlistPriceDrop(999, 999), null);
+    assert.equal(wishlistPriceDrop(999, 1099), null);
   });
 });

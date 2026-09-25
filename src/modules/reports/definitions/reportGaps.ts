@@ -19,6 +19,8 @@ import {
   sqlFrozenPaise,
   REPORTABLE_ORDER_SQL,
 } from '../engine/queryHelpers';
+import { inventoryValuation } from '@modules/pricing/displayMoney';
+import { sqlOrderPaymentPaise } from '@modules/pricing/frozenMoneySql';
 import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
 
 function resolveVendorId(filters: ReportFilters): string | null {
@@ -611,7 +613,7 @@ async function platformInventory(filters: ReportFilters) {
         lowStockAt,
         isLowStock: stock <= lowStockAt,
         price,
-        valuation: Math.round(stock * price * 100) / 100,
+        valuation: inventoryValuation(price, stock),
       };
     }),
     total,
@@ -626,18 +628,19 @@ async function customerAnalytics(filters: ReportFilters) {
       COALESCE(u.email, '') AS email,
       COALESCE(u.name, '') AS name,
       COUNT(o.id)::int AS "orderCount",
-      COALESCE(SUM(o."totalAmount"), 0)::float AS "totalSpent",
+      COALESCE(SUM(${sqlOrderPaymentPaise('o')}), 0)::bigint AS "totalSpentPaise",
       MIN(o."createdAt") AS "firstOrderAt",
       MAX(o."createdAt") AS "lastOrderAt",
       CASE WHEN COUNT(o.id) <= 1 THEN 'NEW' ELSE 'RETURNING' END AS segment
     FROM users u
     INNER JOIN orders o ON o."userId" = u.id AND o."deletedAt" IS NULL
     WHERE o."createdAt" BETWEEN :from AND :to
+      AND ${REPORTABLE_ORDER_SQL}
     GROUP BY u.id, u.email, u.name
   `;
   return pagedSqlQuery({
     selectSql,
-    orderBySql: `"totalSpent" DESC`,
+    orderBySql: `"totalSpentPaise" DESC, "userId" ASC`,
     replacements: sqlReplacements(filters),
     filters,
     mapRow: (row) => ({
@@ -645,7 +648,7 @@ async function customerAnalytics(filters: ReportFilters) {
       email: row.email,
       name: row.name,
       orderCount: Number(row.orderCount ?? 0),
-      totalSpent: Number(row.totalSpent ?? 0),
+      totalSpent: fromPaise(Number(row.totalSpentPaise ?? 0)),
       firstOrderAt: row.firstOrderAt,
       lastOrderAt: row.lastOrderAt,
       segment: row.segment,

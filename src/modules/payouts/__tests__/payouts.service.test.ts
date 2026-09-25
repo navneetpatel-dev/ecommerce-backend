@@ -119,4 +119,53 @@ describe('PayoutsService.process return-window and dispute hold', () => {
     assert.deepEqual(scanSub?.include, lockedSub?.include);
     assert.equal(scanSub?.where?.status, ORDER_STATUS.DELIVERED);
   });
+
+  it('nets TCS out of a pre-engine ledger, like the settlement reports', async () => {
+    const created: Array<{ status?: string; amount?: number }> = [];
+    mock.method(settingsService, 'getPlatformSettings', async () => ({
+      tdsRatePercent: 0,
+      defaultReturnWindow: 7,
+    }));
+    let scans = 0;
+    mock.method(CommissionLedger, 'findAll', async () => {
+      scans += 1;
+      if (scans > 1) return [];
+      return [
+        {
+          id: 'cl-legacy',
+          vendorId: 'vendor-1',
+          createdAt: new Date(),
+          netPayoutAmountPaise: null,
+          netPayoutAmount: null,
+          saleAmount: '1000.00',
+          commissionAmount: '100.00',
+          tcsAmount: '10.00',
+        },
+        {
+          id: 'cl-frozen',
+          vendorId: 'vendor-1',
+          createdAt: new Date(),
+          netPayoutAmountPaise: 20001,
+          netPayoutAmount: '1.00',
+        },
+      ] as never;
+    });
+    mock.method(sequelize, 'transaction', async (callback: (t: { LOCK: { UPDATE: string } }) => Promise<unknown>) => {
+      return callback({ LOCK: { UPDATE: 'UPDATE' } });
+    });
+    mock.method(Payout, 'create', async (fields: { status?: string; amount?: number }) => {
+      created.push(fields);
+      return { id: 'payout-fail', ...fields } as never;
+    });
+    mock.method(Vendor, 'findByPk', async () => ({ businessName: 'Store' }) as never);
+    mock.method(User, 'findOne', async () => null);
+    mock.method(Role, 'findOne', async () => null);
+
+    await payoutsService.process('actor-1');
+
+    // The locked re-read finds nothing, so the batch is recorded as FAILED with the
+    // scanned group total: (1000 − 100 − 10) + 200.01, summed in paise.
+    assert.equal(created.length, 1);
+    assert.equal(created[0]?.amount, 1090.01);
+  });
 });

@@ -14,11 +14,12 @@ import {
   type DiscountBearer,
 } from '@core/constants/statuses';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
+import { fromPaise, toPaise } from '@modules/pricing/money';
 import {
   type CartLineForCoupon,
   computeTypeDiscount,
   filterEligibleLines,
-  lineAmount,
+  linesSubtotal,
   prorateDiscount,
   roundMoney,
   vendorEligibleSubtotals,
@@ -210,7 +211,7 @@ export async function validateCoupon(input: ValidateCouponInput): Promise<Valida
     return fail(ERROR_MESSAGES.COUPON_SCOPE, ERROR_CODES.COUPON_SCOPE);
   }
 
-  const eligibleSubtotal = eligibleLines.reduce((sum, line) => sum + lineAmount(line), 0);
+  const eligibleSubtotal = linesSubtotal(eligibleLines);
   const eligibleQty = eligibleLines.reduce((sum, line) => sum + Number(line.quantity), 0);
   const eligibleVendorIds = new Set(
     eligibleLines.map((line) => line.vendorId ?? 'platform'),
@@ -223,7 +224,9 @@ export async function validateCoupon(input: ValidateCouponInput): Promise<Valida
       )
     : undefined;
   const eligibleShippingTotal = eligibleShippingByVendor
-    ? Object.values(eligibleShippingByVendor).reduce((sum, amount) => sum + amount, 0)
+    ? fromPaise(
+        Object.values(eligibleShippingByVendor).reduce((sum, amount) => sum + toPaise(amount), 0),
+      )
     : shippingTotal;
 
   if (coupon.minOrderValue != null && eligibleSubtotal < Number(coupon.minOrderValue)) {

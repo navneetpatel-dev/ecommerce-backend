@@ -14,14 +14,14 @@ export class CommissionLedger extends Model<InferAttributes<CommissionLedger>, I
   declare tcsAmount: CreationOptional<number>;
   declare netPayoutAmount: CreationOptional<number>;
   declare shippingCollected: CreationOptional<number>;
-  declare saleAmountPaise: CreationOptional<number>;
-  declare commissionAmountPaise: CreationOptional<number>;
-  declare taxableAmountPaise: CreationOptional<number>;
-  declare discountAmountPaise: CreationOptional<number>;
-  declare taxAmountPaise: CreationOptional<number>;
-  declare tcsAmountPaise: CreationOptional<number>;
-  declare netPayoutAmountPaise: CreationOptional<number>;
-  declare shippingCollectedPaise: CreationOptional<number>;
+  declare saleAmountPaise: CreationOptional<number | null>;
+  declare commissionAmountPaise: CreationOptional<number | null>;
+  declare taxableAmountPaise: CreationOptional<number | null>;
+  declare discountAmountPaise: CreationOptional<number | null>;
+  declare taxAmountPaise: CreationOptional<number | null>;
+  declare tcsAmountPaise: CreationOptional<number | null>;
+  declare netPayoutAmountPaise: CreationOptional<number | null>;
+  declare shippingCollectedPaise: CreationOptional<number | null>;
   /** Optional adjustment marker (e.g. CashbackCost / CashbackCostReversal). */
   declare referenceType: CreationOptional<string | null>;
   declare status: 'PENDING' | 'SETTLED' | 'CLAWED_BACK';
@@ -57,14 +57,14 @@ export const initCommissionLedgerModel = (sequelize: Sequelize) => {
       tcsAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       netPayoutAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       shippingCollected: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
-      saleAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
-      commissionAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
-      taxableAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
-      discountAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
-      taxAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
-      tcsAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
-      netPayoutAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
-      shippingCollectedPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      saleAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
+      commissionAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
+      taxableAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
+      discountAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
+      taxAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
+      tcsAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
+      netPayoutAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
+      shippingCollectedPaise: { type: DataTypes.BIGINT, allowNull: true },
       referenceType: { type: DataTypes.STRING(64), allowNull: true },
       status: { type: DataTypes.ENUM('PENDING', 'SETTLED', 'CLAWED_BACK'), defaultValue: 'PENDING' },
       createdBy: { type: DataTypes.UUID, allowNull: true },
