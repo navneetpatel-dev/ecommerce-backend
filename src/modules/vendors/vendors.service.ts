@@ -6,7 +6,12 @@ import { ROLES, VENDOR_STATUS, ORDER_STATUS, COMMISSION_STATUS, PRODUCT_STATUS }
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { fromPaise } from '@modules/pricing/money';
-import { sqlVendorNetPayoutPaise, sqlFrozenPaise, REPORTABLE_ORDER_SQL } from '@modules/pricing/frozenMoneySql';
+import {
+  sqlVendorNetPayoutPaise,
+  sqlFrozenPaise,
+  sqlLineSubtotalPaise,
+  REPORTABLE_ORDER_SQL,
+} from '@modules/pricing/frozenMoneySql';
 import {
   deleteS3ObjectIfReplaced,
   cascadeDeleteEntityMedia,
@@ -876,12 +881,12 @@ export class VendorsService {
       productId: string;
       name: string;
       unitsSold: string;
-      revenue: string;
+      revenuePaise: string;
     }>(
       `SELECT pv."productId" AS "productId",
               (ARRAY_AGG(oi."productName" ORDER BY oi."createdAt" DESC))[1] AS "name",
               SUM(oi.quantity)::int AS "unitsSold",
-              SUM(COALESCE(oi."lineSubtotal", oi."unitPrice" * oi.quantity))::numeric AS "revenue"
+              SUM(${sqlLineSubtotalPaise('oi')})::bigint AS "revenuePaise"
        FROM order_items oi
        INNER JOIN sub_orders s ON s.id = oi."subOrderId" AND s."deletedAt" IS NULL
        INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
@@ -891,7 +896,7 @@ export class VendorsService {
          AND o."createdAt" BETWEEN :from AND :to
          AND ${REPORTABLE_ORDER_SQL}
        GROUP BY pv."productId"
-       ORDER BY revenue DESC
+       ORDER BY "revenuePaise" DESC
        LIMIT 10`,
       { replacements: { vendorId, from, to }, type: QueryTypes.SELECT },
     );
@@ -933,7 +938,7 @@ export class VendorsService {
         id: row.productId,
         name: row.name ?? '',
         unitsSold: Number(row.unitsSold ?? 0),
-        revenue: Number(row.revenue ?? 0),
+        revenue: fromPaise(Number(row.revenuePaise ?? 0)),
       })),
       fulfillmentSLA: { onTimePercent, latePercent },
     };

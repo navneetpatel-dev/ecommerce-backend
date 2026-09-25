@@ -94,7 +94,7 @@ async function main(): Promise<void> {
       vendorsService.getDashboardSummary(vendor.id),
     );
     snapshot[`vendor:${vendor.id}:analytics`] = await capture('vendor analytics', () =>
-      vendorsService.getDashboardAnalytics(vendor.id, 36_500),
+      vendorsService.getDashboardAnalytics(vendor.id, 400),
     );
     snapshot[`vendor:${vendor.id}:commissions`] = await capture('commissions', () =>
       commissionsService.list(PAGE, vendor.id),

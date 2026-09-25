@@ -19,6 +19,7 @@ import {
   sqlFrozenPaise,
   REPORTABLE_ORDER_SQL,
 } from '../engine/queryHelpers';
+import { inventoryValuation } from '@modules/pricing/displayMoney';
 import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
 
 function resolveVendorId(filters: ReportFilters): string | null {
@@ -611,7 +612,7 @@ async function platformInventory(filters: ReportFilters) {
         lowStockAt,
         isLowStock: stock <= lowStockAt,
         price,
-        valuation: Math.round(stock * price * 100) / 100,
+        valuation: inventoryValuation(price, stock),
       };
     }),
     total,

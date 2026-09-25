@@ -15,6 +15,8 @@ import { ReturnRequest } from '@database/models/returnRequest.model';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
 import { createOffsetExportQuery } from '../engine/export/createOffsetExportQuery';
 import { vendorNetPayoutPaise } from '@modules/pricing/frozenMoneySql';
+import { toPaise } from '@modules/pricing/money';
+import { inventoryValuation } from '@modules/pricing/displayMoney';
 import {
   assertReportRange,
   frozenPaise,
@@ -207,21 +209,32 @@ export async function getGstBreakdownForSubOrders(
     where: { subOrderId: { [Op.in]: subOrderIds } },
   });
 
+  // Summed in paise so the ledger never shows float drift (12.300000000000001).
+  const paiseBySubOrder = new Map<string, SubOrderGstBreakdown>();
   for (const item of items) {
     const g = computeOrderItemGst(item);
-    const acc = map.get(item.subOrderId) ?? {
+    const acc = paiseBySubOrder.get(item.subOrderId) ?? {
       taxableAmount: 0,
       cgst: 0,
       sgst: 0,
       igst: 0,
       taxAmount: 0,
     };
-    acc.taxableAmount += g.taxable;
-    acc.cgst += g.cgst;
-    acc.sgst += g.sgst;
-    acc.igst += g.igst;
-    acc.taxAmount += g.tax;
-    map.set(item.subOrderId, acc);
+    acc.taxableAmount += toPaise(g.taxable);
+    acc.cgst += toPaise(g.cgst);
+    acc.sgst += toPaise(g.sgst);
+    acc.igst += toPaise(g.igst);
+    acc.taxAmount += toPaise(g.tax);
+    paiseBySubOrder.set(item.subOrderId, acc);
+  }
+  for (const [subOrderId, paise] of paiseBySubOrder) {
+    map.set(subOrderId, {
+      taxableAmount: fromPaise(paise.taxableAmount),
+      cgst: fromPaise(paise.cgst),
+      sgst: fromPaise(paise.sgst),
+      igst: fromPaise(paise.igst),
+      taxAmount: fromPaise(paise.taxAmount),
+    });
   }
 
   return map;
@@ -842,7 +855,7 @@ async function vendorInventory(filters: ReportFilters) {
         lowStockAt,
         isLowStock: stock <= lowStockAt,
         price,
-        valuation: Math.round(stock * price * 100) / 100,
+        valuation: inventoryValuation(price, stock),
       };
     }),
     total,

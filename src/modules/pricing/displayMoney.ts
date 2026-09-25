@@ -5,6 +5,11 @@ export function lineSubtotal(unitPrice: unknown, quantity: unknown): number {
   return roundMoney(roundMoney(unitPrice) * Math.trunc(Number(quantity) || 0));
 }
 
+/** Stock value of one variant at its list price — the inventory reports' valuation. */
+export function inventoryValuation(unitPrice: unknown, stock: unknown): number {
+  return lineSubtotal(unitPrice, stock);
+}
+
 /** Customer line total after discount, including tax (excludes shipping). */
 export function lineTotal(taxableAmount: unknown, taxAmount: unknown): number {
   return roundMoney(roundMoney(taxableAmount) + roundMoney(taxAmount));

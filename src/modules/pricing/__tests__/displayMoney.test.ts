@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   checkoutAmountDue,
+  inventoryValuation,
   invoiceLineTaxBreakdown,
   lineSubtotal,
   lineTotal,
@@ -109,5 +110,13 @@ describe('displayMoney', () => {
       igst: 50,
       gstPercentage: 18,
     });
+  });
+});
+
+describe('inventoryValuation', () => {
+  it('values stock at the rounded list price', () => {
+    assert.equal(inventoryValuation('19.99', 3), 59.97);
+    assert.equal(inventoryValuation(0.1, 3), 0.3);
+    assert.equal(inventoryValuation(250, 0), 0);
   });
 });
