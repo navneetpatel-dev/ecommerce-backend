@@ -47,12 +47,21 @@ describe('TCS/TDS ledger unique constraints', () => {
     await sequelize.close().catch(() => undefined);
   });
 
-  it('declares a composite unique index on TcsLedger (subOrderId, entryType)', () => {
+  it('declares one COLLECTION per sub-order and one RETURN_ADJUSTMENT per return', () => {
     const indexes = indexNames(TcsLedger);
-    const composite = indexes.find((idx) => idx.name === 'tcs_ledgers_sub_order_entry_type_unique');
-    assert.ok(composite);
-    assert.equal(composite.unique, true);
-    assert.deepEqual(composite.fields, ['subOrderId', 'entryType']);
+    const collection = indexes.find((idx) => idx.name === 'tcs_ledgers_collection_sub_order_unique');
+    assert.ok(collection);
+    assert.equal(collection.unique, true);
+    assert.deepEqual(collection.fields, ['subOrderId']);
+    const adjustment = indexes.find((idx) => idx.name === 'tcs_ledgers_return_adjustment_unique');
+    assert.ok(adjustment);
+    assert.equal(adjustment.unique, true);
+    assert.deepEqual(adjustment.fields, ['returnRequestId']);
+    // The old per-sub-order index blocked a second return's adjustment.
+    assert.equal(
+      indexes.some((idx) => idx.name === 'tcs_ledgers_sub_order_entry_type_unique'),
+      false,
+    );
   });
 
   it('declares a unique index on TdsLedger.subOrderId', () => {
@@ -79,10 +88,10 @@ describe('TCS/TDS ledger unique constraints', () => {
     assert.ok(blob.includes('ROW_NUMBER()'));
   });
 
-  it('rejects a second TcsLedger COLLECTION for the same subOrderId and allows RETURN_ADJUSTMENT', async (t) => {
+  it('rejects a second COLLECTION, allows one RETURN_ADJUSTMENT per return', async (t) => {
     if (!(await dbReady())) return t.skip('database unavailable');
-    if (!(await constraintInstalled('tcs_ledgers_sub_order_entry_type_unique'))) {
-      return t.skip('tcs unique index not installed');
+    if (!(await constraintInstalled('tcs_ledgers_return_adjustment_unique'))) {
+      return t.skip('tcs unique indexes not installed');
     }
 
     const original = await TcsLedger.findOne({
@@ -90,7 +99,7 @@ describe('TCS/TDS ledger unique constraints', () => {
     });
     if (!original) return t.skip('no TCS COLLECTION fixture');
 
-    const duplicateFields = {
+    const fields = {
       orderId: original.orderId,
       subOrderId: original.subOrderId,
       vendorId: original.vendorId,
@@ -111,29 +120,45 @@ describe('TCS/TDS ledger unique constraints', () => {
     };
 
     await assert.rejects(
-      () => TcsLedger.create({ ...duplicateFields, entryType: 'COLLECTION' }),
+      () => TcsLedger.create({ ...fields, entryType: 'COLLECTION' }),
       isUniqueViolation,
     );
 
-    const existingAdjustment = await TcsLedger.findOne({
-      where: { subOrderId: original.subOrderId, entryType: 'RETURN_ADJUSTMENT' },
-    });
-    if (existingAdjustment) {
-      assert.equal(existingAdjustment.subOrderId, original.subOrderId);
-      return;
-    }
-
-    await sequelize.transaction(async (transaction) => {
-      const row = await TcsLedger.create(
-        { ...duplicateFields, entryType: 'RETURN_ADJUSTMENT', tcsAmountPaise: -1, taxableAmountPaise: -100 },
-        { transaction },
-      );
-      assert.equal(row.entryType, 'RETURN_ADJUSTMENT');
-      assert.equal(row.subOrderId, original.subOrderId);
-      throw new Error('rollback-test');
-    }).catch((err: unknown) => {
-      if (!(err instanceof Error) || err.message !== 'rollback-test') throw err;
-    });
+    // Inside a rolled-back transaction: two returns on the same sub-order each get
+    // their adjustment; a retry of the same return is rejected.
+    const [freeReturns] = await sequelize.query(
+      `SELECT rr.id FROM return_requests rr
+       WHERE NOT EXISTS (
+         SELECT 1 FROM tcs_ledgers t
+         WHERE t."returnRequestId" = rr.id AND t."deletedAt" IS NULL
+       )
+       ORDER BY rr.id
+       LIMIT 2`,
+    );
+    const [returnA, returnB] = (freeReturns as Array<{ id: string }>).map((row) => row.id);
+    if (!returnA || !returnB) return t.skip('needs two return requests without TCS adjustments');
+    const adjustment = {
+      ...fields,
+      entryType: 'RETURN_ADJUSTMENT',
+      tcsAmountPaise: -1,
+      taxableAmountPaise: -100,
+    };
+    await sequelize
+      .transaction(async (transaction) => {
+        await TcsLedger.create({ ...adjustment, returnRequestId: returnA }, { transaction });
+        await TcsLedger.create({ ...adjustment, returnRequestId: returnB }, { transaction });
+        await assert.rejects(
+          () =>
+            sequelize.transaction({ transaction }, () =>
+              TcsLedger.create({ ...adjustment, returnRequestId: returnA }, { transaction }),
+            ),
+          isUniqueViolation,
+        );
+        throw new Error('rollback-test');
+      })
+      .catch((err: unknown) => {
+        if (!(err instanceof Error) || err.message !== 'rollback-test') throw err;
+      });
   });
 
   it('rejects a second TdsLedger row for the same subOrderId', async (t) => {
