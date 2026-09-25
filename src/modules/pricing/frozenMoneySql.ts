@@ -129,3 +129,19 @@ export const GMV_SUB_ORDER_SQL = `(
   AND o."deletedAt" IS NULL
   AND ${REPORTABLE_ORDER_SQL}
 )`;
+
+/**
+ * What the customer was charged for one order, in paise (alias = orders): the
+ * checkout total frozen in `originalTotalAmount`, falling back to `totalAmount`
+ * for orders placed before that column existed. Returns and cancellations are
+ * reported separately, so this stays the gross charge. Settlement "customer
+ * payments", customer analytics "total spent" and coupon "revenue impact" all
+ * sum this over `REPORTABLE_ORDER_SQL` orders.
+ */
+export function sqlOrderPaymentPaise(alias: string): string {
+  return `CASE
+    WHEN COALESCE(${alias}."originalTotalAmount", 0) > 0
+      THEN ROUND(${alias}."originalTotalAmount"::numeric * 100)::bigint
+    ELSE ROUND(COALESCE(${alias}."totalAmount", 0)::numeric * 100)::bigint
+  END`;
+}

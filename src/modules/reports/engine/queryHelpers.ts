@@ -7,6 +7,7 @@ import { fromPaise, toPaise } from '@modules/pricing/money';
 import {
   REPORTABLE_ORDER_SQL,
   sqlFrozenPaise,
+  sqlOrderPaymentPaise,
   sqlVendorNetPayoutPaise,
 } from '@modules/pricing/frozenMoneySql';
 import {
@@ -136,11 +137,7 @@ export async function computeReconciliationSummary(filters: {
     WITH reportable_orders AS (
       SELECT
         o.id,
-        CASE
-          WHEN COALESCE(o."originalTotalAmount", 0) > 0
-            THEN ROUND(o."originalTotalAmount"::numeric * 100)::bigint
-          ELSE ROUND(COALESCE(o."totalAmount", 0)::numeric * 100)::bigint
-        END AS "paymentPaise"
+        ${sqlOrderPaymentPaise('o')} AS "paymentPaise"
       FROM orders o
       WHERE o."deletedAt" IS NULL
         AND o."createdAt" BETWEEN :from AND :to
@@ -157,13 +154,12 @@ export async function computeReconciliationSummary(filters: {
       SELECT
         COALESCE(SUM(${taxExpr}), 0)::bigint AS "taxPaise",
         COALESCE(SUM(GREATEST(0, (${shipCost}) - (${shipDisc}))), 0)::bigint AS "shippingPaise",
-        -- GMV counts only sub-orders that were not cancelled (GMV_SUB_ORDER_SQL);
-        -- tax, shipping and discounts above/below keep every scoped sub-order.
-        COALESCE(SUM(${subtotalExpr}) FILTER (
-          WHERE s."status" <> '${ORDER_STATUS.CANCELLED}'
-        ), 0)::bigint AS "gmvPaise",
+        COALESCE(SUM(${subtotalExpr}), 0)::bigint AS "gmvPaise",
         COALESCE(SUM(${merchDiscExpr}), 0)::bigint AS "merchandiseDiscountPaise"
       FROM scoped_subs s
+      -- A cancelled sub-order was refunded and its commission/TCS ledgers deleted, so
+      -- it leaves GMV, tax, shipping and discounts too (same rule as GMV_SUB_ORDER_SQL).
+      WHERE s."status" <> '${ORDER_STATUS.CANCELLED}'
     ),
     ledger_totals AS (
       SELECT
