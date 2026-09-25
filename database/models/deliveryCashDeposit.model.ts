@@ -1,5 +1,6 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
 import { coerceRupees } from '@modules/pricing/money';
+import { cashDepositDiscrepancy } from '@modules/pricing/displayMoney';
 
 export type CashDepositStatus = 'PENDING' | 'VERIFIED' | 'REJECTED';
 
@@ -13,6 +14,8 @@ export class DeliveryCashDeposit extends Model<
   declare amount: number;
   /** COD cash the system expects the agent to be holding at submission time. */
   declare expectedAmount: number;
+  declare readonly discrepancyAmount: CreationOptional<number>;
+  declare readonly hasDiscrepancy: CreationOptional<boolean>;
   declare status: CreationOptional<CashDepositStatus>;
   declare note: string | null;
   declare rejectionReason: string | null;
@@ -51,6 +54,19 @@ export const initDeliveryCashDepositModel = (sequelize: Sequelize) => {
         allowNull: false,
         get(this: DeliveryCashDeposit) {
           return coerceRupees(this.getDataValue('expectedAmount'));
+        },
+      },
+      // Computed server-side so no client ever subtracts the two amounts itself.
+      discrepancyAmount: {
+        type: DataTypes.VIRTUAL,
+        get(this: DeliveryCashDeposit) {
+          return cashDepositDiscrepancy(this.amount, this.expectedAmount).discrepancyAmount;
+        },
+      },
+      hasDiscrepancy: {
+        type: DataTypes.VIRTUAL,
+        get(this: DeliveryCashDeposit) {
+          return cashDepositDiscrepancy(this.amount, this.expectedAmount).hasDiscrepancy;
         },
       },
       status: { type: DataTypes.ENUM('PENDING', 'VERIFIED', 'REJECTED'), allowNull: false, defaultValue: 'PENDING' },

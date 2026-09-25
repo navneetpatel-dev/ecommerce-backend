@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  cashDepositDiscrepancy,
   checkoutAmountDue,
   inventoryValuation,
   invoiceLineTaxBreakdown,
@@ -118,5 +119,24 @@ describe('inventoryValuation', () => {
     assert.equal(inventoryValuation('19.99', 3), 59.97);
     assert.equal(inventoryValuation(0.1, 3), 0.3);
     assert.equal(inventoryValuation(250, 0), 0);
+  });
+});
+
+describe('cashDepositDiscrepancy', () => {
+  it('reports the declared-minus-expected gap in rupees', () => {
+    assert.deepEqual(cashDepositDiscrepancy('950.00', '1000.50'), {
+      discrepancyAmount: -50.5,
+      hasDiscrepancy: true,
+    });
+    assert.deepEqual(cashDepositDiscrepancy(1000.75, 1000), {
+      discrepancyAmount: 0.75,
+      hasDiscrepancy: true,
+    });
+  });
+
+  it('treats a gap within one paisa as matching', () => {
+    assert.equal(cashDepositDiscrepancy(0.3, 0.1 + 0.2).hasDiscrepancy, false);
+    assert.equal(cashDepositDiscrepancy(100.01, 100).hasDiscrepancy, false);
+    assert.equal(cashDepositDiscrepancy(100.02, 100).hasDiscrepancy, true);
   });
 });

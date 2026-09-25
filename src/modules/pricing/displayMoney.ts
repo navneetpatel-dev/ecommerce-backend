@@ -1,4 +1,4 @@
-import { roundMoney } from './money';
+import { coerceRupees, fromPaise, roundMoney, toPaise } from './money';
 
 /** Pre-discount extended price for a cart/order line. */
 export function lineSubtotal(unitPrice: unknown, quantity: unknown): number {
@@ -222,4 +222,22 @@ export function taxInclusivePrice(
   const pct = Number(gstPercentage ?? 0);
   if (!Number.isFinite(pct) || pct <= 0) return null;
   return roundMoney(roundMoney(basePrice) * (1 + pct / 100));
+}
+
+/** A declared cash deposit further than this from the expected COD cash is flagged for review. */
+export const CASH_DEPOSIT_TOLERANCE_PAISE = 1;
+
+/**
+ * Declared-minus-expected gap on an agent's end-of-shift cash deposit (negative =
+ * short), in rupees, and whether it exceeds the review tolerance. Computed in paise.
+ */
+export function cashDepositDiscrepancy(
+  amount: unknown,
+  expectedAmount: unknown,
+): { discrepancyAmount: number; hasDiscrepancy: boolean } {
+  const gapPaise = toPaise(coerceRupees(amount)) - toPaise(coerceRupees(expectedAmount));
+  return {
+    discrepancyAmount: fromPaise(gapPaise),
+    hasDiscrepancy: Math.abs(gapPaise) > CASH_DEPOSIT_TOLERANCE_PAISE,
+  };
 }
