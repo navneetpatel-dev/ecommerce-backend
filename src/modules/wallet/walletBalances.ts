@@ -5,7 +5,7 @@ import {
   WALLET_LEDGER_TYPE,
   WALLET_POINT_SOURCE,
 } from '@core/constants/statuses';
-import { roundMoney } from '@modules/pricing/money';
+import { roundMoney, sumRupees } from '@modules/pricing/money';
 
 export type PointSourceBalances = {
   purchased: number;
@@ -81,5 +81,5 @@ export async function sumExpiredPromotionalCredits(
     },
     transaction,
   });
-  return roundMoney(rows.reduce((sum, row) => sum + Number(row.amount), 0));
+  return sumRupees(rows.map((row) => row.amount));
 }

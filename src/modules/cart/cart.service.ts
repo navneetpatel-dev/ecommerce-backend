@@ -4,8 +4,8 @@ import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { type UnavailableReason } from '@core/constants/statuses';
 import { resolveItemAvailability } from '@core/catalog/customerVisibility';
-import { combinedDiscount, lineSubtotal } from '@modules/pricing/displayMoney';
-import { roundMoney } from '@modules/pricing/money';
+import { lineSubtotal } from '@modules/pricing/displayMoney';
+import { fromPaise, roundMoney, sumRupees } from '@modules/pricing/money';
 import { computeVendorShippingWeightsByVendor } from '@modules/shipping/shippingWeight';
 import { resolveShippingDisplayKey } from '@modules/checkout/checkoutOrderTotals';
 import { cartRepository } from './cart.repository';
@@ -201,7 +201,7 @@ export class CartService {
 
     const mappedItems = items.map(mapCartItem);
     const available = mappedItems.filter((item) => item.isAvailable);
-    const merchandiseSubtotal = roundMoney(available.reduce((sum, item) => sum + item.lineSubtotal, 0));
+    const merchandiseSubtotal = sumRupees(available.map((item) => item.lineSubtotal));
 
     let appliedCoupon: CartView['appliedCoupon'] = null;
     let appliedCoupons: CartView['appliedCoupons'] = [];
@@ -265,7 +265,7 @@ export class CartService {
     vendorBorneDiscountShares: Record<string, number>;
     merchandiseDiscountTotal: number;
   }): Promise<NonNullable<CartView['pricingPreview']>> {
-    const merchandiseSubtotal = input.items.reduce((sum, item) => sum + item.lineSubtotal, 0);
+    const merchandiseSubtotal = sumRupees(input.items.map((item) => item.lineSubtotal));
     if (input.items.length === 0) {
       return {
         merchandiseSubtotal: 0,
@@ -339,17 +339,22 @@ export class CartService {
       settings,
     });
 
-    let discount = 0;
-    let taxTotal = 0;
-    let shippingTotal = 0;
-    let grandTotal = 0;
+    // Summed from the engine's paise breakdown, so the totals are exact.
+    let discountPaise = 0;
+    let taxPaise = 0;
+    let shippingPaise = 0;
+    let grandTotalPaise = 0;
     for (const priced of Object.values(pricedByVendor)) {
-      const r = priced.rupees;
-      discount += combinedDiscount(r.merchandiseDiscount, r.shippingDiscount);
-      taxTotal += r.tax.total;
-      shippingTotal += r.shippingCharged;
-      grandTotal += r.customerTotal;
+      const p = priced.paise;
+      discountPaise += p.merchandiseDiscountPaise + p.shippingDiscountPaise;
+      taxPaise += p.tax.total;
+      shippingPaise += p.shippingChargedPaise;
+      grandTotalPaise += p.customerTotalPaise;
     }
+    let discount = fromPaise(discountPaise);
+    const taxTotal = fromPaise(taxPaise);
+    const shippingTotal = fromPaise(shippingPaise);
+    const grandTotal = fromPaise(grandTotalPaise);
 
     if (discount === 0 && input.merchandiseDiscountTotal > 0) {
       discount = input.merchandiseDiscountTotal;

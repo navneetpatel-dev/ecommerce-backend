@@ -1,4 +1,4 @@
-import { roundMoney } from '@modules/pricing/money';
+import { fromPaise, roundMoney, toPaise } from '@modules/pricing/money';
 
 export type ShippingDisplayKey = 'FREE' | 'PAID';
 
@@ -53,35 +53,35 @@ export function buildCheckoutOrderTotals(
   vendorBreakdowns: VendorBreakdownRow[],
   giftWrapFeeAmount = 0,
 ): CheckoutOrderTotals {
-  let merchandiseSubtotal = 0;
-  let shippingTotal = 0;
-  let cgst = 0;
-  let sgst = 0;
-  let igst = 0;
-  let discountTotal = 0;
+  // Summed in paise and converted once, so many vendors cannot drift the totals.
+  let merchandisePaise = 0;
+  let shippingPaise = 0;
+  let cgstPaise = 0;
+  let sgstPaise = 0;
+  let igstPaise = 0;
+  let discountPaise = 0;
 
   for (const row of vendorBreakdowns) {
-    merchandiseSubtotal += row.subtotal;
-    shippingTotal += row.shippingCost;
-    cgst += row.tax.cgst;
-    sgst += row.tax.sgst;
-    igst += row.tax.igst;
-    discountTotal += row.discount;
+    merchandisePaise += toPaise(row.subtotal);
+    shippingPaise += toPaise(row.shippingCost);
+    cgstPaise += toPaise(row.tax.cgst);
+    sgstPaise += toPaise(row.tax.sgst);
+    igstPaise += toPaise(row.tax.igst);
+    discountPaise += toPaise(row.discount);
   }
 
-  // Round each aggregate once at the end — summing raw floats across many vendors drifts.
-  merchandiseSubtotal = roundMoney(merchandiseSubtotal);
-  shippingTotal = roundMoney(shippingTotal);
-  cgst = roundMoney(cgst);
-  sgst = roundMoney(sgst);
-  igst = roundMoney(igst);
-  discountTotal = roundMoney(discountTotal);
+  const merchandiseSubtotal = fromPaise(merchandisePaise);
+  const shippingTotal = fromPaise(shippingPaise);
+  const cgst = fromPaise(cgstPaise);
+  const sgst = fromPaise(sgstPaise);
+  const igst = fromPaise(igstPaise);
+  const discountTotal = fromPaise(discountPaise);
 
   return {
     merchandiseSubtotal,
     shippingTotal,
     shippingDisplayKey: resolveShippingDisplayKey(shippingTotal),
-    taxTotal: roundMoney(cgst + sgst + igst),
+    taxTotal: fromPaise(cgstPaise + sgstPaise + igstPaise),
     cgst,
     sgst,
     igst,

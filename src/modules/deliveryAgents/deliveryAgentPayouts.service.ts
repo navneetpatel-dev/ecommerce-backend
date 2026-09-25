@@ -7,7 +7,7 @@ import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
-import { roundMoney } from '@modules/pricing/money';
+import { roundMoney, sumRupees } from '@modules/pricing/money';
 import { settingsService } from '@modules/settings/settings.service';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { logAudit } from '@modules/audit/audit.service';
@@ -195,7 +195,7 @@ export class DeliveryAgentPayoutsService {
         });
         if (!locked.length) throw new Error('No pending earnings');
 
-        const amount = roundMoney(locked.reduce((sum, row) => sum + Number(row.amount), 0));
+        const amount = sumRupees(locked.map((row) => row.amount));
         const payoutRow = await DeliveryAgentPayout.create(
           {
             deliveryAgentId,

@@ -32,7 +32,7 @@ import { TcsLedger } from '@database/models/tcsLedger.model';
 import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
-import { fromPaise, roundMoney, toPaise } from '@modules/pricing/money';
+import { fromPaise, roundMoney, sumRupees, toPaise } from '@modules/pricing/money';
 import { frozenPaise } from '@modules/pricing/frozenMoneySql';
 import {
   checkoutAmountDue,
@@ -939,8 +939,8 @@ export class ReturnsService {
       attributes: ['walletRefundAmount', 'razorpayRefundAmount'],
       transaction,
     });
-    const walletAlready = prior.reduce((s, r) => s + Number(r.walletRefundAmount ?? 0), 0);
-    const razorpayAlready = prior.reduce((s, r) => s + Number(r.razorpayRefundAmount ?? 0), 0);
+    const walletAlready = sumRupees(prior.map((r) => r.walletRefundAmount));
+    const razorpayAlready = sumRupees(prior.map((r) => r.razorpayRefundAmount));
     const walletRemaining = roundMoney(Math.max(0, walletUsed - walletAlready));
     const razorpayRemaining = roundMoney(
       Math.max(
@@ -998,8 +998,13 @@ export class ReturnsService {
       const auditActorId = actorId === 'system' ? null : actorId;
 
       if (!existingCredit && row.refundAmount != null) {
-        const merchandisePaise = toPaise(Number(row.refundMerchandiseAmount ?? 0));
-        const taxPaise = toPaise(Number(row.refundTaxAmount ?? 0));
+        // Both are frozen at approval together with refundAmount. A missing one means
+        // the approval never completed: refuse rather than issue a credit note for ₹0.
+        if (row.refundMerchandiseAmountPaise == null || row.refundTaxAmount == null) {
+          throw new ValidationError(ERROR_MESSAGES.RETURN_CREDIT_NOTE_AMOUNTS_MISSING);
+        }
+        const merchandisePaise = frozenPaise(row.refundMerchandiseAmountPaise);
+        const taxPaise = toPaise(Number(row.refundTaxAmount));
         const totalPaise = toPaise(Number(row.refundAmount));
         const issuedAt = new Date();
         const vendorId = orderItem.subOrder.vendorId;
@@ -1133,7 +1138,7 @@ export class ReturnsService {
 
         patch.refundAmount = customerRefund;
         patch.refundTaxAmount = fromPaise(reversal.refundTaxPaise);
-        patch.refundMerchandiseAmount = fromPaise(reversal.refundMerchandisePaise);
+        patch.refundMerchandiseAmountPaise = reversal.refundMerchandisePaise;
         patch.refundCommissionAmount = fromPaise(reversal.refundCommissionPaise);
         patch.refundTcsAmount = fromPaise(reversal.refundTcsPaise);
         patch.refundNetClawback = fromPaise(reversal.refundNetClawbackPaise);
