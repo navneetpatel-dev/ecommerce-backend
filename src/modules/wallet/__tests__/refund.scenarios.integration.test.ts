@@ -419,10 +419,39 @@ describe('consolidated refund scenarios (seeded)', () => {
 
     assert.equal(Number(approved.shippingRefundAmount), 0);
     assert.equal(Number(approved.returnShippingFeeAmount), 50);
+    assert.equal(Number(approved.refundMerchandiseAmount), 100);
     // 100 + 18 - 50 = 68
     assert.ok(Math.abs(Number(approved.refundAmount) - 68) < 0.02);
     assert.equal(await walletService.getBalance(customer.id), Number(approved.refundAmount));
     await assertReturnRefundPurchasedNonExpiring(customer.id, rr.id);
+  });
+
+  it('2c. Return fee larger than the refund keeps the engine merchandise figure', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    await setPlatformReturnShippingFee(150);
+    const customer = await createCustomer();
+    const vendor = await createVendor(null);
+    const { item } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.COD,
+      totalAmount: 167,
+      shippingCharged: 49,
+      lineTaxable: 100,
+      lineTax: 18,
+    });
+    const rr = await returnsService.create(customer.id, {
+      orderItemId: item.id,
+      reasonCode: RETURN_REASON.NO_LONGER_NEEDED,
+      reason: 'Changed mind',
+    });
+    const approved = await returnsService.transition(rr.id, RETURN_STATUS.APPROVED, customer.id);
+
+    // 100 + 18 − 150 clamps to 0. Backing merchandise out of the total would give
+    // 0 − 18 − 0 + 150 = 132; the stored engine value is the real 100.
+    assert.equal(Number(approved.refundAmount), 0);
+    assert.equal(Number(approved.refundMerchandiseAmount), 100);
+    await setPlatformReturnShippingFee(50);
   });
 
   it('2b. Vendor returnShippingFee override wins over platform', async (t) => {

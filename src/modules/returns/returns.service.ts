@@ -244,6 +244,8 @@ function serializeReturn(
     refundCustomerMessage,
     refundAmount: plain.refundAmount != null ? Number(plain.refundAmount) : null,
     refundTaxAmount: plain.refundTaxAmount != null ? Number(plain.refundTaxAmount) : null,
+    refundMerchandiseAmount:
+      plain.refundMerchandiseAmount != null ? Number(plain.refundMerchandiseAmount) : null,
     refundCommissionAmount:
       plain.refundCommissionAmount != null ? Number(plain.refundCommissionAmount) : null,
     refundTcsAmount: plain.refundTcsAmount != null ? Number(plain.refundTcsAmount) : null,
@@ -1046,15 +1048,7 @@ export class ReturnsService {
       const auditActorId = actorId === 'system' ? null : actorId;
 
       if (!existingCredit && row.refundAmount != null) {
-        const merchandisePaise = toPaise(
-          Math.max(
-            0,
-            Number(row.refundAmount) -
-              Number(row.refundTaxAmount ?? 0) -
-              Number(row.shippingRefundAmount ?? 0) +
-              Number(row.returnShippingFeeAmount ?? 0),
-          ),
-        );
+        const merchandisePaise = toPaise(Number(row.refundMerchandiseAmount ?? 0));
         const taxPaise = toPaise(Number(row.refundTaxAmount ?? 0));
         const totalPaise = toPaise(Number(row.refundAmount));
         const issuedAt = new Date();
@@ -1189,6 +1183,7 @@ export class ReturnsService {
 
         patch.refundAmount = customerRefund;
         patch.refundTaxAmount = fromPaise(reversal.refundTaxPaise);
+        patch.refundMerchandiseAmount = fromPaise(reversal.refundMerchandisePaise);
         patch.refundCommissionAmount = fromPaise(reversal.refundCommissionPaise);
         patch.refundTcsAmount = fromPaise(reversal.refundTcsPaise);
         patch.refundNetClawback = fromPaise(reversal.refundNetClawbackPaise);
