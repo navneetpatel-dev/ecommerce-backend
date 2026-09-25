@@ -3,18 +3,23 @@ import { ValidationError } from '@core/errors/ValidationError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import {
+  deleteObject,
   isS3Configured,
   publicObjectUrl,
+  readObjectHead,
   signedGetObjectUrl,
   signedPutObjectUrl,
   uploadObject,
 } from '@config/s3';
 import {
+  assertContentMatchesType,
   assertValidEntityPurpose,
   assertValidUploadContentType,
   assertValidUploadSize,
   buildS3Key,
   parseDataUrl,
+  parseS3Key,
+  SNIFF_BYTES,
   type S3EntityType,
   type S3Purpose,
 } from '@core/s3';
@@ -24,6 +29,7 @@ import type {
   UploadBulkRequest,
   UploadFileInput,
   UploadSingleRequest,
+  VerifyUploadRequest,
 } from './uploads.dto';
 import { assertUploadAllowed, isPrivateUploadPurpose } from './uploadAuthorization';
 
@@ -54,6 +60,19 @@ function userFacingUploadError(error: unknown): string {
   if (error instanceof ForbiddenError) return error.message;
   return ERROR_MESSAGES.UPLOAD_FAILED;
 }
+
+/** The S3 calls `verifyUpload` makes — injectable so the checks can be tested without AWS. */
+export type UploadVerifyStorage = {
+  isConfigured: () => boolean;
+  readHead: typeof readObjectHead;
+  remove: (key: string) => Promise<void>;
+};
+
+const s3VerifyStorage: UploadVerifyStorage = {
+  isConfigured: isS3Configured,
+  readHead: readObjectHead,
+  remove: (key) => deleteObject(key),
+};
 
 function ensureS3Ready(): void {
   if (!isS3Configured()) {
@@ -125,6 +144,8 @@ async function uploadOneFile(input: {
     parsed.buffer.byteLength,
     parsed.contentType,
   );
+  // The declared type came from the client; the bytes must actually be that type.
+  assertContentMatchesType(parsed.buffer, parsed.contentType);
 
   const { key, url, privateObject } = await buildUploadTarget({
     entityType: input.entityType,
@@ -232,6 +253,39 @@ class UploadsService {
         .filter((r): r is Extract<typeof r, { error: string }> => 'error' in r)
         .map((r) => ({ index: r.index, message: r.error })),
     };
+  }
+
+  /**
+   * Check a direct-to-S3 upload after the client's PUT. The presigned URL fixes the
+   * Content-Type and size but not the bytes, so read the object's first bytes and
+   * delete it when they are not the declared type (or the type is not allowed).
+   */
+  async verifyUpload(
+    actor: UploadActor,
+    data: VerifyUploadRequest,
+    storage: UploadVerifyStorage = s3VerifyStorage,
+  ): Promise<{ key: string }> {
+    if (!storage.isConfigured()) {
+      throw new AppError(ERROR_MESSAGES.S3_NOT_CONFIGURED, 503, ERROR_CODES.S3_NOT_CONFIGURED);
+    }
+    const target = parseS3Key(data.key);
+    if (!target) {
+      throw new ValidationError({ key: [ERROR_MESSAGES.UPLOAD_INVALID_KEY] });
+    }
+    await this.authorize(actor, target.entityType, target.entityId, target.purpose);
+
+    const head = await storage.readHead(data.key, SNIFF_BYTES);
+    if (!head) {
+      throw new ValidationError({ key: [ERROR_MESSAGES.UPLOAD_NOT_FOUND] });
+    }
+    try {
+      assertValidUploadContentType(target.entityType, target.purpose, head.contentType);
+      assertContentMatchesType(head.bytes, head.contentType);
+    } catch (error) {
+      await storage.remove(data.key);
+      throw error;
+    }
+    return { key: data.key };
   }
 
   /** Phase 1 server-side upload (data URL) — kept for compatibility. */

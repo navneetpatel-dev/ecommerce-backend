@@ -1,6 +1,7 @@
 export {
   buildS3Key,
   buildS3EntityPrefix,
+  parseS3Key,
   assertValidEntityPurpose,
   extensionFromFilename,
 } from './buildS3Key';
@@ -14,10 +15,12 @@ export {
   MAX_VIDEO_UPLOAD_BYTES,
   MAX_BULK_UPLOAD_FILES,
   S3_ORPHAN_MAX_AGE_MS,
+  UPLOAD_DRAFT_RETENTION_MS,
   type S3EntityType,
   type S3Purpose,
 } from './constants';
 export { parseDataUrl } from './parseDataUrl';
+export { sniffContentType, assertContentMatchesType, SNIFF_BYTES } from './sniffContentType';
 export {
   IMAGE_MIME_TYPES,
   DOCUMENT_MIME_TYPES,

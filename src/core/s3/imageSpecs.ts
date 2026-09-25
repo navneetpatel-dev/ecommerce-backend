@@ -137,6 +137,14 @@ export const IMAGE_UPLOAD_SPECS: Record<string, ImageUploadSpec> = {
     mimeTypes: DOCUMENT_MIME_TYPES,
     cropRequired: false,
   },
+  'delivery-agent-documents:kyc': {
+    outputWidth: 0,
+    outputHeight: 0,
+    aspectRatio: 0,
+    maxBytes: MAX_UPLOAD_BYTES,
+    mimeTypes: DOCUMENT_MIME_TYPES,
+    cropRequired: false,
+  },
   'shipments:proof': {
     outputWidth: 1600,
     outputHeight: 1200,

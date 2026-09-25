@@ -54,7 +54,13 @@ export const PresignBulkSchema = z.object({
   files: z.array(PresignFileSchema).min(1).max(MAX_BULK_UPLOAD_FILES),
 });
 
+/** A direct-to-S3 upload to check after the client's PUT: the `key` presign returned. */
+export const VerifyUploadSchema = z.object({
+  key: z.string().min(1).max(512),
+});
+
 export type UploadSingleRequest = z.infer<typeof UploadSingleSchema>;
+export type VerifyUploadRequest = z.infer<typeof VerifyUploadSchema>;
 export type UploadBulkRequest = z.infer<typeof UploadBulkSchema>;
 export type UploadFileInput = z.infer<typeof UploadFileSchema>;
 export type PresignSingleRequest = z.infer<typeof PresignSingleSchema>;

@@ -2,6 +2,8 @@ import { randomUUID } from 'crypto';
 import { env } from '@config/env';
 import {
   S3_ENTITY_PURPOSES,
+  S3_ENTITY_TYPE_VALUES,
+  S3_PURPOSE_VALUES,
   type S3EntityType,
   type S3Purpose,
 } from './constants';
@@ -24,6 +26,33 @@ export function buildS3Key(
 
   const ext = extensionFromFilename(filename);
   return `${env.NODE_ENV}/${entityType}/${id}/${purpose}/${randomUUID()}.${ext}`;
+}
+
+/**
+ * Reverse of `buildS3Key` for keys this environment issued: the entity and purpose
+ * an upload belongs to. Null for anything else (another env, a traversal attempt,
+ * an unknown entity type or purpose).
+ */
+export function parseS3Key(
+  key: string,
+): { entityType: S3EntityType; entityId: string; purpose: S3Purpose } | null {
+  const parts = key.split('/');
+  if (parts.length !== 5) return null;
+  const [envSegment, entityType, entityId, purpose, file] = parts as [
+    string,
+    string,
+    string,
+    string,
+    string,
+  ];
+  if (envSegment !== env.NODE_ENV) return null;
+  if (!(S3_ENTITY_TYPE_VALUES as readonly string[]).includes(entityType)) return null;
+  if (!(S3_PURPOSE_VALUES as readonly string[]).includes(purpose)) return null;
+  if (!/^[A-Za-z0-9_-]+$/.test(entityId)) return null;
+  if (!/^[A-Za-z0-9-]+\.[a-z0-9]+$/.test(file)) return null;
+  const allowed = S3_ENTITY_PURPOSES[entityType as S3EntityType];
+  if (!allowed?.includes(purpose as S3Purpose)) return null;
+  return { entityType: entityType as S3EntityType, entityId, purpose: purpose as S3Purpose };
 }
 
 /** Prefix covering all objects for a parent entity (cascade delete). */

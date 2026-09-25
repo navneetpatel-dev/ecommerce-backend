@@ -5,12 +5,13 @@
  */
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { before, describe, it } from 'node:test';
+import { after, before, describe, it } from 'node:test';
 import { QueryTypes } from 'sequelize';
 import { sequelize } from '@database/models';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { S3_ENTITY_TYPES, S3_PURPOSES } from '@core/s3';
-import { assertUploadAllowed } from '../uploadAuthorization';
+import { AppError } from '@core/errors';
+import { assertUploadAllowed, MAX_NEW_UPLOAD_DRAFTS_PER_DAY } from '../uploadAuthorization';
 import { PresignSingleSchema } from '../uploads.dto';
 
 type Actor = Parameters<typeof assertUploadAllowed>[0];
@@ -19,6 +20,7 @@ let ready = false;
 let customer: Actor;
 let otherCustomer: Actor;
 let vendorOwner: Actor;
+let otherVendorOwner: Actor | null = null;
 let agent: Actor;
 let ownProductId = '';
 let otherVendorProductId = '';
@@ -103,6 +105,10 @@ describe('upload authorization', () => {
     otherVendorProductId = other.id;
     otherVendorId = other.vendorId;
     otherAgentId = otherAgent.id;
+    otherVendorOwner = await actorFor(
+      `r.name = 'VENDOR_OWNER' AND u."vendorId" IS NOT NULL AND u."vendorId" <> :vendorId`,
+      { vendorId: owner.vendorId },
+    );
     ready = true;
   });
 
@@ -172,5 +178,57 @@ describe('upload authorization', () => {
     for (const entityId of ['abc', `${randomUUID()}/../x`, '']) {
       assert.equal(PresignSingleSchema.safeParse({ ...base, entityId }).success, false, entityId);
     }
+  });
+
+  describe('draft ids', () => {
+    const claimed: string[] = [];
+    after(async () => {
+      if (claimed.length === 0) return;
+      await sequelize.query(`DELETE FROM upload_drafts WHERE "entityId" IN (:ids)`, {
+        replacements: { ids: claimed },
+      });
+    });
+    const draftId = () => {
+      const id = randomUUID();
+      claimed.push(id);
+      return id;
+    };
+
+    it("belong to the vendor who started them; another vendor can't upload into one", async (t) => {
+      if (!ready || !otherVendorOwner) return t.skip('database or seed data unavailable');
+      const draft = draftId();
+      await assertUploadAllowed(vendorOwner, S3_ENTITY_TYPES.PRODUCTS, draft, S3_PURPOSES.IMAGES);
+      await assertUploadAllowed(vendorOwner, S3_ENTITY_TYPES.PRODUCTS, draft, S3_PURPOSES.VIDEO);
+      await assert.rejects(
+        assertUploadAllowed(otherVendorOwner, S3_ENTITY_TYPES.PRODUCTS, draft, S3_PURPOSES.IMAGES),
+        forbidden,
+      );
+    });
+
+    it("belong to the customer who started them for returns", async (t) => {
+      if (!ready) return t.skip('database or seed data unavailable');
+      const draft = draftId();
+      await assertUploadAllowed(customer, S3_ENTITY_TYPES.RETURNS, draft, S3_PURPOSES.PHOTOS);
+      await assert.rejects(
+        assertUploadAllowed(otherCustomer, S3_ENTITY_TYPES.RETURNS, draft, S3_PURPOSES.PHOTOS),
+        forbidden,
+      );
+    });
+
+    it('are capped per user per day', async (t) => {
+      if (!ready) return t.skip('database or seed data unavailable');
+      const ids = Array.from({ length: MAX_NEW_UPLOAD_DRAFTS_PER_DAY }, draftId);
+      await sequelize.query(
+        `INSERT INTO upload_drafts ("entityType", "entityId", "userId")
+         SELECT 'returns', id::uuid, :userId FROM unnest(ARRAY[:ids]::text[]) AS id`,
+        { replacements: { ids, userId: otherCustomer.id } },
+      );
+      await assert.rejects(
+        assertUploadAllowed(otherCustomer, S3_ENTITY_TYPES.RETURNS, draftId(), S3_PURPOSES.PHOTOS),
+        (err: unknown) => err instanceof AppError && err.statusCode === 429,
+      );
+      // An existing draft of theirs still works; only starting new ones is capped.
+      await assertUploadAllowed(otherCustomer, S3_ENTITY_TYPES.RETURNS, ids[0]!, S3_PURPOSES.PHOTOS);
+    });
   });
 });
