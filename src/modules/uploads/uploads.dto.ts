@@ -14,14 +14,16 @@ const UploadFileSchema = z.object({
 
 export const UploadSingleSchema = z.object({
   entityType: z.enum(S3_ENTITY_TYPE_VALUES),
-  entityId: z.string().min(1).max(128),
+  /** Every uploadable entity has a UUID id; drafts use crypto.randomUUID() on the client. */
+  entityId: z.string().uuid(),
   purpose: z.enum(S3_PURPOSE_VALUES),
   file: UploadFileSchema,
 });
 
 export const UploadBulkSchema = z.object({
   entityType: z.enum(S3_ENTITY_TYPE_VALUES),
-  entityId: z.string().min(1).max(128),
+  /** Every uploadable entity has a UUID id; drafts use crypto.randomUUID() on the client. */
+  entityId: z.string().uuid(),
   purpose: z.enum(S3_PURPOSE_VALUES),
   files: z.array(UploadFileSchema).min(1).max(MAX_BULK_UPLOAD_FILES),
 });
@@ -35,7 +37,8 @@ export const PresignFileSchema = z.object({
 
 export const PresignSingleSchema = z.object({
   entityType: z.enum(S3_ENTITY_TYPE_VALUES),
-  entityId: z.string().min(1).max(128),
+  /** Every uploadable entity has a UUID id; drafts use crypto.randomUUID() on the client. */
+  entityId: z.string().uuid(),
   purpose: z.enum(S3_PURPOSE_VALUES),
   filename: z.string().min(1).max(255),
   contentType: z.string().min(1).max(128),
@@ -45,7 +48,8 @@ export const PresignSingleSchema = z.object({
 
 export const PresignBulkSchema = z.object({
   entityType: z.enum(S3_ENTITY_TYPE_VALUES),
-  entityId: z.string().min(1).max(128),
+  /** Every uploadable entity has a UUID id; drafts use crypto.randomUUID() on the client. */
+  entityId: z.string().uuid(),
   purpose: z.enum(S3_PURPOSE_VALUES),
   files: z.array(PresignFileSchema).min(1).max(MAX_BULK_UPLOAD_FILES),
 });
