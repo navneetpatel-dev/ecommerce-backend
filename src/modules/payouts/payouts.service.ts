@@ -208,9 +208,19 @@ export class PayoutsService {
             throw new Error('No pending commission ledgers');
           }
 
-          // Net less 194-O TDS per ledger, less GST on commission — the same
-          // breakdown the vendor dashboard shows as pending (pricing/vendorPayout).
+          // Net less 194-O TDS per ledger, less GST on commission, less vendor-borne
+          // cashback cost — the same breakdown the vendor dashboard shows as pending
+          // (pricing/vendorPayout).
           const breakdown = vendorPayoutBreakdown(locked, payoutRates);
+          if (breakdown.balancePaise < 0) {
+            // Cashback cost exceeds what the sales earned: pay nothing and leave every
+            // ledger pending, so the cost nets against the vendor's next sales.
+            logger.info('Payout carried forward: vendor balance is negative', {
+              vendorId,
+              balancePaise: breakdown.balancePaise,
+            });
+            return null;
+          }
           const amountPaise = breakdown.payoutPaise;
           const commissionTaxablePaise = breakdown.commissionTaxablePaise;
           const tdsRows: Array<{
@@ -286,6 +296,7 @@ export class PayoutsService {
           return payoutRow;
         });
 
+        if (!payout) continue;
         created.push(payout);
         const ownerId = await findVendorOwnerUserId(vendorId);
         if (ownerId) {

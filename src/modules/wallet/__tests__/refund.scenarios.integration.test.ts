@@ -708,6 +708,8 @@ describe('consolidated refund scenarios (seeded)', () => {
     });
     assert.ok(cost);
     assert.equal(Number(cost!.commissionAmount), -50);
+    // Pending, so the next payout run deducts it from the vendor.
+    assert.equal(cost!.status, COMMISSION_STATUS.PENDING);
 
     // Spend most of wallet so clawback is partial
     await walletService.debit(
@@ -747,6 +749,7 @@ describe('consolidated refund scenarios (seeded)', () => {
     });
     assert.ok(reversal);
     assert.equal(Number(reversal!.commissionAmount), 50);
+    assert.equal(reversal!.status, COMMISSION_STATUS.PENDING);
   });
 
   it('9. PLATFORM cashback → no CommissionLedger cost; write-off bornBy PLATFORM', async (t) => {

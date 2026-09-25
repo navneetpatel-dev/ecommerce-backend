@@ -166,4 +166,46 @@ describe('PayoutsService.process return-window and dispute hold', () => {
     assert.equal(created.length, 1);
     assert.equal(created[0]?.amount, 1090.01);
   });
+
+  it('carries ledgers forward when vendor-borne cashback cost exceeds the sales', async () => {
+    mock.method(settingsService, 'getPlatformSettings', async () => ({
+      tdsRatePercent: 0,
+      commissionGstRatePercent: 18,
+      defaultReturnWindow: 7,
+    }));
+    const rows = [
+      {
+        id: 'cl-sale',
+        vendorId: 'vendor-1',
+        subOrderId: 'so-1',
+        createdAt: new Date(),
+        netPayoutAmountPaise: 3000,
+        commissionAmountPaise: 0,
+        referenceType: null,
+      },
+      {
+        id: 'cl-cost',
+        vendorId: 'vendor-1',
+        subOrderId: 'so-1',
+        createdAt: new Date(),
+        netPayoutAmountPaise: -5000,
+        commissionAmountPaise: -5000,
+        referenceType: 'CashbackCost',
+      },
+    ];
+    mock.method(CommissionLedger, 'findAll', async () => rows as never);
+    const settled = mock.method(CommissionLedger, 'update', async () => [0] as never);
+    mock.method(sequelize, 'transaction', async (callback: (t: { LOCK: { UPDATE: string } }) => Promise<unknown>) => {
+      return callback({ LOCK: { UPDATE: 'UPDATE' } });
+    });
+    const payouts = mock.method(Payout, 'create', async () => ({ id: 'payout-x' }) as never);
+
+    const created = await payoutsService.process('actor-1');
+
+    // ₹30 of sales less ₹50 of cashback cost: no payout (not even a FAILED one), and
+    // both ledgers stay PENDING so the cost nets against the next sales.
+    assert.deepEqual(created, []);
+    assert.equal(payouts.mock.callCount(), 0);
+    assert.equal(settled.mock.callCount(), 0);
+  });
 });
