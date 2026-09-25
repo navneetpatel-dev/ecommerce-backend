@@ -27,8 +27,8 @@ import {
 import { logger } from '@core/logger';
 import { Op } from 'sequelize';
 import { settingsService } from '@modules/settings/settings.service';
-import { fromPaise, toPaise, roundMoney } from '@modules/pricing/money';
-import { vendorNetPayoutPaise } from '@modules/pricing/frozenMoneySql';
+import { fromPaise, roundMoney } from '@modules/pricing/money';
+import { frozenPaise, vendorNetPayoutPaise } from '@modules/pricing/frozenMoneySql';
 import {
   computeCommissionGstPaise,
   createCommissionInvoiceForPayout,
@@ -219,10 +219,7 @@ export class PayoutsService {
           }> = [];
           for (const row of locked) {
             const netPaise = vendorNetPayoutPaise(row);
-            const commissionPaise =
-              row.commissionAmountPaise != null && Number(row.commissionAmountPaise) > 0
-                ? Number(row.commissionAmountPaise)
-                : toPaise(Number(row.commissionAmount ?? 0));
+            const commissionPaise = frozenPaise(row.commissionAmountPaise, row.commissionAmount);
             commissionTaxablePaise += commissionPaise;
             // Section 194-O: TDS on gross vendor payout (net before TDS).
             const grossPayoutPaise = netPaise;

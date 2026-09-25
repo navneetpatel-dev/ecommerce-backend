@@ -14,7 +14,11 @@ import { TaxRule } from '@database/models/taxRule.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
 import { createOffsetExportQuery } from '../engine/export/createOffsetExportQuery';
-import { vendorNetPayoutPaise } from '@modules/pricing/frozenMoneySql';
+import {
+  sqlFrozenPaise,
+  sqlVendorNetPayoutPaise,
+  vendorNetPayoutPaise,
+} from '@modules/pricing/frozenMoneySql';
 import { toPaise } from '@modules/pricing/money';
 import { inventoryValuation } from '@modules/pricing/displayMoney';
 import {
@@ -47,12 +51,7 @@ function periodKey(period: string | null | undefined, date: Date): string {
   return `${y}-${m}`;
 }
 
-/** SQL expression matching frozenPaise(discountAmountPaise, discountAmount). */
-const DISCOUNT_PAISE_SQL = `CASE
-  WHEN COALESCE(cl."discountAmountPaise", 0) <> 0 THEN cl."discountAmountPaise"
-  WHEN COALESCE(cl."discountAmount", 0) = 0 THEN 0
-  ELSE ROUND(cl."discountAmount" * 100)
-END`;
+const DISCOUNT_PAISE_SQL = sqlFrozenPaise('cl', 'discountAmountPaise', 'discountAmount');
 
 async function vendorSales(filters: ReportFilters) {
   assertReportRange(filters);
@@ -74,45 +73,17 @@ async function vendorSales(filters: ReportFilters) {
 }
 
 function mapVendorSalesRow(sub: SubOrder | Record<string, unknown>) {
-  const raw = sub as Record<string, unknown>;
-  if (raw.subtotalPaise != null || raw.subtotal != null) {
-    const subtotalPaise =
-      raw.subtotalPaise != null
-        ? Number(raw.subtotalPaise)
-        : Math.round(Number(raw.subtotal ?? 0) * 100);
-    const taxPaise =
-      raw.taxAmountPaise != null
-        ? Number(raw.taxAmountPaise)
-        : Math.round(Number(raw.taxAmount ?? 0) * 100);
-    const discountPaise =
-      raw.discountAmountPaise != null
-        ? Number(raw.discountAmountPaise)
-        : Math.round(Number(raw.discountAmount ?? 0) * 100);
-    const netPaise =
-      raw.netPayoutAmountPaise != null
-        ? Number(raw.netPayoutAmountPaise)
-        : Math.round(Number(raw.netPayoutAmount ?? 0) * 100);
-    return {
-      subOrderId: String(raw.subOrderId ?? raw.id ?? ''),
-      orderId: String(raw.orderId ?? ''),
-      status: String(raw.status ?? ''),
-      subtotal: fromPaise(subtotalPaise),
-      taxAmount: fromPaise(taxPaise),
-      discountAmount: fromPaise(discountPaise),
-      netPayout: fromPaise(netPaise),
-      createdAt: raw.createdAt as Date,
-    };
-  }
-  const row = sub as SubOrder & { order?: { createdAt?: Date } };
+  // Serves both SubOrder instances (paged query) and raw SQL rows (keyset export).
+  const row = sub as Record<string, unknown> & { order?: { createdAt?: Date } };
   return {
-    subOrderId: row.id,
-    orderId: row.orderId,
-    status: row.status,
+    subOrderId: String(row.subOrderId ?? row.id ?? ''),
+    orderId: String(row.orderId ?? ''),
+    status: String(row.status ?? ''),
     subtotal: fromPaise(frozenPaise(row.subtotalPaise, row.subtotal)),
     taxAmount: fromPaise(frozenPaise(row.taxAmountPaise, row.taxAmount)),
     discountAmount: fromPaise(frozenPaise(row.discountAmountPaise, row.discountAmount)),
     netPayout: fromPaise(frozenPaise(row.netPayoutAmountPaise, row.netPayoutAmount)),
-    createdAt: row.order?.createdAt ?? row.createdAt,
+    createdAt: (row.order?.createdAt ?? row.createdAt) as Date,
   };
 }
 
@@ -493,11 +464,11 @@ function mapCommissionLedgerExportRow(row: Record<string, unknown>) {
   return {
     subOrderId: String(row.subOrderId ?? ''),
     status: String(row.status ?? ''),
-    saleAmount: fromPaise(Number(row.saleAmountPaise ?? 0)),
+    saleAmount: fromPaise(Number(row.salePaise ?? 0)),
     commissionRate: Number(row.commissionRate ?? 0),
-    commissionAmount: fromPaise(Number(row.commissionAmountPaise ?? 0)),
-    tcsAmount: fromPaise(Number(row.tcsAmountPaise ?? 0)),
-    netPayout: fromPaise(Number(row.netPayoutAmountPaise ?? 0)),
+    commissionAmount: fromPaise(Number(row.commissionPaise ?? 0)),
+    tcsAmount: fromPaise(Number(row.tcsPaise ?? 0)),
+    netPayout: fromPaise(Number(row.netPaise ?? 0)),
     createdAt: row.createdAt as Date,
   };
 }
@@ -508,11 +479,11 @@ function commissionLedgerSelectSql(): string {
       cl.id AS "ledgerId",
       cl."subOrderId" AS "subOrderId",
       cl.status AS status,
-      cl."saleAmountPaise" AS "saleAmountPaise",
+      ${sqlFrozenPaise('cl', 'saleAmountPaise', 'saleAmount')} AS "salePaise",
       cl."commissionRate" AS "commissionRate",
-      cl."commissionAmountPaise" AS "commissionAmountPaise",
-      cl."tcsAmountPaise" AS "tcsAmountPaise",
-      cl."netPayoutAmountPaise" AS "netPayoutAmountPaise",
+      ${sqlFrozenPaise('cl', 'commissionAmountPaise', 'commissionAmount')} AS "commissionPaise",
+      ${sqlFrozenPaise('cl', 'tcsAmountPaise', 'tcsAmount')} AS "tcsPaise",
+      ${sqlVendorNetPayoutPaise('cl')} AS "netPaise",
       cl."createdAt" AS "createdAt"
     FROM commission_ledgers cl
     WHERE cl."deletedAt" IS NULL
@@ -699,7 +670,7 @@ async function vendorDiscountCost(filters: ReportFilters) {
     status: { [Op.ne]: COMMISSION_STATUS.CLAWED_BACK },
     [Op.or]: [
       { discountAmountPaise: { [Op.gt]: 0 } },
-      { discountAmountPaise: 0, discountAmount: { [Op.gt]: 0 } },
+      { discountAmountPaise: null, discountAmount: { [Op.gt]: 0 } },
     ],
   };
 

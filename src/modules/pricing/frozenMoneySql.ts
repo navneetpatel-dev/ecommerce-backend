@@ -10,21 +10,23 @@ import { toPaise } from './money';
  * amount", so every read surface agrees.
  */
 
-/** Prefer the frozen paise column; fall back to the legacy rupee column × 100. */
+/**
+ * Read a frozen amount in paise. The paise column is the stored value — 0 is a
+ * real zero; NULL means the row predates its snapshot, and only then is the
+ * rupee column read. Every reader of a paired column goes through this (or
+ * `sqlFrozenPaise`), never through the raw paise field.
+ */
 export function frozenPaise(paiseValue: unknown, rupeeValue: unknown): number {
-  const paise = Number(paiseValue ?? 0);
-  const rupees = Number(rupeeValue ?? 0);
-  if (paise !== 0) return paise;
-  if (rupees === 0) return 0;
-  return toPaise(rupees);
+  if (paiseValue != null) return Number(paiseValue);
+  return toPaise(Number(rupeeValue ?? 0));
 }
 
 /** SQL form of `frozenPaise`. */
 export function sqlFrozenPaise(alias: string, paiseCol: string, rupeeCol: string): string {
-  return `CASE
-    WHEN COALESCE(${alias}."${paiseCol}", 0) <> 0 THEN ${alias}."${paiseCol}"
-    ELSE ROUND(COALESCE(${alias}."${rupeeCol}", 0)::numeric * 100)::bigint
-  END`;
+  return `COALESCE(
+    ${alias}."${paiseCol}",
+    ROUND(COALESCE(${alias}."${rupeeCol}", 0)::numeric * 100)::bigint
+  )`;
 }
 
 /**
@@ -59,8 +61,7 @@ export interface VendorNetPayoutSource {
  * `sale − commission − TCS` for pre-engine rows that have neither.
  */
 export function vendorNetPayoutPaise(row: VendorNetPayoutSource): number {
-  const paise = Number(row.netPayoutAmountPaise ?? 0);
-  if (paise !== 0) return paise;
+  if (row.netPayoutAmountPaise != null) return Number(row.netPayoutAmountPaise);
   if (row.netPayoutAmount != null) return toPaise(Number(row.netPayoutAmount));
   return (
     toPaise(Number(row.saleAmount ?? 0)) -
@@ -78,7 +79,7 @@ export function vendorNetPayoutPaise(row: VendorNetPayoutSource): number {
  */
 export function sqlVendorNetPayoutPaise(alias: string): string {
   return `CASE
-    WHEN COALESCE(${alias}."netPayoutAmountPaise", 0) <> 0 THEN ${alias}."netPayoutAmountPaise"
+    WHEN ${alias}."netPayoutAmountPaise" IS NOT NULL THEN ${alias}."netPayoutAmountPaise"
     ELSE ROUND(
       (
         CASE

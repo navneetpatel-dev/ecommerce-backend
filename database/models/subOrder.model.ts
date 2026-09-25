@@ -19,15 +19,16 @@ export class SubOrder extends Model<InferAttributes<SubOrder>, InferCreationAttr
   declare commissionAmount: CreationOptional<number>;
   declare tcsAmount: CreationOptional<number>;
   declare netPayoutAmount: CreationOptional<number>;
-  declare subtotalPaise: CreationOptional<number>;
-  declare shippingCostPaise: CreationOptional<number>;
-  declare shippingDiscountAmountPaise: CreationOptional<number>;
-  declare taxAmountPaise: CreationOptional<number>;
-  declare taxableAmountPaise: CreationOptional<number>;
-  declare discountAmountPaise: CreationOptional<number>;
-  declare commissionAmountPaise: CreationOptional<number>;
-  declare tcsAmountPaise: CreationOptional<number>;
-  declare netPayoutAmountPaise: CreationOptional<number>;
+  /** Frozen paise snapshots: the stored money value. NULL = written before the snapshot existed. */
+  declare subtotalPaise: CreationOptional<number | null>;
+  declare shippingCostPaise: CreationOptional<number | null>;
+  declare shippingDiscountAmountPaise: CreationOptional<number | null>;
+  declare taxAmountPaise: CreationOptional<number | null>;
+  declare taxableAmountPaise: CreationOptional<number | null>;
+  declare discountAmountPaise: CreationOptional<number | null>;
+  declare commissionAmountPaise: CreationOptional<number | null>;
+  declare tcsAmountPaise: CreationOptional<number | null>;
+  declare netPayoutAmountPaise: CreationOptional<number | null>;
   declare roundingAdjustmentPaise: CreationOptional<number>;
   /** Vendor-scoped GST tax invoice number allocated at order placement. */
   declare taxInvoiceNumber: CreationOptional<string | null>;
@@ -72,15 +73,15 @@ export const initSubOrderModel = (sequelize: Sequelize) => {
       commissionAmount: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
       tcsAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       netPayoutAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
-      subtotalPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
-      shippingCostPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
-      shippingDiscountAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
-      taxAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
-      taxableAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
-      discountAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
-      commissionAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
-      tcsAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
-      netPayoutAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      subtotalPaise: { type: DataTypes.BIGINT, allowNull: true },
+      shippingCostPaise: { type: DataTypes.BIGINT, allowNull: true },
+      shippingDiscountAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
+      taxAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
+      taxableAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
+      discountAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
+      commissionAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
+      tcsAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
+      netPayoutAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
       roundingAdjustmentPaise: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
       taxInvoiceNumber: { type: DataTypes.STRING(64), allowNull: true, unique: true },
       taxInvoiceIssuedAt: { type: DataTypes.DATE, allowNull: true },

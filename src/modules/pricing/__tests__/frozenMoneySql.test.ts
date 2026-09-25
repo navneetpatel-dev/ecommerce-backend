@@ -7,6 +7,7 @@ import {
   vendorNetPayoutPaise,
   REPORTABLE_ORDER_SQL,
 } from '../frozenMoneySql';
+import { pricingService } from '../pricing.service';
 
 function squash(sql: string): string {
   return sql.replace(/\s+/g, ' ').trim();
@@ -17,8 +18,14 @@ describe('frozenPaise', () => {
     assert.equal(frozenPaise(12345, 999), 12345);
   });
 
-  it('falls back to the legacy rupee column', () => {
-    assert.equal(frozenPaise(0, 123.45), 12345);
+  it('falls back to the rupee column only when the paise snapshot is NULL', () => {
+    assert.equal(frozenPaise(null, 123.45), 12345);
+    assert.equal(frozenPaise(undefined, '123.45'), 12345);
+  });
+
+  it('treats a stored 0 as a real zero, not a missing snapshot', () => {
+    // A fully refunded line keeps paise 0 while its rupee column may lag.
+    assert.equal(frozenPaise(0, 123.45), 0);
   });
 
   it('treats both-missing as zero', () => {
@@ -27,8 +34,8 @@ describe('frozenPaise', () => {
   });
 
   it('rounds the rupee fallback rather than truncating', () => {
-    assert.equal(frozenPaise(0, 0.005), 1);
-    assert.equal(frozenPaise(0, 10.999), 1100);
+    assert.equal(frozenPaise(null, 0.005), 1);
+    assert.equal(frozenPaise(null, 10.999), 1100);
   });
 
   it('keeps a negative frozen value (return adjustments)', () => {
@@ -39,7 +46,7 @@ describe('frozenPaise', () => {
 describe('sqlFrozenPaise', () => {
   it('reads the paise column first and the rupee column second', () => {
     const sql = squash(sqlFrozenPaise('so', 'subtotalPaise', 'subtotal'));
-    assert.match(sql, /so\."subtotalPaise", 0\) <> 0 THEN so\."subtotalPaise"/);
+    assert.match(sql, /^COALESCE\( so\."subtotalPaise", /);
     assert.match(sql, /so\."subtotal", 0\)::numeric \* 100/);
   });
 
@@ -61,7 +68,7 @@ describe('sqlVendorNetPayoutPaise', () => {
 
   it('prefers the frozen paise column', () => {
     const sql = squash(sqlVendorNetPayoutPaise('cl'));
-    assert.match(sql, /^CASE WHEN COALESCE\(cl\."netPayoutAmountPaise", 0\) <> 0/);
+    assert.match(sql, /^CASE WHEN cl\."netPayoutAmountPaise" IS NOT NULL/);
   });
 });
 
@@ -75,7 +82,7 @@ describe('vendorNetPayoutPaise', () => {
 
   it('falls back to the frozen rupee column', () => {
     assert.equal(
-      vendorNetPayoutPaise({ netPayoutAmountPaise: 0, netPayoutAmount: '812.34', saleAmount: 999 }),
+      vendorNetPayoutPaise({ netPayoutAmountPaise: null, netPayoutAmount: '812.34', saleAmount: 999 }),
       81234,
     );
   });
@@ -85,7 +92,7 @@ describe('vendorNetPayoutPaise', () => {
     // each used to derive this without TCS, so they paid and reported different nets.
     assert.equal(
       vendorNetPayoutPaise({
-        netPayoutAmountPaise: 0,
+        netPayoutAmountPaise: null,
         netPayoutAmount: null,
         saleAmount: '1000.00',
         commissionAmount: '100.00',
@@ -110,5 +117,55 @@ describe('REPORTABLE_ORDER_SQL', () => {
     assert.match(sql, /o\."paymentMethod" = 'COD'/);
     assert.match(sql, /o\."paymentStatus" NOT IN \('FAILED', 'REFUNDED'\)/);
     assert.match(sql, /o\."status" <> 'CANCELLED'/);
+  });
+});
+
+describe('pricingService.frozenLineFromOrderItem', () => {
+  const legacyLine = {
+    id: 'oi-legacy',
+    quantity: 2,
+    unitPrice: 250,
+    discountAmount: 20,
+    taxableAmount: 480,
+    taxAmount: 86.4,
+    commissionAmount: 48,
+    tcsAmount: 4.8,
+    netPayoutAmount: 427.2,
+  };
+
+  it('reads rupee columns for a line written before paise snapshots', () => {
+    // Return reversals used to pass Number(paise ?? 0), so a pre-snapshot line
+    // reversed zero commission, TCS and discount.
+    const line = pricingService.frozenLineFromOrderItem({
+      ...legacyLine,
+      unitPricePaise: null,
+      discountAmountPaise: null,
+      taxableAmountPaise: null,
+      taxAmountPaise: null,
+      commissionAmountPaise: null,
+      tcsAmountPaise: null,
+      netPayoutAmountPaise: null,
+    });
+    assert.equal(line.unitPricePaise, 25000);
+    assert.equal(line.discountPaise, 2000);
+    assert.equal(line.commissionPaise, 4800);
+    assert.equal(line.tcsPaise, 480);
+    assert.equal(line.netPayoutPaise, 42720);
+  });
+
+  it('keeps a stored zero instead of falling back', () => {
+    const line = pricingService.frozenLineFromOrderItem({
+      ...legacyLine,
+      unitPricePaise: 25000,
+      discountAmountPaise: 0,
+      taxableAmountPaise: 50000,
+      taxAmountPaise: 9000,
+      commissionAmountPaise: 0,
+      tcsAmountPaise: 0,
+      netPayoutAmountPaise: 50000,
+    });
+    assert.equal(line.discountPaise, 0);
+    assert.equal(line.commissionPaise, 0);
+    assert.equal(line.tcsPaise, 0);
   });
 });

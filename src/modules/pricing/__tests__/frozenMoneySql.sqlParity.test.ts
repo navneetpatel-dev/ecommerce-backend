@@ -32,10 +32,11 @@ async function dbAvailable(): Promise<boolean> {
 
 const LEDGER_CASES: Array<VendorNetPayoutSource & { label: string }> = [
   { label: 'frozen paise', netPayoutAmountPaise: 81234, netPayoutAmount: '1.00', saleAmount: '999.00', commissionAmount: '0', tcsAmount: '0' },
-  { label: 'frozen rupees', netPayoutAmountPaise: 0, netPayoutAmount: '812.34', saleAmount: '999.00', commissionAmount: '0', tcsAmount: '0' },
-  { label: 'legacy with TCS', netPayoutAmountPaise: 0, netPayoutAmount: null, saleAmount: '1000.00', commissionAmount: '100.00', tcsAmount: '10.00' },
-  { label: 'legacy without TCS', netPayoutAmountPaise: 0, netPayoutAmount: null, saleAmount: '333.33', commissionAmount: '33.33', tcsAmount: null },
-  { label: 'legacy odd paise', netPayoutAmountPaise: 0, netPayoutAmount: null, saleAmount: '0.07', commissionAmount: '0.01', tcsAmount: '0.01' },
+  { label: 'frozen rupees', netPayoutAmountPaise: null, netPayoutAmount: '812.34', saleAmount: '999.00', commissionAmount: '0', tcsAmount: '0' },
+  { label: 'legacy with TCS', netPayoutAmountPaise: null, netPayoutAmount: null, saleAmount: '1000.00', commissionAmount: '100.00', tcsAmount: '10.00' },
+  { label: 'legacy without TCS', netPayoutAmountPaise: null, netPayoutAmount: null, saleAmount: '333.33', commissionAmount: '33.33', tcsAmount: null },
+  { label: 'stored zero', netPayoutAmountPaise: 0, netPayoutAmount: '5.00', saleAmount: '5.00', commissionAmount: '0', tcsAmount: '0' },
+  { label: 'legacy odd paise', netPayoutAmountPaise: null, netPayoutAmount: null, saleAmount: '0.07', commissionAmount: '0.01', tcsAmount: '0.01' },
 ];
 
 describe('frozen money SQL ↔ TS parity', () => {
@@ -57,7 +58,7 @@ describe('frozen money SQL ↔ TS parity', () => {
          ) cl`,
         {
           replacements: {
-            netPayoutAmountPaise: row.netPayoutAmountPaise ?? 0,
+            netPayoutAmountPaise: row.netPayoutAmountPaise ?? null,
             netPayoutAmount: row.netPayoutAmount ?? null,
             saleAmount: row.saleAmount ?? null,
             commissionAmount: row.commissionAmount ?? null,

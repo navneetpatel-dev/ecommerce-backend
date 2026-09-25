@@ -135,7 +135,7 @@ describe('PayoutsService.process return-window and dispute hold', () => {
           id: 'cl-legacy',
           vendorId: 'vendor-1',
           createdAt: new Date(),
-          netPayoutAmountPaise: 0,
+          netPayoutAmountPaise: null,
           netPayoutAmount: null,
           saleAmount: '1000.00',
           commissionAmount: '100.00',

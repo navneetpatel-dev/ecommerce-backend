@@ -13,6 +13,7 @@ import {
   dateBetween,
   REPORTABLE_ORDER_SQL,
 } from '../engine/queryHelpers';
+import { sqlFrozenPaise } from '@modules/pricing/frozenMoneySql';
 
 function resolveVendorId(filters: ReportFilters): string | null {
   return filters.scopedVendorId ?? filters.vendorId ?? null;
@@ -22,14 +23,7 @@ function hoursBetween(from: Date, to: Date): number {
   return Math.round(((to.getTime() - from.getTime()) / 3_600_000) * 100) / 100;
 }
 
-/** Mirrors frozenPaise() for taxable amount in SQL aggregates. */
-const TAXABLE_PAISE_SQL = `
-  CASE
-    WHEN COALESCE(oi."taxableAmountPaise", 0) <> 0 THEN oi."taxableAmountPaise"
-    WHEN COALESCE(oi."taxableAmount", 0) = 0 THEN 0
-    ELSE ROUND(oi."taxableAmount" * 100)::bigint
-  END
-`;
+const TAXABLE_PAISE_SQL = sqlFrozenPaise('oi', 'taxableAmountPaise', 'taxableAmount');
 
 async function productPerformance(filters: ReportFilters) {
   assertReportRange(filters);
