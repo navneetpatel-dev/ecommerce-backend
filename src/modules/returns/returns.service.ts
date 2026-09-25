@@ -569,8 +569,8 @@ export class ReturnsService {
 
     const shippingChargedPaise = Math.max(
       0,
-      frozenPaise(orderItem.subOrder.shippingCostPaise, orderItem.subOrder.shippingCost) -
-        frozenPaise(orderItem.subOrder.shippingDiscountAmountPaise, orderItem.subOrder.shippingDiscountAmount),
+      frozenPaise(orderItem.subOrder.shippingCostPaise) -
+        frozenPaise(orderItem.subOrder.shippingDiscountAmountPaise),
     );
     const returnShippingFeePaise = await resolveReturnShippingFeePaise(orderItem.subOrder.vendorId);
 
@@ -584,21 +584,14 @@ export class ReturnsService {
     const frozen = pricingService.frozenLineFromOrderItem({
       id: orderItem.id,
       quantity: Number(orderItem.quantity),
-      unitPrice: Number(orderItem.unitPrice),
-      discountAmount: Number(orderItem.discountAmount ?? 0),
-      taxableAmount: Number(orderItem.taxableAmount ?? 0),
-      taxAmount: Number(orderItem.taxAmount ?? 0),
       taxBreakdown: (orderItem.taxBreakdown as any) ?? null,
-      commissionAmount: Number(orderItem.commissionAmount ?? 0),
-      tcsAmount: Number(orderItem.tcsAmount ?? 0),
-      netPayoutAmount: Number(orderItem.netPayoutAmount ?? 0),
-      unitPricePaise: frozenPaise(orderItem.unitPricePaise, orderItem.unitPrice),
-      discountAmountPaise: frozenPaise(orderItem.discountAmountPaise, orderItem.discountAmount),
-      taxableAmountPaise: frozenPaise(orderItem.taxableAmountPaise, orderItem.taxableAmount),
-      taxAmountPaise: frozenPaise(orderItem.taxAmountPaise, orderItem.taxAmount),
-      commissionAmountPaise: frozenPaise(orderItem.commissionAmountPaise, orderItem.commissionAmount),
-      tcsAmountPaise: frozenPaise(orderItem.tcsAmountPaise, orderItem.tcsAmount),
-      netPayoutAmountPaise: frozenPaise(orderItem.netPayoutAmountPaise, orderItem.netPayoutAmount),
+      unitPricePaise: frozenPaise(orderItem.unitPricePaise),
+      discountAmountPaise: frozenPaise(orderItem.discountAmountPaise),
+      taxableAmountPaise: frozenPaise(orderItem.taxableAmountPaise),
+      taxAmountPaise: frozenPaise(orderItem.taxAmountPaise),
+      commissionAmountPaise: frozenPaise(orderItem.commissionAmountPaise),
+      tcsAmountPaise: frozenPaise(orderItem.tcsAmountPaise),
+      netPayoutAmountPaise: frozenPaise(orderItem.netPayoutAmountPaise),
     });
 
     const reversal = pricingService.reverseLineFromFrozen(frozen, returnQty, {
@@ -682,24 +675,24 @@ export class ReturnsService {
     }
 
     const sub = orderItem.subOrder;
-    const nextSubtotalPaise = Math.max(0, frozenPaise(sub.subtotalPaise, sub.subtotal) - reversal.refundSubtotalPaise);
+    const nextSubtotalPaise = Math.max(0, frozenPaise(sub.subtotalPaise) - reversal.refundSubtotalPaise);
     const nextDiscountPaise = Math.max(
       0,
-      frozenPaise(sub.discountAmountPaise, sub.discountAmount) - reversal.refundDiscountPaise,
+      frozenPaise(sub.discountAmountPaise) - reversal.refundDiscountPaise,
     );
     const nextTaxablePaise = Math.max(
       0,
-      frozenPaise(sub.taxableAmountPaise, sub.taxableAmount) - reversal.refundMerchandisePaise,
+      frozenPaise(sub.taxableAmountPaise) - reversal.refundMerchandisePaise,
     );
-    const nextTaxPaise = Math.max(0, frozenPaise(sub.taxAmountPaise, sub.taxAmount) - reversal.refundTaxPaise);
+    const nextTaxPaise = Math.max(0, frozenPaise(sub.taxAmountPaise) - reversal.refundTaxPaise);
     const nextCommissionPaise = Math.max(
       0,
-      frozenPaise(sub.commissionAmountPaise, sub.commissionAmount) - reversal.refundCommissionPaise,
+      frozenPaise(sub.commissionAmountPaise) - reversal.refundCommissionPaise,
     );
-    const nextTcsPaise = Math.max(0, frozenPaise(sub.tcsAmountPaise, sub.tcsAmount) - reversal.refundTcsPaise);
+    const nextTcsPaise = Math.max(0, frozenPaise(sub.tcsAmountPaise) - reversal.refundTcsPaise);
     const nextNetPaise = Math.max(
       0,
-      frozenPaise(sub.netPayoutAmountPaise, sub.netPayoutAmount) - reversal.refundNetClawbackPaise,
+      frozenPaise(sub.netPayoutAmountPaise) - reversal.refundNetClawbackPaise,
     );
     const subDisplay = recomputeSubOrderDisplayFields({
       taxableAmount: fromPaise(nextTaxablePaise),
@@ -709,13 +702,6 @@ export class ReturnsService {
     });
     await sub.update(
       {
-        subtotal: fromPaise(nextSubtotalPaise),
-        discountAmount: fromPaise(nextDiscountPaise),
-        taxableAmount: fromPaise(nextTaxablePaise),
-        taxAmount: fromPaise(nextTaxPaise),
-        commissionAmount: fromPaise(nextCommissionPaise),
-        tcsAmount: fromPaise(nextTcsPaise),
-        netPayoutAmount: fromPaise(nextNetPaise),
         shippingCharged: subDisplay.shippingCharged,
         customerTotal: subDisplay.customerTotal,
         subtotalPaise: nextSubtotalPaise,
@@ -750,12 +736,6 @@ export class ReturnsService {
     await orderItem.update(
       isFullReturn
         ? {
-            discountAmount: 0,
-            taxableAmount: 0,
-            taxAmount: 0,
-            commissionAmount: 0,
-            tcsAmount: 0,
-            netPayoutAmount: 0,
             lineSubtotal: 0,
             lineTotal: 0,
             taxBreakdown: null,
@@ -769,30 +749,30 @@ export class ReturnsService {
           }
         : (() => {
             const remainingQty = lineQty - returnQty;
-            const origTaxPaise = Math.max(0, frozenPaise(orderItem.taxAmountPaise, orderItem.taxAmount));
+            const origTaxPaise = Math.max(0, frozenPaise(orderItem.taxAmountPaise));
             const nextItemDiscountPaise = Math.max(
               0,
-              frozenPaise(orderItem.discountAmountPaise, orderItem.discountAmount) - reversal.refundDiscountPaise,
+              frozenPaise(orderItem.discountAmountPaise) - reversal.refundDiscountPaise,
             );
             const nextItemTaxablePaise = Math.max(
               0,
-              frozenPaise(orderItem.taxableAmountPaise, orderItem.taxableAmount) - reversal.refundMerchandisePaise,
+              frozenPaise(orderItem.taxableAmountPaise) - reversal.refundMerchandisePaise,
             );
             const nextItemTaxPaise = Math.max(
               0,
-              frozenPaise(orderItem.taxAmountPaise, orderItem.taxAmount) - reversal.refundTaxPaise,
+              frozenPaise(orderItem.taxAmountPaise) - reversal.refundTaxPaise,
             );
             const nextItemCommissionPaise = Math.max(
               0,
-              frozenPaise(orderItem.commissionAmountPaise, orderItem.commissionAmount) - reversal.refundCommissionPaise,
+              frozenPaise(orderItem.commissionAmountPaise) - reversal.refundCommissionPaise,
             );
             const nextItemTcsPaise = Math.max(
               0,
-              frozenPaise(orderItem.tcsAmountPaise, orderItem.tcsAmount) - reversal.refundTcsPaise,
+              frozenPaise(orderItem.tcsAmountPaise) - reversal.refundTcsPaise,
             );
             const nextItemNetPaise = Math.max(
               0,
-              frozenPaise(orderItem.netPayoutAmountPaise, orderItem.netPayoutAmount) - reversal.refundNetClawbackPaise,
+              frozenPaise(orderItem.netPayoutAmountPaise) - reversal.refundNetClawbackPaise,
             );
             const nextTaxable = fromPaise(nextItemTaxablePaise);
             const nextTax = fromPaise(nextItemTaxPaise);
@@ -803,12 +783,6 @@ export class ReturnsService {
             );
             return {
               quantity: remainingQty,
-              discountAmount: fromPaise(nextItemDiscountPaise),
-              taxableAmount: nextTaxable,
-              taxAmount: nextTax,
-              commissionAmount: fromPaise(nextItemCommissionPaise),
-              tcsAmount: fromPaise(nextItemTcsPaise),
-              netPayoutAmount: fromPaise(nextItemNetPaise),
               lineSubtotal: lineSubtotal(orderItem.unitPrice, remainingQty),
               lineTotal: lineTotal(nextTaxable, nextTax),
               taxBreakdown: scaledBreakdown,
@@ -854,55 +828,30 @@ export class ReturnsService {
       transaction: t,
     });
     if (ledger) {
-      const nextSale = Math.max(
-        0,
-        Number(ledger.saleAmount) - fromPaise(reversal.refundMerchandisePaise),
-      );
-      const nextCommission = Math.max(
-        0,
-        Number(ledger.commissionAmount) - fromPaise(reversal.refundCommissionPaise),
-      );
-      const nextTaxable = Math.max(
-        0,
-        Number(ledger.taxableAmount ?? 0) - fromPaise(reversal.refundMerchandisePaise),
-      );
-      const nextTcs = Math.max(0, Number(ledger.tcsAmount ?? 0) - fromPaise(reversal.refundTcsPaise));
-      const nextNet = Math.max(
-        0,
-        Number(ledger.netPayoutAmount ?? 0) - fromPaise(reversal.refundNetClawbackPaise),
-      );
-      const nextTax = Math.max(0, Number(ledger.taxAmount ?? 0) - fromPaise(reversal.refundTaxPaise));
       const salePaise = Math.max(
         0,
-        frozenPaise(ledger.saleAmountPaise, ledger.saleAmount) - reversal.refundMerchandisePaise,
+        frozenPaise(ledger.saleAmountPaise) - reversal.refundMerchandisePaise,
       );
       const commissionPaise = Math.max(
         0,
-        frozenPaise(ledger.commissionAmountPaise, ledger.commissionAmount) - reversal.refundCommissionPaise,
+        frozenPaise(ledger.commissionAmountPaise) - reversal.refundCommissionPaise,
       );
       const taxablePaise = Math.max(
         0,
-        frozenPaise(ledger.taxableAmountPaise, ledger.taxableAmount) - reversal.refundMerchandisePaise,
+        frozenPaise(ledger.taxableAmountPaise) - reversal.refundMerchandisePaise,
       );
-      const tcsPaise = Math.max(0, frozenPaise(ledger.tcsAmountPaise, ledger.tcsAmount) - reversal.refundTcsPaise);
+      const tcsPaise = Math.max(0, frozenPaise(ledger.tcsAmountPaise) - reversal.refundTcsPaise);
       const netPaise = Math.max(
         0,
-        frozenPaise(ledger.netPayoutAmountPaise, ledger.netPayoutAmount) - reversal.refundNetClawbackPaise,
+        frozenPaise(ledger.netPayoutAmountPaise) - reversal.refundNetClawbackPaise,
       );
-      const taxPaise = Math.max(0, frozenPaise(ledger.taxAmountPaise, ledger.taxAmount) - reversal.refundTaxPaise);
+      const taxPaise = Math.max(0, frozenPaise(ledger.taxAmountPaise) - reversal.refundTaxPaise);
       const discountPaise = Math.max(
         0,
-        frozenPaise(ledger.discountAmountPaise, ledger.discountAmount) - reversal.refundDiscountPaise,
+        frozenPaise(ledger.discountAmountPaise) - reversal.refundDiscountPaise,
       );
       await ledger.update(
         {
-          saleAmount: nextSale,
-          commissionAmount: nextCommission,
-          taxableAmount: nextTaxable,
-          tcsAmount: nextTcs,
-          taxAmount: nextTax,
-          netPayoutAmount: nextNet,
-          discountAmount: fromPaise(discountPaise),
           saleAmountPaise: salePaise,
           commissionAmountPaise: commissionPaise,
           taxableAmountPaise: taxablePaise,
@@ -910,7 +859,7 @@ export class ReturnsService {
           taxAmountPaise: taxPaise,
           netPayoutAmountPaise: netPaise,
           discountAmountPaise: discountPaise,
-          status: nextNet <= 0 ? COMMISSION_STATUS.CLAWED_BACK : ledger.status,
+          status: netPaise <= 0 ? COMMISSION_STATUS.CLAWED_BACK : ledger.status,
           updatedBy: actorId,
         },
         { transaction: t },
@@ -924,7 +873,7 @@ export class ReturnsService {
       transaction: t,
       refundMerchandisePaise: reversal.refundMerchandisePaise,
       orderMerchandiseBeforePaise:
-        frozenPaise(orderItem.subOrder.taxableAmountPaise, orderItem.subOrder.taxableAmount) + reversal.refundMerchandisePaise,
+        frozenPaise(orderItem.subOrder.taxableAmountPaise) + reversal.refundMerchandisePaise,
     });
 
     return { reversal, order, orderItem };
@@ -1064,7 +1013,7 @@ export class ReturnsService {
           t,
         );
         const tb = (orderItem.taxBreakdown as Record<string, unknown> | null) ?? null;
-        const originalTaxPaise = frozenPaise(orderItem.taxAmountPaise, orderItem.taxAmount);
+        const originalTaxPaise = frozenPaise(orderItem.taxAmountPaise);
         const scale =
           originalTaxPaise > 0 && taxPaise > 0 ? taxPaise / originalTaxPaise : 0;
         const cgstPaise = Math.round(Number(tb?.cgst ?? 0) * scale);

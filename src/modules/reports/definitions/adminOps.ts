@@ -138,7 +138,7 @@ async function cancellations(filters: ReportFilters) {
       v."businessName" AS "vendorName",
       o."userId" AS "userId",
       so.status::text AS status,
-      COALESCE(so.subtotal, 0)::float AS amount,
+      (so."subtotalPaise" / 100.0)::float AS amount,
       COALESCE(so."updatedAt", so."createdAt") AS "cancelledAt"
     FROM sub_orders so
     LEFT JOIN vendors v

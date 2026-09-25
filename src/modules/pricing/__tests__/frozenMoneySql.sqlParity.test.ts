@@ -14,7 +14,7 @@ import {
   type VendorNetPayoutSource,
 } from '../frozenMoneySql';
 import { lineSubtotal } from '../displayMoney';
-import { toPaise } from '../money';
+import { fromPaise, toPaise } from '../money';
 
 let dbReady = false;
 
@@ -31,12 +31,10 @@ async function dbAvailable(): Promise<boolean> {
 }
 
 const LEDGER_CASES: Array<VendorNetPayoutSource & { label: string }> = [
-  { label: 'frozen paise', netPayoutAmountPaise: 81234, netPayoutAmount: '1.00', saleAmount: '999.00', commissionAmount: '0', tcsAmount: '0' },
-  { label: 'frozen rupees', netPayoutAmountPaise: null, netPayoutAmount: '812.34', saleAmount: '999.00', commissionAmount: '0', tcsAmount: '0' },
-  { label: 'legacy with TCS', netPayoutAmountPaise: null, netPayoutAmount: null, saleAmount: '1000.00', commissionAmount: '100.00', tcsAmount: '10.00' },
-  { label: 'legacy without TCS', netPayoutAmountPaise: null, netPayoutAmount: null, saleAmount: '333.33', commissionAmount: '33.33', tcsAmount: null },
-  { label: 'stored zero', netPayoutAmountPaise: 0, netPayoutAmount: '5.00', saleAmount: '5.00', commissionAmount: '0', tcsAmount: '0' },
-  { label: 'legacy odd paise', netPayoutAmountPaise: null, netPayoutAmount: null, saleAmount: '0.07', commissionAmount: '0.01', tcsAmount: '0.01' },
+  { label: 'frozen paise', netPayoutAmountPaise: 81234 },
+  { label: 'stored zero', netPayoutAmountPaise: 0 },
+  { label: 'return clawback', netPayoutAmountPaise: -500 },
+  { label: 'BIGINT string', netPayoutAmountPaise: '20001' },
 ];
 
 describe('frozen money SQL ↔ TS parity', () => {
@@ -49,21 +47,9 @@ describe('frozen money SQL ↔ TS parity', () => {
     for (const row of LEDGER_CASES) {
       const [result] = await sequelize.query<{ net: string }>(
         `SELECT ${sqlVendorNetPayoutPaise('cl')} AS net
-         FROM (SELECT
-           :netPayoutAmountPaise::bigint AS "netPayoutAmountPaise",
-           :netPayoutAmount::numeric(12,2) AS "netPayoutAmount",
-           :saleAmount::numeric(12,2) AS "saleAmount",
-           :commissionAmount::numeric(12,2) AS "commissionAmount",
-           :tcsAmount::numeric(12,2) AS "tcsAmount"
-         ) cl`,
+         FROM (SELECT :netPayoutAmountPaise::bigint AS "netPayoutAmountPaise") cl`,
         {
-          replacements: {
-            netPayoutAmountPaise: row.netPayoutAmountPaise ?? null,
-            netPayoutAmount: row.netPayoutAmount ?? null,
-            saleAmount: row.saleAmount ?? null,
-            commissionAmount: row.commissionAmount ?? null,
-            tcsAmount: row.tcsAmount ?? null,
-          },
+          replacements: { netPayoutAmountPaise: row.netPayoutAmountPaise },
           type: QueryTypes.SELECT,
         },
       );
@@ -74,16 +60,16 @@ describe('frozen money SQL ↔ TS parity', () => {
   it('sqlLineSubtotalPaise matches displayMoney.lineSubtotal', async (t) => {
     if (!dbReady) return t.skip('database unavailable');
     const cases = [
-      { lineSubtotal: null, unitPrice: '199.99', quantity: 3 },
-      { lineSubtotal: '120.50', unitPrice: '60.25', quantity: 3 },
-      { lineSubtotal: '0.00', unitPrice: '60.25', quantity: 3 },
+      { lineSubtotal: null, unitPricePaise: 19999, quantity: 3 },
+      { lineSubtotal: '120.50', unitPricePaise: 6025, quantity: 3 },
+      { lineSubtotal: '0.00', unitPricePaise: 6025, quantity: 3 },
     ];
     for (const row of cases) {
       const [result] = await sequelize.query<{ paise: string }>(
         `SELECT ${sqlLineSubtotalPaise('oi')} AS paise
          FROM (SELECT
            :lineSubtotal::numeric(12,2) AS "lineSubtotal",
-           :unitPrice::numeric(12,2) AS "unitPrice",
+           :unitPricePaise::bigint AS "unitPricePaise",
            :quantity::int AS "quantity"
          ) oi`,
         { replacements: row, type: QueryTypes.SELECT },
@@ -91,7 +77,7 @@ describe('frozen money SQL ↔ TS parity', () => {
       const expected =
         row.lineSubtotal != null
           ? toPaise(Number(row.lineSubtotal))
-          : toPaise(lineSubtotal(row.unitPrice, row.quantity));
+          : toPaise(lineSubtotal(fromPaise(row.unitPricePaise), row.quantity));
       assert.equal(Number(result?.paise), expected, JSON.stringify(row));
     }
   });

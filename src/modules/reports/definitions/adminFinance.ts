@@ -183,8 +183,8 @@ async function tds194oSummary(filters: ReportFilters) {
 
 async function hsnSalesSummary(filters: ReportFilters) {
   assertReportRange(filters);
-  const taxableExpr = sqlFrozenPaise('oi', 'taxableAmountPaise', 'taxableAmount');
-  const taxExpr = sqlFrozenPaise('oi', 'taxAmountPaise', 'taxAmount');
+  const taxableExpr = sqlFrozenPaise('oi', 'taxableAmountPaise');
+  const taxExpr = sqlFrozenPaise('oi', 'taxAmountPaise');
 
   const selectSql = `
     SELECT
@@ -230,7 +230,7 @@ async function hsnSalesSummary(filters: ReportFilters) {
 
 async function stateTaxCollection(filters: ReportFilters) {
   assertReportRange(filters);
-  const taxTotalExpr = sqlFrozenPaise('s', 'taxAmountPaise', 'taxAmount');
+  const taxTotalExpr = sqlFrozenPaise('s', 'taxAmountPaise');
 
   const selectSql = `
     SELECT
@@ -318,8 +318,8 @@ async function tds194oExport(
 }
 
 function hsnSalesSelectSql(): string {
-  const taxableExpr = sqlFrozenPaise('oi', 'taxableAmountPaise', 'taxableAmount');
-  const taxExpr = sqlFrozenPaise('oi', 'taxAmountPaise', 'taxAmount');
+  const taxableExpr = sqlFrozenPaise('oi', 'taxableAmountPaise');
+  const taxExpr = sqlFrozenPaise('oi', 'taxAmountPaise');
   return `
     SELECT
       COALESCE(hsn."hsnCode", 'UNKNOWN') AS "hsnCode",
@@ -377,7 +377,7 @@ async function hsnSalesExport(
 }
 
 function stateTaxSelectSql(): string {
-  const taxTotalExpr = sqlFrozenPaise('s', 'taxAmountPaise', 'taxAmount');
+  const taxTotalExpr = sqlFrozenPaise('s', 'taxAmountPaise');
   return `
     SELECT
       COALESCE(NULLIF(a.state, ''), 'UNKNOWN') AS state,
@@ -707,7 +707,7 @@ const COMMISSION_REVENUE_KEYSET: KeysetOrderCol[] = [
 ];
 
 function commissionRevenueSelectSql(): string {
-  const commissionExpr = sqlFrozenPaise('cl', 'commissionAmountPaise', 'commissionAmount');
+  const commissionExpr = sqlFrozenPaise('cl', 'commissionAmountPaise');
   const periodExpr = `to_char(cl."createdAt" AT TIME ZONE 'UTC', 'YYYY-MM')`;
   return `
     SELECT
@@ -777,7 +777,7 @@ async function couponDiscountCost(filters: ReportFilters) {
 }
 
 function couponDiscountSelectSql(): string {
-  const discountExpr = sqlFrozenPaise('cl', 'discountAmountPaise', 'discountAmount');
+  const discountExpr = sqlFrozenPaise('cl', 'discountAmountPaise');
   const bearerExpr = `CASE
     WHEN cl."discountBearer" = '${DISCOUNT_BEARER.VENDOR}' THEN '${DISCOUNT_BEARER.VENDOR}'
     ELSE '${DISCOUNT_BEARER.PLATFORM}'
@@ -870,7 +870,7 @@ async function gmvSales(filters: ReportFilters) {
     });
   }
 
-  const subtotalExpr = sqlFrozenPaise('s', 'subtotalPaise', 'subtotal');
+  const subtotalExpr = sqlFrozenPaise('s', 'subtotalPaise');
   const selectSql = `
     SELECT
       s."vendorId"::text AS "vendorId",
@@ -954,7 +954,7 @@ async function gmvSalesExport(
     return { rows: page.rows, nextCursor: page.nextCursor };
   }
 
-  const subtotalExpr = sqlFrozenPaise('s', 'subtotalPaise', 'subtotal');
+  const subtotalExpr = sqlFrozenPaise('s', 'subtotalPaise');
   const selectSql = `
     SELECT
       s."vendorId"::text AS "vendorId",

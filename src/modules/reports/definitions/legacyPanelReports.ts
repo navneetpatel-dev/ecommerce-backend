@@ -536,11 +536,11 @@ async function vendorSummaryQuery(filters: ReportFilters) {
   const vendorId = filters.scopedVendorId ?? filters.vendorId;
   if (!vendorId) return emptyPage(filters);
 
-  const commissionExpr = sqlFrozenPaise('cl', 'commissionAmountPaise', 'commissionAmount');
+  const commissionExpr = sqlFrozenPaise('cl', 'commissionAmountPaise');
   const netExpr = sqlVendorNetPayoutPaise('cl');
-  const taxableExpr = sqlFrozenPaise('cl', 'taxableAmountPaise', 'taxableAmount');
-  const tcsExpr = sqlFrozenPaise('cl', 'tcsAmountPaise', 'tcsAmount');
-  const discountExpr = sqlFrozenPaise('cl', 'discountAmountPaise', 'discountAmount');
+  const taxableExpr = sqlFrozenPaise('cl', 'taxableAmountPaise');
+  const tcsExpr = sqlFrozenPaise('cl', 'tcsAmountPaise');
+  const discountExpr = sqlFrozenPaise('cl', 'discountAmountPaise');
 
   const [rows] = await sequelize.query(
     `

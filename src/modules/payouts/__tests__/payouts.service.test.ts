@@ -91,7 +91,8 @@ describe('PayoutsService.process return-window and dispute hold', () => {
             id: 'cl-1',
             vendorId: 'vendor-1',
             createdAt: new Date(),
-            netPayoutAmount: 100,
+            netPayoutAmountPaise: 10000,
+            commissionAmountPaise: 1000,
           },
         ] as never;
       }
@@ -120,7 +121,7 @@ describe('PayoutsService.process return-window and dispute hold', () => {
     assert.equal(scanSub?.where?.status, ORDER_STATUS.DELIVERED);
   });
 
-  it('nets TCS out of a pre-engine ledger, like the settlement reports', async () => {
+  it('sums the frozen paise net payout of every ledger in the batch', async () => {
     const created: Array<{ status?: string; amount?: number }> = [];
     mock.method(settingsService, 'getPlatformSettings', async () => ({
       tdsRatePercent: 0,
@@ -132,21 +133,18 @@ describe('PayoutsService.process return-window and dispute hold', () => {
       if (scans > 1) return [];
       return [
         {
-          id: 'cl-legacy',
+          id: 'cl-a',
           vendorId: 'vendor-1',
           createdAt: new Date(),
-          netPayoutAmountPaise: null,
-          netPayoutAmount: null,
-          saleAmount: '1000.00',
-          commissionAmount: '100.00',
-          tcsAmount: '10.00',
+          netPayoutAmountPaise: '89000',
+          commissionAmountPaise: '10000',
         },
         {
-          id: 'cl-frozen',
+          id: 'cl-b',
           vendorId: 'vendor-1',
           createdAt: new Date(),
           netPayoutAmountPaise: 20001,
-          netPayoutAmount: '1.00',
+          commissionAmountPaise: 0,
         },
       ] as never;
     });
@@ -164,7 +162,7 @@ describe('PayoutsService.process return-window and dispute hold', () => {
     await payoutsService.process('actor-1');
 
     // The locked re-read finds nothing, so the batch is recorded as FAILED with the
-    // scanned group total: (1000 − 100 − 10) + 200.01, summed in paise.
+    // scanned group total: 890.00 + 200.01, summed in paise (BIGINT arrives as a string).
     assert.equal(created.length, 1);
     assert.equal(created[0]?.amount, 1090.01);
   });

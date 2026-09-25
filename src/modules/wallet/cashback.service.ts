@@ -14,6 +14,7 @@ import {
   type DiscountBearer,
 } from '@core/constants/statuses';
 import { toPaise, fromPaise, roundMoney } from '@modules/pricing/money';
+import { frozenPaise } from '@modules/pricing/frozenMoneySql';
 import { walletService } from '@modules/wallet/wallet.service';
 import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
 import { env } from '@config/env';
@@ -110,16 +111,8 @@ export async function creditPendingCashbackForOrder(
           {
             vendorId,
             subOrderId: subOrder.id,
-            saleAmount: 0,
             commissionRate: 0,
-            commissionAmount: -proratedPending,
-            taxableAmount: 0,
-            discountAmount: 0,
             discountBearer: DISCOUNT_BEARER.VENDOR,
-            taxAmount: 0,
-            tcsAmount: 0,
-            netPayoutAmount: -proratedPending,
-            shippingCollected: 0,
             saleAmountPaise: 0,
             commissionAmountPaise: -amountPaise,
             taxableAmountPaise: 0,
@@ -217,22 +210,13 @@ export async function clawbackCashbackForReturn(input: {
         transaction,
       });
       if (costRow) {
-        const amount = Math.abs(Number(costRow.commissionAmount));
-        const amountPaise = Math.abs(Number(costRow.commissionAmountPaise ?? toPaise(amount)));
+        const amountPaise = Math.abs(frozenPaise(costRow.commissionAmountPaise));
         await CommissionLedger.create(
           {
             vendorId: costRow.vendorId,
             subOrderId: costRow.subOrderId,
-            saleAmount: 0,
             commissionRate: 0,
-            commissionAmount: amount,
-            taxableAmount: 0,
-            discountAmount: 0,
             discountBearer: DISCOUNT_BEARER.VENDOR,
-            taxAmount: 0,
-            tcsAmount: 0,
-            netPayoutAmount: amount,
-            shippingCollected: 0,
             saleAmountPaise: 0,
             commissionAmountPaise: amountPaise,
             taxableAmountPaise: 0,
