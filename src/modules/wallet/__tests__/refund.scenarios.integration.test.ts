@@ -1315,6 +1315,77 @@ describe('consolidated refund scenarios (seeded)', () => {
     createRefund.mock.restore();
   });
 
+  it('16c. a partial cancellation returns its wallet share now, the last one the rest', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    await walletService.credit(
+      customer.id,
+      300,
+      { type: WALLET_REFERENCE_TYPE.TOPUP, id: randomUUID() },
+      'seed',
+      undefined,
+      { pointSource: 'PURCHASED' as const },
+    );
+    const paymentId = `pay_${randomUUID().slice(0, 10)}`;
+    // ₹1,000 order, two ₹500 parts: ₹300 from the wallet, ₹700 by Razorpay.
+    const { order, sub } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.RAZORPAY,
+      totalAmount: 1000,
+      walletAmountUsed: 300,
+      razorpayAmountPaid: 700,
+      razorpayPaymentId: paymentId,
+      shippingCharged: 0,
+      lineTaxable: 423.73,
+      lineTax: 76.27,
+    });
+    await order.update({ status: ORDER_STATUS.CONFIRMED });
+    await sub.update({ status: ORDER_STATUS.CONFIRMED, customerTotal: 500 });
+    const { id: _id, createdAt: _c, updatedAt: _u, ...fields } = sub.get({ plain: true }) as Record<
+      string,
+      unknown
+    >;
+    const sibling = await SubOrder.create({
+      ...fields,
+      taxInvoiceNumber: null,
+      taxInvoiceSnapshot: null,
+      status: ORDER_STATUS.CONFIRMED,
+      customerTotal: 500,
+    } as never);
+    await sequelize.transaction(async (txn) => {
+      await walletService.debit(
+        customer.id,
+        300,
+        { type: WALLET_REFERENCE_TYPE.ORDER, id: order.id },
+        'checkout spend',
+        txn,
+      );
+    });
+    assert.equal(await walletService.getBalance(customer.id), 0);
+
+    const createRefund = mock.method(
+      paymentsService,
+      'createRazorpayRefund',
+      async () => `rfnd_${randomUUID().slice(0, 8)}`,
+    );
+
+    await subordersService.updateStatus(sub.id, ORDER_STATUS.CANCELLED, undefined, customer.id);
+    // Half the order: ₹350 back to the card and ₹150 back to the wallet, now.
+    assert.equal(await walletService.getBalance(customer.id), 150);
+
+    await subordersService.updateStatus(sibling.id, ORDER_STATUS.CANCELLED, undefined, customer.id);
+    // The rest of the wallet spend, not the whole ₹300 again.
+    assert.equal(await walletService.getBalance(customer.id), 300);
+    assert.deepEqual(
+      createRefund.mock.calls.map((call) => call.arguments[1]),
+      [toPaise(350), toPaise(350)],
+    );
+
+    createRefund.mock.restore();
+  });
+
   it('16b. cancelling the last sub-order refunds the order-level gift-wrap fee too', async (t) => {
     if (!dbReady) return t.skip('database unavailable');
     const customer = await createCustomer();

@@ -76,6 +76,8 @@ describe('SubordersService cancellation refund split', () => {
     });
 
     mock.method(WalletLedger, 'findOne', async () => null);
+    // No earlier part of this order was cancelled, so no wallet share was returned yet.
+    mock.method(WalletLedger, 'findAll', async () => []);
 
     mock.method(Order, 'findByPk', async () => ({
       id: ORDER_ID,
