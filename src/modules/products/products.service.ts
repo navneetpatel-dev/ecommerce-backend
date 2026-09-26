@@ -27,9 +27,10 @@ import { vendorsService } from '@modules/vendors/vendors.service';
 import { shippingService } from '@modules/shipping/shipping.service';
 import { logAudit } from '@modules/audit/audit.service';
 import type { Transaction } from 'sequelize';
-import { resolvePdpPolicy, resolveCodEligibleAtPrice } from './pdpPolicy';
+import { resolvePdpPolicy, resolveCodEligibleAtPrice, type PdpPolicy } from './pdpPolicy';
 import { productDiscountPercent, productShowMrp, taxInclusivePrice } from '@modules/pricing/displayMoney';
-import { roundMoney } from '@modules/pricing/money';
+import { roundMoney, toPaise } from '@modules/pricing/money';
+import { gstRateForPieces } from '@modules/pricing/pricing.engine';
 import { CreateProductSchema } from './products.dto';
 import type {
   CreateProductRequest,
@@ -113,6 +114,18 @@ export function mapProductResponse(product: Product, reviewCount = 0) {
   };
 }
 
+/**
+ * The GST rate and GST-inclusive price the product page shows for one piece at `price`:
+ * a category with a price band charges by the value of the piece.
+ */
+export function pdpTaxAtPrice(
+  policy: Pick<PdpPolicy, 'gstPercentage' | 'gstPriceBand' | 'taxInclusive'>,
+  price: number,
+): { gstPercentage: number; taxInclusivePrice: number | null } {
+  const gstPercentage = gstRateForPieces(policy.gstPercentage, policy.gstPriceBand, toPaise(price), 1);
+  return { gstPercentage, taxInclusivePrice: taxInclusivePrice(price, gstPercentage, policy.taxInclusive) };
+}
+
 async function mapDetailResponse(product: Product, reviewCount = 0) {
   const mapped = mapProductResponse(product, reviewCount);
   const vendorId = mapped.vendorId ?? mapped.vendor?.id ?? null;
@@ -137,9 +150,9 @@ async function mapDetailResponse(product: Product, reviewCount = 0) {
       codEligibleAtUnitPrice: policy.codEnabled
         ? await resolveCodEligibleAtPrice(catalogProduct, variant.price)
         : false,
-      // The GST-inclusive figure for this variant's own price (the page shows the
-      // selected variant's price, so the "incl. GST" line must follow it).
-      taxInclusivePrice: taxInclusivePrice(variant.price, policy.gstPercentage, policy.taxInclusive),
+      // This variant's own GST rate and GST-inclusive figure (the page shows the
+      // selected variant's price).
+      ...pdpTaxAtPrice(policy, variant.price),
     })),
   );
   const defaultVariant = variants[0];
@@ -151,7 +164,8 @@ async function mapDetailResponse(product: Product, reviewCount = 0) {
     returnsAllowed: policy.returnsAllowed,
     returnWindowDays: policy.returnWindowDays,
     returnShippingFee: policy.returnShippingFee,
-    gstPercentage: policy.gstPercentage,
+    // The rate at the listed price (a banded category charges by the price of the piece).
+    gstPercentage: pdpTaxAtPrice(policy, mapped.basePrice).gstPercentage,
     displayHsnCode: policy.hsnCode,
     taxInclusive: policy.taxInclusive,
     codAvailable: policy.codEnabled,
@@ -166,11 +180,7 @@ async function mapDetailResponse(product: Product, reviewCount = 0) {
     displayWarrantyMonths: policy.warrantyMonths,
     displayWarrantyType: policy.warrantyType,
     vendorPerformanceScore: policy.vendorPerformanceScore,
-    taxInclusivePrice: taxInclusivePrice(
-      mapped.basePrice,
-      policy.gstPercentage,
-      policy.taxInclusive,
-    ),
+    taxInclusivePrice: pdpTaxAtPrice(policy, mapped.basePrice).taxInclusivePrice,
   };
 }
 

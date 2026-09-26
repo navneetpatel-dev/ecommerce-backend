@@ -9,6 +9,7 @@ import { categoriesService } from '@modules/categories/categories.service';
 import { pricingService } from '@modules/pricing/pricing.service';
 import { resolveVendorDiscountBearer } from '@modules/coupons/couponEngine';
 import type { PlatformSettingsPayload } from '@modules/settings/settings.service';
+import type { GstPriceBand } from '@modules/pricing/pricing.engine';
 
 /**
  * The single place a cart is grouped by vendor, priced, and run through PricingEngine.
@@ -32,7 +33,10 @@ export type PricedLine = {
   weightGrams: number | null;
 };
 
-export type LineRateMap = Record<string, { gstPercentage: number; commissionRatePercent: number }>;
+export type LineRateMap = Record<
+  string,
+  { gstPercentage: number; gstPriceBand: GstPriceBand | null; commissionRatePercent: number }
+>;
 
 export type VendorPricingRow = {
   vendorId: string;
@@ -92,11 +96,13 @@ async function resolveLineRates(
 ): Promise<{ lineRates: LineRateMap; fallbackGst: number; fallbackCommission: number }> {
   const lineRates: LineRateMap = {};
   for (const line of lines) {
-    const gstPercentage = line.categoryId ? await taxService.getGstRate(line.categoryId) : 0;
+    const { gstPercentage, gstPriceBand } = line.categoryId
+      ? await taxService.getGstRateRule(line.categoryId)
+      : { gstPercentage: 0, gstPriceBand: null };
     const commissionRatePercent = line.categoryId
       ? await categoriesService.resolveCommissionRate(line.categoryId, vendor?.commissionRate, defaultCommissionRate)
       : defaultCommissionRate;
-    lineRates[line.key] = { gstPercentage, commissionRatePercent };
+    lineRates[line.key] = { gstPercentage, gstPriceBand, commissionRatePercent };
   }
   const first = lines[0] ? lineRates[lines[0].key] : undefined;
   return {
@@ -197,6 +203,7 @@ export function priceVendorRows(input: {
         unitPrice: line.unitPrice,
         quantity: line.quantity,
         gstPercentage: row.lineRates[line.key]?.gstPercentage,
+        gstPriceBand: row.lineRates[line.key]?.gstPriceBand,
         commissionRatePercent: row.lineRates[line.key]?.commissionRatePercent,
       })),
       merchandiseDiscount,

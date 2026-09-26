@@ -2,6 +2,7 @@ import { settingsService } from '@modules/settings/settings.service';
 import { categoriesService } from '@modules/categories/categories.service';
 import { taxService } from '@modules/tax/tax.service';
 import { WARRANTY_TYPE, type WarrantyType } from '@core/constants/statuses';
+import type { GstPriceBand } from '@modules/pricing/pricing.engine';
 import type { Product } from '@database/models/product.model';
 
 export type PdpPolicy = {
@@ -11,6 +12,8 @@ export type PdpPolicy = {
   warrantyMonths: number | null;
   warrantyType: WarrantyType | null;
   gstPercentage: number;
+  /** Per-piece price band on the category's GST rule, if any. */
+  gstPriceBand: GstPriceBand | null;
   hsnCode: string | null;
   taxInclusive: false;
   codEnabled: boolean;
@@ -108,6 +111,7 @@ export async function resolvePdpPolicy(product: Product): Promise<PdpPolicy> {
     warrantyMonths,
     warrantyType,
     gstPercentage,
+    gstPriceBand: effectiveTaxRule.gstPriceBand,
     hsnCode,
     taxInclusive: false,
     codEnabled,

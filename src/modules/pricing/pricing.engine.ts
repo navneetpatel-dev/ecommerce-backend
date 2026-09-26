@@ -10,6 +10,30 @@ export type TaxBreakdownPaise = {
   gstPercentage: number;
 };
 
+/**
+ * A GST rate that depends on the value of each piece (e.g. apparel and footwear): above
+ * `thresholdPaise` per piece — its value after discount — the higher rate applies.
+ */
+export type GstPriceBand = {
+  thresholdPaise: Paise;
+  gstPercentageAbove: number;
+};
+
+/**
+ * The GST % for a line of `quantity` pieces with `taxablePaise` between them: the band's
+ * higher rate when each piece is worth more than its threshold, else the base rate.
+ */
+export function gstRateForPieces(
+  baseGstPercentage: number,
+  band: GstPriceBand | null | undefined,
+  taxablePaise: Paise,
+  quantity: number,
+): number {
+  if (!band || quantity <= 0) return baseGstPercentage;
+  // Per-piece value above the threshold, compared without dividing (no rounding).
+  return taxablePaise > band.thresholdPaise * quantity ? band.gstPercentageAbove : baseGstPercentage;
+}
+
 export type PricingLineInput = {
   /** Stable key for mapping back (variantId / cartItemId). */
   key: string;
@@ -17,6 +41,8 @@ export type PricingLineInput = {
   quantity: number;
   /** Per-line GST %; falls back to SubOrderPricingInput.gstPercentage. */
   gstPercentage?: number;
+  /** Per-piece value band that raises the line's GST % (see `gstRateForPieces`). */
+  gstPriceBand?: GstPriceBand | null;
   /** Per-line commission %; falls back to SubOrderPricingInput.commissionRatePercent. */
   commissionRatePercent?: number;
 };
@@ -189,6 +215,7 @@ export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderP
       unitPricePaise: unit,
       lineSubtotalPaise: unit * qty,
       gstPercentage: Number(line.gstPercentage ?? input.gstPercentage ?? 0),
+      gstPriceBand: line.gstPriceBand ?? null,
       commissionRatePercent: Number(line.commissionRatePercent ?? input.commissionRatePercent ?? 0),
     };
   });
@@ -224,7 +251,10 @@ export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderP
   const pricedLines: PricingLineBreakdown[] = lines.map((line, i) => {
     const discountPaise = lineDiscounts[i] ?? 0;
     const lineTaxable = Math.max(0, line.lineSubtotalPaise - discountPaise);
-    const lineTax = splitTax(lineTaxable, line.gstPercentage, input.intraState);
+    // The rate is decided by each piece's value after the coupon, so a discount can move
+    // a piece into the lower band.
+    const lineGst = gstRateForPieces(line.gstPercentage, line.gstPriceBand, lineTaxable, line.quantity);
+    const lineTax = splitTax(lineTaxable, lineGst, input.intraState);
     const lineVendorBorne =
       merchandiseDiscountPaise > 0
         ? Math.round((discountPaise * vendorBorne) / merchandiseDiscountPaise)
@@ -266,7 +296,7 @@ export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderP
   let taxIgst = pricedLines.reduce((sum, line) => sum + line.tax.igst, 0);
 
   // When all lines share one GST rate, reconcile to tax(suborder taxable) and expose residual.
-  const uniqueGst = [...new Set(lines.map((line) => line.gstPercentage))];
+  const uniqueGst = [...new Set(pricedLines.map((line) => line.tax.gstPercentage))];
   let appliedRoundingAdjustmentPaise = 0;
   if (uniqueGst.length === 1) {
     const expected = splitTax(taxablePaise, uniqueGst[0]!, input.intraState);
