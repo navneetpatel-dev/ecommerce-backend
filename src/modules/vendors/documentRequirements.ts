@@ -3,6 +3,7 @@ import { DocumentRequirement } from '@database/models/documentRequirement.model'
 import { Category } from '@database/models/category.model';
 import { VendorDocument } from '@database/models/vendorDocument.model';
 import { VendorCategory } from '@database/models/vendorCategory.model';
+import { Vendor } from '@database/models/vendor.model';
 import {
   VENDOR_DOCUMENT_CHECKLIST_STATUS,
   VENDOR_DOCUMENT_TYPE,
@@ -180,4 +181,21 @@ export async function areCategoryDocumentsSatisfied(
   });
   const verified = new Set(documents.map((doc) => doc.type));
   return required.every((type) => verified.has(type));
+}
+
+/**
+ * Recompute and store whether every KYC document the vendor needs is verified
+ * (`vendors.kycVerified`). A vendor sells only while it is APPROVED and this holds, so
+ * call it after anything that changes the answer: a document uploaded, replaced,
+ * verified or rejected, or the vendor's categories or entity type changed. Returns the
+ * new value.
+ */
+export async function refreshVendorKycStatus(vendorId: string): Promise<boolean> {
+  const vendor = await Vendor.findByPk(vendorId, { attributes: ['id', 'entityType', 'kycVerified'] });
+  if (!vendor) return false;
+  const { isComplete } = await buildKycChecklist(vendorId, vendor.entityType);
+  if (vendor.kycVerified !== isComplete) {
+    await vendor.update({ kycVerified: isComplete });
+  }
+  return isComplete;
 }

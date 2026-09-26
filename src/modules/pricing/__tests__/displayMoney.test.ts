@@ -67,6 +67,42 @@ describe('displayMoney', () => {
     assert.equal(orderDisplay.amountDue, 1020);
   });
 
+  it('counts only the parts still standing once a part is cancelled or RTOd', () => {
+    const subOrders = [
+      { status: 'CANCELLED', subtotal: 400, taxAmount: 72, shippingCost: 28, shippingDiscountAmount: 0, customerTotal: 500 },
+      { status: 'CONFIRMED', subtotal: 800, taxAmount: 144, shippingCost: 56, shippingDiscountAmount: 0, customerTotal: 1000 },
+    ];
+    const cod = recomputeOrderDisplayFields({
+      subOrders,
+      paymentMethod: 'COD',
+      totalAmount: 1550,
+      originalTotalAmount: 1550,
+      walletAmountUsed: 300,
+      razorpayAmountPaid: 0,
+      giftWrapFeeAmount: 50,
+    });
+    assert.equal(cod.merchandiseSubtotal, 800);
+    assert.equal(cod.taxTotal, 144);
+    assert.equal(cod.shippingTotal, 56);
+    assert.equal(cod.totalAmount, 1050);
+    // Kept part + gift wrap (1050) less the wallet still on it: 300 − the cancelled
+    // part's share (500 × 300 / 1550 = 96.77) = 203.23. What the shipment collects.
+    assert.equal(cod.amountDue, 846.77);
+
+    const allReversed = recomputeOrderDisplayFields({
+      subOrders: subOrders.map((sub) => ({ ...sub, status: 'CANCELLED' })),
+      paymentMethod: 'COD',
+      totalAmount: 1550,
+      walletAmountUsed: 300,
+      razorpayAmountPaid: 0,
+      giftWrapFeeAmount: 50,
+    });
+    // A fully reversed order shows as placed, with nothing left to collect.
+    assert.equal(allReversed.merchandiseSubtotal, 1200);
+    assert.equal(allReversed.totalAmount, 1550);
+    assert.equal(allReversed.amountDue, 0);
+  });
+
   it('derives amountDue for COD without treating razorpay as fallback', () => {
     assert.equal(orderAmountDue({
       paymentMethod: 'COD',

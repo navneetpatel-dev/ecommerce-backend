@@ -10,7 +10,6 @@ import {
   DISCOUNT_BEARER,
   ORDER_STATUS,
   PAYMENT_STATUS,
-  VENDOR_STATUS,
   type DiscountBearer,
 } from '@core/constants/statuses';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
@@ -25,6 +24,7 @@ import {
   roundMoney,
   vendorEligibleSubtotals,
 } from './coupon.utils';
+import { isVendorSellable } from '@core/catalog/customerVisibility';
 
 export const LOYAL_CUSTOMER_MIN_PAID_ORDERS = 3;
 
@@ -290,7 +290,8 @@ export async function validateCoupon(input: ValidateCouponInput): Promise<Valida
 
   if (coupon.vendorId) {
     const vendor = await Vendor.findByPk(coupon.vendorId);
-    if (!vendor || vendor.status !== VENDOR_STATUS.APPROVED) {
+    // Only a vendor that can sell (APPROVED, every KYC document verified).
+    if (!isVendorSellable(vendor)) {
       return fail(ERROR_MESSAGES.VENDOR_UNAVAILABLE, ERROR_CODES.VENDOR_UNAVAILABLE);
     }
   }

@@ -31,6 +31,7 @@ import { toPaise } from '@modules/pricing/money';
 import { notifyOrderConfirmed } from '@modules/notifications/orderNotifications';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { rollbackOrderWalletIfNeeded } from '@modules/wallet/walletOrderRollback';
+import { markPartCardRefundProcessed } from './partCardRefund';
 
 export type RazorpayCheckoutPayload = {
   razorpayOrderId: string;
@@ -546,25 +547,13 @@ export class PaymentsService {
     }
 
     if (orderId && notes.reason === 'SUBORDER_CANCEL') {
-      // Cancelling (or an RTO of) the last live sub-order reverses the whole order and
-      // records its refund as `cancelRazorpayRefundId`; once that refund lands the order
-      // is settled. Refunds for earlier partial cancellations match nothing here.
-      // Either way this is never a return refund, so don't fall through to the
-      // return matcher (it pairs refunds to returns by amount).
-      await Order.update(
-        {
-          paymentStatus: PAYMENT_STATUS.REFUNDED,
-          cancelRefundStatus: 'COMPLETED' as const,
-        },
-        {
-          where: {
-            id: orderId,
-            // Cancelled, or every part came back undelivered (RTO).
-            status: [ORDER_STATUS.CANCELLED, ORDER_STATUS.RETURNED],
-            cancelRazorpayRefundId: refund.id,
-          },
-        },
-      );
+      // A reversed part's refund (cancelled, or RTO'd). The part records it; the order
+      // is settled once every part's refund has landed. Never a return refund, so don't
+      // fall through to the return matcher (it pairs refunds to returns by amount).
+      const subOrderId = typeof notes.subOrderId === 'string' ? notes.subOrderId : null;
+      if (subOrderId) {
+        await markPartCardRefundProcessed({ orderId, subOrderId, refundId: refund.id });
+      }
       return;
     }
 

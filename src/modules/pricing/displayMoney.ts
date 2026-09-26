@@ -1,5 +1,6 @@
 import { coerceRupees, fromPaise, roundMoney, toPaise } from './money';
 import { splitTaxAmount } from './pricing.engine';
+import { codCashDuePaise, isReversedPart } from './partReversal';
 
 /** Pre-discount extended price for a cart/order line. */
 export function lineSubtotal(unitPrice: unknown, quantity: unknown): number {
@@ -78,36 +79,79 @@ export function recomputeSubOrderDisplayFields(input: {
   };
 }
 
+/**
+ * The order's display totals, counted over the parts still standing: a part cancelled
+ * before dispatch or back undelivered (RTO) was refunded and drops out of the subtotal,
+ * tax, shipping and total. When every part was reversed the order is shown as it was
+ * placed. On COD, the amount due is the cash the shipments still collect.
+ */
 export function recomputeOrderDisplayFields(input: {
   subOrders: Array<{
+    status?: string | null;
     subtotal: unknown;
     taxAmount: unknown;
     shippingCost: unknown;
     shippingDiscountAmount: unknown;
+    customerTotal?: unknown;
   }>;
   paymentMethod?: string | null;
   totalAmount: unknown;
   walletAmountUsed: unknown;
   razorpayAmountPaid: unknown;
+  originalTotalAmount?: unknown;
+  razorpayPaymentId?: string | null;
+  giftWrapFeeAmount?: unknown;
 }) {
+  const standing = input.subOrders.filter((sub) => !isReversedPart(sub.status));
+  const counted = standing.length > 0 ? standing : input.subOrders;
+  const partTotalPaise = (sub: (typeof input.subOrders)[number]) =>
+    toPaise(
+      sub.customerTotal != null
+        ? roundMoney(sub.customerTotal)
+        : subOrderCustomerTotal({
+            taxableAmount: sub.subtotal,
+            taxAmount: sub.taxAmount,
+            shippingCost: sub.shippingCost,
+            shippingDiscountAmount: sub.shippingDiscountAmount,
+          }),
+    );
   let merchandiseSubtotal = 0;
   let taxTotal = 0;
   let shippingTotal = 0;
-  for (const sub of input.subOrders) {
+  for (const sub of counted) {
     merchandiseSubtotal += roundMoney(sub.subtotal);
     taxTotal += roundMoney(sub.taxAmount);
     shippingTotal += shippingCharged(sub.shippingCost, sub.shippingDiscountAmount);
   }
+  // The order total only changes on returns (delivered parts), so taking the reversed
+  // parts out of it leaves the standing parts, their returns and the gift-wrap fee.
+  const reversedPaise =
+    standing.length > 0
+      ? input.subOrders
+          .filter((sub) => isReversedPart(sub.status))
+          .reduce((sum, sub) => sum + partTotalPaise(sub), 0)
+      : 0;
+  const totalAmount = fromPaise(Math.max(0, toPaise(roundMoney(input.totalAmount)) - reversedPaise));
+  const amountDue =
+    input.paymentMethod === 'COD' && input.subOrders.length > 0
+      ? fromPaise(
+          codCashDuePaise(
+            input,
+            input.subOrders.map((sub) => ({ status: sub.status, totalPaise: partTotalPaise(sub) })),
+          ),
+        )
+      : orderAmountDue({
+          paymentMethod: input.paymentMethod,
+          totalAmount: input.totalAmount,
+          walletAmountUsed: input.walletAmountUsed,
+          razorpayAmountPaid: input.razorpayAmountPaid,
+        });
   return {
     merchandiseSubtotal: roundMoney(merchandiseSubtotal),
     taxTotal: roundMoney(taxTotal),
     shippingTotal: roundMoney(shippingTotal),
-    amountDue: orderAmountDue({
-      paymentMethod: input.paymentMethod,
-      totalAmount: input.totalAmount,
-      walletAmountUsed: input.walletAmountUsed,
-      razorpayAmountPaid: input.razorpayAmountPaid,
-    }),
+    totalAmount,
+    amountDue,
   };
 }
 

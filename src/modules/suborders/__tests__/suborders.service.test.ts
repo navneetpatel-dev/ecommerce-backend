@@ -28,6 +28,8 @@ describe('SubordersService cancellation refund split', () => {
     mock.restoreAll();
   });
 
+  let subOrderUpdates: Array<Record<string, unknown>> = [];
+
   function stubCancellationBase(mockSubOrder: {
     id: string;
     orderId: string;
@@ -52,6 +54,11 @@ describe('SubordersService cancellation refund split', () => {
       return mockSubOrder as unknown as SubOrder;
     });
 
+    subOrderUpdates = [];
+    mock.method(SubOrder, 'update', async (values: Record<string, unknown>) => {
+      subOrderUpdates.push(values);
+      return [1] as never;
+    });
     mock.method(ProductVariant, 'increment', async () => undefined);
     mock.method(CommissionLedger, 'destroy', async () => 1);
     mock.method(TcsLedger, 'destroy', async () => 1);
@@ -187,5 +194,52 @@ describe('SubordersService cancellation refund split', () => {
     assert.equal(parentOrderUpdated, false);
     assert.equal(razorpayAmounts.length, 1);
     assert.equal(razorpayAmounts[0], toPaise(500));
+    // The part records its own card refund, though it is not the order's last part.
+    assert.deepEqual(subOrderUpdates, [
+      { cancelRefundAmountPaise: toPaise(500), cancelRefundStatus: 'PENDING', cancelRazorpayRefundId: null },
+      { cancelRefundStatus: 'INITIATED', cancelRazorpayRefundId: 'rfnd_partial_1' },
+    ]);
+  });
+
+  it('records FAILED on the part when its card refund cannot be issued', async () => {
+    const mockSubOrder = {
+      id: SUB_A,
+      orderId: ORDER_ID,
+      status: ORDER_STATUS.CONFIRMED,
+      subtotal: 500,
+      customerTotal: 500,
+      update: async () => undefined,
+      reload: async () => mockSubOrder,
+    };
+    stubCancellationBase(mockSubOrder);
+    mock.method(walletService, 'credit', async () => ({}) as never);
+    mock.method(WalletLedger, 'findOne', async () => null);
+    mock.method(Order, 'findByPk', async () => ({
+      id: ORDER_ID,
+      userId: 'user-123',
+      paymentStatus: PAYMENT_STATUS.PAID,
+      paymentMethod: PAYMENT_METHOD.RAZORPAY,
+      status: ORDER_STATUS.CONFIRMED,
+      totalAmount: 1000,
+      originalTotalAmount: 1000,
+      walletAmountUsed: 0,
+      razorpayAmountPaid: 1000,
+      razorpayPaymentId: 'pay_cash_1',
+    }) as unknown as Order);
+    mock.method(SubOrder, 'findAll', async () => [
+      { id: SUB_A, status: ORDER_STATUS.CANCELLED, customerTotal: 500, subtotal: 500 },
+      { id: SUB_B, status: ORDER_STATUS.CONFIRMED, customerTotal: 500, subtotal: 500 },
+    ] as unknown as SubOrder[]);
+    mock.method(CouponUsage, 'findAll', async () => []);
+    const orderUpdate = mock.method(Order, 'update', async () => [1]);
+    mock.method(paymentsService, 'createRazorpayRefund', async () => {
+      throw new Error('gateway down');
+    });
+
+    await subordersService.updateStatus(SUB_A, ORDER_STATUS.CANCELLED, undefined, 'actor-1');
+
+    assert.deepEqual(subOrderUpdates.at(-1), { cancelRefundStatus: 'FAILED' });
+    // Not the last part: the order's own refund status is left alone.
+    assert.equal(orderUpdate.mock.callCount(), 0);
   });
 });

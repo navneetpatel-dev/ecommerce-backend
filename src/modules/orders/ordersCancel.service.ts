@@ -139,9 +139,13 @@ export async function cancelPaidOrder(
           await order.update({
             cancelRefundStatus: REFUND_STATUS.INITIATED,
             cancelRazorpayRefundId: refundId,
+            cancelRefundAmountPaise: toPaise(razorpayDue),
           });
         } catch {
-          await order.update({ cancelRefundStatus: REFUND_STATUS.FAILED });
+          await order.update({
+            cancelRefundStatus: REFUND_STATUS.FAILED,
+            cancelRefundAmountPaise: toPaise(razorpayDue),
+          });
         }
       } else {
         await order.update({

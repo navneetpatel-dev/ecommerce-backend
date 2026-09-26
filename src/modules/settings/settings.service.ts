@@ -10,6 +10,11 @@ export type PlatformSettingsPayload = {
    * sale at checkout and withheld at payout, so a change applies to later sales only.
    */
   tdsRatePercent: number;
+  /**
+   * 194-O(4) exemption, in rupees: a sole proprietor whose financial-year gross sales
+   * through the platform stay within this amount has no TDS deducted (0 disables).
+   */
+  tds194oExemptionThreshold: number;
   /** GST % on marketplace commission invoices to vendors (SAC 9985). */
   commissionGstRatePercent: number;
   /** Ecommerce operator GSTIN for commission invoices / GSTR-8. */
@@ -60,6 +65,7 @@ const DEFAULTS: PlatformSettingsPayload = {
   // GST s.52 TCS (0.5% from 10 Jul 2024) and 194-O TDS (0.1% from 1 Oct 2024).
   tcsRatePercent: 0.5,
   tdsRatePercent: 0.1,
+  tds194oExemptionThreshold: 500000,
   commissionGstRatePercent: 18,
   platformGstin: '',
   platformLegalName: '',

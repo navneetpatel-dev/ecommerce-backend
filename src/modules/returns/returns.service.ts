@@ -910,6 +910,9 @@ export class ReturnsService {
       totalAmount: fromPaise(nextOrderTotalPaise),
       walletAmountUsed: order.walletAmountUsed,
       razorpayAmountPaid: order.razorpayAmountPaid,
+      originalTotalAmount: order.originalTotalAmount,
+      razorpayPaymentId: order.razorpayPaymentId,
+      giftWrapFeeAmount: order.giftWrapFeeAmount,
     });
     await order.update(
       {

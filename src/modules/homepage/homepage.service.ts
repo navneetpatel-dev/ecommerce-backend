@@ -70,7 +70,7 @@ async function resolveLinkSlug(
 
   if (linkType === PROMO_BANNER_LINK_TYPE.VENDOR) {
     const vendor = await Vendor.findOne({
-      where: { id: linkTargetId, status: VENDOR_STATUS.APPROVED },
+      where: { id: linkTargetId, status: VENDOR_STATUS.APPROVED, kycVerified: true },
       attributes: ['slug'],
     });
     return vendor?.slug ?? null;
@@ -102,7 +102,7 @@ async function isLinkTargetVisible(
 
   if (linkType === PROMO_BANNER_LINK_TYPE.VENDOR) {
     const vendor = await Vendor.findOne({
-      where: { id: linkTargetId, status: VENDOR_STATUS.APPROVED },
+      where: { id: linkTargetId, status: VENDOR_STATUS.APPROVED, kycVerified: true },
       attributes: ['id'],
     });
     return Boolean(vendor);

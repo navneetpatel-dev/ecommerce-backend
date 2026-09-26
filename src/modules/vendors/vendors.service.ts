@@ -59,6 +59,7 @@ import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import {
   areCategoryDocumentsSatisfied,
   buildKycChecklist,
+  refreshVendorKycStatus,
   resolveRequiredDocuments,
 } from './documentRequirements';
 
@@ -133,9 +134,11 @@ export class VendorsService {
     bannerUrl: string | null;
     description: string | null;
   }> {
+    // A storefront is public only while the vendor can sell (every KYC document verified).
     const vendor = await vendorsRepository.findOne({
       slug,
       status: VENDOR_STATUS.APPROVED,
+      kycVerified: true,
     });
     if (!vendor) throw new NotFoundError('Vendor');
     return {
@@ -224,6 +227,7 @@ export class VendorsService {
     }
 
     const checklist = await buildKycChecklist(vendor.id, vendor.entityType, data.categoryIds);
+    await refreshVendorKycStatus(vendor.id);
     return {
       vendor,
       requiredDocumentTypes: checklist.requiredDocumentTypes,
@@ -283,11 +287,12 @@ export class VendorsService {
     };
   }
 
-  /** Public storefront vendor index — APPROVED shops only. */
+  /** Public storefront vendor index — shops that can sell (APPROVED, KYC verified) only. */
   async listStorefrontVendors(query: VendorDirectoryQuery) {
     const offset = paginationOffset(query.page, query.limit);
     const { rows, count } = await vendorsRepository.findWithFilters({
       status: VENDOR_STATUS.APPROVED,
+      kycVerified: true,
       search: query.search,
       limit: query.limit,
       offset,
@@ -372,6 +377,11 @@ export class VendorsService {
       }
     });
 
+    // New categories or a new entity type can require more documents: selling stops
+    // until they are verified.
+    if (data.categoryIds || data.entityType !== undefined) {
+      await refreshVendorKycStatus(vendorId);
+    }
     // Reload after commit — uncommitted vendor_categories are invisible on another connection.
     return this.getVendorById(vendorId);
   }
@@ -416,6 +426,7 @@ export class VendorsService {
         { transaction: t },
       );
     });
+    await refreshVendorKycStatus(vendorId);
 
     const updated = await this.getVendorById(vendorId);
     await logAudit({
@@ -579,6 +590,8 @@ export class VendorsService {
     });
 
     await deleteS3ObjectIfReplaced(previousUrl, data.url);
+    // A new or replaced document is unverified: the vendor stops selling until it is.
+    await refreshVendorKycStatus(vendorId);
     return document;
   }
 
@@ -682,6 +695,9 @@ export class VendorsService {
       return row;
     });
 
+    // The last missing verification lets the vendor sell again.
+    await refreshVendorKycStatus(document.vendorId);
+
     await logAudit({
       actorId,
       action: 'VENDOR_DOCUMENT_VERIFY',
@@ -711,6 +727,9 @@ export class VendorsService {
       );
       return row;
     });
+
+    // A rejected document stops the vendor's sales until a new one is verified.
+    await refreshVendorKycStatus(document.vendorId);
 
     await logAudit({
       actorId,

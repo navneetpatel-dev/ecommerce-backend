@@ -72,6 +72,7 @@ describe('FREE_SHIPPING allocation', () => {
         ({
           id: 'vendor-1',
           status: VENDOR_STATUS.APPROVED,
+          kycVerified: true,
         }) as Vendor,
     );
     const result = await validateCoupon({

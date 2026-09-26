@@ -34,3 +34,10 @@ export function istStartOfMonth(moment: Date, monthOffset = 0): Date {
 export function sqlIstDay(column: string): string {
   return `date_trunc('day', ${column} AT TIME ZONE '${IST_TIME_ZONE}')`;
 }
+
+/** The instant the Indian financial year (1 April – 31 March, IST) containing `moment` starts. */
+export function istFinancialYearStart(moment: Date): Date {
+  const wall = istWallClock(moment);
+  const year = wall.getUTCMonth() >= 3 ? wall.getUTCFullYear() : wall.getUTCFullYear() - 1;
+  return new Date(Date.UTC(year, 3, 1) - IST_OFFSET_MS);
+}

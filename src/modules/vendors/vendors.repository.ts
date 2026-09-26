@@ -10,6 +10,8 @@ export class VendorsRepository extends BaseRepository<Vendor> {
 
   async findWithFilters(filters: {
     status?: VendorStatus;
+    /** Only vendors whose KYC documents are all verified (those that can sell). */
+    kycVerified?: boolean;
     search?: string;
     limit: number;
     offset: number;
@@ -18,6 +20,9 @@ export class VendorsRepository extends BaseRepository<Vendor> {
 
     if (filters.status) {
       where.status = filters.status;
+    }
+    if (filters.kycVerified !== undefined) {
+      where.kycVerified = filters.kycVerified;
     }
 
     if (filters.search) {

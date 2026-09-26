@@ -28,7 +28,7 @@ import {
 import { mapSubOrder } from '@modules/orders/orderDisplayMappers';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { shippingService } from '@modules/shipping/shipping.service';
-import { paymentsService } from '@modules/payments/payments.service';
+import { issuePartCardRefund, markPartCardRefundPending } from '@modules/payments/partCardRefund';
 import { walletService } from '@modules/wallet/wallet.service';
 import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
 import {
@@ -311,6 +311,7 @@ export class SubordersService {
                 razorpayDue = cashShare;
                 razorpayPaymentId = parentOrder.razorpayPaymentId;
                 refundOrderId = parentOrder.id;
+                await markPartCardRefundPending(id, toPaise(cashShare), transaction);
               }
             }
           }
@@ -403,29 +404,13 @@ export class SubordersService {
     });
 
     if (razorpayPaymentId && razorpayDue > 0 && refundOrderId) {
-      try {
-        const refundId = await paymentsService.createRazorpayRefund(
-          razorpayPaymentId,
-          toPaise(razorpayDue),
-          { orderId: refundOrderId, reason: 'SUBORDER_CANCEL', subOrderId: id },
-        );
-        if (orderFullyCancelled) {
-          await Order.update(
-            {
-              cancelRefundStatus: REFUND_STATUS.INITIATED,
-              cancelRazorpayRefundId: refundId,
-            },
-            { where: { id: refundOrderId } },
-          );
-        }
-      } catch {
-        if (orderFullyCancelled) {
-          await Order.update(
-            { cancelRefundStatus: REFUND_STATUS.FAILED },
-            { where: { id: refundOrderId } },
-          );
-        }
-      }
+      await issuePartCardRefund({
+        orderId: refundOrderId,
+        subOrderId: id,
+        paymentId: razorpayPaymentId,
+        amountPaise: toPaise(razorpayDue),
+        lastPart: orderFullyCancelled,
+      });
     }
 
     const order = (suborder as SubOrder & { order?: Order }).order;

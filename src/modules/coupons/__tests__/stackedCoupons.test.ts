@@ -72,7 +72,7 @@ describe('validateCouponSet with stacked coupons', () => {
       rows.find((row) => row.code === options.where.code) ?? null,
     );
     mock.method(Coupon, 'findAll', async () => rows);
-    mock.method(Vendor, 'findByPk', async () => ({ id: 'vendor-1', status: VENDOR_STATUS.APPROVED }) as Vendor);
+    mock.method(Vendor, 'findByPk', async () => ({ id: 'vendor-1', status: VENDOR_STATUS.APPROVED, kycVerified: true }) as Vendor);
 
     const result = await validateCouponSet({
       codes: ['PLAT20', 'SHOP500'],
