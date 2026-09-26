@@ -7,7 +7,7 @@ import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { logAudit } from '@modules/audit/audit.service';
 
 import { toPaise, fromPaise } from '@modules/pricing/money';
-import { computeSubOrderBreakdown } from '@modules/pricing/pricing.engine';
+import { computeSubOrderBreakdown, type GstPriceBand } from '@modules/pricing/pricing.engine';
 
 export interface TaxCalculation {
   cgst: number;
@@ -17,12 +17,32 @@ export interface TaxCalculation {
   gstPercentage: number;
 }
 
+/** A tax rule's rate, HSN and optional per-piece price band. */
+function effectiveRule(rule: TaxRule): {
+  gstPercentage: number;
+  hsnCode: string | null;
+  gstPriceBand: GstPriceBand | null;
+} {
+  const threshold = rule.priceBandThreshold != null ? Number(rule.priceBandThreshold) : null;
+  const above = rule.gstPercentageAbove != null ? Number(rule.gstPercentageAbove) : null;
+  return {
+    gstPercentage: Number(rule.gstPercentage),
+    hsnCode: rule.hsnCode ? String(rule.hsnCode) : null,
+    gstPriceBand:
+      threshold != null && above != null && threshold > 0
+        ? { thresholdPaise: toPaise(threshold), gstPercentageAbove: above }
+        : null,
+  };
+}
+
 function serializeTaxRule(row: TaxRule) {
   const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
   return {
     id: plain.id,
     hsnCode: plain.hsnCode,
     gstPercentage: Number(plain.gstPercentage),
+    priceBandThreshold: plain.priceBandThreshold != null ? Number(plain.priceBandThreshold) : null,
+    gstPercentageAbove: plain.gstPercentageAbove != null ? Number(plain.gstPercentageAbove) : null,
     categoryName: plain.category?.name ?? null,
     createdAt: plain.createdAt,
   };
@@ -66,30 +86,22 @@ export class TaxService {
    * Resolve the effective tax rule for a category, walking parents when the leaf
    * has no override, falling back to the platform default TaxRule, then to 18%.
    */
-  async resolveEffectiveTaxRule(categoryId?: string): Promise<{ gstPercentage: number; hsnCode: string | null }> {
+  async resolveEffectiveTaxRule(
+    categoryId?: string,
+  ): Promise<{ gstPercentage: number; hsnCode: string | null; gstPriceBand: GstPriceBand | null }> {
     if (categoryId) {
       const { categoriesService } = await import('../categories/categories.service');
       const chain = await categoriesService.walkCategoryAncestors(categoryId);
       for (const node of chain) {
         const categoryRule = await taxRepository.findByCategory(node.id);
-        if (categoryRule) {
-          return {
-            gstPercentage: Number(categoryRule.gstPercentage),
-            hsnCode: categoryRule.hsnCode ? String(categoryRule.hsnCode) : null,
-          };
-        }
+        if (categoryRule) return effectiveRule(categoryRule);
       }
     }
 
     const defaultRule = await taxRepository.findDefault();
-    if (defaultRule) {
-      return {
-        gstPercentage: Number(defaultRule.gstPercentage),
-        hsnCode: defaultRule.hsnCode ? String(defaultRule.hsnCode) : null,
-      };
-    }
+    if (defaultRule) return effectiveRule(defaultRule);
 
-    return { gstPercentage: 18.0, hsnCode: null };
+    return { gstPercentage: 18.0, hsnCode: null, gstPriceBand: null };
   }
 
   /**
@@ -98,6 +110,14 @@ export class TaxService {
   async getGstRate(categoryId?: string): Promise<number> {
     const { gstPercentage } = await this.resolveEffectiveTaxRule(categoryId);
     return gstPercentage;
+  }
+
+  /** The category's GST % and its per-piece price band, if the rule has one. */
+  async getGstRateRule(
+    categoryId?: string,
+  ): Promise<{ gstPercentage: number; gstPriceBand: GstPriceBand | null }> {
+    const { gstPercentage, gstPriceBand } = await this.resolveEffectiveTaxRule(categoryId);
+    return { gstPercentage, gstPriceBand };
   }
 
   async getTaxRules(query: { page: number; limit: number }) {
@@ -121,6 +141,8 @@ export class TaxService {
       categoryId?: string;
       hsnCode?: string;
       gstPercentage: number;
+      priceBandThreshold?: number | null;
+      gstPercentageAbove?: number | null;
     },
     actorId?: string,
   ) {
@@ -129,6 +151,8 @@ export class TaxService {
         categoryId: data.categoryId ?? null,
         hsnCode: data.hsnCode ?? null,
         gstPercentage: data.gstPercentage,
+        priceBandThreshold: data.priceBandThreshold ?? null,
+        gstPercentageAbove: data.gstPercentageAbove ?? null,
       }, { transaction: t });
 
       if (actorId) {
@@ -152,6 +176,8 @@ export class TaxService {
       categoryId?: string;
       hsnCode?: string;
       gstPercentage?: number;
+      priceBandThreshold?: number | null;
+      gstPercentageAbove?: number | null;
     },
     actorId?: string,
   ) {

@@ -5,6 +5,7 @@ import {
   computeSubOrderBreakdown,
   reverseFrozenLine,
   toPaise,
+  type GstPriceBand,
   type PricingLineBreakdown,
   type SubOrderPricingBreakdown,
 } from './pricing.engine';
@@ -15,6 +16,7 @@ export type QuoteVendorPricingInput = {
     unitPrice: number;
     quantity: number;
     gstPercentage?: number;
+    gstPriceBand?: GstPriceBand | null;
     commissionRatePercent?: number;
   }>;
   merchandiseDiscount: number;
@@ -56,6 +58,7 @@ export class PricingService {
         unitPricePaise: toPaise(line.unitPrice),
         quantity: line.quantity,
         gstPercentage: line.gstPercentage,
+        gstPriceBand: line.gstPriceBand,
         commissionRatePercent: line.commissionRatePercent,
       })),
       merchandiseDiscountPaise,
