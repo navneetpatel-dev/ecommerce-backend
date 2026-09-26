@@ -256,36 +256,74 @@ async function tds194oExport(
   return { rows: page.rows, nextCursor: page.nextCursor };
 }
 
+/**
+ * The platform's own supplies on its tax invoices (gift wrapping), one row per invoice
+ * line with the customer's state. Not a vendor's sale, so a vendor or category filter
+ * leaves them out. Cancelled orders are excluded, like marketplace sales.
+ */
+function platformSupplyLinesSql(): string {
+  return `
+    SELECT
+      COALESCE(NULLIF(a.state, ''), 'UNKNOWN') AS state,
+      line->>'sac' AS sac,
+      (line->>'quantity')::int AS qty,
+      (line->>'taxablePaise')::bigint AS taxable,
+      (line->>'cgstPaise')::bigint AS cgst,
+      (line->>'sgstPaise')::bigint AS sgst,
+      (line->>'igstPaise')::bigint AS igst
+    FROM orders o
+    CROSS JOIN LATERAL jsonb_array_elements(o."platformInvoiceSnapshot"->'lines') AS line
+    LEFT JOIN addresses a ON a.id = o."shippingAddressId" AND a."deletedAt" IS NULL
+    WHERE o."deletedAt" IS NULL
+      AND o."platformInvoiceSnapshot" IS NOT NULL
+      AND o."createdAt" BETWEEN :from AND :to
+      AND ${REPORTABLE_ORDER_SQL}
+      AND :vendorId::uuid IS NULL
+  `;
+}
+
 function hsnSalesSelectSql(): string {
   const taxableExpr = sqlFrozenPaise('oi', 'taxableAmountPaise');
   const taxExpr = sqlFrozenPaise('oi', 'taxAmountPaise');
   return `
     SELECT
-      COALESCE(hsn."hsnCode", 'UNKNOWN') AS "hsnCode",
-      SUM(oi.quantity)::int AS qty,
-      SUM(${taxableExpr})::bigint AS "taxablePaise",
-      SUM(${taxExpr})::bigint AS "taxPaise"
-    FROM order_items oi
-    INNER JOIN sub_orders s ON s.id = oi."subOrderId" AND s."deletedAt" IS NULL
-    INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
-    INNER JOIN product_variants pv ON pv.id = oi."variantId" AND pv."deletedAt" IS NULL
-    INNER JOIN products p ON p.id = pv."productId" AND p."deletedAt" IS NULL
-    LEFT JOIN (
-      SELECT DISTINCT ON (tr."categoryId")
-        tr."categoryId",
-        tr."hsnCode"
-      FROM tax_rules tr
-      WHERE tr."deletedAt" IS NULL
-        AND tr."hsnCode" IS NOT NULL
-      ORDER BY tr."categoryId", tr."updatedAt" DESC NULLS LAST
-    ) hsn ON hsn."categoryId" = p."categoryId"
-    WHERE oi."deletedAt" IS NULL
-      AND o."createdAt" BETWEEN :from AND :to
-      -- A cancelled sub-order's items were refunded: not sales, same rule as GMV.
-      AND ${GMV_SUB_ORDER_SQL}
-      AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
-      AND (:categoryId::uuid IS NULL OR p."categoryId" = :categoryId)
-    GROUP BY COALESCE(hsn."hsnCode", 'UNKNOWN')
+      "hsnCode",
+      SUM(qty)::int AS qty,
+      SUM("taxablePaise")::bigint AS "taxablePaise",
+      SUM("taxPaise")::bigint AS "taxPaise"
+    FROM (
+      SELECT
+        COALESCE(hsn."hsnCode", 'UNKNOWN') AS "hsnCode",
+        oi.quantity AS qty,
+        ${taxableExpr} AS "taxablePaise",
+        ${taxExpr} AS "taxPaise"
+      FROM order_items oi
+      INNER JOIN sub_orders s ON s.id = oi."subOrderId" AND s."deletedAt" IS NULL
+      INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
+      INNER JOIN product_variants pv ON pv.id = oi."variantId" AND pv."deletedAt" IS NULL
+      INNER JOIN products p ON p.id = pv."productId" AND p."deletedAt" IS NULL
+      LEFT JOIN (
+        SELECT DISTINCT ON (tr."categoryId")
+          tr."categoryId",
+          tr."hsnCode"
+        FROM tax_rules tr
+        WHERE tr."deletedAt" IS NULL
+          AND tr."hsnCode" IS NOT NULL
+        ORDER BY tr."categoryId", tr."updatedAt" DESC NULLS LAST
+      ) hsn ON hsn."categoryId" = p."categoryId"
+      WHERE oi."deletedAt" IS NULL
+        AND o."createdAt" BETWEEN :from AND :to
+        -- A cancelled sub-order's items were refunded: not sales, same rule as GMV.
+        AND ${GMV_SUB_ORDER_SQL}
+        AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
+        AND (:categoryId::uuid IS NULL OR p."categoryId" = :categoryId)
+      UNION ALL
+      -- The platform's own supplies (gift wrapping), under their SAC.
+      SELECT sac, qty, taxable, cgst + sgst + igst
+      FROM (${platformSupplyLinesSql()}) platform_lines
+      WHERE :categoryId::uuid IS NULL
+    ) supplies
+    GROUP BY "hsnCode"
   `;
 }
 
@@ -344,7 +382,14 @@ function stateTaxSelectSql(): string {
         AND ${GMV_SUB_ORDER_SQL}
         AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
     ),
+    platform_tax AS (
+      -- The platform's own supplies (gift wrapping): GST split in paise at checkout.
+      SELECT state, cgst + sgst + igst AS tax, cgst, sgst, igst
+      FROM (${platformSupplyLinesSql()}) platform_lines
+    ),
     split AS (
+      SELECT state, tax, cgst, sgst, igst FROM platform_tax
+      UNION ALL
       SELECT
         state,
         tax,

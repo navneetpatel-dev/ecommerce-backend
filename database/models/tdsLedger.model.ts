@@ -1,4 +1,4 @@
-import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import { Model, DataTypes, Op, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
 
 export class TdsLedger extends Model<InferAttributes<TdsLedger>, InferCreationAttributes<TdsLedger>> {
   declare id: CreationOptional<string>;
@@ -9,6 +9,8 @@ export class TdsLedger extends Model<InferAttributes<TdsLedger>, InferCreationAt
   declare ratePercent: number;
   declare tdsAmountPaise: number;
   declare payoutId: CreationOptional<string | null>;
+  /** The commission ledger this TDS was worked out from (a sale, or a return reversing it). */
+  declare commissionLedgerId: CreationOptional<string | null>;
   /** Income-tax section — default 194O. */
   declare section: CreationOptional<string>;
   /** YYYY-MM period for TDS returns. */
@@ -36,9 +38,10 @@ export const initTdsLedgerModel = (sequelize: Sequelize) => {
       subOrderId: { type: DataTypes.UUID, allowNull: false },
       vendorId: { type: DataTypes.UUID, allowNull: false },
       taxableAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
-      ratePercent: { type: DataTypes.DECIMAL(5, 2), allowNull: false, defaultValue: 0 },
+      ratePercent: { type: DataTypes.DECIMAL(6, 3), allowNull: false, defaultValue: 0 },
       tdsAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       payoutId: { type: DataTypes.UUID, allowNull: true },
+      commissionLedgerId: { type: DataTypes.UUID, allowNull: true },
       section: { type: DataTypes.STRING(16), allowNull: false, defaultValue: '194O' },
       period: { type: DataTypes.STRING(7), allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
@@ -54,10 +57,19 @@ export const initTdsLedgerModel = (sequelize: Sequelize) => {
       timestamps: true,
       paranoid: true,
       indexes: [
+        // One deduction per sub-order; one row per commission ledger, so a sub-order
+        // can also carry reversals for returns after payout. See migration 20260926000004.
         {
           unique: true,
           fields: ['subOrderId'],
-          name: 'tds_ledgers_sub_order_unique',
+          name: 'tds_ledgers_sub_order_deduction_unique',
+          where: { deletedAt: null, tdsAmountPaise: { [Op.gt]: 0 } },
+        },
+        {
+          unique: true,
+          fields: ['commissionLedgerId'],
+          name: 'tds_ledgers_commission_ledger_unique',
+          where: { deletedAt: null, commissionLedgerId: { [Op.ne]: null } },
         },
       ],
     },

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, describe, it } from 'node:test';
-import { UniqueConstraintError } from 'sequelize';
+import { Op, UniqueConstraintError } from 'sequelize';
 import { sequelize } from '@database/models';
 import { TcsLedger } from '@database/models/tcsLedger.model';
 import { TdsLedger } from '@database/models/tdsLedger.model';
@@ -64,12 +64,21 @@ describe('TCS/TDS ledger unique constraints', () => {
     );
   });
 
-  it('declares a unique index on TdsLedger.subOrderId', () => {
+  it('declares one TDS deduction per sub-order and one TDS row per commission ledger', () => {
     const indexes = indexNames(TdsLedger);
-    const unique = indexes.find((idx) => idx.name === 'tds_ledgers_sub_order_unique');
-    assert.ok(unique);
-    assert.equal(unique.unique, true);
-    assert.deepEqual(unique.fields, ['subOrderId']);
+    const deduction = indexes.find((idx) => idx.name === 'tds_ledgers_sub_order_deduction_unique');
+    assert.ok(deduction);
+    assert.equal(deduction.unique, true);
+    assert.deepEqual(deduction.fields, ['subOrderId']);
+    const perLedger = indexes.find((idx) => idx.name === 'tds_ledgers_commission_ledger_unique');
+    assert.ok(perLedger);
+    assert.equal(perLedger.unique, true);
+    assert.deepEqual(perLedger.fields, ['commissionLedgerId']);
+    // The old index allowed no reversal row beside a sub-order's deduction.
+    assert.equal(
+      indexes.some((idx) => idx.name === 'tds_ledgers_sub_order_unique'),
+      false,
+    );
   });
 
   it('keeps the partial unique indexes, dedupe, and fail-loud queries in the migration', () => {
@@ -161,13 +170,13 @@ describe('TCS/TDS ledger unique constraints', () => {
       });
   });
 
-  it('rejects a second TdsLedger row for the same subOrderId', async (t) => {
+  it('rejects a second TDS deduction for the same subOrderId', async (t) => {
     if (!(await dbReady())) return t.skip('database unavailable');
-    if (!(await constraintInstalled('tds_ledgers_sub_order_unique'))) {
+    if (!(await constraintInstalled('tds_ledgers_sub_order_deduction_unique'))) {
       return t.skip('tds unique index not installed');
     }
 
-    const original = await TdsLedger.findOne();
+    const original = await TdsLedger.findOne({ where: { tdsAmountPaise: { [Op.gt]: 0 } } });
     if (!original) return t.skip('no TDS fixture');
 
     await assert.rejects(
@@ -188,5 +197,43 @@ describe('TCS/TDS ledger unique constraints', () => {
         }),
       isUniqueViolation,
     );
+  });
+
+  it('allows a TDS reversal beside the deduction, once per commission ledger', async (t) => {
+    if (!(await dbReady())) return t.skip('database unavailable');
+    if (!(await constraintInstalled('tds_ledgers_commission_ledger_unique'))) {
+      return t.skip('tds unique index not installed');
+    }
+    const original = await TdsLedger.findOne({ where: { tdsAmountPaise: { [Op.gt]: 0 } } });
+    if (!original) return t.skip('no TDS fixture');
+
+    await sequelize
+      .transaction(async (transaction) => {
+        const reversal = {
+          orderId: original.orderId,
+          subOrderId: original.subOrderId,
+          vendorId: original.vendorId,
+          commissionLedgerId: '00000000-0000-4000-8000-000000000001',
+          taxableAmountPaise: -1000,
+          ratePercent: 1,
+          tdsAmountPaise: -10,
+          payoutId: original.payoutId,
+          section: original.section,
+          period: original.period,
+          createdBy: null,
+          updatedBy: null,
+          deletedBy: null,
+        };
+        await TdsLedger.create(reversal, { transaction });
+        await assert.rejects(
+          () =>
+            sequelize.transaction({ transaction }, () => TdsLedger.create(reversal, { transaction })),
+          isUniqueViolation,
+        );
+        throw new Error('rollback-test');
+      })
+      .catch((err: unknown) => {
+        if (!(err instanceof Error) || err.message !== 'rollback-test') throw err;
+      });
   });
 });

@@ -435,7 +435,7 @@ describe('consolidated refund scenarios (seeded)', () => {
     const sale = await CommissionLedger.findOne({
       where: { subOrderId: sub.id, referenceType: null },
     });
-    await sale!.update({ status: COMMISSION_STATUS.SETTLED });
+    await sale!.update({ status: COMMISSION_STATUS.SETTLED, tdsRatePercent: 1 });
     const paidNetPaise = Number(sale!.netPayoutAmountPaise);
 
     const rr = await returnsService.create(customer.id, {
@@ -457,6 +457,8 @@ describe('consolidated refund scenarios (seeded)', () => {
     assert.equal(clawback!.status, COMMISSION_STATUS.PENDING);
     assert.equal(Number(clawback!.netPayoutAmountPaise), -paidNetPaise);
     assert.equal(Number(clawback!.commissionAmountPaise), -toPaise(10));
+    // The TDS withheld on the sale is given back at the rate it was withheld at.
+    assert.equal(Number(clawback!.tdsRatePercent), 1);
   });
 
   it('2. COD NO_LONGER_NEEDED → excludes shipping, deducts return fee', async (t) => {

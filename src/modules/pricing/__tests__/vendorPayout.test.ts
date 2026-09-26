@@ -98,19 +98,28 @@ describe('vendorPayoutBreakdown with vendor-borne cashback', () => {
     assert.equal(withBoth.payoutPaise, saleOnly.payoutPaise);
   });
 
-  it('recovers a return after payout, and the GST on its commission falls with it', () => {
+  it('recovers a return after payout, giving back its TDS and the GST on its commission', () => {
     const returned = {
       netPayoutAmountPaise: -40000,
       commissionAmountPaise: -4000,
+      taxableAmountPaise: -35001,
+      // Withheld at 1% when the sale was paid, though the platform rate is 0.1% now.
+      tdsRatePercent: '1.000',
       referenceType: 'ReturnClawback',
     };
-    const result = vendorPayoutBreakdown([sale, returned], rates);
-    assert.deepEqual(result.rows[1], { netPaise: -40000, tdsBasePaise: 0, tdsRatePercent: 0, tdsPaise: 0 });
+    const result = vendorPayoutBreakdown([sale, returned], { ...rates, tdsRatePercent: 0.1 });
+    // TDS reversed on ₹350.01 at 1%, rounded like the deduction was: −₹3.50.
+    assert.deepEqual(result.rows[1], {
+      netPaise: -40000,
+      tdsBasePaise: -35001,
+      tdsRatePercent: 1,
+      tdsPaise: -350,
+    });
     // Commission GST on ₹100 − ₹40 of commission.
     assert.equal(result.commissionTaxablePaise, 6000);
     assert.equal(result.commissionGstPaise, 1080);
-    // (89000 − 890) − 1080 − 40000
-    assert.equal(result.payoutPaise, 47030);
+    // (89000 − 89 TDS at 0.1%) − 1080 − 40000 + 350
+    assert.equal(result.payoutPaise, 48181);
   });
 
   it('pays back a reversal on its own', () => {
