@@ -4,7 +4,6 @@ import {
   PAYMENT_STATUS,
   REFUND_STATUS,
 } from '@core/constants/statuses';
-import { logger } from '@core/logger';
 import { CreditNote } from '@database/models/creditNote.model';
 import { Order } from '@database/models/order.model';
 import type { OrderItem } from '@database/models/orderItem.model';
@@ -20,6 +19,7 @@ import {
   rollbackOrderWalletIfNeeded,
 } from '@modules/wallet/walletOrderRollback';
 import { notificationsService } from '@modules/notifications/notifications.service';
+import { issuePartCardRefund, markPartCardRefundPending } from '@modules/payments/partCardRefund';
 
 export const RTO_CREDIT_NOTE_REASON = 'Returned undelivered (RTO)';
 
@@ -74,37 +74,18 @@ export async function refundReturnedUndeliveredPart(
       : 0;
 
   if (cashPaise > 0 && paymentId) {
+    await markPartCardRefundPending(subOrder.id, cashPaise, transaction);
     if (lastPart) {
       await order.update({ cancelRefundStatus: REFUND_STATUS.PENDING }, { transaction });
     }
     transaction.afterCommit(async () => {
-      try {
-        const { paymentsService } = await import('@modules/payments/payments.service');
-        const refundId = await paymentsService.createRazorpayRefund(paymentId, cashPaise, {
-          orderId: order.id,
-          // Settled like a cancellation (see the refund.processed webhook).
-          reason: 'SUBORDER_CANCEL',
-          subOrderId: subOrder.id,
-        });
-        if (lastPart) {
-          await Order.update(
-            { cancelRefundStatus: REFUND_STATUS.INITIATED, cancelRazorpayRefundId: refundId },
-            { where: { id: order.id } },
-          );
-        }
-      } catch (error) {
-        logger.warn('RTO Razorpay refund failed', {
-          orderId: order.id,
-          subOrderId: subOrder.id,
-          reason: error instanceof Error ? error.message : String(error),
-        });
-        if (lastPart) {
-          await Order.update(
-            { cancelRefundStatus: REFUND_STATUS.FAILED },
-            { where: { id: order.id } },
-          );
-        }
-      }
+      await issuePartCardRefund({
+        orderId: order.id,
+        subOrderId: subOrder.id,
+        paymentId,
+        amountPaise: cashPaise,
+        lastPart,
+      });
     });
   }
 

@@ -60,8 +60,9 @@ export class Product extends Model<InferAttributes<Product>, InferCreationAttrib
           model: models.Vendor,
           as: 'vendor',
           required: true,
-          where: { status: VENDOR_STATUS.APPROVED },
-          attributes: ['id', 'businessName', 'slug', 'logoUrl', 'commissionRate', 'performanceScore', 'returnShippingFee', 'codEnabled'],
+          // Sellable vendors only: APPROVED with every KYC document verified.
+          where: { status: VENDOR_STATUS.APPROVED, kycVerified: true },
+          attributes: ['id', 'businessName', 'slug', 'logoUrl', 'commissionRate', 'performanceScore', 'returnShippingFee', 'codEnabled', 'status', 'kycVerified'],
         },
       ],
     });

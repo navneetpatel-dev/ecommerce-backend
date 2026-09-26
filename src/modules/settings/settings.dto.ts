@@ -4,6 +4,7 @@ export const UpdateSettingsSchema = z.object({
   defaultCommissionRate: z.number().min(0).max(100),
   tcsRatePercent: z.number().min(0).max(100).default(0.5),
   tdsRatePercent: z.number().min(0).max(100).default(0.1),
+  tds194oExemptionThreshold: z.number().min(0).default(500000),
   commissionGstRatePercent: z.number().min(0).max(100).default(18),
   platformGstin: z.string().max(20).default(''),
   platformLegalName: z.string().max(200).default(''),

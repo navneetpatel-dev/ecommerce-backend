@@ -75,6 +75,7 @@ import {
   type PlatformInvoiceSnapshot,
 } from '@modules/pricing/platformFeeInvoice';
 import { isIntraStateSupply } from '@modules/pricing/gstPlaceOfSupply';
+import { tdsRateForSale } from '@modules/pricing/tds194o';
 
 /** Flat platform fee for checkout-time gift wrapping (v1: hardcoded, not vendor-specific). */
 export const GIFT_WRAP_FEE_RUPEES = 49;
@@ -792,6 +793,15 @@ export class CheckoutService {
         );
 
         if (vendorId !== 'platform') {
+          // Frozen here so a later platform rate change only affects later sales. A sole
+          // proprietor within the 194-O(4) threshold for the financial year pays none.
+          const tdsRatePercent = await tdsRateForSale({
+            vendorId,
+            entityType: prep.row.vendor?.entityType,
+            saleTaxablePaise: p.taxablePaise,
+            settings,
+            transaction: t,
+          });
           await CommissionLedger.create({
             vendorId,
             subOrderId: subOrder.id,
@@ -808,8 +818,7 @@ export class CheckoutService {
             tcsAmountPaise: p.tcsPaise,
             netPayoutAmountPaise: p.netPayoutPaise,
             shippingCollectedPaise: p.shippingChargedPaise,
-            // Frozen here so a later platform rate change only affects later sales.
-            tdsRatePercent: settings.tdsRatePercent,
+            tdsRatePercent,
             status: COMMISSION_STATUS.PENDING,
           }, { transaction: t });
 

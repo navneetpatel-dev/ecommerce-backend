@@ -1,5 +1,5 @@
 import { ORDER_STATUS } from '@core/constants/statuses';
-import type { Paise } from './money';
+import { toPaise, type Paise } from './money';
 import {
   isWalletFundedOrder,
   orderRazorpayPaidPaise,
@@ -33,4 +33,37 @@ export function reversedPartCashSharePaise(
   const alreadyRefunded = otherReversedPartsPaise.reduce((sum, paise) => sum + cashShare(paise), 0);
   const remaining = Math.max(0, orderRazorpayPaidPaise(order) - alreadyRefunded);
   return lastPart ? remaining : Math.min(cashShare(partPaise), remaining);
+}
+
+/** A part as the COD cash-due calculation reads it. */
+export interface CodPart {
+  status: string | null | undefined;
+  totalPaise: Paise;
+}
+
+/**
+ * Cash still owed at the door on a COD order, in paise: the parts kept (not cancelled
+ * or RTO'd) plus the order-level gift-wrap fee, less the wallet money on them — the
+ * wallet paid at checkout minus each reversed part's wallet share, already returned.
+ * 0 once no part is kept. The shipments split exactly this amount between them.
+ */
+export function codCashDuePaise(
+  order: RefundSplitOrder & { giftWrapFeeAmount?: unknown },
+  parts: CodPart[],
+): Paise {
+  const kept = parts.filter((part) => !isReversedPart(part.status));
+  if (kept.length === 0) return 0;
+  const reversed = parts.filter((part) => isReversedPart(part.status));
+  const keptPaise =
+    kept.reduce((sum, part) => sum + part.totalPaise, 0) +
+    toPaise(Number(order.giftWrapFeeAmount ?? 0));
+  const walletReturnedPaise = reversed.reduce(
+    (sum, part) => sum + walletShareOfRefundPaise(order, part.totalPaise),
+    0,
+  );
+  const walletOnKeptPaise = Math.max(
+    0,
+    toPaise(Number(order.walletAmountUsed ?? 0)) - walletReturnedPaise,
+  );
+  return Math.max(0, keptPaise - walletOnKeptPaise);
 }

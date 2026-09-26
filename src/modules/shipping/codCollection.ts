@@ -4,8 +4,8 @@ import { ORDER_STATUS } from '@core/constants/statuses';
 import { Shipment } from '@database/models/shipment.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { fromPaise, toPaise, type Paise } from '@modules/pricing/money';
-import { walletShareOfRefundPaise, type RefundSplitOrder } from '@modules/pricing/refundSplit';
-import { isReversedPart } from '@modules/pricing/partReversal';
+import type { RefundSplitOrder } from '@modules/pricing/refundSplit';
+import { codCashDuePaise, isReversedPart } from '@modules/pricing/partReversal';
 
 /** The order fields the COD amount reads. */
 export type CodOrder = RefundSplitOrder & { id: string; giftWrapFeeAmount?: unknown };
@@ -36,21 +36,15 @@ export async function codAmountForSubOrderPaise(
   // Cancelled and RTO'd (RETURNED) parts were reversed: they owe no cash and their
   // wallet share went back to the wallet.
   const kept = subOrders.filter((sub) => !isReversedPart(sub.status));
-  const cancelled = subOrders.filter((sub) => isReversedPart(sub.status));
   const current = kept.find((sub) => sub.id === subOrderId);
   if (!current) return 0;
 
   const feePaise = toPaise(Number(order.giftWrapFeeAmount ?? 0));
   const keptPaise = kept.reduce((sum, sub) => sum + totalPaise(sub), 0) + feePaise;
-  const walletReturnedPaise = cancelled.reduce(
-    (sum, sub) => sum + walletShareOfRefundPaise(order, totalPaise(sub)),
-    0,
+  const duePaise = codCashDuePaise(
+    order,
+    subOrders.map((sub) => ({ status: sub.status, totalPaise: totalPaise(sub) })),
   );
-  const walletOnKeptPaise = Math.max(
-    0,
-    toPaise(Number(order.walletAmountUsed ?? 0)) - walletReturnedPaise,
-  );
-  const duePaise = Math.max(0, keptPaise - walletOnKeptPaise);
 
   const others = kept.filter((sub) => sub.id !== subOrderId);
   const shipped = others.length

@@ -1,14 +1,14 @@
-import { coerceRupees, roundMoney } from '@modules/pricing/money';
+import { coerceRupees, fromPaise, roundMoney } from '@modules/pricing/money';
 import {
   checkoutAmountDue,
   combinedDiscount,
   lineTotal,
-  orderAmountDue,
   orderItemDisplayLineSubtotal,
   recomputeOrderDisplayFields,
   shippingCharged,
   subOrderCustomerTotal,
 } from '@modules/pricing/displayMoney';
+import { isReversedPart } from '@modules/pricing/partReversal';
 import { resolveShippingDisplayKey, resolveTaxDisplayKey } from '@modules/checkout/checkoutOrderTotals';
 
 /** Primary image for an order line, resolved live from the product catalogue. */
@@ -65,7 +65,7 @@ export function mapSubOrder(sub: Record<string, unknown>) {
     orderId: sub.orderId,
     vendorId: sub.vendorId,
     vendor: sub.vendor,
-    status: sub.status,
+    status: sub.status as string,
     subtotal: roundMoney(sub.subtotal),
     shippingCost,
     shippingDiscountAmount,
@@ -91,6 +91,10 @@ export function mapSubOrder(sub: Record<string, unknown>) {
     }),
     taxInvoiceNumber: (sub.taxInvoiceNumber as string | null | undefined) ?? null,
     taxInvoiceIssuedAt: sub.taxInvoiceIssuedAt ?? null,
+    // The card refund for a cancelled or RTO'd part, and where it stands.
+    cancelRefundAmount:
+      sub.cancelRefundAmountPaise != null ? fromPaise(Number(sub.cancelRefundAmountPaise)) : null,
+    cancelRefundStatus: (sub.cancelRefundStatus as string | null | undefined) ?? null,
     shipment: sub.shipment ?? null,
     items,
   };
@@ -132,12 +136,17 @@ export function mapOrderResponse(order: Record<string, unknown>) {
     totalAmount,
     walletAmountUsed,
     razorpayAmountPaid,
+    originalTotalAmount,
+    razorpayPaymentId: (plain.razorpayPaymentId as string | null | undefined) ?? null,
+    giftWrapFeeAmount: plain.giftWrapFeeAmount,
   });
-  const orderTax = sumTaxFromSubOrders(rawSubOrders);
+  // Tax lines of the parts still standing (every part when all were reversed).
+  const standingRaw = rawSubOrders.filter((sub) => !isReversedPart(sub.status as string));
+  const orderTax = sumTaxFromSubOrders(standingRaw.length > 0 ? standingRaw : rawSubOrders);
   return {
     id: plain.id,
     userId: plain.userId,
-    totalAmount,
+    totalAmount: aggregates.totalAmount,
     discountTotal: roundMoney(plain.discountTotal),
     giftWrap: Boolean(plain.giftWrap),
     giftMessage: (plain.giftMessage as string | null | undefined) ?? null,
@@ -146,12 +155,7 @@ export function mapOrderResponse(order: Record<string, unknown>) {
     walletAmountUsed,
     originalTotalAmount,
     razorpayAmountPaid,
-    amountDue: orderAmountDue({
-      paymentMethod: plain.paymentMethod as string | null | undefined,
-      totalAmount,
-      walletAmountUsed,
-      razorpayAmountPaid,
-    }),
+    amountDue: aggregates.amountDue,
     merchandiseSubtotal: aggregates.merchandiseSubtotal,
     taxTotal: aggregates.taxTotal,
     shippingTotal: aggregates.shippingTotal,

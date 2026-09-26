@@ -157,6 +157,11 @@ describe('Delivery Module Comprehensive Verification', () => {
       });
 
       mock.method(notificationsService, 'sendRefundProcessed', () => {});
+      const partRefundUpdates: Array<Record<string, unknown>> = [];
+      mock.method(SubOrder, 'update', async (values: Record<string, unknown>) => {
+        partRefundUpdates.push(values);
+        return [1] as never;
+      });
 
       const mockShipment = {
         id: 'shipment-rto',
@@ -181,6 +186,12 @@ describe('Delivery Module Comprehensive Verification', () => {
       // Paid by card: the refund goes back to the card, not into the wallet as points.
       assert.equal(cardRefundPaise, 125000);
       assert.equal(walletRefundCredited, 0);
+      // The RTO'd part records its own card refund.
+      assert.deepEqual(partRefundUpdates[0], {
+        cancelRefundAmountPaise: 125000,
+        cancelRefundStatus: 'PENDING',
+        cancelRazorpayRefundId: null,
+      });
     });
   });
 

@@ -78,6 +78,7 @@ const liveProductFilters = `
   p."deletedAt" IS NULL
   AND p.status = :liveStatus
   AND v.status = :approvedStatus
+  AND v."kycVerified" = true
   AND v."deletedAt" IS NULL
 `;
 
@@ -347,6 +348,7 @@ export class SearchRepository {
       FROM vendors v
       WHERE v."deletedAt" IS NULL
         AND v.status = :approvedStatus
+  AND v."kycVerified" = true
         AND (
           v."businessName" ILIKE :prefixPattern ESCAPE '\\'
           OR (

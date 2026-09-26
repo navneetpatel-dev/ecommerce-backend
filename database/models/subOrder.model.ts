@@ -36,6 +36,10 @@ export class SubOrder extends Model<InferAttributes<SubOrder>, InferCreationAttr
   /** Vendor-scoped GST tax invoice number allocated at order placement. */
   declare taxInvoiceNumber: CreationOptional<string | null>;
   declare taxInvoiceIssuedAt: CreationOptional<Date | null>;
+  /** Card (Razorpay) refund for this part when it was cancelled or came back undelivered. */
+  declare cancelRefundAmountPaise: CreationOptional<number | null>;
+  declare cancelRefundStatus: CreationOptional<string | null>;
+  declare cancelRazorpayRefundId: CreationOptional<string | null>;
   /** Tax invoice amounts as issued at checkout; null on sub-orders placed before it existed. */
   declare taxInvoiceSnapshot: CreationOptional<TaxInvoiceSnapshot | null>;
   /** The platform's invoice for the shipping charged on this part; numbered at dispatch. */
@@ -94,6 +98,9 @@ export const initSubOrderModel = (sequelize: Sequelize) => {
       roundingAdjustmentPaise: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
       taxInvoiceNumber: { type: DataTypes.STRING(64), allowNull: true, unique: true },
       taxInvoiceIssuedAt: { type: DataTypes.DATE, allowNull: true },
+      cancelRefundAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
+      cancelRefundStatus: { type: DataTypes.STRING(16), allowNull: true },
+      cancelRazorpayRefundId: { type: DataTypes.STRING(64), allowNull: true },
       taxInvoiceSnapshot: { type: DataTypes.JSONB, allowNull: true },
       shippingInvoiceSnapshot: { type: DataTypes.JSONB, allowNull: true },
       tcsRatePercent: { type: DataTypes.DECIMAL(6, 3), allowNull: true },

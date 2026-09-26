@@ -1,4 +1,4 @@
-import { PAYMENT_METHOD, PAYMENT_STATUS, ORDER_STATUS } from '@core/constants/statuses';
+import { PAYMENT_METHOD, PAYMENT_STATUS, ORDER_STATUS, REFUND_STATUS } from '@core/constants/statuses';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { sequelize } from '@database/models';
 import { WalletLedger } from '@database/models/walletLedger.model';
@@ -427,6 +427,28 @@ async function paymentGatewayReconciliation(filters: ReportFilters) {
       COALESCE(o."razorpayOrderId", '') AS "razorpayOrderId",
       COALESCE(o."razorpayPaymentId", '') AS "razorpayPaymentId",
       COALESCE(o."razorpayAmountPaid", 0)::float AS "razorpayAmount",
+      ROUND(COALESCE(o."razorpayAmountPaid", 0) * 100)::bigint AS "capturedPaise",
+      -- Card money sent back: a full cancellation (on the order), each cancelled or
+      -- RTO'd part, and each return's Razorpay share. Issued (INITIATED) counts: it has
+      -- left the gateway balance. A FAILED refund has not.
+      (
+        CASE WHEN o."cancelRefundStatus" IN ('${REFUND_STATUS.INITIATED}', '${REFUND_STATUS.COMPLETED}')
+          THEN COALESCE(o."cancelRefundAmountPaise", 0) ELSE 0 END
+        + COALESCE((
+          SELECT SUM(ps."cancelRefundAmountPaise")
+          FROM sub_orders ps
+          WHERE ps."orderId" = o.id AND ps."deletedAt" IS NULL
+            AND ps."cancelRefundStatus" IN ('${REFUND_STATUS.INITIATED}', '${REFUND_STATUS.COMPLETED}')
+        ), 0)
+        + COALESCE((
+          SELECT SUM(ROUND(rr."razorpayRefundAmount" * 100))
+          FROM return_requests rr
+          INNER JOIN order_items ri ON ri.id = rr."orderItemId"
+          INNER JOIN sub_orders rs ON rs.id = ri."subOrderId"
+          WHERE rs."orderId" = o.id AND rr."deletedAt" IS NULL
+            AND rr."refundStatus" IN ('${REFUND_STATUS.INITIATED}', '${REFUND_STATUS.COMPLETED}')
+        ), 0)
+      )::bigint AS "refundedPaise",
       COALESCE(o."totalAmount", 0)::float AS "orderTotal",
       COALESCE(o."walletAmountUsed", 0)::float AS "walletUsed",
       -- Keep in sync with resolvePaymentGatewayReconStatus
@@ -468,6 +490,9 @@ async function paymentGatewayReconciliation(filters: ReportFilters) {
       razorpayOrderId: row.razorpayOrderId,
       razorpayPaymentId: row.razorpayPaymentId,
       razorpayAmount: Number(row.razorpayAmount ?? 0),
+      captured: fromPaise(Number(row.capturedPaise ?? 0)),
+      refunded: fromPaise(Number(row.refundedPaise ?? 0)),
+      net: fromPaise(Number(row.capturedPaise ?? 0) - Number(row.refundedPaise ?? 0)),
       orderTotal: Number(row.orderTotal ?? 0),
       walletUsed: Number(row.walletUsed ?? 0),
       reconStatus: row.reconStatus,
@@ -1007,7 +1032,9 @@ export const adminFinanceGapReports: ReportDefinition[] = [
       { key: 'paymentStatus', labelKey: 'paymentStatus' },
       { key: 'razorpayOrderId', labelKey: 'razorpayOrderId' },
       { key: 'razorpayPaymentId', labelKey: 'razorpayPaymentId' },
-      { key: 'razorpayAmount', labelKey: 'razorpayAmount', format: 'currency' },
+      { key: 'captured', labelKey: 'pgCaptured', format: 'currency' },
+      { key: 'refunded', labelKey: 'pgRefunded', format: 'currency' },
+      { key: 'net', labelKey: 'pgNet', format: 'currency' },
       { key: 'orderTotal', labelKey: 'totalAmount', format: 'currency' },
       { key: 'walletUsed', labelKey: 'walletUsed', format: 'currency' },
       { key: 'reconStatus', labelKey: 'reconStatus' },

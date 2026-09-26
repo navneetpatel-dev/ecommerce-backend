@@ -49,6 +49,8 @@ export class Order extends Model<InferAttributes<Order>, InferCreationAttributes
     'NONE' | 'PENDING' | 'INITIATED' | 'COMPLETED' | 'FAILED'
   >;
   declare cancelRazorpayRefundId: CreationOptional<string | null>;
+  /** Card refund of a full-order cancellation, in paise (per-part refunds sit on sub-orders). */
+  declare cancelRefundAmountPaise: CreationOptional<number | null>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -106,6 +108,7 @@ export const initOrderModel = (sequelize: Sequelize) => {
         defaultValue: 'NONE',
       },
       cancelRazorpayRefundId: { type: DataTypes.STRING(64), allowNull: true },
+      cancelRefundAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },
