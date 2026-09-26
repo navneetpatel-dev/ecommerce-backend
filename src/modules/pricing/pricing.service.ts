@@ -136,6 +136,8 @@ export class PricingService {
       commissionBasePaise: taxablePaise,
       commissionPaise,
       tcsPaise,
+      // Not stored per line; reversals scale the stored net, which already includes it.
+      platformFundedDiscountPaise: 0,
       netPayoutPaise,
     };
   }

@@ -18,10 +18,15 @@ export interface PayoutLedgerRow {
   referenceType?: string | null;
 }
 
-/** GST the platform charges on its marketplace commission (SAC 9985), in paise. */
+/**
+ * GST the platform charges on its marketplace commission (SAC 9985), in paise. A negative
+ * commission (a payout whose returns hand back more commission than its sales earned)
+ * gives the GST back: the same amount, negative, rounded like a charge would be.
+ */
 export function commissionGstPaise(commissionTaxablePaise: Paise, gstRatePercent: number): Paise {
-  if (commissionTaxablePaise <= 0 || gstRatePercent <= 0) return 0;
-  return Math.round((commissionTaxablePaise * gstRatePercent) / 100);
+  if (commissionTaxablePaise === 0 || gstRatePercent <= 0) return 0;
+  const gst = Math.round((Math.abs(commissionTaxablePaise) * gstRatePercent) / 100);
+  return commissionTaxablePaise < 0 ? -gst : gst;
 }
 
 /** Section 194-O TDS on a (non-negative) sale value, rounded to the paisa. */

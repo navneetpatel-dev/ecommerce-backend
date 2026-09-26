@@ -40,7 +40,6 @@ import {
   settleSubMinRazorpayRemainder,
 } from './razorpayWalletRemainder';
 import { RAZORPAY_MIN_AMOUNT_PAISE } from '@core/constants/http';
-import { nextVendorTaxInvoiceNumber } from '@modules/pricing/vendorInvoiceSequence';
 import { resolveItemAvailability } from '@core/catalog/customerVisibility';
 import type {
   CancelCheckoutRequest,
@@ -671,15 +670,15 @@ export class CheckoutService {
       }
 
       // Gift wrapping is the platform's own service: its fee includes 18% GST and gets
-      // the platform's tax invoice, numbered in the platform series.
+      // the platform's tax invoice. Amounts freeze now; the number is issued at dispatch
+      // (pricing/taxInvoiceIssue), so an order cancelled before shipping gets none.
       let platformInvoiceSnapshot: PlatformInvoiceSnapshot | null = null;
       if (data.giftWrap && giftWrapFeeAmount > 0) {
         const intraState = isIntraStateSupply(settings.platformState, shippingAddress.state);
         const line = giftWrapInvoiceLine(giftWrapFeeAmount, intraState);
-        const invoice = await nextVendorTaxInvoiceNumber(null, new Date(), t);
         platformInvoiceSnapshot = {
-          invoiceNumber: invoice.number,
-          issuedAt: invoice.issuedAt.toISOString(),
+          invoiceNumber: null,
+          issuedAt: null,
           intraState,
           lines: [line],
           totalPaise: platformInvoiceLineTotalPaise(line),
@@ -760,12 +759,6 @@ export class CheckoutService {
         const p = priced.paise;
         const bearer = bearerByVendor[vendorId] ?? DISCOUNT_BEARER.PLATFORM;
         const resolvedVendorId = vendorId === 'platform' ? null : vendorId;
-        const issuedAt = new Date();
-        const invoice = await nextVendorTaxInvoiceNumber(
-          resolvedVendorId,
-          issuedAt,
-          t,
-        );
 
         const subOrder = await SubOrder.create({
           orderId: orderRow.id,
@@ -784,8 +777,9 @@ export class CheckoutService {
           tcsAmountPaise: p.tcsPaise,
           netPayoutAmountPaise: p.netPayoutPaise,
           roundingAdjustmentPaise: p.roundingAdjustmentPaise,
-          taxInvoiceNumber: invoice.number,
-          taxInvoiceIssuedAt: invoice.issuedAt,
+          // The tax invoice number is issued at dispatch (pricing/taxInvoiceIssue).
+          taxInvoiceNumber: null,
+          taxInvoiceIssuedAt: null,
           trackingId: null,
         }, { transaction: t });
 

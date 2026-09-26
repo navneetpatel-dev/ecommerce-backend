@@ -18,12 +18,13 @@ export type PlatformInvoiceLine = {
 };
 
 /**
- * The platform's own tax invoice for fees it charges on an order (gift wrapping),
- * frozen at checkout with its invoice number from the platform series.
+ * The platform's own tax invoice for fees it charges on an order (gift wrapping). The
+ * amounts are frozen at checkout; the number (platform series) and date are set when the
+ * order's first sub-order is dispatched, and stay null on an order cancelled before that.
  */
 export type PlatformInvoiceSnapshot = {
-  invoiceNumber: string;
-  issuedAt: string;
+  invoiceNumber: string | null;
+  issuedAt: string | null;
   intraState: boolean;
   lines: PlatformInvoiceLine[];
   totalPaise: Paise;

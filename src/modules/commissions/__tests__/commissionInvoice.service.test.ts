@@ -6,7 +6,10 @@ import { Vendor } from '@database/models/vendor.model';
 import { VendorInvoiceSequence } from '@database/models/vendorInvoiceSequence.model';
 import { splitTaxAmount } from '@modules/pricing/pricing.engine';
 import { settingsService } from '@modules/settings/settings.service';
-import { createCommissionInvoiceForPayout } from '../commissionInvoice.service';
+import {
+  createCommissionInvoiceForPayout,
+  isCommissionCreditNote,
+} from '../commissionInvoice.service';
 
 const transaction = {
   LOCK: { UPDATE: 'UPDATE', SHARE: 'SHARE' },
@@ -174,5 +177,44 @@ describe('createCommissionInvoiceForPayout GST split', () => {
       },
       REGRESSION_INTER,
     );
+  });
+
+  it('issues a credit note giving the GST back when the payout commission is negative', async () => {
+    mockInvoiceDeps({ platformState: 'KARNATAKA', vendorState: 'KARNATAKA' });
+    const note = await createCommissionInvoiceForPayout(
+      {
+        vendorId: 'vendor-1',
+        payoutId: 'payout-2',
+        periodStart: new Date('2026-02-01'),
+        periodEnd: new Date('2026-02-28'),
+        commissionTaxablePaise: -REGRESSION_TAXABLE_PAISE,
+        actorId: 'actor-1',
+      },
+      transaction,
+    );
+    assert.ok(note);
+    assert.equal(isCommissionCreditNote(note), true);
+    // The same amounts as the invoice, negative: −₹5.61 commission, −₹1.01 GST.
+    assert.equal(note.gstPaise, -REGRESSION_GST_PAISE);
+    assert.equal(note.cgstPaise, -REGRESSION_INTRA.cgstPaise);
+    assert.equal(note.sgstPaise, -REGRESSION_INTRA.sgstPaise);
+    assert.equal(note.totalPaise, -REGRESSION_INTRA.totalPaise);
+    assert.match(note.number, /CN/);
+  });
+
+  it('issues nothing when the payout carries no commission', async () => {
+    mockInvoiceDeps({ platformState: 'KARNATAKA', vendorState: 'KARNATAKA' });
+    const none = await createCommissionInvoiceForPayout(
+      {
+        vendorId: 'vendor-1',
+        payoutId: 'payout-3',
+        periodStart: new Date('2026-02-01'),
+        periodEnd: new Date('2026-02-28'),
+        commissionTaxablePaise: 0,
+        actorId: 'actor-1',
+      },
+      transaction,
+    );
+    assert.equal(none, null);
   });
 });

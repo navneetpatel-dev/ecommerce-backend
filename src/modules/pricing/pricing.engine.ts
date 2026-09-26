@@ -32,6 +32,8 @@ export type PricingLineBreakdown = {
   commissionBasePaise: Paise;
   commissionPaise: Paise;
   tcsPaise: Paise;
+  /** The platform-funded part of the line's discount, which the platform pays the vendor. */
+  platformFundedDiscountPaise: Paise;
   netPayoutPaise: Paise;
 };
 
@@ -69,6 +71,8 @@ export type SubOrderPricingBreakdown = {
   commissionBasePaise: Paise;
   commissionPaise: Paise;
   tcsPaise: Paise;
+  /** The platform-funded part of the merchandise discount, paid to the vendor. */
+  platformFundedDiscountPaise: Paise;
   netPayoutPaise: Paise;
   /** Customer pays for this vendor slice (excl. cashback). */
   customerTotalPaise: Paise;
@@ -123,14 +127,26 @@ function splitTax(taxablePaise: Paise, gstPercentage: number, intraState: boolea
   return { cgst, sgst, igst, total, gstPercentage };
 }
 
-/** A line's vendor net: taxable + GST − commission − TCS, never below zero. */
+/**
+ * A line's vendor net: taxable + the platform-funded part of its discount + GST −
+ * commission − TCS, never below zero. A coupon the platform funds is the platform's
+ * cost, so the vendor is paid as if it had not been given.
+ */
 function lineNetPayoutPaise(line: {
   taxablePaise: Paise;
+  platformFundedDiscountPaise: Paise;
   tax: { total: Paise };
   commissionPaise: Paise;
   tcsPaise: Paise;
 }): Paise {
-  return Math.max(0, line.taxablePaise + line.tax.total - line.commissionPaise - line.tcsPaise);
+  return Math.max(
+    0,
+    line.taxablePaise +
+      line.platformFundedDiscountPaise +
+      line.tax.total -
+      line.commissionPaise -
+      line.tcsPaise,
+  );
 }
 
 /**
@@ -139,8 +155,9 @@ function lineNetPayoutPaise(line: {
  * commission per-line (excludes tax/shipping) → TCS → net payout.
  *
  * Net payout is what the vendor is owed: the taxable value plus the GST the customer paid
- * on it (the vendor is the supplier on the tax invoice and remits that GST), less commission
- * and TCS. Shipping stays with the platform.
+ * on it (the vendor is the supplier on the tax invoice and remits that GST), plus the
+ * platform-funded part of any coupon (the platform's promotion, which it pays for), less
+ * commission and TCS. Shipping stays with the platform.
  */
 export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderPricingBreakdown {
   const lines = input.lines.map((line) => {
@@ -206,6 +223,7 @@ export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderP
       commissionBasePaise: commissionBase,
       commissionPaise: commission,
       tcsPaise: 0,
+      platformFundedDiscountPaise: Math.max(0, discountPaise - lineVendorBorne),
       netPayoutPaise: 0,
     };
   });
@@ -254,7 +272,14 @@ export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderP
 
   const commissionBasePaise = pricedLines.reduce((sum, line) => sum + line.commissionBasePaise, 0);
   const commissionPaise = pricedLines.reduce((sum, line) => sum + line.commissionPaise, 0);
-  const netPayoutPaise = Math.max(0, taxablePaise + taxTotal - commissionPaise - tcsPaise);
+  const platformFundedDiscountPaise = pricedLines.reduce(
+    (sum, line) => sum + line.platformFundedDiscountPaise,
+    0,
+  );
+  const netPayoutPaise = Math.max(
+    0,
+    taxablePaise + platformFundedDiscountPaise + taxTotal - commissionPaise - tcsPaise,
+  );
   const customerTotalPaise = taxablePaise + taxTotal + shippingChargedPaise;
 
   const displayGst =
@@ -286,6 +311,7 @@ export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderP
     commissionBasePaise,
     commissionPaise,
     tcsPaise,
+    platformFundedDiscountPaise,
     netPayoutPaise,
     customerTotalPaise,
     roundingAdjustmentPaise: appliedRoundingAdjustmentPaise,

@@ -236,6 +236,9 @@ export function toTaxInvoiceSourceFromPlatformInvoice(
   snapshot: PlatformInvoiceSnapshot,
   platform: { legalName?: string | null; gstin?: string | null; state?: string | null },
 ): TaxInvoiceSource {
+  if (!snapshot.invoiceNumber || !snapshot.issuedAt) {
+    throw new Error('Platform invoice has not been issued yet');
+  }
   return {
     invoiceNo: snapshot.invoiceNumber,
     orderId: order.id,
