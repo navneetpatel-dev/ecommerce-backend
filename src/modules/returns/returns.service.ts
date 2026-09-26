@@ -59,7 +59,10 @@ import { settingsService } from '@modules/settings/settings.service';
 import { resolveReturnWindowForCategory } from '@modules/products/pdpPolicy';
 import { walletService } from '@modules/wallet/wallet.service';
 import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
-import { clawbackCashbackForReturn } from '@modules/wallet/cashback.service';
+import {
+  clawbackCashbackForReturn,
+  shrinkPendingCashbackForReturn,
+} from '@modules/wallet/cashback.service';
 import { logAudit } from '@modules/audit/audit.service';
 import { paymentsService } from '@modules/payments/payments.service';
 import {
@@ -680,6 +683,7 @@ export class ReturnsService {
 
     const sub = orderItem.subOrder;
     const nextSubtotalPaise = Math.max(0, frozenPaise(sub.subtotalPaise) - reversal.refundSubtotalPaise);
+    const returnedSubtotalPaise = frozenPaise(sub.subtotalPaise) - nextSubtotalPaise;
     const nextDiscountPaise = Math.max(
       0,
       frozenPaise(sub.discountAmountPaise) - reversal.refundDiscountPaise,
@@ -870,6 +874,13 @@ export class ReturnsService {
       );
     }
 
+    await shrinkPendingCashbackForReturn({
+      order,
+      actorId,
+      transaction: t,
+      merchandiseBeforePaise: toPaise(orderDisplay.merchandiseSubtotal) + returnedSubtotalPaise,
+      merchandiseAfterPaise: toPaise(orderDisplay.merchandiseSubtotal),
+    });
     await clawbackCashbackForReturn({
       order,
       returnRequestId: row.id,

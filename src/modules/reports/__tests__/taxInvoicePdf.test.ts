@@ -301,4 +301,59 @@ describe('toTaxInvoiceSourceFromSubOrder', () => {
     assert.equal(line?.igst, 0);
     assert.equal(source.totalAmount, 0);
   });
+
+  it('renders the amounts issued at checkout, not the lines a return rewrote', () => {
+    const source = toTaxInvoiceSourceFromSubOrder(
+      {
+        id: 'order-snap',
+        createdAt: new Date('2026-09-01T00:00:00.000Z'),
+        paymentMethod: 'RAZORPAY',
+        paymentStatus: 'PAID',
+      },
+      {
+        id: 'sub-snap',
+        taxInvoiceNumber: 'SN/2627/00000001',
+        taxInvoiceIssuedAt: new Date('2026-09-01T00:00:00.000Z'),
+        // After one of two units was returned.
+        customerTotal: 590,
+        items: [
+          {
+            id: 'item-1',
+            productName: 'Brass Lamp',
+            quantity: 1,
+            unitPrice: 500,
+            taxableAmount: 500,
+            taxAmount: 90,
+            taxBreakdown: { cgst: 45, sgst: 45, igst: 0 },
+            variant: { sku: 'BL-1', product: { categoryId: 'cat-a' } },
+          },
+        ],
+        taxInvoiceSnapshot: {
+          totalPaise: 118001,
+          lines: [
+            {
+              orderItemId: 'item-1',
+              quantity: 2,
+              unitPricePaise: 50000,
+              taxablePaise: 100001,
+              cgstPaise: 9000,
+              sgstPaise: 9000,
+              igstPaise: 0,
+            },
+          ],
+        },
+      },
+      new Map([['cat-a', '9405']]),
+    );
+
+    const line = source.seller.items[0];
+    assert.equal(line?.productName, 'Brass Lamp');
+    assert.equal(line?.hsn, '9405');
+    assert.equal(line?.sku, 'BL-1');
+    assert.equal(line?.quantity, 2);
+    assert.equal(line?.taxable, 1000.01);
+    assert.equal(line?.cgst, 90);
+    assert.equal(line?.sgst, 90);
+    assert.equal(source.totalAmount, 1180.01);
+  });
 });

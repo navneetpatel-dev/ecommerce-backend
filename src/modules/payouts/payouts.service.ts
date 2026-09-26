@@ -208,7 +208,7 @@ export class PayoutsService {
             throw new Error('No pending commission ledgers');
           }
 
-          // Net less 194-O TDS per ledger, less GST on commission, less vendor-borne
+          // Net less 194-O TDS on each sale's value, less GST on commission, less vendor-borne
           // cashback cost — the same breakdown the vendor dashboard shows as pending
           // (pricing/vendorPayout).
           const breakdown = vendorPayoutBreakdown(locked, payoutRates);
@@ -230,13 +230,13 @@ export class PayoutsService {
             tdsAmountPaise: number;
           }> = [];
           locked.forEach((row, index) => {
-            const { netPaise, tdsPaise } = breakdown.rows[index]!;
+            const { tdsBasePaise, tdsPaise } = breakdown.rows[index]!;
             const subOrder = (row as any).SubOrder as SubOrder | undefined;
             if (tdsPaise > 0 && subOrder?.orderId) {
               tdsRows.push({
                 orderId: subOrder.orderId,
                 subOrderId: row.subOrderId,
-                taxableAmountPaise: netPaise,
+                taxableAmountPaise: tdsBasePaise,
                 tdsAmountPaise: tdsPaise,
               });
             }

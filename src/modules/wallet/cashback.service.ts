@@ -137,6 +137,37 @@ export async function creditPendingCashbackForOrder(
 }
 
 /**
+ * Shrink cashback that is still pending (not yet credited) when a return removes
+ * merchandise from the order, by the share of merchandise returned.
+ *
+ * `creditPendingCashbackForOrder` prorates against the order's merchandise subtotal,
+ * which a return rewrites to what is left — so on its own it would pay full cashback
+ * on returned items. Scaling pending by after/before here keeps the credit exact:
+ * pending × (after ÷ before) × (delivered ÷ after) = pending × delivered ÷ before.
+ * Once cashback is credited, `clawbackCashbackForReturn` handles returns instead.
+ */
+export async function shrinkPendingCashbackForReturn(input: {
+  order: Order;
+  actorId: string;
+  transaction: Transaction;
+  /** Order merchandise subtotal (all sub-orders), in paise, before and after this return. */
+  merchandiseBeforePaise: number;
+  merchandiseAfterPaise: number;
+}): Promise<void> {
+  const { order, actorId, transaction, merchandiseBeforePaise, merchandiseAfterPaise } = input;
+  if (order.cashbackCreditedAt) return;
+  const pendingPaise = toPaise(Number(order.pendingCashbackAmount ?? 0));
+  if (pendingPaise <= 0 || merchandiseBeforePaise <= 0) return;
+  const keptPaise = Math.max(0, Math.min(merchandiseAfterPaise, merchandiseBeforePaise));
+  const nextPaise = Math.round((pendingPaise * keptPaise) / merchandiseBeforePaise);
+  if (nextPaise === pendingPaise) return;
+  await order.update(
+    { pendingCashbackAmount: fromPaise(nextPaise), updatedBy: actorId },
+    { transaction },
+  );
+}
+
+/**
  * Claw back credited cashback proportionally to returned merchandise.
  * Vendor CashbackCost is reversed in FULL on first clawback after credit
  * (vendor does not bear write-off risk from partial wallet recovery).

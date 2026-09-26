@@ -41,14 +41,14 @@ describe('PricingEngine verification scenario', () => {
     assert.equal(vendorA.commissionBasePaise, vendorA.subtotalPaise);
     assert.equal(vendorB.commissionBasePaise, vendorB.taxablePaise);
 
+    // Every rupee the customer paid goes to a vendor (net, which includes the GST the
+    // vendor remits), the platform (commission, shipping) or the government (TCS).
     const customerTotal = vendorA.customerTotalPaise + vendorB.customerTotalPaise;
     const accounted =
       vendorA.netPayoutPaise +
       vendorB.netPayoutPaise +
       vendorA.commissionPaise +
       vendorB.commissionPaise +
-      vendorA.tax.total +
-      vendorB.tax.total +
       vendorA.tcsPaise +
       vendorB.tcsPaise +
       vendorA.shippingChargedPaise +
@@ -71,8 +71,6 @@ describe('PricingEngine verification scenario', () => {
       vendorB.netPayoutPaise +
       (vendorA.commissionPaise - reversal.refundCommissionPaise) +
       vendorB.commissionPaise +
-      (vendorA.tax.total - reversal.refundTaxPaise) +
-      vendorB.tax.total +
       (vendorA.tcsPaise - reversal.refundTcsPaise) +
       vendorB.tcsPaise +
       vendorA.shippingChargedPaise +
@@ -82,8 +80,9 @@ describe('PricingEngine verification scenario', () => {
       reversal.customerRefundPaise,
       reversal.refundMerchandisePaise + reversal.refundTaxPaise,
     );
+    // The vendor gives back its net (which includes the GST), the platform its commission.
     assert.equal(
-      reversal.refundMerchandisePaise,
+      reversal.refundMerchandisePaise + reversal.refundTaxPaise,
       reversal.refundNetClawbackPaise + reversal.refundCommissionPaise + reversal.refundTcsPaise,
     );
   });

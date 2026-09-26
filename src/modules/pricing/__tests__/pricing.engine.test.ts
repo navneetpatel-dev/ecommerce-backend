@@ -45,7 +45,12 @@ describe('PricingEngine', () => {
     assert.equal(result.commissionBasePaise, 20000);
     assert.equal(result.commissionPaise, 2000);
     assert.equal(result.tcsPaise, 180); // 1% of taxable
-    assert.equal(result.netPayoutPaise, 18000 - 2000 - 180);
+    // The vendor remits the GST, so its net includes it: taxable + tax − commission − TCS.
+    assert.equal(result.netPayoutPaise, 18000 + 3240 - 2000 - 180);
+    assert.equal(
+      result.lines.reduce((sum, line) => sum + line.netPayoutPaise, 0),
+      result.netPayoutPaise,
+    );
     // customer = taxable + tax + shipping
     assert.equal(result.customerTotalPaise, 18000 + 3240 + 5000);
   });
@@ -68,7 +73,7 @@ describe('PricingEngine', () => {
     assert.equal(result.tax.cgst + result.tax.sgst, result.tax.total);
   });
 
-  it('reconciles customer payment to payouts + commission + tax + tcs + shipping', () => {
+  it('reconciles customer payment to payouts (incl. GST) + commission + tcs + shipping', () => {
     const result = computeSubOrderBreakdown({
       lines: [
         { key: 'a', unitPricePaise: 9999, quantity: 1 },
@@ -88,7 +93,6 @@ describe('PricingEngine', () => {
     const right =
       result.netPayoutPaise +
       result.commissionPaise +
-      result.tax.total +
       result.tcsPaise +
       result.shippingChargedPaise;
     assert.equal(left, right);

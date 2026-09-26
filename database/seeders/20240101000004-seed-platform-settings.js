@@ -4,8 +4,9 @@ const { v4: uuidv4 } = require('uuid');
 
 const PLATFORM_VALUE = {
   defaultCommissionRate: 10,
-  tcsRatePercent: 1,
-  tdsRatePercent: 1,
+  // GST s.52 TCS (0.5% from 10 Jul 2024) and 194-O TDS (0.1% from 1 Oct 2024).
+  tcsRatePercent: 0.5,
+  tdsRatePercent: 0.1,
   autoApproveProducts: false,
   defaultReturnWindow: 7,
   payoutCycle: 'WEEKLY',

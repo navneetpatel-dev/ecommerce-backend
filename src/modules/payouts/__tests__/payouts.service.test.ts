@@ -181,6 +181,7 @@ describe('PayoutsService.process return-window and dispute hold', () => {
         createdAt: new Date(),
         netPayoutAmountPaise: 3000,
         commissionAmountPaise: 0,
+        taxableAmountPaise: 3000,
         referenceType: null,
       },
       {

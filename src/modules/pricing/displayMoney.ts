@@ -1,4 +1,5 @@
 import { coerceRupees, fromPaise, roundMoney, toPaise } from './money';
+import { splitTaxAmount } from './pricing.engine';
 
 /** Pre-discount extended price for a cart/order line. */
 export function lineSubtotal(unitPrice: unknown, quantity: unknown): number {
@@ -135,12 +136,10 @@ export function invoiceLineTaxBreakdown(input: {
   if (Math.abs(breakdownTotal - tax) < 0.01) {
     return { cgst, sgst, igst };
   }
-  const scale = tax / breakdownTotal;
-  return {
-    cgst: roundMoney(cgst * scale),
-    sgst: roundMoney(sgst * scale),
-    igst: roundMoney(igst * scale),
-  };
+  // The stored split no longer matches the tax (the line was partly returned): split
+  // the tax afresh in paise so CGST + SGST (or IGST) adds up to it exactly.
+  const split = splitTaxAmount(toPaise(tax), igst <= 0);
+  return { cgst: fromPaise(split.cgst), sgst: fromPaise(split.sgst), igst: fromPaise(split.igst) };
 }
 
 /** Customer-facing pre-discount extended price for an order line. */

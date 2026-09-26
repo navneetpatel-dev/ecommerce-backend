@@ -84,6 +84,24 @@ describe('displayMoney', () => {
     }), { cgst: 0, sgst: 0, igst: 0 });
   });
 
+  it('splits a partly returned line\'s tax afresh so CGST + SGST equals it', () => {
+    // Stored split is for ₹10.02; ₹5.01 is left. Scaling each half gives 2.51 + 2.51.
+    const split = invoiceLineTaxBreakdown({
+      taxableAmount: 27.83,
+      taxAmount: 5.01,
+      taxBreakdown: { cgst: 5.01, sgst: 5.01, igst: 0 },
+    });
+    assert.deepEqual(split, { cgst: 2.5, sgst: 2.51, igst: 0 });
+    assert.deepEqual(
+      invoiceLineTaxBreakdown({
+        taxableAmount: 27.83,
+        taxAmount: 5.01,
+        taxBreakdown: { cgst: 0, sgst: 0, igst: 10.02 },
+      }),
+      { cgst: 0, sgst: 0, igst: 5.01 },
+    );
+  });
+
   it('derives partial-return line subtotal from stored value', () => {
     assert.equal(orderItemDisplayLineSubtotal({
       unitPrice: 1000,
