@@ -31,6 +31,7 @@ import { computeReconciliationSummary } from '@modules/reports/engine/queryHelpe
 import { getReportDefinition } from '@modules/reports/engine/reportRegistry';
 import { fromPaise, toPaise } from '@modules/pricing/money';
 import { ensureTestRoles } from '../../../testHelpers/ensureTestRoles';
+import { shippingInvoiceLine, unissuedPlatformInvoice } from '@modules/pricing/platformFeeInvoice';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -447,5 +448,91 @@ describe('report money scope', () => {
     // A vendor's reports hold only that vendor's sales.
     const vendorState = await getReportDefinition('state-tax-collection')!.query({ ...all, vendorId });
     assert.equal(vendorState.rows.find((row) => row.state === giftState), undefined);
+  });
+
+  it("GST reports include the platform's shipping GST, not on a cancelled part", async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const shipState = `SH-${randomUUID().slice(0, 6)}`;
+    const address = await Address.create({
+      userId: customerId,
+      line1: 'Shipping GST',
+      line2: null,
+      city: 'Pune',
+      state: shipState,
+      country: 'IN',
+      pincode: '411001',
+      isDefault: false,
+      createdBy: customerId,
+      updatedBy: customerId,
+      deletedBy: null,
+    });
+    const order = await Order.create({
+      userId: customerId,
+      couponId: null,
+      appliedCouponIds: [],
+      totalAmount: 98,
+      originalTotalAmount: 98,
+      discountTotal: 0,
+      status: ORDER_STATUS.DELIVERED,
+      paymentStatus: PAYMENT_STATUS.PAID,
+      paymentMethod: PAYMENT_METHOD.RAZORPAY,
+      walletAmountUsed: 0,
+      razorpayAmountPaid: 98,
+      shippingAddressId: address.id,
+      createdBy: customerId,
+      updatedBy: customerId,
+      deletedBy: null,
+    } as never);
+    created.orders.push(order.id);
+    const invoiceNumber = `SHIP/TEST/${randomUUID().slice(0, 6)}`;
+    // ₹49 shipping at 18% included, intra-state: ₹41.52 + CGST ₹3.74 + SGST ₹3.74.
+    const shipping = {
+      ...unissuedPlatformInvoice([shippingInvoiceLine(4900, true)], true),
+      invoiceNumber,
+      issuedAt: now.toISOString(),
+    };
+    for (const status of [ORDER_STATUS.DELIVERED, ORDER_STATUS.CANCELLED]) {
+      await SubOrder.create({
+        orderId: order.id,
+        vendorId,
+        status,
+        subtotalPaise: 0,
+        customerTotal: 49,
+        shippingCostPaise: 4900,
+        taxAmountPaise: 0,
+        taxableAmountPaise: 0,
+        discountAmount: 0,
+        shippingInvoiceSnapshot:
+          status === ORDER_STATUS.DELIVERED
+            ? shipping
+            : { ...shipping, invoiceNumber: null, issuedAt: null },
+        createdBy: customerId,
+        updatedBy: customerId,
+        deletedBy: null,
+      } as never);
+    }
+
+    const all = { ...range, page: 1, limit: 100_000 };
+    const state = await getReportDefinition('state-tax-collection')!.query(all);
+    const row = state.rows.find((r) => r.state === shipState);
+    // The delivered part's shipping GST only; the cancelled part's shipping was refunded.
+    assert.equal(row?.taxTotal, 7.48);
+    assert.equal(row?.cgst, 3.74);
+    assert.equal(row?.sgst, 3.74);
+
+    const hsn = await getReportDefinition('hsn-sales-summary')!.query(all);
+    const sac = hsn.rows.find((r) => r.hsnCode === '9968');
+    assert.ok(sac && Number(sac.tax) >= 7.48);
+
+    // GSTR-1 lists the platform's own shipping invoice.
+    const gstr1 = await getReportDefinition('gstr-1-filing')!.query(all);
+    const doc = gstr1.rows.find((r) => r.documentNumber === invoiceNumber);
+    assert.equal(doc?.section, 'PLATFORM');
+    assert.equal(doc?.taxable, 41.52);
+    assert.equal(doc?.tax, 7.48);
+
+    // Not a vendor's supply: the vendor's report has its part (no goods tax here) only.
+    const vendorState = await getReportDefinition('state-tax-collection')!.query({ ...all, vendorId });
+    assert.equal(vendorState.rows.find((r) => r.state === shipState)?.taxTotal ?? 0, 0);
   });
 });

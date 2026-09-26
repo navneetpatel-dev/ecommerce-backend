@@ -18,10 +18,13 @@ import {
   dateBetween,
   sqlFrozenPaise,
   REPORTABLE_ORDER_SQL,
+  TCS_LEDGER_ORDER_SQL,
 } from '../engine/queryHelpers';
 import { inventoryValuation } from '@modules/pricing/displayMoney';
 import { sqlOrderPaymentPaise } from '@modules/pricing/frozenMoneySql';
 import { sqlCodCashDuePaise } from '@modules/shipping/codCollection';
+import { gstPeriodOf } from '@modules/pricing/gstPeriod';
+import { platformInvoiceDocumentsSql, platformSupplyLinesSql } from '../engine/platformSupplySql';
 import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
 
 function resolveVendorId(filters: ReportFilters): string | null {
@@ -54,7 +57,10 @@ async function taxInvoiceRegister(filters: ReportFilters) {
       so."taxInvoiceIssuedAt" AS "taxInvoiceIssuedAt",
       (so."taxableAmountPaise" / 100.0)::float AS taxable,
       (so."taxAmountPaise" / 100.0)::float AS tax,
-      COALESCE(so."customerTotal", 0)::float AS total,
+      (COALESCE(
+        (so."taxInvoiceSnapshot"->>'totalPaise')::bigint,
+        so."taxableAmountPaise" + so."taxAmountPaise"
+      ) / 100.0)::float AS total,
       o."paymentMethod"::text AS "paymentMethod",
       o."paymentStatus"::text AS "paymentStatus",
       COALESCE(NULLIF(TRIM(a.gstin), ''), '') AS "buyerGstin",
@@ -119,7 +125,10 @@ async function taxInvoiceRegisterExport(
       so."taxInvoiceIssuedAt" AS "taxInvoiceIssuedAt",
       (so."taxableAmountPaise" / 100.0)::float AS taxable,
       (so."taxAmountPaise" / 100.0)::float AS tax,
-      COALESCE(so."customerTotal", 0)::float AS total,
+      (COALESCE(
+        (so."taxInvoiceSnapshot"->>'totalPaise')::bigint,
+        so."taxableAmountPaise" + so."taxAmountPaise"
+      ) / 100.0)::float AS total,
       o."paymentMethod"::text AS "paymentMethod",
       o."paymentStatus"::text AS "paymentStatus",
       COALESCE(NULLIF(TRIM(a.gstin), ''), '') AS "buyerGstin",
@@ -164,7 +173,10 @@ function b2bGstinSalesRegisterSelectSql(vendorFilter: string): string {
       COALESCE(a.state, '') AS "placeOfSupplyState",
       (so."taxableAmountPaise" / 100.0)::float AS taxable,
       (so."taxAmountPaise" / 100.0)::float AS tax,
-      COALESCE(so."customerTotal", 0)::float AS total
+      (COALESCE(
+        (so."taxInvoiceSnapshot"->>'totalPaise')::bigint,
+        so."taxableAmountPaise" + so."taxAmountPaise"
+      ) / 100.0)::float AS total
     FROM sub_orders so
     INNER JOIN orders o ON o.id = so."orderId" AND o."deletedAt" IS NULL
     INNER JOIN vendors v ON v.id = so."vendorId" AND v."deletedAt" IS NULL
@@ -289,6 +301,24 @@ async function gstr1Filing(filters: ReportFilters) {
 
       UNION ALL
 
+      -- The platform's own invoices (gift wrap, shipping, kept return fees).
+      SELECT
+        'PLATFORM'::text AS section,
+        pd."documentNumber",
+        pd."documentDate",
+        pd."recipientGstin",
+        pd.state,
+        ''::text AS "hsnCode",
+        0::int AS qty,
+        pd."taxablePaise",
+        pd."taxPaise",
+        0::bigint AS "igstPaise",
+        0::bigint AS "cgstPaise",
+        0::bigint AS "sgstPaise"
+      FROM (${platformInvoiceDocumentsSql()}) pd
+
+      UNION ALL
+
       SELECT
         'CDN'::text AS section,
         cn.number AS "documentNumber",
@@ -351,20 +381,29 @@ async function gstr3bSummary(filters: ReportFilters) {
         COALESCE(SUM(${taxExpr.replace(/\bso\./g, 'scoped.')}), 0)::bigint AS "taxPaise"
       FROM scoped
     ),
+    platform_parts AS (
+      -- The platform's own supplies (gift wrap, shipping, kept return fees).
+      SELECT
+        COALESCE(SUM(taxable), 0)::bigint AS "taxablePaise",
+        COALESCE(SUM(cgst + sgst + igst), 0)::bigint AS "taxPaise"
+      FROM (${platformSupplyLinesSql()}) platform_lines
+    ),
     tcs_parts AS (
       SELECT COALESCE(SUM(t."tcsAmountPaise"), 0)::bigint AS "tcsPaise"
       FROM tcs_ledgers t
       INNER JOIN orders o ON o.id = t."orderId" AND o."deletedAt" IS NULL
       WHERE t."deletedAt" IS NULL
         AND t."createdAt" BETWEEN :from AND :to
-        AND ${REPORTABLE_ORDER_SQL}
+        AND ${TCS_LEDGER_ORDER_SQL}
         AND (:vendorId::uuid IS NULL OR t."vendorId" = :vendorId)
     )
-    SELECT 'OUTWARD_TAXABLE'::text AS line, tp."taxablePaise" AS "amountPaise" FROM tax_parts tp
-    UNION ALL SELECT 'OUTWARD_TAX'::text, tp."taxPaise" FROM tax_parts tp
+    SELECT 'OUTWARD_TAXABLE'::text AS line, (tp."taxablePaise" + pp."taxablePaise")::bigint AS "amountPaise"
+    FROM tax_parts tp CROSS JOIN platform_parts pp
+    UNION ALL SELECT 'OUTWARD_TAX'::text, (tp."taxPaise" + pp."taxPaise")::bigint
+    FROM tax_parts tp CROSS JOIN platform_parts pp
     UNION ALL SELECT 'TCS_COLLECTED'::text, tc."tcsPaise" FROM tcs_parts tc
-    UNION ALL SELECT 'NET_TAX_LIABILITY'::text, (tp."taxPaise" + tc."tcsPaise")::bigint
-    FROM tax_parts tp CROSS JOIN tcs_parts tc
+    UNION ALL SELECT 'NET_TAX_LIABILITY'::text, (tp."taxPaise" + pp."taxPaise" + tc."tcsPaise")::bigint
+    FROM tax_parts tp CROSS JOIN platform_parts pp CROSS JOIN tcs_parts tc
     `,
     { replacements: sqlReplacements(filters) },
   );
@@ -374,7 +413,7 @@ async function gstr3bSummary(filters: ReportFilters) {
     amount: fromPaise(Number(row.amountPaise ?? 0)),
   }));
 
-  return { rows: mapped, total: mapped.length, meta: { period: filters.from.toISOString().slice(0, 7) } };
+  return { rows: mapped, total: mapped.length, meta: { period: gstPeriodOf(filters.from) } };
 }
 
 async function paymentGatewayReconciliation(filters: ReportFilters) {

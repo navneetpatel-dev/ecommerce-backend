@@ -5,6 +5,7 @@ import { Order } from '@database/models/order.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { Vendor } from '@database/models/vendor.model';
 import { VendorInvoiceSequence } from '@database/models/vendorInvoiceSequence.model';
+import { TcsLedger } from '@database/models/tcsLedger.model';
 import { ORDER_STATUS } from '@core/constants/statuses';
 import { issueTaxInvoicesOnDispatch } from '../taxInvoiceIssue';
 
@@ -55,6 +56,7 @@ describe('issueTaxInvoicesOnDispatch', () => {
       vendorId: 'vendor-1',
       status: ORDER_STATUS.SHIPPED,
       taxInvoiceNumber: null as string | null,
+      tcsAmountPaise: 0,
     });
     const order = row({ id: 'order-1', platformInvoiceSnapshot: { ...giftWrapSnapshot } });
     mock.method(SubOrder, 'findByPk', async () => sub as never);
@@ -71,6 +73,41 @@ describe('issueTaxInvoicesOnDispatch', () => {
     await issueTaxInvoicesOnDispatch('so-1', transaction);
     assert.equal(sub.updates.length, 1);
     assert.equal(order.updates.length, 1);
+  });
+
+  it("numbers the part's shipping invoice and records its TCS at dispatch", async () => {
+    mockSequence();
+    const sub = row({
+      id: 'so-3',
+      orderId: 'order-3',
+      vendorId: 'vendor-1',
+      status: ORDER_STATUS.SHIPPED,
+      taxInvoiceNumber: null as string | null,
+      taxInvoiceIssuedAt: null as Date | null,
+      taxableAmountPaise: 10000,
+      tcsAmountPaise: 50,
+      tcsRatePercent: 0.5,
+      taxBreakdown: { igst: 0 },
+      shippingInvoiceSnapshot: { ...giftWrapSnapshot } as Record<string, unknown>,
+    });
+    const order = row({ id: 'order-3', platformInvoiceSnapshot: null });
+    mock.method(SubOrder, 'findByPk', async () => sub as never);
+    mock.method(Order, 'findByPk', async () => order as never);
+    mock.method(TcsLedger, 'findOne', async () => null);
+    const tcs = mock.method(TcsLedger, 'create', async (values: Record<string, unknown>) => values as never);
+
+    await issueTaxInvoicesOnDispatch('so-3', transaction);
+
+    const shipping = sub.shippingInvoiceSnapshot as { invoiceNumber: string; issuedAt: string };
+    assert.match(shipping.invoiceNumber, /^PLAT\//);
+    assert.ok(shipping.issuedAt);
+    assert.equal(tcs.mock.callCount(), 1);
+    const collection = tcs.mock.calls[0]!.arguments[0] as Record<string, unknown>;
+    assert.equal(collection.tcsAmountPaise, 50);
+    assert.equal(collection.ratePercent, 0.5);
+    assert.equal(collection.entryType, 'COLLECTION');
+    // CGST = SGST on an intra-state supply.
+    assert.equal(collection.tcsCgstPaise, collection.tcsSgstPaise);
   });
 
   it('issues nothing for a cancelled sub-order', async () => {

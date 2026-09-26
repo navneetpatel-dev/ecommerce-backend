@@ -28,11 +28,12 @@ import { logger } from '@core/logger';
 import { Op } from 'sequelize';
 import { settingsService } from '@modules/settings/settings.service';
 import { fromPaise, roundMoney } from '@modules/pricing/money';
-import { vendorNetPayoutPaise } from '@modules/pricing/frozenMoneySql';
 import { payoutRatesFromSettings, vendorPayoutBreakdown } from '@modules/pricing/vendorPayout';
 import { createCommissionInvoiceForPayout } from '@modules/commissions/commissionInvoice.service';
 import { logAudit } from '@modules/audit/audit.service';
 import type { MarkPayoutFailedRequest, MarkPayoutPaidRequest } from './payouts.dto';
+import { vendorNetPayoutPaise } from '@modules/pricing/frozenMoneySql';
+import { gstPeriodOf } from '@modules/pricing/gstPeriod';
 import { subOrdersInReturnWindow, type DeliveredSubOrder } from './returnWindowHold';
 
 async function notifyPayoutFailed(params: {
@@ -120,6 +121,22 @@ function payoutEligibleSubOrderInclude(windowCutoff: Date) {
   };
 }
 
+/**
+ * The amount a failed payout batch is recorded at: what the run would have paid (after
+ * TDS, GST on commission and deductions), not the ledgers' gross net. When the breakdown
+ * itself is what failed, the gross net is the best figure there is.
+ */
+function failedPayoutAmountPaise(
+  ledgers: CommissionLedger[],
+  rates: ReturnType<typeof payoutRatesFromSettings>,
+): number {
+  try {
+    return Math.max(0, vendorPayoutBreakdown(ledgers, rates).payoutPaise);
+  } catch {
+    return Math.max(0, ledgers.reduce((sum, ledger) => sum + vendorNetPayoutPaise(ledger), 0));
+  }
+}
+
 /** Delivered sub-orders (with their delivery time) behind a set of candidate ledgers. */
 function deliveredSubOrdersOf(ledgers: CommissionLedger[]): DeliveredSubOrder[] {
   const byId = new Map<string, DeliveredSubOrder>();
@@ -184,7 +201,6 @@ export class PayoutsService {
 
   async process(actorId: string) {
     const settings = await settingsService.getPlatformSettings();
-    const payoutRates = payoutRatesFromSettings(settings);
     const windowCutoff = payoutReturnWindowCutoff(Number(settings.defaultReturnWindow ?? 7));
     const subOrderInclude = payoutEligibleSubOrderInclude(windowCutoff);
     const candidates = await CommissionLedger.findAll({
@@ -194,15 +210,13 @@ export class PayoutsService {
     // Also hold sales still inside their items' own (longer) category return window.
     const held = await subOrdersInReturnWindow(deliveredSubOrdersOf(candidates));
     const ledgers = candidates.filter((ledger) => !held.has(ledger.subOrderId));
-    const grouped = new Map<string, { amountPaise: number; start: Date; end: Date; rows: CommissionLedger[] }>();
+    const grouped = new Map<string, { start: Date; end: Date; rows: CommissionLedger[] }>();
     for (const ledger of ledgers) {
       const current = grouped.get(ledger.vendorId) ?? {
-        amountPaise: 0,
         start: ledger.createdAt,
         end: ledger.createdAt,
         rows: [],
       };
-      current.amountPaise += vendorNetPayoutPaise(ledger);
       current.start = current.start < ledger.createdAt ? current.start : ledger.createdAt;
       current.end = current.end > ledger.createdAt ? current.end : ledger.createdAt;
       current.rows.push(ledger);
@@ -211,6 +225,9 @@ export class PayoutsService {
 
     const created: Payout[] = [];
     for (const [vendorId, group] of grouped) {
+      // Commission GST as the vendor's commission invoice charges it (CGST + SGST or IGST).
+      const vendorState = (await Vendor.findByPk(vendorId, { attributes: ['state'] }))?.state;
+      const payoutRates = payoutRatesFromSettings(settings, vendorState ?? null);
       try {
         const payout = await sequelize.transaction(async (transaction) => {
           const locked = await CommissionLedger.findAll({
@@ -292,7 +309,8 @@ export class PayoutsService {
             transaction,
           );
 
-          const period = new Date(group.end).toISOString().slice(0, 7);
+          // Filed by Indian calendar month (IST), not the UTC month.
+          const period = gstPeriodOf(new Date(group.end));
           for (const tds of tdsRows) {
             await TdsLedger.create(
               {
@@ -332,9 +350,10 @@ export class PayoutsService {
       } catch (error) {
         const reason = error instanceof Error ? error.message : 'Payout processing failed';
         logger.warn('Payout processing failed for vendor', { vendorId, reason });
+        const payablePaise = failedPayoutAmountPaise(group.rows, payoutRates);
         const failed = await Payout.create({
           vendorId,
-          amount: fromPaise(group.amountPaise),
+          amount: fromPaise(payablePaise),
           periodStart: group.start,
           periodEnd: group.end,
           status: PAYOUT_STATUS.FAILED,

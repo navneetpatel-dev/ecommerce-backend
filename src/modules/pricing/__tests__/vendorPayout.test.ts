@@ -179,6 +179,23 @@ describe('payoutRatesFromSettings', () => {
     assert.deepEqual(payoutRatesFromSettings({ tdsRatePercent: '1' }), {
       tdsRatePercent: 1,
       commissionGstRatePercent: 18,
+      commissionIntraState: false,
     });
+  });
+
+  it('works commission GST out as the invoice does: equal CGST + SGST for a same-state vendor', () => {
+    const settings = { tdsRatePercent: 0, commissionGstRatePercent: 18, platformState: 'Karnataka' };
+    const ledger = {
+      netPayoutAmountPaise: 10000,
+      commissionAmountPaise: 561,
+      taxableAmountPaise: 10000,
+      tdsRatePercent: 0,
+      referenceType: null,
+    };
+    // ₹5.61 commission: CGST 50 + SGST 50 paise same-state, IGST 101 paise otherwise.
+    const intra = vendorPayoutBreakdown([ledger], payoutRatesFromSettings(settings, 'karnataka'));
+    assert.equal(intra.commissionGstPaise, 100);
+    const inter = vendorPayoutBreakdown([ledger], payoutRatesFromSettings(settings, 'Goa'));
+    assert.equal(inter.commissionGstPaise, 101);
   });
 });

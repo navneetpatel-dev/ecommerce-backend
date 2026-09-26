@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { afterEach, describe, it, mock } from 'node:test';
+import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { Op } from 'sequelize';
 import { sequelize } from '@database/models';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
@@ -14,6 +14,12 @@ import { payoutsService } from '../payouts.service';
 import { ORDER_STATUS, RETURN_STATUS } from '@core/constants/statuses';
 
 describe('PayoutsService.process return-window and dispute hold', () => {
+  beforeEach(() => {
+    // The run reads each vendor's state for its commission GST (CGST + SGST or IGST);
+    // tests that care mock their own vendor after this.
+    mock.method(Vendor, 'findByPk', async () => ({ state: null, businessName: 'Store' }) as never);
+  });
+
   afterEach(() => {
     mock.restoreAll();
   });
@@ -94,6 +100,7 @@ describe('PayoutsService.process return-window and dispute hold', () => {
             createdAt: new Date(),
             netPayoutAmountPaise: 10000,
             commissionAmountPaise: 1000,
+            taxableAmountPaise: 11000,
           },
         ] as never;
       }
@@ -122,10 +129,11 @@ describe('PayoutsService.process return-window and dispute hold', () => {
     assert.equal(scanSub?.where?.status, ORDER_STATUS.DELIVERED);
   });
 
-  it('sums the frozen paise net payout of every ledger in the batch', async () => {
+  it('records a failed batch at what it would have paid, summed in paise', async () => {
     const created: Array<{ status?: string; amount?: number }> = [];
     mock.method(settingsService, 'getPlatformSettings', async () => ({
       tdsRatePercent: 0,
+      commissionGstRatePercent: 18,
       defaultReturnWindow: 7,
     }));
     let scans = 0;
@@ -139,6 +147,7 @@ describe('PayoutsService.process return-window and dispute hold', () => {
           createdAt: new Date(),
           netPayoutAmountPaise: '89000',
           commissionAmountPaise: '10000',
+          taxableAmountPaise: '99000',
         },
         {
           id: 'cl-b',
@@ -146,6 +155,7 @@ describe('PayoutsService.process return-window and dispute hold', () => {
           createdAt: new Date(),
           netPayoutAmountPaise: 20001,
           commissionAmountPaise: 0,
+          taxableAmountPaise: 20001,
         },
       ] as never;
     });
@@ -162,10 +172,11 @@ describe('PayoutsService.process return-window and dispute hold', () => {
 
     await payoutsService.process('actor-1');
 
-    // The locked re-read finds nothing, so the batch is recorded as FAILED with the
-    // scanned group total: 890.00 + 200.01, summed in paise (BIGINT arrives as a string).
+    // The locked re-read finds nothing, so the batch is recorded as FAILED at what it
+    // would have paid: 890.00 + 200.01 (summed in paise; BIGINT arrives as a string) less
+    // 18% GST on the ₹100 commission — not the gross 1090.01.
     assert.equal(created.length, 1);
-    assert.equal(created[0]?.amount, 1090.01);
+    assert.equal(created[0]?.amount, 1072.01);
   });
 
   it('carries ledgers forward when vendor-borne cashback cost exceeds the sales', async () => {

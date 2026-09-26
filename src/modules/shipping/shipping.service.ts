@@ -12,7 +12,6 @@ import { Address } from '@database/models/address.model';
 import { WebhookEvent } from '@database/models/webhookEvent.model';
 import { OrderItem } from '@database/models/orderItem.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
-import { TcsLedger } from '@database/models/tcsLedger.model';
 import { AppError } from '@core/errors/AppError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { NotFoundError } from '@core/errors/NotFoundError';
@@ -38,6 +37,30 @@ import { deliveryAgentPayoutsService } from '@modules/deliveryAgents/deliveryAge
 import { issueTaxInvoicesOnDispatch } from '@modules/pricing/taxInvoiceIssue';
 import { issueRtoCreditNotes, refundReturnedUndeliveredPart } from './rtoSettlement';
 import { isReversedPart } from '@modules/pricing/partReversal';
+import { reverseTcsForReturnedPart } from '@modules/pricing/tcsLedger';
+
+/** The platform-wide free-shipping threshold (settings), or null when none is set. */
+function platformFreeShippingThreshold(settings: { freeShippingThreshold?: unknown }): number | null {
+  const amount = Number(settings.freeShippingThreshold);
+  return settings.freeShippingThreshold != null && Number.isFinite(amount) && amount >= 0
+    ? amount
+    : null;
+}
+
+/**
+ * The order value above which a rate ships free: the rate's own threshold, else the
+ * platform's. One definition for the product page, cart and checkout — the product page
+ * used to fall back to the platform threshold while checkout did not, so a customer was
+ * shown free shipping and then charged for it.
+ */
+function effectiveFreeShippingThreshold(
+  rate: { freeShippingThreshold?: unknown },
+  platformThreshold: number | null,
+): number | null {
+  if (rate.freeShippingThreshold == null) return platformThreshold;
+  const amount = Number(rate.freeShippingThreshold);
+  return Number.isFinite(amount) ? amount : platformThreshold;
+}
 
 /** Shipment statuses that mean the goods have been dispatched. */
 const DISPATCHED_SHIPMENT_STATUSES = new Set([
@@ -174,9 +197,10 @@ async function cascadeRtoDeliveredAndSettle(
     }
   }
 
-  // 2. Destroy Commission & TCS Ledgers
+  // 2. Destroy the commission ledgers (never paid out: nothing was delivered). The TCS
+  // was reported when the part was dispatched — reverse it, don't delete it.
   await CommissionLedger.destroy({ where: { subOrderId }, transaction });
-  await TcsLedger.destroy({ where: { subOrderId }, transaction });
+  await reverseTcsForReturnedPart(subOrder, transaction);
 
   // 3. Settle parent Order
   const order = subOrder.order;
@@ -329,6 +353,9 @@ export const shippingService = {
         : rates.filter((rate) => rate.vendorId == null);
     }
 
+    const platformThreshold = platformFreeShippingThreshold(
+      await settingsService.getPlatformSettings(),
+    );
     const cheapestByMethod = new Map<string, ShippingQuoteRate>();
     for (const rate of scoped) {
       if (!cheapestByMethod.has(rate.method)) {
@@ -337,8 +364,7 @@ export const shippingService = {
           cost: Number(rate.price),
           shippingDisplayKey: resolveShippingDisplayKey(Number(rate.price)),
           estimatedDays: Number(rate.estimatedDays),
-          freeShippingThreshold:
-            rate.freeShippingThreshold == null ? null : Number(rate.freeShippingThreshold),
+          freeShippingThreshold: effectiveFreeShippingThreshold(rate, platformThreshold),
           zoneId: rate.zoneId,
         });
       }
@@ -385,11 +411,11 @@ export const shippingService = {
 
     if (!query.productId || productPrice == null) return rates;
 
-    const settings = await settingsService.getPlatformSettings();
+    // The rate's threshold is already the effective one (its own, else the platform's),
+    // the same the cart and checkout charge by.
     return rates.map((rate) => {
-      const threshold =
-        rate.freeShippingThreshold ?? Number(settings.freeShippingThreshold ?? 0);
-      const cost = productPrice >= threshold ? 0 : rate.cost;
+      const threshold = rate.freeShippingThreshold;
+      const cost = threshold != null && productPrice >= threshold ? 0 : rate.cost;
       return {
         ...rate,
         cost,
@@ -759,19 +785,34 @@ export const shippingService = {
     return existingTransaction ? apply(existingTransaction) : sequelize.transaction(apply);
   },
 
-  async getVendorFreeShippingThreshold(vendorId: string): Promise<number | null> {
-    const rates = await ShippingRate.findAll({
-      where: {
-        vendorId,
-        freeShippingThreshold: { [Op.ne]: null },
-      },
-      attributes: ['freeShippingThreshold'],
-    });
-    const amounts = rates
-      .map((rate) => Number(rate.freeShippingThreshold))
-      .filter((amount) => Number.isFinite(amount) && amount >= 0);
-    if (!amounts.length) return null;
-    return Math.min(...amounts);
+  /**
+   * The "free shipping above ₹X" a vendor's product page can promise wherever it ships:
+   * the highest effective threshold across the rates that apply to the vendor (its own,
+   * else the platform-wide ones — as quotes pick them). It used to be the lowest of the
+   * vendor's own thresholds, which a customer in a zone with a higher one did not get.
+   * Null when some applicable rate is never free. A platform product (no vendor) uses
+   * the platform-wide rates.
+   */
+  async getVendorFreeShippingThreshold(vendorId: string | null): Promise<number | null> {
+    const own = vendorId
+      ? await ShippingRate.findAll({
+          where: { vendorId },
+          attributes: ['freeShippingThreshold'],
+        })
+      : [];
+    const rates = own.length
+      ? own
+      : await ShippingRate.findAll({
+          where: { vendorId: null },
+          attributes: ['freeShippingThreshold'],
+        });
+    if (!rates.length) return null;
+    const platformThreshold = platformFreeShippingThreshold(
+      await settingsService.getPlatformSettings(),
+    );
+    const thresholds = rates.map((rate) => effectiveFreeShippingThreshold(rate, platformThreshold));
+    if (thresholds.some((threshold) => threshold == null)) return null;
+    return Math.max(...(thresholds as number[]));
   },
 };
 

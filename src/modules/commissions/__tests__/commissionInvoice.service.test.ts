@@ -4,7 +4,6 @@ import type { Transaction } from 'sequelize';
 import { CommissionInvoice } from '@database/models/commissionInvoice.model';
 import { Vendor } from '@database/models/vendor.model';
 import { VendorInvoiceSequence } from '@database/models/vendorInvoiceSequence.model';
-import { splitTaxAmount } from '@modules/pricing/pricing.engine';
 import { settingsService } from '@modules/settings/settings.service';
 import {
   createCommissionInvoiceForPayout,
@@ -15,15 +14,19 @@ const transaction = {
   LOCK: { UPDATE: 'UPDATE', SHARE: 'SHARE' },
 } as unknown as Transaction;
 
-/** Pre-refactor snapshot: commissionTaxablePaise=561 @ 18% → gstPaise=101 (odd). */
+/**
+ * ₹5.61 commission at 18%: inter-state IGST 100.98 → 101 paise; intra-state CGST and
+ * SGST are each 9% = 50.49 → 50 paise, equal, 100 in all.
+ */
 const REGRESSION_TAXABLE_PAISE = 561;
 const REGRESSION_GST_PAISE = 101;
+const REGRESSION_INTRA_GST_PAISE = 100;
 const REGRESSION_INTRA = {
   cgstPaise: 50,
-  sgstPaise: 51,
+  sgstPaise: 50,
   igstPaise: 0,
-  gstPaise: 101,
-  totalPaise: 662,
+  gstPaise: 100,
+  totalPaise: 661,
 };
 const REGRESSION_INTER = {
   cgstPaise: 0,
@@ -61,7 +64,7 @@ function mockInvoiceDeps(opts: { platformState: string; vendorState: string | nu
 describe('createCommissionInvoiceForPayout GST split', () => {
   afterEach(() => mock.restoreAll());
 
-  it('splits intra-state GST into CGST+SGST, including the odd-paise remainder on SGST', async () => {
+  it('charges intra-state GST as equal CGST and SGST at half the rate each', async () => {
     mockInvoiceDeps({ platformState: 'KARNATAKA', vendorState: 'KARNATAKA' });
     const invoice = await createCommissionInvoiceForPayout(
       {
@@ -77,12 +80,8 @@ describe('createCommissionInvoiceForPayout GST split', () => {
     assert.ok(invoice);
     assert.equal(invoice.cgstPaise + invoice.sgstPaise, invoice.gstPaise);
     assert.equal(invoice.igstPaise, 0);
-    const expected = splitTaxAmount(REGRESSION_GST_PAISE, true);
-    assert.equal(invoice.cgstPaise, expected.cgst);
-    assert.equal(invoice.sgstPaise, expected.sgst);
-    assert.equal(invoice.igstPaise, expected.igst);
     assert.equal(invoice.cgstPaise, 50);
-    assert.equal(invoice.sgstPaise, 51);
+    assert.equal(invoice.sgstPaise, 50);
   });
 
   it('defaults to CGST/SGST when platform state is unset', async () => {
@@ -101,9 +100,8 @@ describe('createCommissionInvoiceForPayout GST split', () => {
     assert.ok(invoice);
     assert.equal(invoice.igstPaise, 0);
     assert.equal(invoice.cgstPaise + invoice.sgstPaise, invoice.gstPaise);
-    const expected = splitTaxAmount(REGRESSION_GST_PAISE, true);
-    assert.equal(invoice.cgstPaise, expected.cgst);
-    assert.equal(invoice.sgstPaise, expected.sgst);
+    assert.equal(invoice.cgstPaise, REGRESSION_INTRA.cgstPaise);
+    assert.equal(invoice.sgstPaise, REGRESSION_INTRA.sgstPaise);
   });
 
   it('puts the entire GST into IGST for an inter-state vendor', async () => {
@@ -123,11 +121,10 @@ describe('createCommissionInvoiceForPayout GST split', () => {
     assert.equal(invoice.igstPaise, invoice.gstPaise);
     assert.equal(invoice.cgstPaise, 0);
     assert.equal(invoice.sgstPaise, 0);
-    const expected = splitTaxAmount(REGRESSION_GST_PAISE, false);
-    assert.equal(invoice.igstPaise, expected.igst);
+    assert.equal(invoice.igstPaise, REGRESSION_GST_PAISE);
   });
 
-  it('regression-locks intra-state GST split to the pre-refactor snapshot', async () => {
+  it('locks the intra-state GST amounts', async () => {
     mockInvoiceDeps({ platformState: 'KARNATAKA', vendorState: 'KARNATAKA' });
     const invoice = await createCommissionInvoiceForPayout(
       {
@@ -153,7 +150,7 @@ describe('createCommissionInvoiceForPayout GST split', () => {
     );
   });
 
-  it('regression-locks inter-state GST split to the pre-refactor snapshot', async () => {
+  it('locks the inter-state GST amounts', async () => {
     mockInvoiceDeps({ platformState: 'KARNATAKA', vendorState: 'MAHARASHTRA' });
     const invoice = await createCommissionInvoiceForPayout(
       {
@@ -194,8 +191,8 @@ describe('createCommissionInvoiceForPayout GST split', () => {
     );
     assert.ok(note);
     assert.equal(isCommissionCreditNote(note), true);
-    // The same amounts as the invoice, negative: −₹5.61 commission, −₹1.01 GST.
-    assert.equal(note.gstPaise, -REGRESSION_GST_PAISE);
+    // The same amounts as the invoice, negative: −₹5.61 commission, −₹1.00 GST.
+    assert.equal(note.gstPaise, -REGRESSION_INTRA_GST_PAISE);
     assert.equal(note.cgstPaise, -REGRESSION_INTRA.cgstPaise);
     assert.equal(note.sgstPaise, -REGRESSION_INTRA.sgstPaise);
     assert.equal(note.totalPaise, -REGRESSION_INTRA.totalPaise);

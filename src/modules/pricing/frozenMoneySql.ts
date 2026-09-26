@@ -48,6 +48,19 @@ export const REPORTABLE_ORDER_SQL = `(
   )
 )`;
 
+/**
+ * Orders whose TCS rows count in GSTR-8 / GSTR-3B (alias `o` = orders). TCS is recorded
+ * when a part is dispatched and invoiced, and reversed by an adjustment row if it comes
+ * back, so each row is a real supply or its reversal: it counts whatever the order's
+ * status is now (a fully RTO'd order keeps its collection and its reversal, each in its
+ * own period). Only rows written at checkout before that change, on online orders that
+ * were never paid, are left out.
+ */
+export const TCS_LEDGER_ORDER_SQL = `NOT (
+  o."paymentMethod" <> '${PAYMENT_METHOD.COD}'
+  AND o."paymentStatus" IN ('${PAYMENT_STATUS.PENDING}', '${PAYMENT_STATUS.FAILED}')
+)`;
+
 /** The commission_ledgers column `vendorNetPayoutPaise` reads. */
 export interface VendorNetPayoutSource {
   netPayoutAmountPaise?: unknown;

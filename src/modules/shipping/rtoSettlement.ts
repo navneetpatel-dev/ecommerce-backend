@@ -219,6 +219,29 @@ export async function issueRtoCreditNotes(
     }
   }
 
+  // The platform's invoice for the shipping on this part: the delivery was not made.
+  const shipping = subOrder.shippingInvoiceSnapshot;
+  if (shipping?.invoiceNumber) {
+    for (const line of shipping.lines) {
+      await createCreditNote(
+        {
+          vendorId: null,
+          order,
+          subOrderId: subOrder.id,
+          againstInvoiceNumber: shipping.invoiceNumber,
+          line: {
+            orderItemId: null,
+            merchandisePaise: line.taxablePaise,
+            cgst: line.cgstPaise,
+            sgst: line.sgstPaise,
+            igst: line.igstPaise,
+          },
+        },
+        transaction,
+      );
+    }
+  }
+
   const lastPart = siblings.every((sub) => sub.id === subOrder.id || isReversedPart(sub.status));
   const platform = order.platformInvoiceSnapshot;
   if (lastPart && platform?.invoiceNumber) {

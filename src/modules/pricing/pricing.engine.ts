@@ -121,10 +121,30 @@ export function splitTaxAmount(
   return { cgst: 0, sgst: 0, igst: totalPaise };
 }
 
+/**
+ * GST on a taxable value, in paise. Intra-state, CGST and SGST are each charged at half
+ * the rate and rounded on their own, so they are always equal (as on a GST invoice) and
+ * the total is their sum; inter-state, IGST at the full rate. A negative taxable value
+ * (a credit) gives the same amounts, negative.
+ */
+export function gstOnTaxablePaise(
+  taxablePaise: Paise,
+  gstPercentage: number,
+  intraState: boolean,
+): { cgst: Paise; sgst: Paise; igst: Paise; total: Paise } {
+  const sign = taxablePaise < 0 ? -1 : 1;
+  const base = Math.abs(taxablePaise);
+  if (base === 0 || !(gstPercentage > 0)) return { cgst: 0, sgst: 0, igst: 0, total: 0 };
+  if (intraState) {
+    const half = sign * Math.round((base * gstPercentage) / 200);
+    return { cgst: half, sgst: half, igst: 0, total: 2 * half };
+  }
+  const igst = sign * Math.round((base * gstPercentage) / 100);
+  return { cgst: 0, sgst: 0, igst, total: igst };
+}
+
 function splitTax(taxablePaise: Paise, gstPercentage: number, intraState: boolean): TaxBreakdownPaise {
-  const total = Math.round((taxablePaise * gstPercentage) / 100);
-  const { cgst, sgst, igst } = splitTaxAmount(total, intraState);
-  return { cgst, sgst, igst, total, gstPercentage };
+  return { ...gstOnTaxablePaise(taxablePaise, gstPercentage, intraState), gstPercentage };
 }
 
 /**
@@ -228,7 +248,8 @@ export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderP
     };
   });
 
-  const tcsPaise = Math.round((taxablePaise * Number(input.tcsRatePercent || 0)) / 100);
+  // TCS under section 52 is collected as CGST + SGST (or IGST) like GST: equal halves.
+  const tcsPaise = gstOnTaxablePaise(taxablePaise, Number(input.tcsRatePercent || 0), input.intraState).total;
   const lineTcs = allocateProportionally(
     tcsPaise,
     pricedLines.map((line) => line.taxablePaise),
@@ -256,7 +277,10 @@ export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderP
       );
       target.tax.total += appliedRoundingAdjustmentPaise;
       if (input.intraState) {
-        target.tax.sgst += appliedRoundingAdjustmentPaise;
+        // Both sides are sums of equal halves, so the adjustment is even: split it
+        // evenly and keep CGST equal to SGST.
+        target.tax.cgst += appliedRoundingAdjustmentPaise / 2;
+        target.tax.sgst += appliedRoundingAdjustmentPaise / 2;
       } else {
         target.tax.igst += appliedRoundingAdjustmentPaise;
       }
@@ -344,7 +368,13 @@ export function reverseFrozenLine(input: RefundReversalInput): RefundReversalBre
   const refundSubtotalPaise = scale(line.lineSubtotalPaise);
   const refundDiscountPaise = scale(line.discountPaise);
   const refundMerchandisePaise = scale(line.taxablePaise);
-  const refundTaxPaise = scale(line.tax.total);
+  // Intra-state tax is two equal halves (CGST = SGST): refund a part as equal halves too,
+  // so its credit note's CGST equals its SGST. A full return refunds the tax as charged.
+  const intraStateTax = line.tax.igst <= 0;
+  const refundTaxPaise =
+    qty === line.quantity || !intraStateTax
+      ? scale(line.tax.total)
+      : 2 * Math.round((line.tax.total * ratioNum) / (2 * ratioDen));
   const refundCommissionPaise = scale(line.commissionPaise);
   const refundTcsPaise = scale(line.tcsPaise);
   const refundNetClawbackPaise = scale(line.netPayoutPaise);

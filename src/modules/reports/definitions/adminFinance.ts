@@ -2,7 +2,7 @@ import {
   assertReportRange,
   fromPaise,
   dateBetween,
-  REPORTABLE_ORDER_SQL,
+  TCS_LEDGER_ORDER_SQL,
   pagedFindAndCount,
   pagedSqlQuery,
   computeReconciliationSummary,
@@ -12,6 +12,7 @@ import {
   COMMISSION_STATUS,
 } from '../engine/queryHelpers';
 import { GMV_SUB_ORDER_SQL, sqlLineSubtotalPaise } from '@modules/pricing/frozenMoneySql';
+import { platformSupplyLinesSql } from '../engine/platformSupplySql';
 import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { AuditLog } from '@database/models/auditLog.model';
@@ -70,7 +71,7 @@ function gstTcsSelectSql(vendorFilter: string): string {
     INNER JOIN orders o ON o.id = t."orderId" AND o."deletedAt" IS NULL
     WHERE t."deletedAt" IS NULL
       AND t."createdAt" BETWEEN :from AND :to
-      AND ${REPORTABLE_ORDER_SQL}
+      AND ${TCS_LEDGER_ORDER_SQL}
       ${vendorFilter}
     GROUP BY t."vendorId", ${stateExpr}, ${periodExpr}, ${sectionExpr}, COALESCE(t."entryType", 'COLLECTION')
 
@@ -95,7 +96,7 @@ function gstTcsSelectSql(vendorFilter: string): string {
     INNER JOIN orders o ON o.id = t."orderId" AND o."deletedAt" IS NULL
     WHERE t."deletedAt" IS NULL
       AND t."createdAt" BETWEEN :from AND :to
-      AND ${REPORTABLE_ORDER_SQL}
+      AND ${TCS_LEDGER_ORDER_SQL}
       ${vendorFilter}
     GROUP BY ${stateExpr}, ${periodExpr}, ${sectionExpr}, COALESCE(t."entryType", 'COLLECTION')
   `;
@@ -256,32 +257,6 @@ async function tds194oExport(
   return { rows: page.rows, nextCursor: page.nextCursor };
 }
 
-/**
- * The platform's own supplies on its tax invoices (gift wrapping), one row per invoice
- * line with the customer's state. Not a vendor's sale, so a vendor or category filter
- * leaves them out. Cancelled orders are excluded, like marketplace sales.
- */
-function platformSupplyLinesSql(): string {
-  return `
-    SELECT
-      COALESCE(NULLIF(a.state, ''), 'UNKNOWN') AS state,
-      line->>'sac' AS sac,
-      (line->>'quantity')::int AS qty,
-      (line->>'taxablePaise')::bigint AS taxable,
-      (line->>'cgstPaise')::bigint AS cgst,
-      (line->>'sgstPaise')::bigint AS sgst,
-      (line->>'igstPaise')::bigint AS igst
-    FROM orders o
-    CROSS JOIN LATERAL jsonb_array_elements(o."platformInvoiceSnapshot"->'lines') AS line
-    LEFT JOIN addresses a ON a.id = o."shippingAddressId" AND a."deletedAt" IS NULL
-    WHERE o."deletedAt" IS NULL
-      AND o."platformInvoiceSnapshot" IS NOT NULL
-      AND o."createdAt" BETWEEN :from AND :to
-      AND ${REPORTABLE_ORDER_SQL}
-      AND :vendorId::uuid IS NULL
-  `;
-}
-
 function hsnSalesSelectSql(): string {
   const taxableExpr = sqlFrozenPaise('oi', 'taxableAmountPaise');
   const taxExpr = sqlFrozenPaise('oi', 'taxAmountPaise');
@@ -318,7 +293,7 @@ function hsnSalesSelectSql(): string {
         AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
         AND (:categoryId::uuid IS NULL OR p."categoryId" = :categoryId)
       UNION ALL
-      -- The platform's own supplies (gift wrapping), under their SAC.
+      -- The platform's own supplies (gift wrap, shipping, return fees), under their SAC.
       SELECT sac, qty, taxable, cgst + sgst + igst
       FROM (${platformSupplyLinesSql()}) platform_lines
       WHERE :categoryId::uuid IS NULL
@@ -383,7 +358,7 @@ function stateTaxSelectSql(): string {
         AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
     ),
     platform_tax AS (
-      -- The platform's own supplies (gift wrapping): GST split in paise at checkout.
+      -- The platform's own supplies (gift wrap, shipping, return fees): GST split in paise.
       SELECT state, cgst + sgst + igst AS tax, cgst, sgst, igst
       FROM (${platformSupplyLinesSql()}) platform_lines
     ),

@@ -1,5 +1,6 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
 import { paiseBackedRupees } from '@modules/pricing/paiseBackedRupees';
+import type { PlatformInvoiceSnapshot } from '@modules/pricing/platformFeeInvoice';
 import {
   REFUND_METHOD_VALUES,
   REFUND_STATUS,
@@ -41,6 +42,8 @@ export class ReturnRequest extends Model<InferAttributes<ReturnRequest>, InferCr
   declare razorpayRefundAmount: CreationOptional<number>;
   declare shippingRefundAmount: CreationOptional<number>;
   declare returnShippingFeeAmount: CreationOptional<number>;
+  /** The platform's invoice for the return shipping fee kept from the refund. */
+  declare returnFeeInvoiceSnapshot: CreationOptional<PlatformInvoiceSnapshot | null>;
   declare razorpayRefundId: CreationOptional<string | null>;
   declare refundAttemptCount: CreationOptional<number>;
   declare lastRefundAttemptAt: CreationOptional<Date | null>;
@@ -111,6 +114,7 @@ export const initReturnRequestModel = (sequelize: Sequelize) => {
       razorpayRefundAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       shippingRefundAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       returnShippingFeeAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      returnFeeInvoiceSnapshot: { type: DataTypes.JSONB, allowNull: true },
       refundMerchandiseAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
       refundMerchandiseAmount: paiseBackedRupees('refundMerchandiseAmountPaise'),
       razorpayRefundId: { type: DataTypes.STRING, allowNull: true },
