@@ -12,6 +12,7 @@ import { GiftCard } from '@database/models/giftCard.model';
 import { roundMoney, toPaise } from '@modules/pricing/money';
 import { paymentsService } from '@modules/payments/payments.service';
 import { walletService } from '@modules/wallet/wallet.service';
+import { settingsService } from '@modules/settings/settings.service';
 import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
 import {
   GIFT_CARD_MIN_AMOUNT_INR,
@@ -229,6 +230,14 @@ export class GiftCardsService {
       if (row.expiresAt.getTime() < Date.now()) {
         await row.update({ status: GIFT_CARD_STATUS.EXPIRED, updatedBy: userId }, { transaction: t });
         throw new ValidationError(ERROR_MESSAGES.GIFT_CARD_EXPIRED);
+      }
+
+      // Same ceiling a recharge has: a gift card is not a way around the wallet limit.
+      // Refused here, the card stays ACTIVE for when the balance has room.
+      const settings = await settingsService.getPlatformSettings();
+      const balance = await walletService.getBalance(userId, t);
+      if (roundMoney(balance + Number(row.amount)) > Number(settings.walletMaxBalancePoints)) {
+        throw new ValidationError(ERROR_MESSAGES.GIFT_CARD_WALLET_MAX_BALANCE_EXCEEDED);
       }
 
       await walletService.credit(

@@ -173,6 +173,9 @@ export const REPORT_COLUMN_LABELS: Record<string, string> = {
   razorpayOrderId: 'Razorpay Order ID',
   razorpayPaymentId: 'Razorpay Payment ID',
   razorpayAmount: 'Razorpay Amount',
+  pgSourceType: 'Payment For',
+  giftCardCount: 'Cards',
+  pgReferenceId: 'Reference ID',
   pgCaptured: 'Captured',
   pgRefunded: 'Refunded',
   pgNet: 'Net Captured',
@@ -223,6 +226,7 @@ export const REPORT_COLUMN_LABELS: Record<string, string> = {
   pointsCredited: 'Points Credited',
   amountInr: 'Amount (INR)',
   walletRechargeInflow: 'Wallet Recharge Inflow',
+  giftCardRedemptionInflow: 'Gift Card Redemptions',
   walletPointsRedeemedAtCheckout: 'Wallet Points Redeemed',
 };
 

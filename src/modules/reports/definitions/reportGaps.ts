@@ -1,4 +1,10 @@
-import { PAYMENT_METHOD, PAYMENT_STATUS, ORDER_STATUS, REFUND_STATUS } from '@core/constants/statuses';
+import {
+  GIFT_CARD_STATUS,
+  ORDER_STATUS,
+  PAYMENT_METHOD,
+  PAYMENT_STATUS,
+  REFUND_STATUS,
+} from '@core/constants/statuses';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { sequelize } from '@database/models';
 import { WalletLedger } from '@database/models/walletLedger.model';
@@ -416,10 +422,55 @@ async function gstr3bSummary(filters: ReportFilters) {
   return { rows: mapped, total: mapped.length, meta: { period: gstPeriodOf(filters.from) } };
 }
 
+/**
+ * Gift cards over the period and what the platform still owes on them: cards sold
+ * (paid), redeemed into wallets, expired unredeemed, and outstanding at the period
+ * end — paid, not yet redeemed and not yet expired (a liability until then).
+ */
+async function giftCardLiability(filters: ReportFilters) {
+  assertReportRange(filters);
+  const paid = `g.status::text IN ('${GIFT_CARD_STATUS.ACTIVE}', '${GIFT_CARD_STATUS.REDEEMED}', '${GIFT_CARD_STATUS.EXPIRED}')`;
+  const amountPaise = 'ROUND(g.amount * 100)';
+  const [rows] = await sequelize.query(
+    `
+    SELECT 'SOLD'::text AS line, COUNT(*)::int AS "cardCount", COALESCE(SUM(${amountPaise}), 0)::bigint AS "amountPaise"
+      FROM gift_cards g
+     WHERE g."deletedAt" IS NULL AND ${paid} AND g."createdAt" BETWEEN :from AND :to
+    UNION ALL
+    SELECT 'REDEEMED'::text, COUNT(*)::int, COALESCE(SUM(${amountPaise}), 0)::bigint
+      FROM gift_cards g
+     WHERE g."deletedAt" IS NULL AND g."redeemedAt" BETWEEN :from AND :to
+    UNION ALL
+    SELECT 'EXPIRED_UNREDEEMED'::text, COUNT(*)::int, COALESCE(SUM(${amountPaise}), 0)::bigint
+      FROM gift_cards g
+     WHERE g."deletedAt" IS NULL AND ${paid} AND g."redeemedAt" IS NULL
+       AND g."expiresAt" BETWEEN :from AND :to
+    UNION ALL
+    SELECT 'OUTSTANDING_AT_END'::text, COUNT(*)::int, COALESCE(SUM(${amountPaise}), 0)::bigint
+      FROM gift_cards g
+     WHERE g."deletedAt" IS NULL AND ${paid}
+       AND g."createdAt" <= :to
+       AND (g."redeemedAt" IS NULL OR g."redeemedAt" > :to)
+       AND g."expiresAt" > :to
+    `,
+    { replacements: sqlReplacements(filters) },
+  );
+  const mapped = (rows as Array<Record<string, unknown>>).map((row) => ({
+    line: String(row.line ?? ''),
+    cardCount: Number(row.cardCount ?? 0),
+    amount: fromPaise(Number(row.amountPaise ?? 0)),
+  }));
+  return { rows: mapped, total: mapped.length };
+}
+
 async function paymentGatewayReconciliation(filters: ReportFilters) {
   assertReportRange(filters);
+  // Every Razorpay payment the gateway settles: orders, gift-card purchases and wallet
+  // recharges, so the report's totals can be matched to Razorpay's settlements.
+  const paidStatuses = `'${PAYMENT_STATUS.PAID}', '${PAYMENT_STATUS.REFUNDED}'`;
   const selectSql = `
     SELECT
+      'ORDER'::text AS "sourceType",
       o.id AS "orderId",
       o."createdAt" AS "createdAt",
       o."paymentMethod"::text AS "paymentMethod",
@@ -427,7 +478,9 @@ async function paymentGatewayReconciliation(filters: ReportFilters) {
       COALESCE(o."razorpayOrderId", '') AS "razorpayOrderId",
       COALESCE(o."razorpayPaymentId", '') AS "razorpayPaymentId",
       COALESCE(o."razorpayAmountPaid", 0)::float AS "razorpayAmount",
-      ROUND(COALESCE(o."razorpayAmountPaid", 0) * 100)::bigint AS "capturedPaise",
+      -- Captured only once the payment went through (never for an unpaid checkout).
+      (CASE WHEN o."paymentStatus" IN (${paidStatuses}) AND o."razorpayPaymentId" IS NOT NULL
+        THEN ROUND(COALESCE(o."razorpayAmountPaid", 0) * 100) ELSE 0 END)::bigint AS "capturedPaise",
       -- Card money sent back: a full cancellation (on the order), each cancelled or
       -- RTO'd part, and each return's Razorpay share. Issued (INITIATED) counts: it has
       -- left the gateway balance. A FAILED refund has not.
@@ -476,6 +529,74 @@ async function paymentGatewayReconciliation(filters: ReportFilters) {
     WHERE o."deletedAt" IS NULL
       AND o."createdAt" BETWEEN :from AND :to
       AND o."paymentMethod" = '${PAYMENT_METHOD.RAZORPAY}'
+
+    UNION ALL
+
+    SELECT
+      'GIFT_CARD'::text,
+      g.id,
+      g."createdAt",
+      '${PAYMENT_METHOD.RAZORPAY}'::text,
+      (CASE
+        WHEN g.status::text IN ('${GIFT_CARD_STATUS.ACTIVE}', '${GIFT_CARD_STATUS.REDEEMED}', '${GIFT_CARD_STATUS.EXPIRED}')
+          THEN '${PAYMENT_STATUS.PAID}'
+        WHEN g.status::text = '${GIFT_CARD_STATUS.PENDING}' THEN '${PAYMENT_STATUS.PENDING}'
+        ELSE '${PAYMENT_STATUS.FAILED}'
+      END)::text,
+      COALESCE(g."razorpayOrderId", ''),
+      COALESCE(g."razorpayPaymentId", ''),
+      COALESCE(g.amount, 0)::float,
+      (CASE WHEN g."razorpayPaymentId" IS NOT NULL
+          AND g.status::text IN ('${GIFT_CARD_STATUS.ACTIVE}', '${GIFT_CARD_STATUS.REDEEMED}', '${GIFT_CARD_STATUS.EXPIRED}')
+        THEN ROUND(COALESCE(g.amount, 0) * 100) ELSE 0 END)::bigint,
+      0::bigint,
+      COALESCE(g.amount, 0)::float,
+      0::float,
+      (CASE
+        WHEN g.status::text IN ('${GIFT_CARD_STATUS.ACTIVE}', '${GIFT_CARD_STATUS.REDEEMED}', '${GIFT_CARD_STATUS.EXPIRED}')
+          THEN CASE WHEN g."razorpayPaymentId" IS NOT NULL THEN 'MATCHED' ELSE 'MISSING_PG_REF' END
+        WHEN g.status::text = '${GIFT_CARD_STATUS.PENDING}' THEN 'PENDING'
+        ELSE 'FAILED'
+      END)::text
+    FROM gift_cards g
+    WHERE g."deletedAt" IS NULL
+      AND g."createdAt" BETWEEN :from AND :to
+
+    UNION ALL
+
+    SELECT
+      'WALLET_RECHARGE'::text,
+      w.id,
+      w."createdAt",
+      '${PAYMENT_METHOD.RAZORPAY}'::text,
+      (CASE
+        WHEN w.status::text = 'PAID' AND w."refundStatus"::text IN ('${REFUND_STATUS.INITIATED}', '${REFUND_STATUS.COMPLETED}')
+          THEN '${PAYMENT_STATUS.REFUNDED}'
+        WHEN w.status::text = 'PAID' THEN '${PAYMENT_STATUS.PAID}'
+        WHEN w.status::text = 'PENDING' THEN '${PAYMENT_STATUS.PENDING}'
+        ELSE '${PAYMENT_STATUS.FAILED}'
+      END)::text,
+      COALESCE(w."razorpayOrderId", ''),
+      COALESCE(w."razorpayPaymentId", ''),
+      COALESCE(w."amountInr", 0)::float,
+      (CASE WHEN w.status::text = 'PAID' AND w."razorpayPaymentId" IS NOT NULL
+        THEN ROUND(COALESCE(w."amountInr", 0) * 100) ELSE 0 END)::bigint,
+      -- A recharge refunded (e.g. it would have passed the wallet limit) goes back whole.
+      (CASE WHEN w."refundStatus"::text IN ('${REFUND_STATUS.INITIATED}', '${REFUND_STATUS.COMPLETED}')
+        THEN ROUND(COALESCE(w."amountInr", 0) * 100) ELSE 0 END)::bigint,
+      COALESCE(w."amountInr", 0)::float,
+      0::float,
+      (CASE
+        WHEN w.status::text = 'PAID' AND w."refundStatus"::text IN ('${REFUND_STATUS.INITIATED}', '${REFUND_STATUS.COMPLETED}')
+          THEN 'REFUNDED'
+        WHEN w.status::text = 'PAID'
+          THEN CASE WHEN w."razorpayPaymentId" IS NOT NULL THEN 'MATCHED' ELSE 'MISSING_PG_REF' END
+        WHEN w.status::text = 'PENDING' THEN 'PENDING'
+        ELSE 'FAILED'
+      END)::text
+    FROM wallet_recharge_orders w
+    WHERE w."deletedAt" IS NULL
+      AND w."createdAt" BETWEEN :from AND :to
   `;
   return pagedSqlQuery({
     selectSql,
@@ -483,6 +604,7 @@ async function paymentGatewayReconciliation(filters: ReportFilters) {
     replacements: sqlReplacements(filters),
     filters,
     mapRow: (row) => ({
+      sourceType: row.sourceType,
       orderId: row.orderId,
       createdAt: row.createdAt,
       paymentMethod: row.paymentMethod,
@@ -1026,7 +1148,8 @@ export const adminFinanceGapReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: true,
     columns: [
-      { key: 'orderId', labelKey: 'orderId' },
+      { key: 'sourceType', labelKey: 'pgSourceType' },
+      { key: 'orderId', labelKey: 'pgReferenceId' },
       { key: 'createdAt', labelKey: 'createdAt', format: 'date' },
       { key: 'paymentMethod', labelKey: 'paymentMethod' },
       { key: 'paymentStatus', labelKey: 'paymentStatus' },
@@ -1041,6 +1164,21 @@ export const adminFinanceGapReports: ReportDefinition[] = [
     ],
     query: paymentGatewayReconciliation,
     exportQuery: createOffsetExportQuery(paymentGatewayReconciliation),
+  },
+  {
+    type: 'gift-card-liability',
+    labelKey: 'reportGiftCardLiability',
+    audience: 'admin_finance',
+    permissions: [PERMISSIONS.COMMISSION_VIEW],
+    vendorScoped: false,
+    financial: true,
+    columns: [
+      { key: 'line', labelKey: 'line' },
+      { key: 'cardCount', labelKey: 'giftCardCount' },
+      { key: 'amount', labelKey: 'amount', format: 'currency' },
+    ],
+    query: giftCardLiability,
+    exportQuery: createSingleShotExportQuery(giftCardLiability),
   },
   {
     type: 'cod-remittance',

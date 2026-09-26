@@ -83,6 +83,8 @@ async function resolveOriginalPromotionalExpiry(
 }
 
 const PART_RETURN_MARKER = ' returned for cancelled part ';
+/** Every part-return wallet credit's description starts with this (for SQL `LIKE`). */
+export const PART_RETURN_DESCRIPTION_PREFIX = `${WALLET_DESCRIPTIONS.CHECKOUT_SPEND}${PART_RETURN_MARKER}`;
 
 function partReturnDescription(subOrderId: string): string {
   return `${WALLET_DESCRIPTIONS.CHECKOUT_SPEND}${PART_RETURN_MARKER}${subOrderId}`;
