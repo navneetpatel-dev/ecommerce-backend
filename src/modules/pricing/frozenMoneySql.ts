@@ -127,9 +127,9 @@ export const GMV_SUB_ORDER_SQL = `(
  * cancelled or RTO'd (RETURNED) sub-order's `customerTotal` — the amount refunded
  * (`subtotalPaise` for rows without one). A cancelled sub-order is already out of
  * GMV, tax, shipping and the ledgers, so its payment leaves here too. Return
- * refunds are reported separately through credit notes. Settlement "customer
- * payments", customer analytics "total spent" and coupon "revenue impact" all
- * sum this over `REPORTABLE_ORDER_SQL` orders.
+ * refunds are reported separately: settlement "customer payments" sums this over
+ * `REPORTABLE_ORDER_SQL` orders and lists refunds on their own line. Customer
+ * analytics "total spent" and coupon "revenue impact" use `sqlOrderKeptPaymentPaise`.
  */
 export function sqlOrderPaymentPaise(alias: string): string {
   return `GREATEST(0, (CASE
@@ -142,5 +142,27 @@ export function sqlOrderPaymentPaise(alias: string): string {
     WHERE cs."orderId" = ${alias}.id
       AND cs."status" IN ('${ORDER_STATUS.CANCELLED}', '${ORDER_STATUS.RETURNED}')
       AND cs."deletedAt" IS NULL
+  ), 0))`;
+}
+
+/**
+ * What the customer paid for one order and kept, in paise (alias = orders): the
+ * payment (`sqlOrderPaymentPaise`) less refunds on returns of delivered items — each
+ * return whose vendor credit note is issued (its refund is done), at the amount
+ * refunded. Customer "total spent" and coupon "revenue impact" count this: a
+ * customer who bought ₹5,000 and returned ₹4,000 of it spent ₹1,000.
+ */
+export function sqlOrderKeptPaymentPaise(alias: string): string {
+  return `GREATEST(0, ${sqlOrderPaymentPaise(alias)} - COALESCE((
+    SELECT SUM(ROUND(rr."refundAmount"::numeric * 100))::bigint
+    FROM return_requests rr
+    INNER JOIN sub_orders rs ON rs.id = rr."subOrderId" AND rs."orderId" = ${alias}.id
+    WHERE rr."deletedAt" IS NULL
+      AND EXISTS (
+        SELECT 1 FROM credit_notes rcn
+        WHERE rcn."returnRequestId" = rr.id
+          AND rcn."vendorId" IS NOT NULL
+          AND rcn."deletedAt" IS NULL
+      )
   ), 0))`;
 }

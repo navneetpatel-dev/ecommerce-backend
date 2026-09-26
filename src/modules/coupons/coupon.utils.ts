@@ -200,6 +200,51 @@ export function vendorEligibleSubtotals(
   );
 }
 
+/** One applied coupon's per-vendor shares, for `capStackedCouponShares`. */
+export type StackedCouponShares = {
+  /** A platform-wide coupon (not a vendor's own). */
+  platform: boolean;
+  /** FREE_SHIPPING: its shares are shipping discount, not merchandise. */
+  freeShipping: boolean;
+  shares: Record<string, number>;
+};
+
+/**
+ * Stacked coupons are each worked out on the full price, so together they can come to
+ * more than a vendor's items (or shipping) cost. Pricing caps the discount a vendor's
+ * part gets at its subtotal; this caps each coupon's shares the same way, so what is
+ * recorded (the order's discount, each coupon's redemption, who funds it) is what was
+ * actually given. A vendor's own coupon applies first; a platform coupon gets what is
+ * left. Returns each coupon's capped shares, in input order.
+ */
+export function capStackedCouponShares(
+  coupons: StackedCouponShares[],
+  merchandiseByVendor: Record<string, number>,
+  shippingByVendor?: Record<string, number>,
+): Array<Record<string, number>> {
+  const capped = coupons.map((coupon) => ({ ...coupon.shares }));
+  const order = coupons
+    .map((coupon, index) => ({ coupon, index }))
+    .sort((a, b) => Number(a.coupon.platform) - Number(b.coupon.platform));
+  for (const freeShipping of [false, true]) {
+    const limits = freeShipping ? shippingByVendor : merchandiseByVendor;
+    if (!limits) continue;
+    const remaining: Record<string, number> = Object.fromEntries(
+      Object.entries(limits).map(([vendorId, amount]) => [vendorId, toPaise(amount)]),
+    );
+    for (const { coupon, index } of order) {
+      if (coupon.freeShipping !== freeShipping) continue;
+      for (const [vendorId, share] of Object.entries(coupon.shares)) {
+        const left = remaining[vendorId] ?? 0;
+        const givenPaise = Math.min(toPaise(share), left);
+        remaining[vendorId] = left - givenPaise;
+        capped[index]![vendorId] = fromPaise(givenPaise);
+      }
+    }
+  }
+  return capped;
+}
+
 export function generateCouponCode(prefix = 'CPN'): string {
   const rand = Math.random().toString(36).slice(2, 10).toUpperCase();
   return `${prefix}${rand}`.slice(0, 16);

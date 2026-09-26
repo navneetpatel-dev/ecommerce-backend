@@ -1813,6 +1813,33 @@ describe('consolidated refund scenarios (seeded)', () => {
     createRefund.mock.restore();
   });
 
+  it('18. promo expiry takes only the unused part of expired lots, never newer points', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const past = new Date(Date.now() - 86_400_000);
+    const future = new Date(Date.now() + 30 * 86_400_000);
+    const promo = (amount: number, expiresAt: Date) =>
+      walletService.credit(
+        customer.id,
+        amount,
+        { type: WALLET_REFERENCE_TYPE.CASHBACK, id: randomUUID() },
+        'promo',
+        undefined,
+        { pointSource: WALLET_POINT_SOURCE.PROMOTIONAL, expiresAt },
+      );
+
+    // ₹100 promo, ₹60 of it spent, then it expires: only the ₹40 left goes.
+    await promo(100, past);
+    await walletService.debit(customer.id, 60, { type: WALLET_REFERENCE_TYPE.ORDER, id: randomUUID() }, 'spend');
+    assert.equal(await walletService.expirePromotionalPoints(customer.id, new Date()), 40);
+    assert.equal(await walletService.getBalance(customer.id), 0);
+
+    // New cashback still valid: the next run leaves it alone (it used to expire it).
+    await promo(50, future);
+    assert.equal(await walletService.expirePromotionalPoints(customer.id, new Date()), 0);
+    assert.equal(await walletService.getBalance(customer.id), 50);
+  });
+
   it('17. return-refund wallet credit is excluded from promotional expiry sweep', async (t) => {
     if (!dbReady) return t.skip('database unavailable');
     const customer = await createCustomer();

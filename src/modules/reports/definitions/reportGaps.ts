@@ -21,7 +21,7 @@ import {
   TCS_LEDGER_ORDER_SQL,
 } from '../engine/queryHelpers';
 import { inventoryValuation } from '@modules/pricing/displayMoney';
-import { sqlOrderPaymentPaise } from '@modules/pricing/frozenMoneySql';
+import { sqlOrderKeptPaymentPaise } from '@modules/pricing/frozenMoneySql';
 import { sqlCodCashDuePaise } from '@modules/shipping/codCollection';
 import { gstPeriodOf } from '@modules/pricing/gstPeriod';
 import { platformInvoiceDocumentsSql, platformSupplyLinesSql } from '../engine/platformSupplySql';
@@ -690,7 +690,7 @@ async function customerAnalytics(filters: ReportFilters) {
       COALESCE(u.email, '') AS email,
       COALESCE(u.name, '') AS name,
       COUNT(o.id)::int AS "orderCount",
-      COALESCE(SUM(${sqlOrderPaymentPaise('o')}), 0)::bigint AS "totalSpentPaise",
+      COALESCE(SUM(${sqlOrderKeptPaymentPaise('o')}), 0)::bigint AS "totalSpentPaise",
       MIN(o."createdAt") AS "firstOrderAt",
       MAX(o."createdAt") AS "lastOrderAt",
       CASE WHEN COUNT(o.id) <= 1 THEN 'NEW' ELSE 'RETURNING' END AS segment

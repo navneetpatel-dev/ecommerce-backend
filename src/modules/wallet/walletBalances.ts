@@ -83,3 +83,23 @@ export async function sumExpiredPromotionalCredits(
   });
   return sumRupees(rows.map((row) => row.amount));
 }
+
+/** Every promotional credit the user ever received (credits not marked purchased). */
+export async function sumPromotionalCredits(
+  userId: string,
+  transaction?: Transaction,
+): Promise<number> {
+  const rows = await WalletLedger.findAll({
+    where: {
+      userId,
+      type: WALLET_LEDGER_TYPE.CREDIT,
+      [Op.or]: [
+        { pointSource: { [Op.ne]: WALLET_POINT_SOURCE.PURCHASED } },
+        { pointSource: null },
+      ],
+    },
+    attributes: ['amount'],
+    transaction,
+  });
+  return sumRupees(rows.map((row) => row.amount));
+}
