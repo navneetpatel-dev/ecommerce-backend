@@ -854,6 +854,8 @@ export class ReturnsService {
           netPayoutAmountPaise: -reversal.refundNetClawbackPaise,
           shippingCollectedPaise: 0,
           referenceType: COMMISSION_REFERENCE_TYPE.RETURN_CLAWBACK,
+          // The TDS withheld on the sale is given back at the rate it was withheld at.
+          tdsRatePercent: ledger.tdsRatePercent,
           status: COMMISSION_STATUS.PENDING,
           createdBy: actorId,
           updatedBy: actorId,

@@ -325,4 +325,79 @@ describe('report money scope', () => {
     assert.equal(fromPaise(totalTax), 180);
     assert.equal(fromPaise(totalTaxable), 1000);
   });
+
+  it('GST reports include gift-wrap GST, not for a vendor or a cancelled order', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const giftState = `GW-${randomUUID().slice(0, 6)}`;
+    const address = await Address.create({
+      userId: customerId,
+      line1: 'Gift wrap',
+      line2: null,
+      city: 'Chennai',
+      state: giftState,
+      country: 'IN',
+      pincode: '600001',
+      isDefault: false,
+      createdBy: customerId,
+      updatedBy: customerId,
+      deletedBy: null,
+    });
+    const snapshot = {
+      invoiceNumber: `PLAT/TEST/${randomUUID().slice(0, 6)}`,
+      issuedAt: now.toISOString(),
+      intraState: false,
+      totalPaise: 4900,
+      lines: [
+        {
+          description: 'Gift wrapping',
+          sac: '9985',
+          quantity: 1,
+          gstRatePercent: 18,
+          taxablePaise: 4153,
+          cgstPaise: 0,
+          sgstPaise: 0,
+          igstPaise: 747,
+        },
+      ],
+    };
+    for (const status of [ORDER_STATUS.DELIVERED, ORDER_STATUS.CANCELLED]) {
+      const order = await Order.create({
+        userId: customerId,
+        couponId: null,
+        appliedCouponIds: [],
+        totalAmount: 49,
+        originalTotalAmount: 49,
+        discountTotal: 0,
+        status,
+        paymentStatus: PAYMENT_STATUS.PAID,
+        paymentMethod: PAYMENT_METHOD.RAZORPAY,
+        walletAmountUsed: 0,
+        razorpayAmountPaid: 49,
+        shippingAddressId: address.id,
+        giftWrap: true,
+        giftWrapFeeAmount: 49,
+        platformInvoiceSnapshot: snapshot,
+        createdBy: customerId,
+        updatedBy: customerId,
+        deletedBy: null,
+      } as never);
+      created.orders.push(order.id);
+    }
+
+    const all = { ...range, page: 1, limit: 100_000 };
+    const state = await getReportDefinition('state-tax-collection')!.query(all);
+    const gift = state.rows.find((row) => row.state === giftState);
+    // The delivered order's ₹7.47 IGST only; the cancelled order's fee was refunded.
+    assert.equal(gift?.taxTotal, 7.47);
+    assert.equal(gift?.igst, 7.47);
+    assert.equal(gift?.cgst, 0);
+
+    const hsn = await getReportDefinition('hsn-sales-summary')!.query(all);
+    const sac = hsn.rows.find((row) => row.hsnCode === '9985');
+    assert.ok(sac && Number(sac.tax) >= 7.47);
+
+    // A vendor's reports hold only that vendor's sales.
+    const vendorState = await getReportDefinition('state-tax-collection')!.query({ ...all, vendorId });
+    assert.equal(vendorState.rows.find((row) => row.state === giftState), undefined);
+  });
 });

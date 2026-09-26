@@ -24,6 +24,11 @@ export function commissionGstPaise(commissionTaxablePaise: Paise, gstRatePercent
   return Math.round((commissionTaxablePaise * gstRatePercent) / 100);
 }
 
+/** Section 194-O TDS on a (non-negative) sale value, rounded to the paisa. */
+function tdsOnPaise(basePaise: Paise, ratePercent: number): Paise {
+  return ratePercent > 0 ? Math.round((basePaise * ratePercent) / 100) : 0;
+}
+
 export type VendorPayoutBreakdown = {
   /**
    * Per ledger, in input order: net before TDS, the TDS base (sale value excluding
@@ -49,9 +54,10 @@ export type VendorPayoutBreakdown = {
  *   GST (the ledger's taxable amount, net of returns), at the rate frozen on the
  *   ledger at checkout (`rates.tdsRatePercent` only for ledgers without one);
  * - less GST on the platform's commission across the sale ledgers;
- * - plus adjustment rows as they stand: a vendor-borne cashback cost is deducted, its
- *   reversal added back, and a return after payout recovers the net the vendor was
- *   paid for it (its commission also lowers the commission-GST base). No TDS on them.
+ * - plus adjustment rows: a vendor-borne cashback cost is deducted and its reversal
+ *   added back (no TDS); a return after payout recovers the net the vendor was paid
+ *   for it, less the TDS withheld on it (reversed at the sale's rate), and its
+ *   commission lowers the commission-GST base.
  */
 export function vendorPayoutBreakdown(
   ledgers: PayoutLedgerRow[],
@@ -62,20 +68,25 @@ export function vendorPayoutBreakdown(
   let commissionTaxablePaise = 0;
   const rows = ledgers.map((ledger) => {
     const netPaise = vendorNetPayoutPaise(ledger);
+    const tdsRatePercent =
+      ledger.tdsRatePercent != null ? Number(ledger.tdsRatePercent) : rates.tdsRatePercent;
+    if (ledger.referenceType === COMMISSION_REFERENCE_TYPE.RETURN_CLAWBACK) {
+      // A return after payout: the vendor gives back the net it was paid, and gets back
+      // the TDS withheld on the returned sale value (a negative TDS row) and the GST on
+      // the commission refunded with it.
+      const tdsBasePaise = Math.min(0, frozenPaise(ledger.taxableAmountPaise));
+      const tdsPaise = -tdsOnPaise(-tdsBasePaise, tdsRatePercent);
+      adjustmentPaise += netPaise - tdsPaise;
+      commissionTaxablePaise += frozenPaise(ledger.commissionAmountPaise);
+      return { netPaise, tdsBasePaise, tdsRatePercent, tdsPaise };
+    }
     if (ledger.referenceType) {
+      // Cashback cost or its reversal: not a sale and not commission.
       adjustmentPaise += netPaise;
-      // A return after payout also hands back the commission on it, so the GST charged
-      // on that commission falls with it. Cashback cost is not commission.
-      if (ledger.referenceType === COMMISSION_REFERENCE_TYPE.RETURN_CLAWBACK) {
-        commissionTaxablePaise += frozenPaise(ledger.commissionAmountPaise);
-      }
       return { netPaise, tdsBasePaise: 0, tdsRatePercent: 0, tdsPaise: 0 };
     }
     const tdsBasePaise = Math.max(0, frozenPaise(ledger.taxableAmountPaise));
-    const tdsRatePercent =
-      ledger.tdsRatePercent != null ? Number(ledger.tdsRatePercent) : rates.tdsRatePercent;
-    const tdsPaise =
-      tdsRatePercent > 0 ? Math.round((tdsBasePaise * tdsRatePercent) / 100) : 0;
+    const tdsPaise = tdsOnPaise(tdsBasePaise, tdsRatePercent);
     afterTdsPaise += Math.max(0, netPaise - tdsPaise);
     commissionTaxablePaise += frozenPaise(ledger.commissionAmountPaise);
     return { netPaise, tdsBasePaise, tdsRatePercent, tdsPaise };

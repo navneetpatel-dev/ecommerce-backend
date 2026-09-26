@@ -245,6 +245,7 @@ export class PayoutsService {
           const tdsRows: Array<{
             orderId: string;
             subOrderId: string;
+            commissionLedgerId: string;
             taxableAmountPaise: number;
             ratePercent: number;
             tdsAmountPaise: number;
@@ -252,10 +253,12 @@ export class PayoutsService {
           locked.forEach((row, index) => {
             const { tdsBasePaise, tdsRatePercent, tdsPaise } = breakdown.rows[index]!;
             const subOrder = (row as any).SubOrder as SubOrder | undefined;
-            if (tdsPaise > 0 && subOrder?.orderId) {
+            // A deduction on a sale, or a (negative) reversal for a return after payout.
+            if (tdsPaise !== 0 && subOrder?.orderId) {
               tdsRows.push({
                 orderId: subOrder.orderId,
                 subOrderId: row.subOrderId,
+                commissionLedgerId: row.id,
                 taxableAmountPaise: tdsBasePaise,
                 ratePercent: tdsRatePercent,
                 tdsAmountPaise: tdsPaise,
@@ -295,6 +298,7 @@ export class PayoutsService {
               {
                 orderId: tds.orderId,
                 subOrderId: tds.subOrderId,
+                commissionLedgerId: tds.commissionLedgerId,
                 vendorId,
                 payoutId: payoutRow.id,
                 taxableAmountPaise: tds.taxableAmountPaise,

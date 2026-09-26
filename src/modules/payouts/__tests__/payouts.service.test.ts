@@ -254,4 +254,63 @@ describe('PayoutsService.process return-window and dispute hold', () => {
     // ₹1,075 net less ₹10 TDS.
     assert.equal(payouts.mock.calls[0]!.arguments[0].amount, 1065);
   });
+
+  it('records a negative TDS row when a return after payout gives the TDS back', async () => {
+    mock.method(settingsService, 'getPlatformSettings', async () => ({
+      tdsRatePercent: 0.1,
+      commissionGstRatePercent: 18,
+      defaultReturnWindow: 7,
+    }));
+    const rows = [
+      {
+        id: 'cl-sale-2',
+        vendorId: 'vendor-1',
+        subOrderId: 'so-2',
+        createdAt: new Date(),
+        netPayoutAmountPaise: 107500,
+        commissionAmountPaise: 0,
+        taxableAmountPaise: 100000,
+        tdsRatePercent: '0.100',
+        referenceType: null,
+        SubOrder: { orderId: 'order-2' },
+      },
+      {
+        // An earlier sale, paid at 1%, returned since.
+        id: 'cl-return-1',
+        vendorId: 'vendor-1',
+        subOrderId: 'so-1',
+        createdAt: new Date(),
+        netPayoutAmountPaise: -53750,
+        commissionAmountPaise: 0,
+        taxableAmountPaise: -50000,
+        tdsRatePercent: '1.000',
+        referenceType: 'ReturnClawback',
+        SubOrder: { orderId: 'order-1' },
+      },
+    ];
+    mock.method(CommissionLedger, 'findAll', async () => rows as never);
+    mock.method(CommissionLedger, 'update', async () => [2] as never);
+    mock.method(sequelize, 'transaction', async (callback: (t: { LOCK: { UPDATE: string } }) => Promise<unknown>) => {
+      return callback({ LOCK: { UPDATE: 'UPDATE' } });
+    });
+    const payouts = mock.method(Payout, 'create', async (fields: Record<string, unknown>) => {
+      return { id: 'payout-2', ...fields } as never;
+    });
+    const tds = mock.method(TdsLedger, 'create', async () => ({}) as never);
+    mock.method(User, 'findOne', async () => null);
+    mock.method(Role, 'findOne', async () => null);
+
+    await payoutsService.process('actor-1');
+
+    const tdsRows = tds.mock.calls.map((call) => call.arguments[0] as Record<string, unknown>);
+    assert.deepEqual(
+      tdsRows.map((row) => [row.commissionLedgerId, row.taxableAmountPaise, row.ratePercent, row.tdsAmountPaise]),
+      [
+        ['cl-sale-2', 100000, 0.1, 100],
+        ['cl-return-1', -50000, 1, -500],
+      ],
+    );
+    // 107500 − 100 TDS − 53750 returned + 500 TDS given back.
+    assert.equal(payouts.mock.calls[0]!.arguments[0].amount, 541.5);
+  });
 });
