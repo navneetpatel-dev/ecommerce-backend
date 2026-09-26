@@ -17,6 +17,7 @@ import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { fromPaise, toPaise } from '@modules/pricing/money';
 import {
   type CartLineForCoupon,
+  capStackedCouponShares,
   computeTypeDiscount,
   filterEligibleLines,
   linesSubtotal,
@@ -413,6 +414,28 @@ export async function validateCouponSet(input: {
   let freeShipping = false;
   const coupons: Coupon[] = [];
   const perCoupon: ValidateCouponSetResult['perCoupon'] = [];
+
+  // Together the coupons may come to more than a vendor's items (or shipping): cap them
+  // at what is actually given — the vendor's own coupon first, a platform one after.
+  const cappedShares = capStackedCouponShares(
+    results.map((result) => ({
+      platform: !result.coupon!.vendorId,
+      freeShipping: result.freeShipping,
+      shares: result.vendorDiscountShares,
+    })),
+    vendorEligibleSubtotals(input.lines),
+    input.shippingByVendor,
+  );
+
+  results.forEach((result, index) => {
+    const shares = cappedShares[index]!;
+    const cutPaise = Object.entries(result.vendorDiscountShares).reduce(
+      (sum, [vendorId, share]) => sum + toPaise(share) - toPaise(shares[vendorId] ?? 0),
+      0,
+    );
+    result.vendorDiscountShares = shares;
+    result.discount = fromPaise(Math.max(0, toPaise(result.discount) - cutPaise));
+  });
 
   for (const result of results) {
     const coupon = result.coupon!;

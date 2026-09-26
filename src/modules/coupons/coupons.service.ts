@@ -24,7 +24,7 @@ import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { resolveItemAvailability, isProductCustomerVisible } from '@core/catalog/customerVisibility';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { coerceRupees, fromPaise, roundMoney } from '@modules/pricing/money';
-import { REPORTABLE_ORDER_SQL, sqlOrderPaymentPaise } from '@modules/pricing/frozenMoneySql';
+import { REPORTABLE_ORDER_SQL, sqlOrderKeptPaymentPaise } from '@modules/pricing/frozenMoneySql';
 import {
   resolveCartShippingPreviewForCoupon,
   resolveProductShippingPreviewForCoupon,
@@ -43,7 +43,7 @@ import { generateCouponCode } from './coupon.utils';
 /**
  * One coupon redemption's discount still given, in paise (aliases: `cu` = coupon_usages,
  * `c` = its coupon). A cancelled or RTO'd (RETURNED) part was refunded, so the discount
- * on it was never given — the same parts `sqlOrderPaymentPaise` takes out of revenue.
+ * on it was never given — the same parts `sqlOrderPaymentPaise` takes out of the payment.
  * The redemption keeps the share of its discount that sits on parts still standing: the
  * kept parts' discount (merchandise + shipping) over every part's, or their merchandise
  * over every part's when the parts carry no discount. A vendor coupon only discounted
@@ -71,7 +71,8 @@ function sqlKeptCouponDiscountPaise(): string {
  * Discount given and customer payments on the orders that redeemed these coupons,
  * counting only orders the settlement reports count (REPORTABLE_ORDER_SQL) and each
  * order once even when it redeemed several of the coupons. Discount on a cancelled or
- * RTO'd part is left out, as its payment is (`sqlKeptCouponDiscountPaise`).
+ * RTO'd part is left out, as its payment is (`sqlKeptCouponDiscountPaise`); payments
+ * are net of return refunds (`sqlOrderKeptPaymentPaise`).
  */
 async function couponUsageMoney(
   couponIds: string[],
@@ -88,7 +89,7 @@ async function couponUsageMoney(
      )
      SELECT
        COALESCE(SUM(u."discountPaise"), 0)::bigint AS "discountPaise",
-       COALESCE(SUM(${sqlOrderPaymentPaise('o')}), 0)::bigint AS "paymentPaise"
+       COALESCE(SUM(${sqlOrderKeptPaymentPaise('o')}), 0)::bigint AS "paymentPaise"
      FROM usages u
      INNER JOIN orders o ON o.id = u."orderId" AND o."deletedAt" IS NULL
      WHERE ${REPORTABLE_ORDER_SQL}`,

@@ -25,7 +25,17 @@ import { Role } from '@database/models/role.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { User } from '@database/models/user.model';
 import { Vendor } from '@database/models/vendor.model';
-import { ORDER_STATUS, PAYMENT_METHOD, PAYMENT_STATUS, ROLES } from '@core/constants/statuses';
+import {
+  ORDER_STATUS,
+  PAYMENT_METHOD,
+  PAYMENT_STATUS,
+  REFUND_STATUS,
+  RETURN_REASON,
+  RETURN_STATUS,
+  ROLES,
+} from '@core/constants/statuses';
+import { ReturnRequest } from '@database/models/returnRequest.model';
+import { CreditNote } from '@database/models/creditNote.model';
 import { couponsService } from '@modules/coupons/coupons.service';
 import { computeReconciliationSummary } from '@modules/reports/engine/queryHelpers';
 import { getReportDefinition } from '@modules/reports/engine/reportRegistry';
@@ -294,6 +304,54 @@ describe('report money scope', () => {
     const row = report.rows.find((r) => r.userId === customerId);
     assert.equal(row?.orderCount, 1);
     assert.equal(row?.totalSpent, 1230);
+  });
+
+  it('customer spend and coupon revenue are net of return refunds', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    // A ₹230 refund on a return from the paid order, its vendor credit note issued.
+    const paidOrderId = created.orders[0]!;
+    const sub = await SubOrder.findOne({
+      where: { orderId: paidOrderId, status: ORDER_STATUS.DELIVERED },
+    });
+    const item = await OrderItem.findOne({ where: { subOrderId: sub!.id } });
+    const rr = await ReturnRequest.create({
+      subOrderId: sub!.id,
+      orderItemId: item!.id,
+      userId: customerId,
+      reason: 'Damaged',
+      reasonCode: RETURN_REASON.DAMAGED,
+      status: RETURN_STATUS.REFUNDED,
+      refundStatus: REFUND_STATUS.COMPLETED,
+      refundAmount: 230,
+    } as never);
+    const note = await CreditNote.create({
+      number: `CN/TEST/${randomUUID().slice(0, 8)}`,
+      returnRequestId: rr.id,
+      orderId: paidOrderId,
+      orderItemId: item!.id,
+      subOrderId: sub!.id,
+      vendorId,
+      userId: customerId,
+      merchandisePaise: 19492,
+      taxPaise: 3508,
+      totalPaise: 23000,
+    } as never);
+    try {
+      const report = await getReportDefinition('customer-analytics')!.query({
+        ...range,
+        page: 1,
+        limit: 100_000,
+      });
+      // ₹1,230 kept at checkout, ₹230 of it refunded on the return: ₹1,000 spent.
+      assert.equal(report.rows.find((r) => r.userId === customerId)?.totalSpent, 1000);
+      assert.equal((await couponsService.analytics(couponId)).revenueImpact, 1000);
+      // Settlement still lists the payment gross, with the refund on its own line.
+      const recon = await computeReconciliationSummary({ ...range });
+      assert.ok(recon.refundsPaise >= 23000);
+    } finally {
+      await note.destroy({ force: true });
+      await rr.destroy({ force: true });
+    }
   });
 
   it('coupon analytics counts only charged and kept orders', async (t) => {

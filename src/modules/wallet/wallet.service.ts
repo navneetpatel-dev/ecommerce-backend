@@ -21,9 +21,12 @@ import { roundMoney } from '@modules/pricing/money';
 import {
   allocateDebitFromBalances,
   getPointSourceBalances,
+  sumExpiredPromotionalCredits,
+  sumPromotionalCredits,
   type PointSourceBalances,
 } from './walletBalances';
-import { promotionalCreditExpiryDate } from './walletExpiry';
+import { promotionalCreditExpiryDate, promotionalExpiryDebitAmount } from './walletExpiry';
+import { WALLET_DESCRIPTIONS } from './wallet.constants';
 
 export type WalletRef = { type: string; id: string };
 
@@ -224,6 +227,36 @@ export class WalletService {
 
     if (outerTransaction) return run(outerTransaction);
     return sequelize.transaction(run);
+  }
+
+  /**
+   * Expire a user's promotional points that are past their expiry and still unused
+   * (`promotionalExpiryDebitAmount`), under the user's wallet lock so a spend cannot
+   * land between reading the balances and the expiry debit. Returns the amount expired.
+   */
+  async expirePromotionalPoints(userId: string, asOf: Date): Promise<number> {
+    return sequelize.transaction(async (transaction) => {
+      await acquireUserWalletLock(userId, transaction);
+      const [expiredLots, promotionalCredits, balances] = await Promise.all([
+        sumExpiredPromotionalCredits(userId, asOf, transaction),
+        sumPromotionalCredits(userId, transaction),
+        getPointSourceBalances(userId, transaction),
+      ]);
+      const amount = promotionalExpiryDebitAmount({
+        expiredLots,
+        promotionalCredits,
+        netPromotional: balances.promotional,
+      });
+      if (amount <= 0) return 0;
+      await this.debit(
+        userId,
+        amount,
+        { type: WALLET_REFERENCE_TYPE.EXPIRY, id: userId },
+        WALLET_DESCRIPTIONS.PROMO_EXPIRY,
+        transaction,
+      );
+      return amount;
+    });
   }
 
   /**
