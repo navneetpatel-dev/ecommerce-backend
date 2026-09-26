@@ -3,6 +3,7 @@ import { logger } from '@core/logger';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { REFUND_STATUS } from '@core/constants/statuses';
 import { returnsService } from '@modules/returns/returns.service';
+import { retryFailedPartCardRefunds } from '@modules/payments/partCardRefund';
 
 export const REFUND_RETRY_JOB = 'refund-retry';
 
@@ -34,6 +35,11 @@ export async function runRefundRetry(): Promise<{ retried: number; failed: numbe
       });
     }
   }
+
+  // Card refunds of cancelled and RTO'd parts, too.
+  const parts = await retryFailedPartCardRefunds();
+  retried += parts.retried;
+  failed += parts.failed;
 
   logger.info('Refund retry job finished', { retried, failed });
   return { retried, failed };

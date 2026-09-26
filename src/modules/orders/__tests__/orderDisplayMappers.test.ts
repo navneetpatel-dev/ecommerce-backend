@@ -91,6 +91,24 @@ describe('mapSubOrder', () => {
 });
 
 describe('mapOrderResponse', () => {
+  it('reports the card money refunded for cancelled parts and whole-order cancels', () => {
+    const mapped = mapOrderResponse({
+      id: 'order-1',
+      totalAmount: 1500,
+      cancelRefundStatus: 'NONE',
+      cancelRefundAmountPaise: null,
+      subOrders: [
+        { id: 's1', status: 'CANCELLED', subtotal: 500, customerTotal: 500, cancelRefundAmountPaise: 40_000, cancelRefundStatus: 'INITIATED' },
+        { id: 's2', status: 'CANCELLED', subtotal: 300, customerTotal: 300, cancelRefundAmountPaise: 24_000, cancelRefundStatus: 'FAILED' },
+        { id: 's3', status: 'CONFIRMED', subtotal: 700, customerTotal: 700 },
+      ],
+    });
+    // The failed ₹240 has not reached the card yet.
+    assert.equal(mapped.cancellationRefundAmount, 400);
+    assert.equal(mapped.subOrders[1]!.cancelRefundStatus, 'FAILED');
+    assert.equal(mapped.subOrders[1]!.cancelRefundAmount, 240);
+  });
+
   it('does not leak paise columns from the order or nested sub-orders', () => {
     const mapped = mapOrderResponse({
       id: 'order-1',

@@ -80,6 +80,7 @@ import {
   cascadeDeleteEntityMedia,
   S3_ENTITY_TYPES,
 } from '@core/s3';
+import { isReversedPart } from '@modules/pricing/partReversal';
 import {
   getCreditNotePdfForActor,
   getDebitNotePdfForActor,
@@ -916,9 +917,9 @@ export class ReturnsService {
     });
     await order.update(
       {
-        merchandiseSubtotal: orderDisplay.merchandiseSubtotal,
-        taxTotal: orderDisplay.taxTotal,
-        shippingTotal: orderDisplay.shippingTotal,
+        merchandiseSubtotal: orderDisplay.placed.merchandiseSubtotal,
+        taxTotal: orderDisplay.placed.taxTotal,
+        shippingTotal: orderDisplay.placed.shippingTotal,
         amountDue: orderDisplay.amountDue,
         updatedBy: actorId,
       },
@@ -1002,8 +1003,8 @@ export class ReturnsService {
       order,
       actorId,
       transaction: t,
-      merchandiseBeforePaise: toPaise(orderDisplay.merchandiseSubtotal) + returnedSubtotalPaise,
-      merchandiseAfterPaise: toPaise(orderDisplay.merchandiseSubtotal),
+      merchandiseBeforePaise: toPaise(orderDisplay.placed.merchandiseSubtotal) + returnedSubtotalPaise,
+      merchandiseAfterPaise: toPaise(orderDisplay.placed.merchandiseSubtotal),
     });
     await clawbackCashbackForReturn({
       order,
@@ -1051,12 +1052,23 @@ export class ReturnsService {
       };
     }
 
-    // Cap by remaining refundable pools across prior returns on this order.
+    // Cap by what is left in each pool after earlier returns on this order and the
+    // cancelled or RTO'd parts, which already got their wallet share and card refund back.
     const subOrders = await SubOrder.findAll({
       where: { orderId: order.id },
-      attributes: ['id'],
+      attributes: ['id', 'status', 'customerTotal', 'subtotal', 'cancelRefundAmountPaise'],
       transaction,
     });
+    const reversedParts = subOrders.filter((sub) => isReversedPart(sub.status));
+    const partsWalletPaise = reversedParts.reduce(
+      (sum, sub) =>
+        sum + walletShareOfRefundPaise(order, toPaise(Number(sub.customerTotal ?? sub.subtotal ?? 0))),
+      0,
+    );
+    const partsCardPaise = reversedParts.reduce(
+      (sum, sub) => sum + Number(sub.cancelRefundAmountPaise ?? 0),
+      0,
+    );
     const prior = await ReturnRequest.findAll({
       where: {
         subOrderId: { [Op.in]: subOrders.map((s) => s.id) },
@@ -1067,9 +1079,11 @@ export class ReturnsService {
     });
     const walletAlready = sumRupees(prior.map((r) => r.walletRefundAmount));
     const razorpayAlready = sumRupees(prior.map((r) => r.razorpayRefundAmount));
-    const walletRemaining = roundMoney(Math.max(0, walletUsed - walletAlready));
+    const walletRemaining = roundMoney(
+      Math.max(0, walletUsed - walletAlready - fromPaise(partsWalletPaise)),
+    );
     const razorpayRemaining = roundMoney(
-      Math.max(0, fromPaise(orderRazorpayPaidPaise(order)) - razorpayAlready),
+      Math.max(0, fromPaise(orderRazorpayPaidPaise(order) - partsCardPaise) - razorpayAlready),
     );
 
     // Same wallet/cash proportion sub-order cancellations use (pricing/refundSplit),

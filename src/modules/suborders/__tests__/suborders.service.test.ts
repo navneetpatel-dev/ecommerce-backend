@@ -238,7 +238,8 @@ describe('SubordersService cancellation refund split', () => {
 
     await subordersService.updateStatus(SUB_A, ORDER_STATUS.CANCELLED, undefined, 'actor-1');
 
-    assert.deepEqual(subOrderUpdates.at(-1), { cancelRefundStatus: 'FAILED' });
+    assert.equal(subOrderUpdates.at(-1)?.cancelRefundStatus, 'FAILED');
+    assert.ok(subOrderUpdates.at(-1)?.cancelRefundLastAttemptAt instanceof Date);
     // Not the last part: the order's own refund status is left alone.
     assert.equal(orderUpdate.mock.callCount(), 0);
   });

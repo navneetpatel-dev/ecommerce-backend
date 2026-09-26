@@ -17,6 +17,7 @@ import { settingsService } from '@modules/settings/settings.service';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import {
   GMV_SUB_ORDER_SQL,
+  PAID_OR_COD_ORDER_SQL,
   sqlGmvPaise,
   sqlLineSubtotalPaise,
 } from '@modules/pricing/frozenMoneySql';
@@ -34,7 +35,7 @@ import { Product } from '@database/models/product.model';
 import { Category } from '@database/models/category.model';
 import { Role } from '@database/models/role.model';
 import { sequelize } from '@database/models';
-import { Op, QueryTypes, type Transaction } from 'sequelize';
+import { Op, QueryTypes, literal, type Transaction } from 'sequelize';
 import type {
   RegisterVendorRequest,
   UpdateVendorRequest,
@@ -846,7 +847,17 @@ export class VendorsService {
     // (pricing/vendorPayout).
     const [pendingLedgers, settings] = await Promise.all([
       CommissionLedger.findAll({
-        where: { vendorId, status: COMMISSION_STATUS.PENDING },
+        where: {
+          vendorId,
+          status: COMMISSION_STATUS.PENDING,
+          // Not an online checkout still awaiting its payment: that is no sale yet.
+          subOrderId: {
+            [Op.in]: literal(`(
+              SELECT s.id FROM sub_orders s INNER JOIN orders o ON o.id = s."orderId"
+              WHERE s."vendorId" = ${sequelize.escape(vendorId)} AND ${PAID_OR_COD_ORDER_SQL}
+            )`),
+          },
+        },
         attributes: [
           'netPayoutAmountPaise',
           'commissionAmountPaise',

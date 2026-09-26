@@ -115,14 +115,22 @@ export function recomputeOrderDisplayFields(input: {
             shippingDiscountAmount: sub.shippingDiscountAmount,
           }),
     );
-  let merchandiseSubtotal = 0;
-  let taxTotal = 0;
-  let shippingTotal = 0;
-  for (const sub of counted) {
-    merchandiseSubtotal += roundMoney(sub.subtotal);
-    taxTotal += roundMoney(sub.taxAmount);
-    shippingTotal += shippingCharged(sub.shippingCost, sub.shippingDiscountAmount);
-  }
+  const sums = (parts: typeof input.subOrders) => {
+    let merchandiseSubtotal = 0;
+    let taxTotal = 0;
+    let shippingTotal = 0;
+    for (const sub of parts) {
+      merchandiseSubtotal += roundMoney(sub.subtotal);
+      taxTotal += roundMoney(sub.taxAmount);
+      shippingTotal += shippingCharged(sub.shippingCost, sub.shippingDiscountAmount);
+    }
+    return {
+      merchandiseSubtotal: roundMoney(merchandiseSubtotal),
+      taxTotal: roundMoney(taxTotal),
+      shippingTotal: roundMoney(shippingTotal),
+    };
+  };
+  const { merchandiseSubtotal, taxTotal, shippingTotal } = sums(counted);
   // The order total only changes on returns (delivered parts), so taking the reversed
   // parts out of it leaves the standing parts, their returns and the gift-wrap fee.
   const reversedPaise =
@@ -147,11 +155,17 @@ export function recomputeOrderDisplayFields(input: {
           razorpayAmountPaid: input.razorpayAmountPaid,
         });
   return {
-    merchandiseSubtotal: roundMoney(merchandiseSubtotal),
-    taxTotal: roundMoney(taxTotal),
-    shippingTotal: roundMoney(shippingTotal),
+    merchandiseSubtotal,
+    taxTotal,
+    shippingTotal,
     totalAmount,
     amountDue,
+    /**
+     * The same sums over every part, reversed ones included: what the order's stored
+     * `merchandiseSubtotal`/`taxTotal`/`shippingTotal` columns hold, and the whole-cart
+     * base cashback is prorated against. Never the display figures above.
+     */
+    placed: sums(input.subOrders),
   };
 }
 

@@ -20,7 +20,8 @@ import {
   type PdfTotalsLine,
 } from '@core/pdf';
 import { invoiceLineTaxBreakdown } from '@modules/pricing/displayMoney';
-import { coerceRupees, fromPaise, roundMoney, sumRupees } from '@modules/pricing/money';
+import { coerceRupees, fromPaise, roundMoney, sumRupees, toPaise } from '@modules/pricing/money';
+import { isWalletFundedOrder, walletShareOfRefundPaise } from '@modules/pricing/refundSplit';
 import type { TaxInvoiceSnapshot } from '@modules/pricing/taxInvoiceSnapshot';
 import type { PlatformInvoiceSnapshot } from '@modules/pricing/platformFeeInvoice';
 import { TAX_INVOICE_COPY as COPY } from './reports.constants';
@@ -61,10 +62,12 @@ export type TaxInvoiceSource = {
   invoiceDate: Date;
   paymentMethod: string | null;
   paymentStatus: string;
-  /** Points applied toward this order (order-level; shown for funding clarity). */
+  /** Wallet money that paid for this invoice (its share of the order's wallet spend). */
   walletAmountUsed?: number;
-  /** Online remainder charged via Razorpay (order-level). */
+  /** Card (Razorpay) money that paid for this invoice. */
   razorpayAmountPaid?: number;
+  /** Cash collected at the door for this invoice (COD). */
+  cashOnDeliveryAmount?: number;
   /** Vendor slice grand total (customerTotal). */
   totalAmount: number;
   buyerName?: string | null;
@@ -109,6 +112,9 @@ export type TaxInvoiceOrderInput = {
   paymentStatus: string;
   walletAmountUsed?: number | null;
   razorpayAmountPaid?: number | null;
+  originalTotalAmount?: number | null;
+  totalAmount?: number | null;
+  razorpayPaymentId?: string | null;
   user?: { name?: string | null } | null;
   shippingAddress?: TaxInvoiceAddress | null;
 };
@@ -124,11 +130,34 @@ export function paymentMethodLabel(method: string | null): string {
   return COPY.paymentMethodLabels[method] ?? method;
 }
 
+/**
+ * How one invoice of the order was paid: its share of the wallet money (the same
+ * proportion refunds use), and the rest by card, or in cash at the door on COD. An order
+ * split into several invoices shows each invoice's own amounts, never the whole order's.
+ */
+export function invoicePaymentSplit(
+  order: TaxInvoiceOrderInput,
+  invoiceTotal: number,
+): { walletAmountUsed: number; razorpayAmountPaid: number; cashOnDeliveryAmount: number } {
+  const totalPaise = toPaise(roundMoney(invoiceTotal));
+  const walletPaise = isWalletFundedOrder(order)
+    ? totalPaise
+    : walletShareOfRefundPaise(order, totalPaise);
+  const restPaise = Math.max(0, totalPaise - walletPaise);
+  const cod = order.paymentMethod === 'COD';
+  return {
+    walletAmountUsed: fromPaise(walletPaise),
+    razorpayAmountPaid: cod ? 0 : fromPaise(restPaise),
+    cashOnDeliveryAmount: cod ? fromPaise(restPaise) : 0,
+  };
+}
+
 /** Payment method line on tax invoice — reflects wallet funding, not only DB enum. */
 export function invoiceFundingMethodLabel(source: {
   paymentMethod: string | null;
   walletAmountUsed?: number;
   razorpayAmountPaid?: number;
+  cashOnDeliveryAmount?: number;
   totalAmount: number;
 }): string {
   const walletUsed = roundMoney(source.walletAmountUsed ?? 0);
@@ -140,6 +169,9 @@ export function invoiceFundingMethodLabel(source: {
   }
   if (walletUsed > 0 && online > 0) {
     return COPY.paymentMethodLabels.WALLET_PLUS_RAZORPAY ?? 'Wallet + Razorpay';
+  }
+  if (walletUsed > 0 && roundMoney(source.cashOnDeliveryAmount ?? 0) > 0) {
+    return COPY.paymentMethodLabels.WALLET_PLUS_COD ?? 'Wallet + Cash on delivery';
   }
   if (walletUsed > 0) {
     return COPY.paymentMethodLabels.WALLET ?? 'Wallet';
@@ -245,8 +277,7 @@ export function toTaxInvoiceSourceFromPlatformInvoice(
     invoiceDate: new Date(snapshot.issuedAt),
     paymentMethod: order.paymentMethod ?? null,
     paymentStatus: order.paymentStatus,
-    walletAmountUsed: roundMoney(order.walletAmountUsed ?? 0),
-    razorpayAmountPaid: roundMoney(order.razorpayAmountPaid ?? 0),
+    ...invoicePaymentSplit(order, fromPaise(snapshot.totalPaise)),
     totalAmount: fromPaise(snapshot.totalPaise),
     buyerName: order.user?.name ?? null,
     shippingAddress: order.shippingAddress ?? null,
@@ -293,8 +324,7 @@ export function toTaxInvoiceSourceFromSubOrder(
     invoiceDate: subOrder.taxInvoiceIssuedAt ?? order.createdAt,
     paymentMethod: order.paymentMethod ?? null,
     paymentStatus: order.paymentStatus,
-    walletAmountUsed: roundMoney(order.walletAmountUsed ?? 0),
-    razorpayAmountPaid: roundMoney(order.razorpayAmountPaid ?? 0),
+    ...invoicePaymentSplit(order, totalAmount),
     totalAmount,
     buyerName: order.user?.name ?? null,
     shippingAddress: order.shippingAddress ?? null,
@@ -480,6 +510,14 @@ function paintTaxInvoice(doc: PDFKit.PDFDocument, source: TaxInvoiceSource) {
       metaLeft.push({
         label: COPY.onlinePaid,
         value: formatInvoiceMoney(online),
+        tone: 'muted',
+      });
+    }
+    const cash = roundMoney(source.cashOnDeliveryAmount ?? 0);
+    if (cash > 0) {
+      metaLeft.push({
+        label: COPY.cashOnDelivery,
+        value: formatInvoiceMoney(cash),
         tone: 'muted',
       });
     }
