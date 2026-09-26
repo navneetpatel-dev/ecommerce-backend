@@ -23,6 +23,7 @@ export const TAX_INVOICE_COPY = {
   grandTotal: 'Grand total',
   walletApplied: 'Wallet applied',
   onlinePaid: 'Online / Razorpay',
+  cashOnDelivery: 'Cash on delivery',
   amountInWords: 'Amount in words',
   cgst: 'CGST',
   sgst: 'SGST',
@@ -36,6 +37,7 @@ export const TAX_INVOICE_COPY = {
     COD: 'Cash on delivery',
     WALLET: 'Wallet',
     WALLET_PLUS_RAZORPAY: 'Wallet + Razorpay',
+    WALLET_PLUS_COD: 'Wallet + Cash on delivery',
   } as Record<string, string>,
   paymentStatusLabels: {
     PENDING: 'Pending',

@@ -39,6 +39,8 @@ export class SubOrder extends Model<InferAttributes<SubOrder>, InferCreationAttr
   /** Card (Razorpay) refund for this part when it was cancelled or came back undelivered. */
   declare cancelRefundAmountPaise: CreationOptional<number | null>;
   declare cancelRefundStatus: CreationOptional<string | null>;
+  declare cancelRefundAttemptCount: CreationOptional<number>;
+  declare cancelRefundLastAttemptAt: CreationOptional<Date | null>;
   declare cancelRazorpayRefundId: CreationOptional<string | null>;
   /** Tax invoice amounts as issued at checkout; null on sub-orders placed before it existed. */
   declare taxInvoiceSnapshot: CreationOptional<TaxInvoiceSnapshot | null>;
@@ -100,6 +102,8 @@ export const initSubOrderModel = (sequelize: Sequelize) => {
       taxInvoiceIssuedAt: { type: DataTypes.DATE, allowNull: true },
       cancelRefundAmountPaise: { type: DataTypes.BIGINT, allowNull: true },
       cancelRefundStatus: { type: DataTypes.STRING(16), allowNull: true },
+      cancelRefundAttemptCount: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+      cancelRefundLastAttemptAt: { type: DataTypes.DATE, allowNull: true },
       cancelRazorpayRefundId: { type: DataTypes.STRING(64), allowNull: true },
       taxInvoiceSnapshot: { type: DataTypes.JSONB, allowNull: true },
       shippingInvoiceSnapshot: { type: DataTypes.JSONB, allowNull: true },

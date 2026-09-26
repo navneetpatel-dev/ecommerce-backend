@@ -19,12 +19,16 @@ import {
   recordCouponUsagesForOrder,
   destroyCouponUsageForOrder,
 } from '@modules/coupons/couponEngine';
+import { Op } from 'sequelize';
 import {
   ORDER_STATUS,
+  PAYMENT_METHOD,
   PAYMENT_STATUS,
   COMMISSION_STATUS,
+  REFUND_STATUS,
   allSubOrdersCancellable,
 } from '@core/constants/statuses';
+import { logger } from '@core/logger';
 import { ERROR_MESSAGES, ERROR_CODES } from '@core/constants/errors';
 import { RAZORPAY_MIN_AMOUNT_PAISE } from '@core/constants/http';
 import { toPaise } from '@modules/pricing/money';
@@ -61,10 +65,20 @@ type OrderForRollback = Order & {
 
 export class PaymentsService {
   private async restoreCancelledRazorpayOrder(razorpayOrderId: string): Promise<string | null> {
+    return this.cancelUnpaidOrder({ razorpayOrderId });
+  }
+
+  /**
+   * Cancel an online order that was never paid: restock, void its ledgers and coupon
+   * use, return the items to the cart and the wallet money applied at checkout.
+   */
+  private async cancelUnpaidOrder(
+    where: { razorpayOrderId: string } | { id: string },
+  ): Promise<string | null> {
     let cancelledOrderId: string | null = null;
     await sequelize.transaction(async (t) => {
       const locked = await Order.findOne({
-        where: { razorpayOrderId },
+        where,
         transaction: t,
         lock: t.LOCK.UPDATE,
       });
@@ -138,6 +152,104 @@ export class PaymentsService {
       cancelledOrderId = order.id;
     });
     return cancelledOrderId;
+  }
+
+  /**
+   * Expire online checkouts nobody paid for: orders still awaiting their Razorpay
+   * payment after `CHECKOUT_PENDING_PAYMENT_TTL_MINUTES` (the customer closed the
+   * browser mid-payment, so neither the dismiss call nor a payment.failed webhook came).
+   * Until then the wallet money applied at checkout stays deducted, the stock stays
+   * reserved and the vendor's ledger counts a sale. An order Razorpay holds a captured
+   * or authorized payment for is left to its webhook.
+   */
+  async expireAbandonedCheckouts(now = new Date()): Promise<{ expired: number; skipped: number }> {
+    const cutoff = new Date(now.getTime() - env.CHECKOUT_PENDING_PAYMENT_TTL_MINUTES * 60 * 1000);
+    const stale = await Order.findAll({
+      where: {
+        paymentMethod: PAYMENT_METHOD.RAZORPAY,
+        paymentStatus: PAYMENT_STATUS.PENDING,
+        status: { [Op.ne]: ORDER_STATUS.CANCELLED },
+        createdAt: { [Op.lt]: cutoff },
+      },
+      attributes: ['id', 'userId', 'razorpayOrderId'],
+      order: [['createdAt', 'ASC']],
+      limit: 100,
+    });
+
+    let expired = 0;
+    let skipped = 0;
+    for (const order of stale) {
+      if (order.razorpayOrderId) {
+        if (!razorpayConfigured) {
+          skipped += 1;
+          continue;
+        }
+        try {
+          const payments = await razorpay.orders.fetchPayments(order.razorpayOrderId);
+          const paid = (payments.items ?? []).some((payment) =>
+            ['captured', 'authorized'].includes(String(payment.status)),
+          );
+          if (paid) {
+            skipped += 1;
+            continue;
+          }
+        } catch (error) {
+          // Unknown at the gateway: try again on the next run rather than guess.
+          logger.warn('Abandoned checkout check failed', {
+            orderId: order.id,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+          skipped += 1;
+          continue;
+        }
+      }
+      const cancelledOrderId = await this.cancelUnpaidOrder({ id: order.id });
+      if (cancelledOrderId) {
+        expired += 1;
+        void notificationsService.sendOrderCancelled(order.userId, cancelledOrderId, {
+          orderId: cancelledOrderId,
+          orderNumber: cancelledOrderId.slice(0, 8).toUpperCase(),
+        });
+      }
+    }
+    return { expired, skipped };
+  }
+
+  /**
+   * A payment captured for an order already cancelled unpaid (expired, dismissed, or a
+   * failed attempt followed by a successful retry): the goods went back to stock and the
+   * wallet was returned, so the card money goes straight back as well.
+   */
+  private async refundPaymentForCancelledOrder(
+    order: Order,
+    paymentId: string,
+    amountPaise: number,
+  ): Promise<void> {
+    await order.update({ razorpayPaymentId: paymentId, cancelRefundStatus: REFUND_STATUS.PENDING });
+    if (amountPaise <= 0) return;
+    try {
+      const refundId = await this.createRazorpayRefund(paymentId, amountPaise, {
+        orderId: order.id,
+        reason: 'ORDER_CANCEL',
+      });
+      await order.update({
+        paymentStatus: PAYMENT_STATUS.PAID,
+        cancelRefundStatus: REFUND_STATUS.INITIATED,
+        cancelRazorpayRefundId: refundId,
+        cancelRefundAmountPaise: amountPaise,
+      });
+    } catch (error) {
+      logger.error('Refund of payment on a cancelled order failed', {
+        orderId: order.id,
+        paymentId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      await order.update({
+        paymentStatus: PAYMENT_STATUS.PAID,
+        cancelRefundStatus: REFUND_STATUS.FAILED,
+        cancelRefundAmountPaise: amountPaise,
+      });
+    }
   }
 
   private async applyCouponOnPaymentCaptured(order: Order, transaction: any) {
@@ -388,6 +500,8 @@ export class PaymentsService {
           entity?: {
             id: string;
             order_id: string;
+            /** Captured amount, in paise. */
+            amount?: number;
             /** Present when the customer opted to save this instrument. */
             token_id?: string | null;
             method?: string;
@@ -435,6 +549,7 @@ export class PaymentsService {
         if (!handledRecharge && !handledGiftCard) {
           let confirmedOrderId: string | null = null;
           let confirmedOrderUserId: string | null = null;
+          let cancelledPaidOrder: Order | null = null;
           await sequelize.transaction(async (t) => {
             const order = await Order.findOne({
               where: { razorpayOrderId: payment.order_id },
@@ -443,6 +558,11 @@ export class PaymentsService {
             });
             if (!order) return;
             if (order.paymentStatus === PAYMENT_STATUS.PAID) return;
+            // Never revive a cancelled order: its stock and wallet money are already back.
+            if (order.status === ORDER_STATUS.CANCELLED) {
+              cancelledPaidOrder = order;
+              return;
+            }
 
             await order.update(
               {
@@ -456,6 +576,13 @@ export class PaymentsService {
             confirmedOrderId = order.id;
             confirmedOrderUserId = order.userId;
           });
+          if (cancelledPaidOrder) {
+            await this.refundPaymentForCancelledOrder(
+              cancelledPaidOrder,
+              payment.id,
+              Number(payment.amount ?? 0),
+            );
+          }
           if (confirmedOrderId) {
             void notifyOrderConfirmed(confirmedOrderId);
           }

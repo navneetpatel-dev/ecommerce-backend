@@ -85,6 +85,8 @@ describe('displayMoney', () => {
     assert.equal(cod.taxTotal, 144);
     assert.equal(cod.shippingTotal, 56);
     assert.equal(cod.totalAmount, 1050);
+    // The order's stored totals (and the cashback base) stay over every part.
+    assert.deepEqual(cod.placed, { merchandiseSubtotal: 1200, taxTotal: 216, shippingTotal: 84 });
     // Kept part + gift wrap (1050) less the wallet still on it: 300 − the cancelled
     // part's share (500 × 300 / 1550 = 96.77) = 203.23. What the shipment collects.
     assert.equal(cod.amountDue, 846.77);

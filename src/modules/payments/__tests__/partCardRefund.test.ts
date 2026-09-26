@@ -4,7 +4,11 @@ import { Order } from '@database/models/order.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { ORDER_STATUS, REFUND_STATUS } from '@core/constants/statuses';
 import { paymentsService } from '@modules/payments/payments.service';
-import { retryPartCardRefund } from '@modules/payments/partCardRefund';
+import {
+  PART_REFUND_MAX_ATTEMPTS,
+  retryFailedPartCardRefunds,
+  retryPartCardRefund,
+} from '@modules/payments/partCardRefund';
 
 describe('retryPartCardRefund', () => {
   afterEach(() => mock.restoreAll());
@@ -82,7 +86,28 @@ describe('retryPartCardRefund', () => {
       throw new Error('gateway down');
     });
     await assert.rejects(retryPartCardRefund('sub-1'));
-    assert.deepEqual(rows.subOrderUpdates.at(-1), { cancelRefundStatus: REFUND_STATUS.FAILED });
+    assert.equal(rows.subOrderUpdates.at(-1)?.cancelRefundStatus, REFUND_STATUS.FAILED);
+    assert.ok(rows.subOrderUpdates.at(-1)?.cancelRefundLastAttemptAt instanceof Date);
     assert.deepEqual(rows.orderUpdates, []);
+  });
+});
+
+describe('retryFailedPartCardRefunds', () => {
+  afterEach(() => mock.restoreAll());
+
+  it('retries failed part refunds still under the attempt limit, oldest first', async () => {
+    let where: Record<string, unknown> | undefined;
+    let order: unknown;
+    mock.method(SubOrder, 'findAll', async (options: { where: Record<string, unknown>; order: unknown }) => {
+      where = options.where;
+      order = options.order;
+      return [] as never;
+    });
+    const result = await retryFailedPartCardRefunds();
+    assert.deepEqual(result, { retried: 0, failed: 0 });
+    assert.equal(where?.cancelRefundStatus, REFUND_STATUS.FAILED);
+    const attempts = where?.cancelRefundAttemptCount as Record<symbol, number>;
+    assert.equal(attempts[Object.getOwnPropertySymbols(attempts)[0]!], PART_REFUND_MAX_ATTEMPTS);
+    assert.deepEqual(order, [['cancelRefundLastAttemptAt', 'ASC']]);
   });
 });

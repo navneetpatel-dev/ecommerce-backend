@@ -5,6 +5,7 @@ import {
   formatInvoiceDate,
   formatInvoiceMoney,
   invoiceFundingMethodLabel,
+  invoicePaymentSplit,
   paymentMethodLabel,
   paymentStatusLabel,
   renderTaxInvoicePdf,
@@ -30,6 +31,38 @@ describe('taxInvoicePdf formatters', () => {
     assert.equal(paymentMethodLabel(null), '--');
     assert.equal(paymentStatusLabel('PENDING'), 'Pending');
     assert.equal(paymentStatusLabel('PAID'), 'Paid');
+  });
+
+  it("shows each invoice's own share of the wallet and card payment", () => {
+    // ₹1500 order: ₹300 wallet + ₹1200 card, split into a ₹1000 and a ₹500 invoice.
+    const order = {
+      id: 'o1',
+      createdAt: new Date(),
+      paymentMethod: 'RAZORPAY',
+      paymentStatus: 'PAID',
+      walletAmountUsed: 300,
+      razorpayAmountPaid: 1200,
+      originalTotalAmount: 1500,
+      totalAmount: 1500,
+      razorpayPaymentId: 'pay_1',
+    };
+    assert.deepEqual(invoicePaymentSplit(order, 500), {
+      walletAmountUsed: 100,
+      razorpayAmountPaid: 400,
+      cashOnDeliveryAmount: 0,
+    });
+    assert.deepEqual(invoicePaymentSplit(order, 1000), {
+      walletAmountUsed: 200,
+      razorpayAmountPaid: 800,
+      cashOnDeliveryAmount: 0,
+    });
+    const cod = { ...order, paymentMethod: 'COD', razorpayAmountPaid: 0, razorpayPaymentId: null };
+    const split = invoicePaymentSplit(cod, 500);
+    assert.deepEqual(split, { walletAmountUsed: 100, razorpayAmountPaid: 0, cashOnDeliveryAmount: 400 });
+    assert.equal(
+      invoiceFundingMethodLabel({ paymentMethod: 'COD', totalAmount: 500, ...split }),
+      'Wallet + Cash on delivery',
+    );
   });
 
   it('maps invoice funding method from wallet split', () => {

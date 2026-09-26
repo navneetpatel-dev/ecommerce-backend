@@ -9,6 +9,7 @@ import {
   subOrderCustomerTotal,
 } from '@modules/pricing/displayMoney';
 import { isReversedPart } from '@modules/pricing/partReversal';
+import { REFUND_STATUS } from '@core/constants/statuses';
 import { resolveShippingDisplayKey, resolveTaxDisplayKey } from '@modules/checkout/checkoutOrderTotals';
 
 /** Primary image for an order line, resolved live from the product catalogue. */
@@ -140,6 +141,15 @@ export function mapOrderResponse(order: Record<string, unknown>) {
     razorpayPaymentId: (plain.razorpayPaymentId as string | null | undefined) ?? null,
     giftWrapFeeAmount: plain.giftWrapFeeAmount,
   });
+  // Card money sent back for cancellations: each cancelled or RTO'd part's refund, and
+  // a whole-order cancellation's. Issued (INITIATED) counts; a FAILED one is not back yet.
+  const issued = (status: unknown) =>
+    status === REFUND_STATUS.INITIATED || status === REFUND_STATUS.COMPLETED;
+  const cancellationRefundPaise =
+    rawSubOrders.reduce(
+      (sum, sub) => sum + (issued(sub.cancelRefundStatus) ? Number(sub.cancelRefundAmountPaise ?? 0) : 0),
+      0,
+    ) + (issued(plain.cancelRefundStatus) ? Number(plain.cancelRefundAmountPaise ?? 0) : 0);
   // Tax lines of the parts still standing (every part when all were reversed).
   const standingRaw = rawSubOrders.filter((sub) => !isReversedPart(sub.status as string));
   const orderTax = sumTaxFromSubOrders(standingRaw.length > 0 ? standingRaw : rawSubOrders);
@@ -169,6 +179,7 @@ export function mapOrderResponse(order: Record<string, unknown>) {
     paymentMethod: plain.paymentMethod ?? null,
     cancelRefundStatus: plain.cancelRefundStatus ?? null,
     cancelRazorpayRefundId: plain.cancelRazorpayRefundId ?? null,
+    cancellationRefundAmount: fromPaise(cancellationRefundPaise),
     createdAt: plain.createdAt,
     shippingAddress: plain.shippingAddress ?? null,
     customerName: (plain.user as { name?: string } | undefined)?.name ?? null,

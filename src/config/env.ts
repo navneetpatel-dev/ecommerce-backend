@@ -95,6 +95,8 @@ const envSchema = z.object({
   CASHBACK_CREDIT_DELAY_DAYS: z.coerce.number().int().min(0).default(0),
   /** Hours before stale PENDING wallet recharges are marked EXPIRED. */
   WALLET_RECHARGE_PENDING_TTL_HOURS: z.coerce.number().int().positive().default(24),
+  /** Minutes an online checkout may wait for its Razorpay payment before it is cancelled. */
+  CHECKOUT_PENDING_PAYMENT_TTL_MINUTES: z.coerce.number().int().positive().default(120),
 
   LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
 

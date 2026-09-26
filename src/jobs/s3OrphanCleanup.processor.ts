@@ -7,12 +7,14 @@ import {
   runWalletRechargeExpiry,
 } from './walletRechargeExpiry.processor';
 import { REFUND_RETRY_JOB, runRefundRetry } from './refundRetry.processor';
+import { CHECKOUT_EXPIRY_JOB, runCheckoutExpiry } from './checkoutExpiry.processor';
 import { PROMO_POINTS_EXPIRY_JOB, runPromoPointsExpiry } from './promoPointsExpiry.processor';
 import { EXPORT_CLEANUP_JOB, EXPORT_STALE_PROCESSING_SWEEP_JOB, runExportCleanup, runStaleProcessingSweep } from './exportCleanup';
 
 const REPEAT_JOB_ID = 's3-orphan-cleanup-daily';
 const WALLET_RECHARGE_EXPIRY_JOB_ID = 'wallet-recharge-expiry-hourly';
 const REFUND_RETRY_JOB_ID = 'refund-retry-hourly';
+const CHECKOUT_EXPIRY_JOB_ID = 'checkout-expiry-15min';
 const PROMO_POINTS_EXPIRY_JOB_ID = 'promo-points-expiry-daily';
 const EXPORT_CLEANUP_JOB_ID = 'export-cleanup-daily';
 const EXPORT_STALE_PROCESSING_SWEEP_JOB_ID = 'export-stale-processing-sweep-15min';
@@ -32,6 +34,10 @@ export function startS3OrphanCleanupWorker(): Worker {
       }
       if (job.name === REFUND_RETRY_JOB) {
         await runRefundRetry();
+        return;
+      }
+      if (job.name === CHECKOUT_EXPIRY_JOB) {
+        await runCheckoutExpiry();
         return;
       }
       if (job.name === PROMO_POINTS_EXPIRY_JOB) {
@@ -100,6 +106,18 @@ export async function scheduleS3OrphanCleanupJob(): Promise<void> {
     },
   );
   logger.info('Refund retry scheduled', { cron: '30 * * * *' });
+
+  await queues.s3OrphanCleanup.add(
+    CHECKOUT_EXPIRY_JOB,
+    {},
+    {
+      jobId: CHECKOUT_EXPIRY_JOB_ID,
+      repeat: { pattern: '5-59/15 * * * *' },
+      removeOnComplete: 50,
+      removeOnFail: 100,
+    },
+  );
+  logger.info('Checkout expiry scheduled', { cron: '5-59/15 * * * *' });
 
   await queues.s3OrphanCleanup.add(
     PROMO_POINTS_EXPIRY_JOB,

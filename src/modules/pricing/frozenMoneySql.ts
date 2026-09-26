@@ -61,6 +61,16 @@ export const TCS_LEDGER_ORDER_SQL = `NOT (
   AND o."paymentStatus" IN ('${PAYMENT_STATUS.PENDING}', '${PAYMENT_STATUS.FAILED}')
 )`;
 
+/**
+ * Orders whose sale is real money (alias `o` = orders): COD, or an online order whose
+ * payment went through. An online checkout still awaiting (or that failed) its payment
+ * is not a sale yet — its ledger rows are not the vendor's earnings.
+ */
+export const PAID_OR_COD_ORDER_SQL = `NOT (
+  o."paymentMethod" <> '${PAYMENT_METHOD.COD}'
+  AND o."paymentStatus" IN ('${PAYMENT_STATUS.PENDING}', '${PAYMENT_STATUS.FAILED}')
+)`;
+
 /** The commission_ledgers column `vendorNetPayoutPaise` reads. */
 export interface VendorNetPayoutSource {
   netPayoutAmountPaise?: unknown;

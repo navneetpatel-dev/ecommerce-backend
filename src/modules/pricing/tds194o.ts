@@ -1,6 +1,7 @@
 import { QueryTypes, type Transaction } from 'sequelize';
 import { COMMISSION_REFERENCE_TYPE, ORDER_STATUS, VENDOR_ENTITY_TYPE } from '@core/constants/statuses';
 import { sequelize } from '@database/models';
+import { PAID_OR_COD_ORDER_SQL } from './frozenMoneySql';
 import { istFinancialYearStart } from './istCalendar';
 import { toPaise, type Paise } from './money';
 
@@ -8,7 +9,8 @@ import { toPaise, type Paise } from './money';
  * Whether a sale qualifies for the s.194-O(4) exemption: the seller is an individual
  * (sole proprietor, with PAN/Aadhaar on file — the KYC gate guarantees it) and their
  * gross sales through the platform this financial year, including this sale, stay
- * within the threshold. Cancelled and RTO'd parts do not count, and returns reduce it.
+ * within the threshold. Cancelled and RTO'd parts and unpaid online checkouts do not
+ * count, and returns reduce it.
  */
 export function qualifiesFor194oExemption(input: {
   entityType: string | null | undefined;
@@ -32,7 +34,9 @@ export async function vendorFinancialYearGrossPaise(
     `SELECT COALESCE(SUM(cl."taxableAmountPaise"), 0)::bigint AS "grossPaise"
        FROM commission_ledgers cl
        INNER JOIN sub_orders s ON s.id = cl."subOrderId"
+       INNER JOIN orders o ON o.id = s."orderId"
       WHERE cl."vendorId" = :vendorId
+        AND ${PAID_OR_COD_ORDER_SQL}
         AND cl."deletedAt" IS NULL
         AND cl."createdAt" >= :fyStart
         AND (cl."referenceType" IS NULL OR cl."referenceType" = :clawback)

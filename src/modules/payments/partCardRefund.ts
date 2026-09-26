@@ -1,4 +1,4 @@
-import type { Transaction } from 'sequelize';
+import { literal, Op, type Transaction } from 'sequelize';
 import { ORDER_STATUS, PAYMENT_STATUS, REFUND_STATUS } from '@core/constants/statuses';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { NotFoundError } from '@core/errors/NotFoundError';
@@ -71,7 +71,11 @@ export async function issuePartCardRefund(input: {
       reason: error instanceof Error ? error.message : String(error),
     });
     await SubOrder.update(
-      { cancelRefundStatus: REFUND_STATUS.FAILED },
+      {
+        cancelRefundStatus: REFUND_STATUS.FAILED,
+        cancelRefundAttemptCount: literal('"cancelRefundAttemptCount" + 1') as unknown as number,
+        cancelRefundLastAttemptAt: new Date(),
+      },
       { where: { id: input.subOrderId } },
     );
     if (input.lastPart) {
@@ -163,4 +167,39 @@ export async function retryPartCardRefund(subOrderId: string): Promise<SubOrder>
   });
   if (!refundId) throw new ValidationError(ERROR_MESSAGES.PART_REFUND_FAILED);
   return part.reload();
+}
+
+/** How many times the refund-retry job tries a part's card refund before leaving it to an admin. */
+export const PART_REFUND_MAX_ATTEMPTS = 5;
+
+/**
+ * Retry failed part card refunds (the refund-retry job), oldest attempt first, up to
+ * `PART_REFUND_MAX_ATTEMPTS` tries each. An admin can still retry one past that.
+ */
+export async function retryFailedPartCardRefunds(limit = 50): Promise<{ retried: number; failed: number }> {
+  const parts = await SubOrder.findAll({
+    where: {
+      cancelRefundStatus: REFUND_STATUS.FAILED,
+      cancelRefundAmountPaise: { [Op.gt]: 0 },
+      cancelRefundAttemptCount: { [Op.lt]: PART_REFUND_MAX_ATTEMPTS },
+    },
+    attributes: ['id'],
+    order: [['cancelRefundLastAttemptAt', 'ASC']],
+    limit,
+  });
+  let retried = 0;
+  let failed = 0;
+  for (const part of parts) {
+    try {
+      await retryPartCardRefund(part.id);
+      retried += 1;
+    } catch (error) {
+      failed += 1;
+      logger.warn('Part refund retry failed', {
+        subOrderId: part.id,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return { retried, failed };
 }
