@@ -252,7 +252,9 @@ async function gstr1Filing(filters: ReportFilters) {
       WHERE so."deletedAt" IS NULL
         AND so."taxInvoiceNumber" IS NOT NULL
         AND so."taxInvoiceIssuedAt" BETWEEN :from AND :to
-        AND ${REPORTABLE_ORDER_SQL}
+        -- An RTO'd part's invoice was issued at dispatch: it stays here, reversed by
+        -- its credit note in the CDN section.
+        AND (${REPORTABLE_ORDER_SQL} OR so."status" = '${ORDER_STATUS.RETURNED}')
         ${vendorFilter}
       GROUP BY so."taxInvoiceNumber", so."taxInvoiceIssuedAt", a.gstin, a.state
 
@@ -278,7 +280,9 @@ async function gstr1Filing(filters: ReportFilters) {
       WHERE so."deletedAt" IS NULL
         AND so."taxInvoiceNumber" IS NOT NULL
         AND so."taxInvoiceIssuedAt" BETWEEN :from AND :to
-        AND ${REPORTABLE_ORDER_SQL}
+        -- An RTO'd part's invoice was issued at dispatch: it stays here, reversed by
+        -- its credit note in the CDN section.
+        AND (${REPORTABLE_ORDER_SQL} OR so."status" = '${ORDER_STATUS.RETURNED}')
         ${vendorFilter}
       GROUP BY a.state
 

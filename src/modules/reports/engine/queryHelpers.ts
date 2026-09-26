@@ -75,7 +75,8 @@ export function reportPageParams(filters: ReportFilters): {
  */
 export function reportableOrderWhere(from?: Date, to?: Date): Record<string, unknown> {
   const where: Record<string, unknown> = {
-    status: { [Op.ne]: ORDER_STATUS.CANCELLED },
+    // A fully cancelled or fully RTO'd (RETURNED) order was refunded: not a sale.
+    status: { [Op.notIn]: [ORDER_STATUS.CANCELLED, ORDER_STATUS.RETURNED] },
     [Op.or]: [
       { paymentStatus: PAYMENT_STATUS.PAID },
       {
@@ -158,9 +159,10 @@ export async function computeReconciliationSummary(filters: {
         COALESCE(SUM(${subtotalExpr}), 0)::bigint AS "gmvPaise",
         COALESCE(SUM(${merchDiscExpr}), 0)::bigint AS "merchandiseDiscountPaise"
       FROM scoped_subs s
-      -- A cancelled sub-order was refunded and its commission/TCS ledgers deleted, so
-      -- it leaves GMV, tax, shipping and discounts too (same rule as GMV_SUB_ORDER_SQL).
-      WHERE s."status" <> '${ORDER_STATUS.CANCELLED}'
+      -- A cancelled or RTO'd (RETURNED) sub-order was refunded and its commission/TCS
+      -- ledgers deleted, so it leaves GMV, tax, shipping and discounts too (same rule
+      -- as GMV_SUB_ORDER_SQL).
+      WHERE s."status" NOT IN ('${ORDER_STATUS.CANCELLED}', '${ORDER_STATUS.RETURNED}')
     ),
     ledger_totals AS (
       SELECT
@@ -199,6 +201,9 @@ export async function computeReconciliationSummary(filters: {
       FROM credit_notes cn
       INNER JOIN reportable_orders ro ON ro.id = cn."orderId"
       WHERE cn."deletedAt" IS NULL
+        -- Return refunds only: an RTO credit note's part already left customer
+        -- payments (sqlOrderPaymentPaise), like a cancelled part.
+        AND cn."returnRequestId" IS NOT NULL
         AND (
           :vendorId::uuid IS NULL
           OR EXISTS (

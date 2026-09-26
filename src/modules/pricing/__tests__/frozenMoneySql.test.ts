@@ -58,12 +58,12 @@ describe('vendorNetPayoutPaise', () => {
 });
 
 describe('REPORTABLE_ORDER_SQL', () => {
-  it('counts paid orders and placed COD orders, excluding cancelled COD', () => {
+  it('counts paid orders and placed COD orders, excluding cancelled and fully RTO\'d orders', () => {
     const sql = squash(REPORTABLE_ORDER_SQL);
     assert.match(sql, /o\."paymentStatus" = 'PAID'/);
     assert.match(sql, /o\."paymentMethod" = 'COD'/);
     assert.match(sql, /o\."paymentStatus" NOT IN \('FAILED', 'REFUNDED'\)/);
-    assert.match(sql, /o\."status" <> 'CANCELLED'/);
+    assert.match(sql, /o\."status" NOT IN \('CANCELLED', 'RETURNED'\)/);
   });
 });
 

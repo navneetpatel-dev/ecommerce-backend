@@ -38,6 +38,7 @@ import {
 import type { GetSubOrdersQuery } from './suborders.dto';
 import { issueTaxInvoicesOnDispatch } from '@modules/pricing/taxInvoiceIssue';
 import { codAmountForSubOrder } from '@modules/shipping/codCollection';
+import { isReversedPart } from '@modules/pricing/partReversal';
 
 /**
  * Transitions reachable through this manual, vendor/admin-facing endpoint.
@@ -249,8 +250,9 @@ export class SubordersService {
             attributes: ['id', 'status', 'customerTotal', 'subtotal'],
             transaction,
           });
+          // Every other part is already reversed (cancelled, or RTO'd): this is the last.
           const allCancelled = sisterSubOrders.every(
-            (s) => s.id === id || s.status === ORDER_STATUS.CANCELLED,
+            (s) => s.id === id || isReversedPart(s.status),
           );
           const customerRefund = roundMoney(Number(row.customerTotal ?? row.subtotal));
           if (allCancelled) {
@@ -280,7 +282,7 @@ export class SubordersService {
                 const razorpayPaid = fromPaise(orderRazorpayPaidPaise(parentOrder));
                 const alreadyRefunded = sumRupees(
                   sisterSubOrders
-                    .filter((s) => s.id !== id && s.status === ORDER_STATUS.CANCELLED)
+                    .filter((s) => s.id !== id && isReversedPart(s.status))
                     .map((s) =>
                       suborderCancelCashShare(
                         parentOrder,

@@ -64,7 +64,8 @@ describe('PaymentsService cancellation refund webhook', () => {
         // an earlier partial-cancel refund matches no row.
         where: {
           id: 'order-cancelled',
-          status: ORDER_STATUS.CANCELLED,
+          // Cancelled, or every part came back undelivered (RTO).
+          status: [ORDER_STATUS.CANCELLED, ORDER_STATUS.RETURNED],
           cancelRazorpayRefundId: 'rfnd_last_cancel',
         },
       },

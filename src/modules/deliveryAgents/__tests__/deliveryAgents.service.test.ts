@@ -13,6 +13,7 @@ import { deliveryAgentsService } from '../deliveryAgents.service';
 import { deliveryAgentsRepository } from '../deliveryAgents.repository';
 import { returnsService } from '@modules/returns/returns.service';
 import { walletService } from '@modules/wallet/wallet.service';
+import { paymentsService } from '@modules/payments/payments.service';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { RETURN_STATUS } from '@core/constants/statuses';
 
@@ -82,6 +83,12 @@ describe('Delivery Module Comprehensive Verification', () => {
           userId: 'user-1',
           paymentMethod: 'RAZORPAY',
           paymentStatus: 'PAID',
+          razorpayPaymentId: 'pay_rto_1',
+          razorpayAmountPaid: 1250,
+          totalAmount: 1250,
+          originalTotalAmount: 1250,
+          walletAmountUsed: 0,
+          update: async () => undefined,
         },
         update: async (fields: { status?: string }) => {
           subOrderUpdatedStatus = fields.status;
@@ -113,13 +120,19 @@ describe('Delivery Module Comprehensive Verification', () => {
       }) as unknown as Order);
 
       mock.method(Order, 'update', async (fields: { status?: string }) => {
-        orderUpdatedStatus = fields.status;
+        // The refund bookkeeping updates the order too; keep the status it was set to.
+        if (fields.status) orderUpdatedStatus = fields.status;
         return [1];
       });
 
       mock.method(walletService, 'credit', async (_userId, amount) => {
         walletRefundCredited = amount;
         return {} as any;
+      });
+      let cardRefundPaise = 0;
+      mock.method(paymentsService, 'createRazorpayRefund', async (_paymentId: string, amountPaise: number) => {
+        cardRefundPaise = amountPaise;
+        return 'rfnd_rto_1';
       });
 
       mock.method(notificationsService, 'sendRefundProcessed', () => {});
@@ -139,7 +152,9 @@ describe('Delivery Module Comprehensive Verification', () => {
       assert.equal(stockIncremented, 2);
       assert.equal(commissionDestroyed, true);
       assert.equal(orderUpdatedStatus, 'RETURNED');
-      assert.equal(walletRefundCredited, 1250);
+      // Paid by card: the refund goes back to the card, not into the wallet as points.
+      assert.equal(cardRefundPaise, 125000);
+      assert.equal(walletRefundCredited, 0);
     });
   });
 
