@@ -3,9 +3,11 @@ import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, 
 export class CreditNote extends Model<InferAttributes<CreditNote>, InferCreationAttributes<CreditNote>> {
   declare id: CreationOptional<string>;
   declare number: string;
-  declare returnRequestId: string;
+  /** The return this refunds; null for an RTO credit note (no customer return). */
+  declare returnRequestId: CreationOptional<string | null>;
   declare orderId: string;
-  declare orderItemId: string;
+  /** The invoice line credited; null for a platform-fee line (gift wrap). */
+  declare orderItemId: CreationOptional<string | null>;
   declare subOrderId: CreationOptional<string | null>;
   declare vendorId: CreationOptional<string | null>;
   /** Original vendor tax invoice this credit note adjusts. */
@@ -39,9 +41,9 @@ export const initCreditNoteModel = (sequelize: Sequelize) => {
     {
       id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
       number: { type: DataTypes.STRING(64), allowNull: false, unique: true },
-      returnRequestId: { type: DataTypes.UUID, allowNull: false },
+      returnRequestId: { type: DataTypes.UUID, allowNull: true },
       orderId: { type: DataTypes.UUID, allowNull: false },
-      orderItemId: { type: DataTypes.UUID, allowNull: false },
+      orderItemId: { type: DataTypes.UUID, allowNull: true },
       subOrderId: { type: DataTypes.UUID, allowNull: true },
       vendorId: { type: DataTypes.UUID, allowNull: true },
       againstInvoiceNumber: { type: DataTypes.STRING(64), allowNull: true },

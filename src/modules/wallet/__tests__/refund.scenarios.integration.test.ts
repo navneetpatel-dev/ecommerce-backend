@@ -55,6 +55,8 @@ import {
 } from '@modules/wallet/walletOrderRollback';
 import { cancelPaidOrder } from '@modules/orders/ordersCancel.service';
 import { subordersService } from '@modules/suborders/suborders.service';
+import { shippingService } from '@modules/shipping/shipping.service';
+import { Shipment } from '@database/models/shipment.model';
 
 let dbReady = false;
 let sharedVariantId: string | null = null;
@@ -1384,6 +1386,96 @@ describe('consolidated refund scenarios (seeded)', () => {
     );
 
     createRefund.mock.restore();
+  });
+
+  it('16d. a parcel back undelivered (RTO) refunds like a cancellation, with a credit note', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    await walletService.credit(
+      customer.id,
+      300,
+      { type: WALLET_REFERENCE_TYPE.TOPUP, id: randomUUID() },
+      'seed',
+      undefined,
+      { pointSource: 'PURCHASED' as const },
+    );
+    const paymentId = `pay_${randomUUID().slice(0, 10)}`;
+    // ₹1,000 order, two ₹500 parts: ₹300 from the wallet, ₹700 by Razorpay.
+    const { order, sub } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.RAZORPAY,
+      totalAmount: 1000,
+      walletAmountUsed: 300,
+      razorpayAmountPaid: 700,
+      razorpayPaymentId: paymentId,
+      shippingCharged: 0,
+      lineTaxable: 423.73,
+      lineTax: 76.27,
+    });
+    await order.update({ status: ORDER_STATUS.CONFIRMED });
+    const invoiceNumber = `RTO/TEST/${randomUUID().slice(0, 8)}`;
+    await sub.update({
+      status: ORDER_STATUS.SHIPPED,
+      customerTotal: 500,
+      taxInvoiceNumber: invoiceNumber,
+      taxInvoiceIssuedAt: new Date(),
+    });
+    const { id: _id, createdAt: _c, updatedAt: _u, ...fields } = sub.get({ plain: true }) as Record<
+      string,
+      unknown
+    >;
+    await SubOrder.create({
+      ...fields,
+      taxInvoiceNumber: null,
+      taxInvoiceSnapshot: null,
+      status: ORDER_STATUS.CONFIRMED,
+      customerTotal: 500,
+    } as never);
+    await sequelize.transaction(async (txn) => {
+      await walletService.debit(
+        customer.id,
+        300,
+        { type: WALLET_REFERENCE_TYPE.ORDER, id: order.id },
+        'checkout spend',
+        txn,
+      );
+    });
+    const shipment = await Shipment.create({
+      subOrderId: sub.id,
+      carrier: 'MANUAL',
+      trackingNumber: `TRK-${randomUUID().slice(0, 8)}`,
+      status: 'RTO_INITIATED',
+    } as never);
+
+    const createRefund = mock.method(
+      paymentsService,
+      'createRazorpayRefund',
+      async () => `rfnd_${randomUUID().slice(0, 8)}`,
+    );
+    try {
+      await shippingService.applyShipmentStatus(shipment, 'RTO_DELIVERED');
+
+      // Its ₹150 wallet share back as spent (not ₹500 of promotional points) ...
+      assert.equal(await walletService.getBalance(customer.id), 150);
+      const balances = await walletService.getPointSourceBalances(customer.id);
+      assert.equal(balances.purchased, 150);
+      // ... and its ₹350 card share back to the card.
+      assert.deepEqual(
+        createRefund.mock.calls.map((call) => call.arguments[1]),
+        [toPaise(350)],
+      );
+      // The invoice issued at dispatch is reversed by a credit note.
+      const notes = await CreditNote.findAll({ where: { orderId: order.id } });
+      assert.equal(notes.length, 1);
+      assert.equal(notes[0]!.againstInvoiceNumber, invoiceNumber);
+      assert.equal(notes[0]!.returnRequestId, null);
+      assert.equal(Number(notes[0]!.totalPaise), toPaise(500));
+    } finally {
+      createRefund.mock.restore();
+      await Shipment.destroy({ where: { id: shipment.id }, force: true });
+    }
   });
 
   it('16b. cancelling the last sub-order refunds the order-level gift-wrap fee too', async (t) => {

@@ -546,9 +546,9 @@ export class PaymentsService {
     }
 
     if (orderId && notes.reason === 'SUBORDER_CANCEL') {
-      // Cancelling the last live sub-order cancels the whole order and records its
-      // refund as `cancelRazorpayRefundId`; once that refund lands the order is
-      // settled. Refunds for earlier partial cancellations match nothing here.
+      // Cancelling (or an RTO of) the last live sub-order reverses the whole order and
+      // records its refund as `cancelRazorpayRefundId`; once that refund lands the order
+      // is settled. Refunds for earlier partial cancellations match nothing here.
       // Either way this is never a return refund, so don't fall through to the
       // return matcher (it pairs refunds to returns by amount).
       await Order.update(
@@ -559,7 +559,8 @@ export class PaymentsService {
         {
           where: {
             id: orderId,
-            status: ORDER_STATUS.CANCELLED,
+            // Cancelled, or every part came back undelivered (RTO).
+            status: [ORDER_STATUS.CANCELLED, ORDER_STATUS.RETURNED],
             cancelRazorpayRefundId: refund.id,
           },
         },

@@ -213,8 +213,9 @@ describe('report money scope', () => {
     });
     const base = { addressId: address.id, variantId: variant.id };
 
-    // Paid: ₹1,000 + ₹180 tax + ₹50 shipping live, ₹300 + ₹54 + ₹40 cancelled → charged
-    // ₹1,624, of which the cancelled ₹394 was refunded → kept ₹1,230.
+    // Paid: ₹1,000 + ₹180 tax + ₹50 shipping live, ₹300 + ₹54 + ₹40 cancelled and
+    // ₹200 + ₹36 + ₹20 RTO'd → charged ₹1,880, of which ₹394 + ₹256 was refunded →
+    // kept ₹1,230.
     await seedOrder({
       ...base,
       paymentMethod: PAYMENT_METHOD.RAZORPAY,
@@ -224,6 +225,8 @@ describe('report money scope', () => {
       subOrders: [
         { status: ORDER_STATUS.DELIVERED, subtotal: 1000, tax: 180, shipping: 50 },
         { status: ORDER_STATUS.CANCELLED, subtotal: 300, tax: 54, shipping: 40 },
+        // Came back undelivered (RTO) and refunded: out of every total like the cancelled one.
+        { status: ORDER_STATUS.RETURNED, subtotal: 200, tax: 36, shipping: 20 },
       ],
     });
     // Never charged: an unpaid and a failed online payment, same coupon.

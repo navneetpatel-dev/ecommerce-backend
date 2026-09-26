@@ -13,7 +13,6 @@ import { WebhookEvent } from '@database/models/webhookEvent.model';
 import { OrderItem } from '@database/models/orderItem.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { TcsLedger } from '@database/models/tcsLedger.model';
-import { walletService } from '@modules/wallet/wallet.service';
 import { AppError } from '@core/errors/AppError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { NotFoundError } from '@core/errors/NotFoundError';
@@ -37,6 +36,7 @@ import { resolveShippingDisplayKey } from '@modules/checkout/checkoutOrderTotals
 import { WebhookPayloadSchema } from './shipping.dto';
 import { deliveryAgentPayoutsService } from '@modules/deliveryAgents/deliveryAgentPayouts.service';
 import { issueTaxInvoicesOnDispatch } from '@modules/pricing/taxInvoiceIssue';
+import { issueRtoCreditNotes, refundReturnedUndeliveredPart } from './rtoSettlement';
 
 /** Shipment statuses that mean the goods have been dispatched. */
 const DISPATCHED_SHIPMENT_STATUSES = new Set([
@@ -194,22 +194,12 @@ async function cascadeRtoDeliveredAndSettle(
       await Order.update({ status: targetStatus }, { where: { id: order.id }, transaction });
     }
 
-    // 4. If prepaid, credit refund to customer wallet
-    const isPrepaid = order.paymentMethod !== 'COD' && order.paymentStatus === 'PAID';
-    const refundAmount = Number(subOrder.customerTotal ?? 0);
-    if (isPrepaid && refundAmount > 0) {
-      await walletService.credit(
-        order.userId,
-        refundAmount,
-        { type: 'RTO_REFUND', id: subOrderId },
-        `Refund for undelivered returned parcel (Order #${order.id.slice(0, 8).toUpperCase()})`,
-        transaction,
-      );
-      void notificationsService.sendRefundProcessed(order.userId, subOrderId, {
-        amount: refundAmount,
-        orderNumber: order.id.slice(0, 8).toUpperCase(),
-      });
-    }
+    // 4. Refund the part the way a cancellation does: its wallet share back as the
+    // checkout spend it was, its cash share back to the card (after commit). The last
+    // part of the order to come back returns whatever is left, gift-wrap fee included.
+    await refundReturnedUndeliveredPart(subOrder, order, siblings, transaction);
+    // 5. Credit note for the tax invoice issued at dispatch: the supply was reversed.
+    await issueRtoCreditNotes(subOrder, order, siblings, transaction);
   }
 }
 
