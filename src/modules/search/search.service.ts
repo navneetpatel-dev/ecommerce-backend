@@ -36,6 +36,8 @@ export class SearchService {
           compareAtPrice,
           discountPercent: productDiscountPercent(basePrice, compareAtPrice),
           showMrp: productShowMrp(basePrice, compareAtPrice),
+          priceRangeMax: row.priceRangeMax != null ? roundMoney(row.priceRangeMax) : basePrice,
+          hasPriceRange: row.priceRangeMax != null && roundMoney(row.priceRangeMax) > basePrice,
           brand: row.brand ?? null,
           avgRating: Number(row.avgRating ?? 0),
           reviewCount: Number(row.reviewCount ?? 0),

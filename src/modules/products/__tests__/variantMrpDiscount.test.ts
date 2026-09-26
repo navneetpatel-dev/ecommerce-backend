@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { afterEach, describe, it, mock } from 'node:test';
 import type { Product } from '@database/models/product.model';
-import { mapProductResponse } from '../products.service';
+import { Product as ProductModel } from '@database/models/product.model';
+import { ProductVariant } from '@database/models/productVariant.model';
+import { mapProductResponse, syncProductBasePrice } from '../products.service';
 
 describe('product MRP discount follows the variant', () => {
   it("gives each variant its own discount against the product's MRP", () => {
@@ -34,5 +36,65 @@ describe('product MRP discount follows the variant', () => {
     // Priced above the MRP: no discount and no struck-through MRP.
     assert.equal(byId['v-above-mrp']?.discountPercent, null);
     assert.equal(byId['v-above-mrp']?.showMrp, false);
+  });
+});
+
+describe('product price range', () => {
+  it('flags a range when variants sell at different prices', () => {
+    const product = {
+      get: () => ({
+        id: 'p',
+        basePrice: 499,
+        compareAtPrice: null,
+        images: [],
+        variants: [
+          { id: 'a', price: 499, stock: 1 },
+          { id: 'b', price: 699, stock: 1 },
+        ],
+      }),
+    } as unknown as Product;
+    const mapped = mapProductResponse(product);
+    assert.equal(mapped.hasPriceRange, true);
+    assert.equal(mapped.priceRangeMax, 699);
+  });
+
+  it('shows a single price when every variant costs the same', () => {
+    const product = {
+      get: () => ({
+        id: 'p',
+        basePrice: 499,
+        images: [],
+        variants: [
+          { id: 'a', price: 499, stock: 1 },
+          { id: 'b', price: 499, stock: 1 },
+        ],
+      }),
+    } as unknown as Product;
+    assert.equal(mapProductResponse(product).hasPriceRange, false);
+  });
+});
+
+describe('syncProductBasePrice', () => {
+  afterEach(() => mock.restoreAll());
+
+  it("sets the product's listed price to its lowest variant price", async () => {
+    mock.method(ProductVariant, 'min', async () => 549 as never);
+    const updates: Array<Record<string, unknown>> = [];
+    mock.method(ProductModel, 'findByPk', async () => ({
+      id: 'p',
+      basePrice: 499,
+      update: async (values: Record<string, unknown>) => {
+        updates.push(values);
+      },
+    }) as never);
+    await syncProductBasePrice('p', {} as never);
+    assert.deepEqual(updates, [{ basePrice: 549 }]);
+  });
+
+  it('leaves a product without variants alone', async () => {
+    mock.method(ProductVariant, 'min', async () => null as never);
+    const lookup = mock.method(ProductModel, 'findByPk', async () => null as never);
+    await syncProductBasePrice('p', {} as never);
+    assert.equal(lookup.mock.callCount(), 0);
   });
 });

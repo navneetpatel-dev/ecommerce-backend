@@ -31,6 +31,7 @@ export interface SearchResultRow {
   id: string;
   name: string;
   basePrice: string;
+  priceRangeMax: string | null;
   compareAtPrice: string | null;
   brand: string | null;
   categoryId: string;
@@ -159,6 +160,11 @@ export class SearchRepository {
         p.id,
         p.name,
         p."basePrice",
+        (
+          SELECT MAX(pv.price)
+          FROM product_variants pv
+          WHERE pv."productId" = p.id AND pv."deletedAt" IS NULL
+        ) AS "priceRangeMax",
         p."compareAtPrice",
         p.brand,
         p."categoryId",

@@ -52,6 +52,35 @@ describe('WishlistService.moveToCart stock clamp', () => {
   });
 });
 
+describe('WishlistService.moveToCart variant choice', () => {
+  afterEach(() => mock.restoreAll());
+
+  it('adds the cheapest in-stock variant, the price the wishlist shows', async () => {
+    mock.method(sequelize, 'transaction', async (callback: (t: unknown) => Promise<unknown>) =>
+      callback({}),
+    );
+    mock.method(wishlistRepository, 'findByUserId', async () => ({ id: 'wl-1' }));
+    mock.method(WishlistItem, 'findOne', async () => ({
+      id: 'wi-1',
+      product: {
+        variants: [
+          { id: 'oldest-dear', price: 899, stock: 3, createdAt: new Date('2026-01-01') },
+          { id: 'cheap-sold-out', price: 499, stock: 0, createdAt: new Date('2026-02-01') },
+          { id: 'cheap-in-stock', price: 599, stock: 2, createdAt: new Date('2026-03-01') },
+        ],
+      },
+      destroy: async () => undefined,
+    }) as unknown as WishlistItem);
+    mock.method(Cart, 'findOrCreate', async () => [{ id: 'cart-1' }]);
+    mock.method(CartItem, 'findOne', async () => null);
+    const created = mock.method(CartItem, 'create', async () => ({}) as never);
+
+    await wishlistService.moveToCart('user-1', 'product-1');
+
+    assert.equal((created.mock.calls[0]?.arguments[0] as { variantId: string }).variantId, 'cheap-in-stock');
+  });
+});
+
 describe('WishlistService.getWishlist price drop', () => {
   afterEach(() => {
     mock.restoreAll();
