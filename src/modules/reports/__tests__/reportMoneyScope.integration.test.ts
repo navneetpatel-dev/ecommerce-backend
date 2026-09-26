@@ -40,7 +40,14 @@ let vendorId = '';
 let couponId = '';
 const created = { orders: [] as string[] };
 
-type SubSpec = { status: string; subtotal: number; tax: number; shipping: number };
+type SubSpec = {
+  status: string;
+  subtotal: number;
+  tax: number;
+  shipping: number;
+  /** The coupon discount on this part (checkout splits the order's across its parts). */
+  discount?: number;
+};
 
 async function dbAvailable(): Promise<boolean> {
   try {
@@ -98,7 +105,8 @@ async function seedOrder(params: {
       taxAmountPaise: toPaise(spec.tax),
       taxableAmount: spec.subtotal,
       taxableAmountPaise: toPaise(spec.subtotal),
-      discountAmount: 0,
+      discountAmount: spec.discount ?? 0,
+      discountAmountPaise: toPaise(spec.discount ?? 0),
       createdBy: customerId,
       updatedBy: customerId,
       deletedBy: null,
@@ -223,10 +231,11 @@ describe('report money scope', () => {
       status: ORDER_STATUS.DELIVERED,
       couponDiscount: 50,
       subOrders: [
-        { status: ORDER_STATUS.DELIVERED, subtotal: 1000, tax: 180, shipping: 50 },
-        { status: ORDER_STATUS.CANCELLED, subtotal: 300, tax: 54, shipping: 40 },
+        // The ₹50 coupon discount split ₹30 / ₹12 / ₹8 across the three parts.
+        { status: ORDER_STATUS.DELIVERED, subtotal: 1000, tax: 180, shipping: 50, discount: 30 },
+        { status: ORDER_STATUS.CANCELLED, subtotal: 300, tax: 54, shipping: 40, discount: 12 },
         // Came back undelivered (RTO) and refunded: out of every total like the cancelled one.
-        { status: ORDER_STATUS.RETURNED, subtotal: 200, tax: 36, shipping: 20 },
+        { status: ORDER_STATUS.RETURNED, subtotal: 200, tax: 36, shipping: 20, discount: 8 },
       ],
     });
     // Never charged: an unpaid and a failed online payment, same coupon.
@@ -290,7 +299,43 @@ describe('report money scope', () => {
     if (!dbReady) return t.skip('database unavailable');
     const analytics = await couponsService.analytics(couponId);
     assert.equal(analytics.revenueImpact, 1230);
-    assert.equal(analytics.totalDiscount, 50);
+    // The discount on the cancelled and RTO'd parts was refunded with them: ₹30, not ₹50.
+    assert.equal(analytics.totalDiscount, 30);
+  });
+
+  it("a vendor's absorbed discount counts only charged orders and parts still standing", async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const vendorCoupon = await Coupon.create({
+      code: `VSCOPE${randomUUID().slice(0, 8).toUpperCase()}`,
+      type: 'FLAT',
+      value: 50,
+      config: {},
+      vendorId,
+      discountBearer: 'VENDOR',
+      startDate: new Date(now.getTime() - DAY_MS),
+      endDate: new Date(now.getTime() + DAY_MS),
+      status: 'ACTIVE',
+      createdById: customerId,
+    } as never);
+    try {
+      // Redeemed on the paid order (₹30 of its ₹50 still stands) and on the unpaid one.
+      for (const orderId of created.orders.slice(0, 2)) {
+        await CouponUsage.create({
+          couponId: vendorCoupon.id,
+          userId: customerId,
+          orderId,
+          discountApplied: 50,
+          createdBy: customerId,
+          updatedBy: customerId,
+          deletedBy: null,
+        } as never);
+      }
+      const summary = await couponsService.vendorAbsorbedDiscountSummary(vendorId);
+      assert.equal(summary.absorbedDiscountTotal, 30);
+    } finally {
+      await CouponUsage.destroy({ where: { couponId: vendorCoupon.id }, force: true });
+      await vendorCoupon.destroy({ force: true });
+    }
   });
 
   it('settlement tax and shipping drop a cancelled sub-order', async (t) => {

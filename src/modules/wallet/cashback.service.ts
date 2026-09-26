@@ -1,5 +1,5 @@
 import type { Transaction } from 'sequelize';
-import { Op } from 'sequelize';
+import { Op, QueryTypes } from 'sequelize';
 import { sequelize } from '@database/models';
 import { Order } from '@database/models/order.model';
 import { SubOrder } from '@database/models/subOrder.model';
@@ -15,6 +15,7 @@ import {
 } from '@core/constants/statuses';
 import { fromPaise, roundMoney, sumRupees, toPaise } from '@modules/pricing/money';
 import { frozenPaise } from '@modules/pricing/frozenMoneySql';
+import { isReversedPart } from '@modules/pricing/partReversal';
 import { walletService } from '@modules/wallet/wallet.service';
 import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
 import { env } from '@config/env';
@@ -41,12 +42,12 @@ export async function creditPendingCashbackForOrder(
     // `pendingCashbackAmount` covers every vendor in the cart, not just one — crediting it the
     // moment a single suborder delivers would pay out cashback for items from other vendors that
     // haven't shipped yet (and may still be cancelled). Require every suborder that hasn't been
-    // cancelled to be DELIVERED before crediting anything.
+    // reversed (cancelled, or back undelivered — RTO) to be DELIVERED before crediting anything.
     const allSubOrders = await SubOrder.findAll({
       where: { orderId: order.id },
       transaction,
     });
-    const relevant = allSubOrders.filter((s) => s.status !== ORDER_STATUS.CANCELLED);
+    const relevant = allSubOrders.filter((s) => !isReversedPart(s.status));
     if (relevant.length === 0) return false;
     const allDelivered = relevant.every((s) => s.status === ORDER_STATUS.DELIVERED);
     if (!allDelivered) return false;
@@ -280,39 +281,60 @@ export async function clawbackCashbackForReturn(input: {
 }
 
 /**
- * Delayed-job pattern matching REVIEW_REQUEST: credit cashback for orders whose
- * delivered sub-order fell into the delay window.
+ * Delayed job: credit cashback on orders that are settled — at least one part delivered,
+ * every other part delivered or reversed (cancelled, or back undelivered) — once the last
+ * of those parts settled at least the cashback delay ago.
+ *
+ * It used to look only at sub-orders DELIVERED inside one 24-hour window. An order whose
+ * last part was cancelled or came back undelivered after that window never settled on a
+ * delivery inside it, so its cashback was never paid.
  */
 export async function processPendingCashbackCredits(limit = 100): Promise<number> {
-  const delayMs = env.CASHBACK_CREDIT_DELAY_DAYS * 24 * 60 * 60 * 1000;
-  const windowEnd = new Date(Date.now() - delayMs);
-  const windowStart = new Date(windowEnd.getTime() - 24 * 60 * 60 * 1000);
-
-  const deliveredSubs = await SubOrder.findAll({
-    where: {
-      status: ORDER_STATUS.DELIVERED,
-      updatedAt: { [Op.between]: [windowStart, windowEnd] },
-    },
-    attributes: ['orderId'],
-    limit,
-  });
-  const orderIds = [...new Set(deliveredSubs.map((s) => s.orderId))];
-  if (orderIds.length === 0) return 0;
-
-  const orders = await Order.findAll({
-    where: {
-      id: { [Op.in]: orderIds },
-      pendingCashbackAmount: { [Op.gt]: 0 },
-      cashbackCreditedAt: null,
-    },
-  });
-
   let credited = 0;
-  for (const order of orders) {
-    const ok = await creditPendingCashbackForOrder(order.id);
+  for (const orderId of await ordersDueForCashbackCredit(limit)) {
+    const ok = await creditPendingCashbackForOrder(orderId);
     if (ok) credited += 1;
   }
   return credited;
+}
+
+/** Ids of the orders `processPendingCashbackCredits` credits, oldest first. */
+export async function ordersDueForCashbackCredit(limit = 100): Promise<string[]> {
+  const delayMs = env.CASHBACK_CREDIT_DELAY_DAYS * 24 * 60 * 60 * 1000;
+  const settledBefore = new Date(Date.now() - delayMs);
+
+  const rows = await sequelize.query<{ id: string }>(
+    `SELECT o.id
+     FROM orders o
+     WHERE o."deletedAt" IS NULL
+       AND o."pendingCashbackAmount" > 0
+       AND o."cashbackCreditedAt" IS NULL
+       AND EXISTS (
+         SELECT 1 FROM sub_orders s
+         WHERE s."orderId" = o.id AND s."deletedAt" IS NULL AND s.status = :delivered
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM sub_orders s
+         WHERE s."orderId" = o.id AND s."deletedAt" IS NULL
+           AND s.status NOT IN (:settled)
+       )
+       AND (
+         SELECT MAX(s."updatedAt") FROM sub_orders s
+         WHERE s."orderId" = o.id AND s."deletedAt" IS NULL
+       ) <= :settledBefore
+     ORDER BY o."createdAt"
+     LIMIT :limit`,
+    {
+      replacements: {
+        delivered: ORDER_STATUS.DELIVERED,
+        settled: [ORDER_STATUS.DELIVERED, ORDER_STATUS.CANCELLED, ORDER_STATUS.RETURNED],
+        settledBefore,
+        limit,
+      },
+      type: QueryTypes.SELECT,
+    },
+  );
+  return rows.map((row) => row.id);
 }
 
 export { fromPaise };

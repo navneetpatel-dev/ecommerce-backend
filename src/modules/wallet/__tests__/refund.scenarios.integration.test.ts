@@ -32,7 +32,12 @@ import { paymentsService } from '@modules/payments/payments.service';
 import {
   creditPendingCashbackForOrder,
   clawbackCashbackForReturn,
+  ordersDueForCashbackCredit,
 } from '@modules/wallet/cashback.service';
+import { env } from '@config/env';
+import { Coupon } from '@database/models/coupon.model';
+import { CouponUsage } from '@database/models/couponUsage.model';
+import { getReportDefinition } from '@modules/reports/engine/reportRegistry';
 import {
   COMMISSION_REFERENCE_TYPE,
   COMMISSION_STATUS,
@@ -60,6 +65,7 @@ import { Shipment } from '@database/models/shipment.model';
 
 let dbReady = false;
 let sharedVariantId: string | null = null;
+const cleanupShipments: string[] = [];
 const cleanupIds = {
   users: [] as string[],
   vendors: [] as string[],
@@ -305,6 +311,31 @@ async function seedFullOrder(opts: SeedOrderOpts) {
   return { order, sub, item, address };
 }
 
+/** A second part (sub-order) on the seeded order, copied from the first. */
+async function addSiblingPart(sub: SubOrder, fields: Record<string, unknown>): Promise<SubOrder> {
+  const { id: _id, createdAt: _c, updatedAt: _u, ...plain } = sub.get({ plain: true }) as Record<
+    string,
+    unknown
+  >;
+  return SubOrder.create({
+    ...plain,
+    taxInvoiceNumber: null,
+    taxInvoiceSnapshot: null,
+    ...fields,
+  } as never);
+}
+
+async function createShipment(subOrderId: string, fields: Record<string, unknown>) {
+  const shipment = await Shipment.create({
+    subOrderId,
+    carrier: 'MANUAL',
+    trackingNumber: `TRK-${randomUUID().slice(0, 8)}`,
+    ...fields,
+  } as never);
+  cleanupShipments.push(shipment.id);
+  return shipment;
+}
+
 async function assertReturnRefundPurchasedNonExpiring(userId: string, returnRequestId: string) {
   const row = await WalletLedger.findOne({
     where: {
@@ -347,7 +378,11 @@ describe('consolidated refund scenarios (seeded)', () => {
       return;
     }
     try {
+      await Shipment.destroy({ where: { id: cleanupShipments }, force: true });
       for (const orderId of cleanupIds.orders) {
+        const usages = await CouponUsage.findAll({ where: { orderId }, paranoid: false });
+        await CouponUsage.destroy({ where: { orderId }, force: true });
+        await Coupon.destroy({ where: { id: usages.map((u) => u.couponId) }, force: true });
         const subs = await SubOrder.findAll({ where: { orderId } });
         for (const sub of subs) {
           const returns = await ReturnRequest.findAll({ where: { subOrderId: sub.id } });
@@ -1476,6 +1511,177 @@ describe('consolidated refund scenarios (seeded)', () => {
       createRefund.mock.restore();
       await Shipment.destroy({ where: { id: shipment.id }, force: true });
     }
+  });
+
+  it('16e. cashback is paid on the delivered part when a sibling came back undelivered (RTO)', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    // ₹200 of merchandise in two ₹100 parts, ₹20 cashback pending.
+    const { order, sub } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.COD,
+      totalAmount: 236,
+      shippingCharged: 0,
+      pendingCashbackAmount: 20,
+    });
+    await order.update({ merchandiseSubtotal: 200 });
+    await sub.update({ customerTotal: 118 });
+    const other = await addSiblingPart(sub, { status: ORDER_STATUS.SHIPPED, customerTotal: 118 });
+    const shipment = await createShipment(other.id, { status: 'RTO_INITIATED' });
+    await shippingService.applyShipmentStatus(shipment, 'RTO_DELIVERED');
+
+    // Settled long enough ago: the job picks the order up although its last part was an RTO.
+    await sequelize.query(
+      `UPDATE sub_orders SET "updatedAt" = NOW() - make_interval(days => :days) WHERE "orderId" = :orderId`,
+      { replacements: { days: env.CASHBACK_CREDIT_DELAY_DAYS + 1, orderId: order.id } },
+    );
+    assert.ok((await ordersDueForCashbackCredit(100_000)).includes(order.id));
+
+    const before = await walletService.getBalance(customer.id);
+    assert.equal(await creditPendingCashbackForOrder(order.id), true);
+    // Half the merchandise was delivered: half the cashback.
+    assert.equal(await walletService.getBalance(customer.id), before + 10);
+  });
+
+  it('16f. every part back undelivered (RTO): no cashback due, as on a full cancellation', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    const { order, sub } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.COD,
+      totalAmount: 118,
+      shippingCharged: 0,
+      pendingCashbackAmount: 20,
+    });
+    await order.update({ paymentStatus: PAYMENT_STATUS.PENDING, status: ORDER_STATUS.SHIPPED });
+    await sub.update({ status: ORDER_STATUS.SHIPPED, customerTotal: 118 });
+    const shipment = await createShipment(sub.id, { status: 'RTO_INITIATED', codAmount: 118 });
+    await shippingService.applyShipmentStatus(shipment, 'RTO_DELIVERED');
+
+    const after = await Order.findByPk(order.id);
+    assert.equal(after!.status, ORDER_STATUS.RETURNED);
+    assert.equal(Number(after!.pendingCashbackAmount), 0);
+    // Nothing was collected: still unpaid.
+    assert.equal(after!.paymentStatus, PAYMENT_STATUS.PENDING);
+  });
+
+  it('16g. a COD order is paid once its other parcel is delivered and one came back (RTO)', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    await walletService.credit(
+      customer.id,
+      36,
+      { type: WALLET_REFERENCE_TYPE.TOPUP, id: randomUUID() },
+      'seed',
+      undefined,
+      { pointSource: 'PURCHASED' as const },
+    );
+    // ₹236 in two ₹118 parts: ₹36 from the wallet, ₹200 cash on delivery (₹100 a parcel).
+    const { order, sub } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.COD,
+      totalAmount: 236,
+      walletAmountUsed: 36,
+      shippingCharged: 0,
+    });
+    await order.update({ paymentStatus: PAYMENT_STATUS.PENDING, status: ORDER_STATUS.SHIPPED });
+    await sub.update({ status: ORDER_STATUS.SHIPPED, customerTotal: 118 });
+    const other = await addSiblingPart(sub, { status: ORDER_STATUS.SHIPPED, customerTotal: 118 });
+    await sequelize.transaction(async (txn) => {
+      await walletService.debit(
+        customer.id,
+        36,
+        { type: WALLET_REFERENCE_TYPE.ORDER, id: order.id },
+        'checkout spend',
+        txn,
+      );
+    });
+    const delivered = await createShipment(sub.id, { status: 'OUT_FOR_DELIVERY', codAmount: 100 });
+    const refused = await createShipment(other.id, { status: 'IN_TRANSIT', codAmount: 100 });
+
+    await shippingService.applyShipmentStatus(delivered, 'DELIVERED');
+    // The other parcel is still on its way: not paid yet.
+    assert.equal((await Order.findByPk(order.id))!.paymentStatus, PAYMENT_STATUS.PENDING);
+
+    await refused.update({ status: 'RTO_INITIATED' });
+    await shippingService.applyShipmentStatus(refused, 'RTO_DELIVERED');
+    // The refused parcel owes nothing: the cash collected is all that was due.
+    assert.equal((await Order.findByPk(order.id))!.paymentStatus, PAYMENT_STATUS.PAID);
+    // Its ₹18 wallet share came back.
+    assert.equal(await walletService.getBalance(customer.id), 18);
+
+    // The COD remittance report: ₹100 due (not the ₹200 checked out), ₹100 collected.
+    const now = Date.now();
+    const report = await getReportDefinition('cod-remittance')!.query({
+      from: new Date(now - 86_400_000),
+      to: new Date(now + 86_400_000),
+      page: 1,
+      limit: 100_000,
+    });
+    const row = report.rows.find((r) => r.orderId === order.id);
+    assert.equal(row?.codAmount, 100);
+    assert.equal(row?.codCollected, 100);
+    assert.equal(row?.codStatus, 'COLLECTED');
+  });
+
+  it('16h. cancelling every part one by one gives the coupon back; an RTO does not', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+
+    const seedWithCoupon = async () => {
+      const coupon = await Coupon.create({
+        code: `PART${randomUUID().slice(0, 8).toUpperCase()}`,
+        type: 'FLAT',
+        value: 20,
+        config: {},
+        usedCount: 1,
+        startDate: new Date(Date.now() - 86_400_000),
+        endDate: new Date(Date.now() + 86_400_000),
+        status: 'ACTIVE',
+        createdById: customer.id,
+      } as never);
+      const { order, sub } = await seedFullOrder({
+        userId: customer.id,
+        vendorId: vendor.id,
+        paymentMethod: PAYMENT_METHOD.COD,
+        totalAmount: 236,
+        shippingCharged: 0,
+      });
+      await order.update({ paymentStatus: PAYMENT_STATUS.PENDING, status: ORDER_STATUS.CONFIRMED });
+      await sub.update({ status: ORDER_STATUS.CONFIRMED, customerTotal: 118 });
+      const other = await addSiblingPart(sub, { status: ORDER_STATUS.CONFIRMED, customerTotal: 118 });
+      await CouponUsage.create({
+        couponId: coupon.id,
+        userId: customer.id,
+        orderId: order.id,
+        discountApplied: 20,
+        createdBy: customer.id,
+        updatedBy: customer.id,
+        deletedBy: null,
+      } as never);
+      return { coupon, order, sub, other };
+    };
+
+    const cancelled = await seedWithCoupon();
+    await subordersService.updateStatus(cancelled.sub.id, ORDER_STATUS.CANCELLED, undefined, customer.id);
+    // One part still stands: the redemption stays.
+    assert.equal(await CouponUsage.count({ where: { orderId: cancelled.order.id } }), 1);
+    await subordersService.updateStatus(cancelled.other.id, ORDER_STATUS.CANCELLED, undefined, customer.id);
+    assert.equal(await CouponUsage.count({ where: { orderId: cancelled.order.id } }), 0);
+    assert.equal((await Coupon.findByPk(cancelled.coupon.id))!.usedCount, 0);
+
+    const refused = await seedWithCoupon();
+    await refused.sub.update({ status: ORDER_STATUS.RETURNED });
+    await subordersService.updateStatus(refused.other.id, ORDER_STATUS.CANCELLED, undefined, customer.id);
+    assert.equal(await CouponUsage.count({ where: { orderId: refused.order.id } }), 1);
+    assert.equal((await Coupon.findByPk(refused.coupon.id))!.usedCount, 1);
   });
 
   it('16b. cancelling the last sub-order refunds the order-level gift-wrap fee too', async (t) => {

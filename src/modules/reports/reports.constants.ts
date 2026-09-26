@@ -174,6 +174,7 @@ export const REPORT_COLUMN_LABELS: Record<string, string> = {
   walletUsed: 'Wallet Used',
   reconStatus: 'Reconciliation Status',
   codAmount: 'COD Amount',
+  codCollected: 'COD Collected',
   codStatus: 'COD Status',
   userId: 'User ID',
   email: 'Email',

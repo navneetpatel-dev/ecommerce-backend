@@ -17,6 +17,7 @@ import { AppError } from '@core/errors/AppError';
 import {
   COUPON_STATUS,
   DISCOUNT_BEARER,
+  ORDER_STATUS,
   VENDOR_STATUS,
 } from '@core/constants/statuses';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
@@ -40,9 +41,37 @@ import {
 import { generateCouponCode } from './coupon.utils';
 
 /**
+ * One coupon redemption's discount still given, in paise (aliases: `cu` = coupon_usages,
+ * `c` = its coupon). A cancelled or RTO'd (RETURNED) part was refunded, so the discount
+ * on it was never given — the same parts `sqlOrderPaymentPaise` takes out of revenue.
+ * The redemption keeps the share of its discount that sits on parts still standing: the
+ * kept parts' discount (merchandise + shipping) over every part's, or their merchandise
+ * over every part's when the parts carry no discount. A vendor coupon only discounted
+ * that vendor's parts, so only those count.
+ */
+function sqlKeptCouponDiscountPaise(): string {
+  const kept = `s."status" NOT IN ('${ORDER_STATUS.CANCELLED}', '${ORDER_STATUS.RETURNED}')`;
+  return `ROUND(ROUND(cu."discountApplied"::numeric * 100) * COALESCE((
+    SELECT CASE
+      WHEN SUM(s."discountAmountPaise" + s."shippingDiscountAmountPaise") > 0
+        THEN SUM(CASE WHEN ${kept} THEN s."discountAmountPaise" + s."shippingDiscountAmountPaise" ELSE 0 END)::numeric
+          / SUM(s."discountAmountPaise" + s."shippingDiscountAmountPaise")
+      WHEN SUM(s."subtotalPaise") > 0
+        THEN SUM(CASE WHEN ${kept} THEN s."subtotalPaise" ELSE 0 END)::numeric / SUM(s."subtotalPaise")
+      ELSE 1
+    END
+    FROM sub_orders s
+    WHERE s."orderId" = cu."orderId"
+      AND s."deletedAt" IS NULL
+      AND (c."vendorId" IS NULL OR s."vendorId" = c."vendorId")
+  ), 1))::bigint`;
+}
+
+/**
  * Discount given and customer payments on the orders that redeemed these coupons,
  * counting only orders the settlement reports count (REPORTABLE_ORDER_SQL) and each
- * order once even when it redeemed several of the coupons.
+ * order once even when it redeemed several of the coupons. Discount on a cancelled or
+ * RTO'd part is left out, as its payment is (`sqlKeptCouponDiscountPaise`).
  */
 async function couponUsageMoney(
   couponIds: string[],
@@ -50,8 +79,9 @@ async function couponUsageMoney(
   if (couponIds.length === 0) return { discountTotal: 0, revenueImpact: 0 };
   const [row] = await sequelize.query<{ discountPaise: string; paymentPaise: string }>(
     `WITH usages AS (
-       SELECT cu."orderId", SUM(ROUND(cu."discountApplied"::numeric * 100))::bigint AS "discountPaise"
+       SELECT cu."orderId", SUM(${sqlKeptCouponDiscountPaise()})::bigint AS "discountPaise"
        FROM coupon_usages cu
+       INNER JOIN coupons c ON c.id = cu."couponId"
        WHERE cu."couponId" IN (:couponIds)
          AND cu."deletedAt" IS NULL
        GROUP BY cu."orderId"
@@ -491,16 +521,23 @@ export class CouponsService {
         periodEnd: periodEnd.toISOString(),
       };
     }
-    const total =
-      (await CouponUsage.sum('discountApplied', {
-        where: {
-          couponId: { [Op.in]: ids },
-          createdAt: { [Op.gte]: periodStart, [Op.lt]: periodEnd },
-        },
-      })) ?? 0;
+    // Only orders that were charged and kept (as coupon analytics), and only the discount
+    // on parts still standing: none on an unpaid, failed or cancelled order.
+    const [absorbed] = await sequelize.query<{ discountPaise: string | null }>(
+      `SELECT COALESCE(SUM(${sqlKeptCouponDiscountPaise()}), 0)::bigint AS "discountPaise"
+       FROM coupon_usages cu
+       INNER JOIN coupons c ON c.id = cu."couponId"
+       INNER JOIN orders o ON o.id = cu."orderId" AND o."deletedAt" IS NULL
+       WHERE cu."couponId" IN (:ids)
+         AND cu."deletedAt" IS NULL
+         AND cu."createdAt" >= :periodStart
+         AND cu."createdAt" < :periodEnd
+         AND ${REPORTABLE_ORDER_SQL}`,
+      { replacements: { ids, periodStart, periodEnd }, type: QueryTypes.SELECT },
+    );
     return {
       vendorId,
-      absorbedDiscountTotal: Number(total),
+      absorbedDiscountTotal: fromPaise(Number(absorbed?.discountPaise ?? 0)),
       couponCount: ids.length,
       periodStart: periodStart.toISOString(),
       periodEnd: periodEnd.toISOString(),

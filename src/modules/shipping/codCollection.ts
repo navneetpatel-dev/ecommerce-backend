@@ -5,6 +5,7 @@ import { Shipment } from '@database/models/shipment.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { fromPaise, toPaise, type Paise } from '@modules/pricing/money';
 import { walletShareOfRefundPaise, type RefundSplitOrder } from '@modules/pricing/refundSplit';
+import { isReversedPart } from '@modules/pricing/partReversal';
 
 /** The order fields the COD amount reads. */
 export type CodOrder = RefundSplitOrder & { id: string; giftWrapFeeAmount?: unknown };
@@ -12,9 +13,11 @@ export type CodOrder = RefundSplitOrder & { id: string; giftWrapFeeAmount?: unkn
 /**
  * Cash the delivery agent collects for one COD shipment, in paise.
  *
- * The customer owes, at the door, the parts they kept (every sub-order not cancelled)
- * plus the order-level gift-wrap fee, less the wallet money applied to them: the wallet
- * paid at checkout minus the wallet shares already returned for cancelled parts. That
+ * The customer owes, at the door, the parts they kept (every sub-order not cancelled or
+ * back undelivered — RTO) plus the order-level gift-wrap fee, less the wallet money
+ * applied to them: the wallet paid at checkout minus the wallet shares already returned
+ * for reversed parts. A parcel refused before the others ship leaves the fee it carried
+ * to the next one. That
  * total is split across the shipments in proportion to what each carries; the gift-wrap
  * fee rides on the first shipment, and the last one takes the remainder, so the cash
  * collected adds up to exactly what is owed.
@@ -30,8 +33,10 @@ export async function codAmountForSubOrderPaise(
     transaction,
   });
   const totalPaise = (sub: SubOrder) => toPaise(Number(sub.customerTotal ?? 0));
-  const kept = subOrders.filter((sub) => sub.status !== ORDER_STATUS.CANCELLED);
-  const cancelled = subOrders.filter((sub) => sub.status === ORDER_STATUS.CANCELLED);
+  // Cancelled and RTO'd (RETURNED) parts were reversed: they owe no cash and their
+  // wallet share went back to the wallet.
+  const kept = subOrders.filter((sub) => !isReversedPart(sub.status));
+  const cancelled = subOrders.filter((sub) => isReversedPart(sub.status));
   const current = kept.find((sub) => sub.id === subOrderId);
   if (!current) return 0;
 
@@ -74,4 +79,36 @@ export async function codAmountForSubOrder(
   transaction?: Transaction,
 ): Promise<number> {
   return fromPaise(await codAmountForSubOrderPaise(order, subOrderId, transaction));
+}
+
+/**
+ * SQL twin of the amount `codAmountForSubOrderPaise` splits across the shipments, in
+ * paise (alias = orders): the cash still owed at the door for the parts kept — every
+ * sub-order not cancelled or back undelivered (RTO) — plus the gift-wrap fee, less the
+ * wallet money on them (wallet paid at checkout less each reversed part's wallet share,
+ * as `walletShareOfRefundPaise` computes it). 0 once no part is kept.
+ */
+export function sqlCodCashDuePaise(alias: string): string {
+  const walletPaise = `ROUND(COALESCE(${alias}."walletAmountUsed", 0)::numeric * 100)`;
+  const checkoutTotalPaise = `GREATEST(
+    ROUND(COALESCE(${alias}."originalTotalAmount", 0)::numeric * 100),
+    ROUND(COALESCE(${alias}."razorpayAmountPaid", 0)::numeric * 100) + ${walletPaise},
+    ROUND(COALESCE(${alias}."totalAmount", 0)::numeric * 100),
+    ${walletPaise}
+  )`;
+  const partPaise = `ROUND(COALESCE(cs."customerTotal", 0)::numeric * 100)`;
+  const reversed = `cs."status" IN ('${ORDER_STATUS.CANCELLED}', '${ORDER_STATUS.RETURNED}')`;
+  return `(SELECT CASE
+      WHEN COUNT(*) FILTER (WHERE NOT (${reversed})) = 0 THEN 0
+      ELSE GREATEST(0,
+        COALESCE(SUM(${partPaise}) FILTER (WHERE NOT (${reversed})), 0)
+        + ROUND(COALESCE(${alias}."giftWrapFeeAmount", 0)::numeric * 100)
+        - GREATEST(0, ${walletPaise} - COALESCE(SUM(
+            CASE WHEN ${walletPaise} > 0 AND ${checkoutTotalPaise} > 0 AND ${partPaise} > 0
+              THEN LEAST(${partPaise}, ROUND(${partPaise} * ${walletPaise} / ${checkoutTotalPaise}))
+              ELSE 0 END
+          ) FILTER (WHERE ${reversed}), 0)))
+    END
+    FROM sub_orders cs
+    WHERE cs."orderId" = ${alias}.id AND cs."deletedAt" IS NULL)::bigint`;
 }

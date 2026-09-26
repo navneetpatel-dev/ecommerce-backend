@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it, mock } from 'node:test';
 import { SubOrder } from '@database/models/subOrder.model';
+import { CouponUsage } from '@database/models/couponUsage.model';
 import { Order } from '@database/models/order.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
@@ -96,6 +97,10 @@ describe('SubordersService cancellation refund split', () => {
       { id: SUB_A, status: ORDER_STATUS.CANCELLED, customerTotal: 1000, subtotal: 1000 },
     ] as unknown as SubOrder[]);
 
+    // No coupon on the order: nothing to give back when the last part is cancelled.
+
+    mock.method(CouponUsage, 'findAll', async () => []);
+
     mock.method(Order, 'update', async () => [1]);
 
     const razorpayAmounts: number[] = [];
@@ -160,6 +165,8 @@ describe('SubordersService cancellation refund split', () => {
     ] as unknown as SubOrder[]);
 
     let parentOrderUpdated = false;
+    // No coupon on the order: nothing to give back when the last part is cancelled.
+    mock.method(CouponUsage, 'findAll', async () => []);
     mock.method(Order, 'update', async () => {
       parentOrderUpdated = true;
       return [1];

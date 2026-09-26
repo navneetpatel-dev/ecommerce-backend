@@ -62,4 +62,23 @@ describe('codAmountForSubOrderPaise', () => {
     const walletBack = Math.round((50000 * 30000) / 104900);
     assert.equal(only, 54900 - (30000 - walletBack));
   });
+
+  it('a parcel refused (RTO) before the other ships leaves the fee it carried to the other', async () => {
+    // so-a shipped first, carrying the ₹49 fee, and came back undelivered: its wallet share
+    // went back like a cancelled part's, so so-b owes its ₹500 + the fee less the wallet
+    // left on it — the fee is not lost with the refused parcel.
+    const first = await (async () => {
+      mockOrder(parts, []);
+      const amount = await codAmountForSubOrderPaise(order, 'so-a');
+      mock.restoreAll();
+      return amount;
+    })();
+    mockOrder(
+      [{ ...parts[0]!, status: ORDER_STATUS.RETURNED }, parts[1]!],
+      [{ subOrderId: 'so-a', codAmount: first / 100 }],
+    );
+    const last = await codAmountForSubOrderPaise(order, 'so-b');
+    const walletBack = Math.round((50000 * 30000) / 104900);
+    assert.equal(last, 54900 - (30000 - walletBack));
+  });
 });

@@ -21,6 +21,7 @@ import {
 } from '../engine/queryHelpers';
 import { inventoryValuation } from '@modules/pricing/displayMoney';
 import { sqlOrderPaymentPaise } from '@modules/pricing/frozenMoneySql';
+import { sqlCodCashDuePaise } from '@modules/shipping/codCollection';
 import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
 
 function resolveVendorId(filters: ReportFilters): string | null {
@@ -435,19 +436,36 @@ async function paymentGatewayReconciliation(filters: ReportFilters) {
   });
 }
 
+/**
+ * COD orders with the cash owed at the door and the cash agents collected. Cash due is
+ * what the shipments are set to collect (`sqlCodCashDuePaise`): cancelled and RTO'd
+ * parts leave it, as they leave the order's payment; it used to be the checkout
+ * `amountDue`, which overstated it after a partial cancellation or an RTO.
+ */
 async function codRemittance(filters: ReportFilters) {
   assertReportRange(filters);
+  const keptPart = `s."status" NOT IN ('${ORDER_STATUS.CANCELLED}', '${ORDER_STATUS.RETURNED}')`;
   const selectSql = `
     SELECT
       o.id AS "orderId",
       o."createdAt" AS "createdAt",
       o.status::text AS "orderStatus",
       o."paymentStatus"::text AS "paymentStatus",
-      COALESCE(o."amountDue", o."totalAmount", 0)::float AS "codAmount",
-      COALESCE(o."walletAmountUsed", 0)::float AS "walletUsed",
+      ${sqlCodCashDuePaise('o')} AS "codDuePaise",
+      COALESCE((
+        SELECT SUM(ROUND(sh."codAmount"::numeric * 100))
+        FROM shipments sh
+        INNER JOIN sub_orders s ON s.id = sh."subOrderId" AND s."deletedAt" IS NULL
+        WHERE s."orderId" = o.id AND sh."codCollected" = true
+      ), 0)::bigint AS "codCollectedPaise",
+      ROUND(COALESCE(o."walletAmountUsed", 0)::numeric * 100)::bigint AS "walletUsedPaise",
       CASE
         WHEN o.status = '${ORDER_STATUS.CANCELLED}' THEN 'CANCELLED'
-        WHEN o.status = '${ORDER_STATUS.DELIVERED}' AND o."paymentStatus" = '${PAYMENT_STATUS.PAID}' THEN 'COLLECTED'
+        WHEN NOT EXISTS (
+          SELECT 1 FROM sub_orders s
+          WHERE s."orderId" = o.id AND s."deletedAt" IS NULL AND ${keptPart}
+        ) THEN 'RETURNED'
+        WHEN o."paymentStatus" = '${PAYMENT_STATUS.PAID}' THEN 'COLLECTED'
         WHEN o.status = '${ORDER_STATUS.DELIVERED}' THEN 'DELIVERED_UNPAID'
         ELSE 'OPEN'
       END AS "codStatus"
@@ -467,8 +485,9 @@ async function codRemittance(filters: ReportFilters) {
       createdAt: row.createdAt,
       orderStatus: row.orderStatus,
       paymentStatus: row.paymentStatus,
-      codAmount: Number(row.codAmount ?? 0),
-      walletUsed: Number(row.walletUsed ?? 0),
+      codAmount: fromPaise(Number(row.codDuePaise ?? 0)),
+      codCollected: fromPaise(Number(row.codCollectedPaise ?? 0)),
+      walletUsed: fromPaise(Number(row.walletUsedPaise ?? 0)),
       codStatus: row.codStatus,
     }),
   });
@@ -970,6 +989,7 @@ export const adminFinanceGapReports: ReportDefinition[] = [
       { key: 'orderStatus', labelKey: 'orderStatus' },
       { key: 'paymentStatus', labelKey: 'paymentStatus' },
       { key: 'codAmount', labelKey: 'codAmount', format: 'currency' },
+      { key: 'codCollected', labelKey: 'codCollected', format: 'currency' },
       { key: 'walletUsed', labelKey: 'walletUsed', format: 'currency' },
       { key: 'codStatus', labelKey: 'codStatus' },
     ],

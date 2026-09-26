@@ -38,6 +38,7 @@ import {
 import type { GetSubOrdersQuery } from './suborders.dto';
 import { issueTaxInvoicesOnDispatch } from '@modules/pricing/taxInvoiceIssue';
 import { codAmountForSubOrder } from '@modules/shipping/codCollection';
+import { destroyCouponUsageForOrder } from '@modules/coupons/couponEngine';
 import { isReversedPart } from '@modules/pricing/partReversal';
 
 /**
@@ -334,6 +335,12 @@ export class SubordersService {
               },
               { where: { id: parentOrder.id }, transaction },
             );
+            // Cancelled part by part, the order ends where a whole-order cancel does: give the
+            // coupon redemptions back (usage limits, analytics). Not when a part came back
+            // undelivered (RTO) — a refused parcel does not return the coupon.
+            if (sisterSubOrders.every((s) => s.id === id || s.status === ORDER_STATUS.CANCELLED)) {
+              await destroyCouponUsageForOrder(parentOrder.id, transaction);
+            }
             orderFullyCancelled = true;
           }
         }
