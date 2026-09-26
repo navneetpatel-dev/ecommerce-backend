@@ -8,6 +8,7 @@ import { Role } from '@database/models/role.model';
 import { sequelize } from '@database/models';
 import { QueryTypes } from 'sequelize';
 import { fromPaise } from '@modules/pricing/money';
+import { sqlIstDay } from '@modules/pricing/istCalendar';
 import {
   GMV_SUB_ORDER_SQL,
   sqlGmvPaise,
@@ -221,15 +222,15 @@ export const adminService = {
         { type: QueryTypes.SELECT },
       ),
       sequelize.query<{ date: string; count: string; revenuePaise: string }>(
-        `SELECT to_char(date_trunc('day', o."createdAt"), 'YYYY-MM-DD') AS date,
+        `SELECT to_char(${sqlIstDay('o."createdAt"')}, 'YYYY-MM-DD') AS date,
                 COUNT(DISTINCT o.id)::int AS count,
                 COALESCE(SUM(${sqlGmvPaise('s')}), 0)::bigint AS "revenuePaise"
          FROM sub_orders s
          INNER JOIN orders o ON o.id = s."orderId"
          WHERE o."createdAt" >= NOW() - INTERVAL '30 days'
            AND ${GMV_SUB_ORDER_SQL}
-         GROUP BY date_trunc('day', o."createdAt")
-         ORDER BY date_trunc('day', o."createdAt") ASC`,
+         GROUP BY ${sqlIstDay('o."createdAt"')}
+         ORDER BY ${sqlIstDay('o."createdAt"')} ASC`,
         { type: QueryTypes.SELECT },
       ),
       sequelize.query<{ status: string; count: string }>(

@@ -12,9 +12,11 @@ import {
 } from '@core/pdf';
 import { WalletRechargeOrder } from '@database/models/walletRechargeOrder.model';
 import { User } from '@database/models/user.model';
+import { istDateString } from '@modules/pricing/istCalendar';
 
 function nextReceiptNumber(): string {
-  const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  // Dated in India time, like the receipt itself.
+  const stamp = istDateString(new Date()).replace(/-/g, '');
   const suffix = Math.floor(Math.random() * 900000 + 100000);
   return `WRC-${stamp}-${suffix}`;
 }

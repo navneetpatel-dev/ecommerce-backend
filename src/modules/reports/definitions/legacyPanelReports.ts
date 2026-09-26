@@ -21,6 +21,7 @@ import {
 import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
 import { roundMoney } from '@modules/pricing/money';
 import { GMV_SUB_ORDER_SQL, sqlGmvPaise } from '@modules/pricing/frozenMoneySql';
+import { sqlIstDay } from '@modules/pricing/istCalendar';
 import { PAYMENT_STATUS } from '@core/constants/statuses';
 
 const WALLET_LIABILITY_KEYSET: KeysetOrderCol[] = [
@@ -480,15 +481,15 @@ async function platformAnalyticsQuery(filters: ReportFilters) {
       : 0;
 
   const orderVolumeRows = await sequelize.query<{ date: string; count: string; revenuePaise: string }>(
-    `SELECT to_char(date_trunc('day', o."createdAt"), 'YYYY-MM-DD') AS date,
+    `SELECT to_char(${sqlIstDay('o."createdAt"')}, 'YYYY-MM-DD') AS date,
             COUNT(DISTINCT o.id)::int AS count,
             COALESCE(SUM(${sqlGmvPaise('s')}), 0)::bigint AS "revenuePaise"
      FROM sub_orders s
      INNER JOIN orders o ON o.id = s."orderId"
      WHERE o."createdAt" BETWEEN :from AND :to
        AND ${GMV_SUB_ORDER_SQL}
-     GROUP BY date_trunc('day', o."createdAt")
-     ORDER BY date_trunc('day', o."createdAt") ASC`,
+     GROUP BY ${sqlIstDay('o."createdAt"')}
+     ORDER BY ${sqlIstDay('o."createdAt"')} ASC`,
     {
       replacements: { from: filters.from, to: filters.to },
       type: QueryTypes.SELECT,

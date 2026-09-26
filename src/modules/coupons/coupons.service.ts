@@ -25,6 +25,7 @@ import { resolveItemAvailability, isProductCustomerVisible } from '@core/catalog
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { coerceRupees, fromPaise, roundMoney } from '@modules/pricing/money';
 import { REPORTABLE_ORDER_SQL, sqlOrderKeptPaymentPaise } from '@modules/pricing/frozenMoneySql';
+import { istStartOfMonth } from '@modules/pricing/istCalendar';
 import {
   resolveCartShippingPreviewForCoupon,
   resolveProductShippingPreviewForCoupon,
@@ -504,9 +505,10 @@ export class CouponsService {
     periodStart: string;
     periodEnd: string;
   }> {
+    // This calendar month in India time.
     const now = new Date();
-    const periodStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const periodEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+    const periodStart = istStartOfMonth(now);
+    const periodEnd = istStartOfMonth(now, 1);
 
     const coupons = await Coupon.findAll({
       where: { vendorId, discountBearer: DISCOUNT_BEARER.VENDOR },

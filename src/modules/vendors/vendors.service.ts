@@ -7,6 +7,12 @@ import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { fromPaise } from '@modules/pricing/money';
 import { payoutRatesFromSettings, vendorPayoutBreakdown } from '@modules/pricing/vendorPayout';
+import {
+  istDateString,
+  istStartOfDay,
+  istStartOfMonth,
+  sqlIstDay,
+} from '@modules/pricing/istCalendar';
 import { settingsService } from '@modules/settings/settings.service';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import {
@@ -786,8 +792,12 @@ export class VendorsService {
        FROM sub_orders
        WHERE "vendorId" = :vendorId
          AND status <> :cancelled
-         AND "createdAt" >= date_trunc('day', NOW())`,
-      { replacements: { vendorId, cancelled: ORDER_STATUS.CANCELLED }, type: QueryTypes.SELECT },
+         AND "createdAt" >= :dayStart`,
+      {
+        // Today and this month in India time (midnight IST), not UTC.
+        replacements: { vendorId, cancelled: ORDER_STATUS.CANCELLED, dayStart: istStartOfDay(new Date()) },
+        type: QueryTypes.SELECT,
+      },
     );
     const [pending] = await sequelize.query<{ shipments: string }>(
       `SELECT COUNT(*)::int AS shipments
@@ -808,9 +818,9 @@ export class VendorsService {
        FROM sub_orders s
        INNER JOIN orders o ON o.id = s."orderId"
        WHERE s."vendorId" = :vendorId
-         AND o."createdAt" >= date_trunc('month', NOW())
+         AND o."createdAt" >= :monthStart
          AND ${GMV_SUB_ORDER_SQL}`,
-      { replacements: { vendorId }, type: QueryTypes.SELECT },
+      { replacements: { vendorId, monthStart: istStartOfMonth(new Date()) }, type: QueryTypes.SELECT },
     );
     // What the vendor will be paid for pending commission: net less 194-O TDS, GST on
     // commission and vendor-borne cashback cost — the payout run's own breakdown
@@ -861,17 +871,19 @@ export class VendorsService {
     const vendor = await vendorsRepository.findById(vendorId);
     if (!vendor) throw new NotFoundError('Vendor');
 
+    // Days in India time: the window starts at midnight IST, and each day's revenue is
+    // the sales between IST midnights.
     const to = new Date();
-    const from = new Date(to);
-    from.setUTCDate(from.getUTCDate() - (windowDays - 1));
-    from.setUTCHours(0, 0, 0, 0);
+    const from = istStartOfDay(new Date(to.getTime() - (windowDays - 1) * 86_400_000));
+    const fromDay = istDateString(from);
+    const toDay = istDateString(to);
 
     const revenueRows = await sequelize.query<{ day: string; revenuePaise: string }>(
       `WITH days AS (
-         SELECT generate_series(:from::date, :to::date, interval '1 day')::date AS day
+         SELECT generate_series(:fromDay::date, :toDay::date, interval '1 day')::date AS day
        ),
        daily_revenue AS (
-         SELECT date_trunc('day', o."createdAt")::date AS day,
+         SELECT ${sqlIstDay('o."createdAt"')}::date AS day,
                 SUM(${sqlGmvPaise('s')}) AS "revenuePaise"
          FROM sub_orders s
          INNER JOIN orders o ON o.id = s."orderId"
@@ -884,7 +896,7 @@ export class VendorsService {
        FROM days d
        LEFT JOIN daily_revenue r ON r.day = d.day
        ORDER BY d.day ASC`,
-      { replacements: { vendorId, from, to }, type: QueryTypes.SELECT },
+      { replacements: { vendorId, from, to, fromDay, toDay }, type: QueryTypes.SELECT },
     );
 
     const topProductRows = await sequelize.query<{

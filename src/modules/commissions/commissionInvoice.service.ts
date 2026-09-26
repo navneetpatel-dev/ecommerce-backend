@@ -10,6 +10,7 @@ import {
 } from '@modules/pricing/vendorInvoiceSequence';
 import { settingsService } from '@modules/settings/settings.service';
 import { isIntraStateSupply } from '@modules/pricing/gstPlaceOfSupply';
+import { istDateString } from '@modules/pricing/istCalendar';
 
 export type CreateCommissionInvoiceInput = {
   vendorId: string;
@@ -122,7 +123,7 @@ export async function renderCommissionInvoicePdf(
   doc.moveDown(0.5);
   doc.fontSize(10);
   doc.text(`${creditNote ? 'Credit Note' : 'Invoice'} No: ${invoice.number}`);
-  doc.text(`Date: ${invoice.issuedAt.toISOString().slice(0, 10)}`);
+  doc.text(`Date: ${istDateString(invoice.issuedAt)}`);
   doc.text(`SAC: ${invoice.sacCode}`);
   doc.moveDown();
   doc.text('Supplier (Platform)');
@@ -135,7 +136,7 @@ export async function renderCommissionInvoicePdf(
   if (vendor.gstNumber) doc.text(`GSTIN: ${vendor.gstNumber}`);
   if (vendor.state) doc.text(`State: ${vendor.state}`);
   doc.moveDown();
-  doc.text(`Period: ${invoice.periodStart.toISOString().slice(0, 10)} → ${invoice.periodEnd.toISOString().slice(0, 10)}`);
+  doc.text(`Period: ${istDateString(invoice.periodStart)} → ${istDateString(invoice.periodEnd)}`);
   doc.moveDown();
   doc.text(`Taxable commission: Rs ${fromPaise(Number(invoice.taxablePaise)).toFixed(2)}`);
   doc.text(`GST @ ${Number(invoice.gstRatePercent)}%: Rs ${fromPaise(Number(invoice.gstPaise)).toFixed(2)}`);

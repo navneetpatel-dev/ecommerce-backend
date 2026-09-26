@@ -3,6 +3,7 @@ import { DocumentSequence } from '@database/models/documentSequence.model';
 import type { DocumentSequenceKind } from '@core/constants/statuses';
 import { AppError } from '@core/errors/AppError';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
+import { istDateString } from './istCalendar';
 
 async function lockSequence(
   kind: DocumentSequenceKind,
@@ -30,7 +31,8 @@ export async function nextDocumentNumber(
 ): Promise<string> {
   const row = await lockSequence(kind, transaction);
   const value = Number(row.nextValue);
-  const year = new Date().getFullYear();
+  // The calendar year in India time (a number issued at 00:30 IST on 1 Jan is that year's).
+  const year = istDateString(new Date()).slice(0, 4);
   const number = `${row.prefix}-${year}-${String(value).padStart(6, '0')}`;
   await row.update({ nextValue: value + 1 }, { transaction });
   return number;

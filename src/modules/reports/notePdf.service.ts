@@ -8,6 +8,7 @@ import { ReturnRequest } from '@database/models/returnRequest.model';
 import { Vendor } from '@database/models/vendor.model';
 import { User } from '@database/models/user.model';
 import { fromPaise } from '@modules/pricing/money';
+import { istDateString } from '@modules/pricing/istCalendar';
 
 async function pdfBuffer(
   paint: (doc: PDFKit.PDFDocument) => void,
@@ -38,7 +39,7 @@ export async function renderCreditNotePdf(note: CreditNote, meta: {
     if (note.againstInvoiceNumber) {
       doc.text(`Against Invoice: ${note.againstInvoiceNumber}`);
     }
-    doc.text(`Date: ${(note.issuedAt ?? note.createdAt).toISOString().slice(0, 10)}`);
+    doc.text(`Date: ${istDateString(note.issuedAt ?? note.createdAt)}`);
     doc.moveDown();
     doc.text(`Seller: ${meta.vendorName || note.vendorId || '—'}`);
     if (meta.vendorGstin) doc.text(`GSTIN: ${meta.vendorGstin}`);
@@ -72,7 +73,7 @@ export async function renderDebitNotePdf(note: DebitNote, meta: {
     if (note.againstInvoiceNumber) {
       doc.text(`Against Invoice: ${note.againstInvoiceNumber}`);
     }
-    doc.text(`Date: ${(note.issuedAt ?? note.createdAt).toISOString().slice(0, 10)}`);
+    doc.text(`Date: ${istDateString(note.issuedAt ?? note.createdAt)}`);
     doc.moveDown();
     doc.text(`Vendor: ${meta.vendorName || note.vendorId}`);
     if (meta.vendorGstin) doc.text(`GSTIN: ${meta.vendorGstin}`);

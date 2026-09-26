@@ -34,6 +34,7 @@ import {
   COMMISSION_STATUS,
 } from '../engine/queryHelpers';
 import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
+import { gstPeriodOf } from '@modules/pricing/gstPeriod';
 
 function vendorScopeWhere(filters: ReportFilters): Record<string, unknown> {
   const vendorId = filters.scopedVendorId ?? filters.vendorId ?? null;
@@ -46,9 +47,8 @@ function hoursBetween(from: Date, to: Date): number {
 
 function periodKey(period: string | null | undefined, date: Date): string {
   if (period) return period;
-  const y = date.getUTCFullYear();
-  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
-  return `${y}-${m}`;
+  // Rows without a stored period: the filing month in India time.
+  return gstPeriodOf(date);
 }
 
 const DISCOUNT_PAISE_SQL = sqlFrozenPaise('cl', 'discountAmountPaise');
