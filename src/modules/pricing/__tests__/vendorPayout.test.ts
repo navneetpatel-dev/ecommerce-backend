@@ -122,6 +122,30 @@ describe('vendorPayoutBreakdown with vendor-borne cashback', () => {
     assert.equal(result.payoutPaise, 48181);
   });
 
+  it('gives the commission GST back when returns hand back more commission than sales earn', () => {
+    const smallSale = {
+      netPayoutAmountPaise: 60000,
+      commissionAmountPaise: 1000,
+      taxableAmountPaise: 50000,
+      referenceType: null,
+    };
+    const returned = {
+      netPayoutAmountPaise: -20000,
+      commissionAmountPaise: -3000,
+      taxableAmountPaise: -18000,
+      tdsRatePercent: 0,
+      referenceType: 'ReturnClawback',
+    };
+    const result = vendorPayoutBreakdown([smallSale, returned], {
+      tdsRatePercent: 0,
+      commissionGstRatePercent: 18,
+    });
+    assert.equal(result.commissionTaxablePaise, -2000);
+    assert.equal(result.commissionGstPaise, -360);
+    // 60000 + ₹3.60 GST back − 20000 returned.
+    assert.equal(result.payoutPaise, 40360);
+  });
+
   it('pays back a reversal on its own', () => {
     const result = vendorPayoutBreakdown([reversal], rates);
     assert.equal(result.commissionGstPaise, 0);
@@ -145,7 +169,8 @@ describe('commissionGstPaise', () => {
   it('rounds GST on commission in paise and is zero for no commission', () => {
     assert.equal(commissionGstPaise(12345, 18), 2222);
     assert.equal(commissionGstPaise(0, 18), 0);
-    assert.equal(commissionGstPaise(-500, 18), 0);
+    // A negative commission gives the GST back, rounded like a charge.
+    assert.equal(commissionGstPaise(-12345, 18), -2222);
   });
 });
 

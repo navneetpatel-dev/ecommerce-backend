@@ -36,6 +36,15 @@ import {
 import { resolveShippingDisplayKey } from '@modules/checkout/checkoutOrderTotals';
 import { WebhookPayloadSchema } from './shipping.dto';
 import { deliveryAgentPayoutsService } from '@modules/deliveryAgents/deliveryAgentPayouts.service';
+import { issueTaxInvoicesOnDispatch } from '@modules/pricing/taxInvoiceIssue';
+
+/** Shipment statuses that mean the goods have been dispatched. */
+const DISPATCHED_SHIPMENT_STATUSES = new Set([
+  'PICKED_UP',
+  'IN_TRANSIT',
+  'OUT_FOR_DELIVERY',
+  'DELIVERED',
+]);
 
 export type ShippingQuoteRate = {
   method: 'STANDARD' | 'EXPRESS';
@@ -708,6 +717,10 @@ export const shippingService = {
         },
         { transaction },
       );
+      if (DISPATCHED_SHIPMENT_STATUSES.has(status)) {
+        // The goods have left the seller: issue the tax invoices (not at checkout).
+        await issueTaxInvoicesOnDispatch(shipment.subOrderId, transaction);
+      }
       if (status === 'DELIVERED') {
         await SubOrder.update(
           { status: 'DELIVERED' },

@@ -33,6 +33,7 @@ import { walletService } from '@modules/wallet/wallet.service';
 import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
 import { rollbackOrderWalletIfNeeded } from '@modules/wallet/walletOrderRollback';
 import type { GetSubOrdersQuery } from './suborders.dto';
+import { issueTaxInvoicesOnDispatch } from '@modules/pricing/taxInvoiceIssue';
 
 /**
  * Transitions reachable through this manual, vendor/admin-facing endpoint.
@@ -191,6 +192,9 @@ export class SubordersService {
       assertSubOrderTransition(row.status, status);
 
       await row.update({ status, trackingId: trackingId ?? row.trackingId, updatedBy }, { transaction });
+      if (status === ORDER_STATUS.SHIPPED || status === ORDER_STATUS.DELIVERED) {
+        await issueTaxInvoicesOnDispatch(id, transaction);
+      }
 
       if (status === ORDER_STATUS.CANCELLED) {
         // 1. Restock items

@@ -77,11 +77,12 @@ async function hsnMapForOrder(order: Order): Promise<Map<string, string>> {
   );
 }
 
+/** Tax invoices are issued when a shipment is dispatched (pricing/taxInvoiceIssue). */
+const TAX_INVOICE_NOT_ISSUED = 'The tax invoice is issued when the order is shipped';
+
 function assertInvoiceAllocated(sub: SubOrder) {
   if (!sub.taxInvoiceNumber) {
-    throw new ValidationError(
-      'Tax invoice has not been allocated for this seller shipment yet',
-    );
+    throw new ValidationError(TAX_INVOICE_NOT_ISSUED);
   }
 }
 
@@ -107,7 +108,8 @@ async function buildPlatformInvoicePdf(
   order: Order,
 ): Promise<{ source: TaxInvoiceSource; pdf: Buffer; filename: string } | null> {
   const snapshot = order.platformInvoiceSnapshot;
-  if (!snapshot) return null;
+  // Issued with the order's first dispatch; none on an order not yet shipped.
+  if (!snapshot?.invoiceNumber) return null;
   const settings = await settingsService.getPlatformSettings();
   const orderInput = order as unknown as TaxInvoiceOrderInput;
   const source = toTaxInvoiceSourceFromPlatformInvoice(orderInput, snapshot, {
@@ -151,11 +153,13 @@ export async function getCustomerOrderInvoices(input: {
 
   const hsnByCategory = await hsnMapForOrder(order);
   const rendered = [];
-  for (const sub of subOrders) {
+  // Invoices are issued at dispatch: skip sub-orders not shipped yet (or cancelled).
+  for (const sub of subOrders.filter((row) => row.taxInvoiceNumber)) {
     rendered.push(await buildSubOrderInvoicePdf(order, sub, hsnByCategory));
   }
   const platformInvoice = await buildPlatformInvoicePdf(order);
   if (platformInvoice) rendered.push(platformInvoice);
+  if (rendered.length === 0) throw new ValidationError(TAX_INVOICE_NOT_ISSUED);
 
   if (rendered.length === 1) {
     const only = rendered[0]!;

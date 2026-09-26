@@ -23,13 +23,24 @@ export type CreateCommissionInvoiceInput = {
 };
 
 /**
- * Issue a platform → vendor GST invoice for marketplace commission (SAC 9985).
+ * A commission document with negative amounts is a credit note: the payout's returns
+ * handed back more commission than its sales earned, with the GST on it.
+ */
+export function isCommissionCreditNote(invoice: { taxablePaise: number | string }): boolean {
+  return Number(invoice.taxablePaise) < 0;
+}
+
+/**
+ * Issue a platform → vendor GST invoice for marketplace commission (SAC 9985), or a
+ * commission credit note (numbered in the platform credit-note series) when the payout's
+ * commission is negative.
  */
 export async function createCommissionInvoiceForPayout(
   input: CreateCommissionInvoiceInput,
   transaction: Transaction,
 ): Promise<CommissionInvoice | null> {
-  if (input.commissionTaxablePaise <= 0) return null;
+  if (input.commissionTaxablePaise === 0) return null;
+  const creditNote = input.commissionTaxablePaise < 0;
 
   const existing = await CommissionInvoice.findOne({
     where: { payoutId: input.payoutId },
@@ -44,7 +55,7 @@ export async function createCommissionInvoiceForPayout(
   const issuedAt = new Date();
   const { number } = await nextVendorDocumentNumber(
     null,
-    VENDOR_DOCUMENT_KIND.COMMISSION_INVOICE,
+    creditNote ? VENDOR_DOCUMENT_KIND.CREDIT_NOTE : VENDOR_DOCUMENT_KIND.COMMISSION_INVOICE,
     issuedAt,
     transaction,
   );
@@ -55,7 +66,12 @@ export async function createCommissionInvoiceForPayout(
   });
   const intra = isIntraStateSupply(settings.platformState, vendor?.state);
   const gstPaise = commissionGstPaise(input.commissionTaxablePaise, gstRate);
-  const { cgst: cgstPaise, sgst: sgstPaise, igst: igstPaise } = splitTaxAmount(gstPaise, intra);
+  // Split the GST's size, then give a credit note's parts the credit note's sign.
+  const sign = gstPaise < 0 ? -1 : 1;
+  const split = splitTaxAmount(Math.abs(gstPaise), intra);
+  const cgstPaise = sign * split.cgst;
+  const sgstPaise = sign * split.sgst;
+  const igstPaise = sign * split.igst;
 
   return CommissionInvoice.create(
     {
@@ -96,10 +112,16 @@ export async function renderCommissionInvoicePdf(
     doc.on('error', reject);
   });
 
-  doc.fontSize(16).text('Tax Invoice — Marketplace Commission', { align: 'left' });
+  const creditNote = isCommissionCreditNote(invoice);
+  doc
+    .fontSize(16)
+    .text(
+      creditNote ? 'Credit Note — Marketplace Commission' : 'Tax Invoice — Marketplace Commission',
+      { align: 'left' },
+    );
   doc.moveDown(0.5);
   doc.fontSize(10);
-  doc.text(`Invoice No: ${invoice.number}`);
+  doc.text(`${creditNote ? 'Credit Note' : 'Invoice'} No: ${invoice.number}`);
   doc.text(`Date: ${invoice.issuedAt.toISOString().slice(0, 10)}`);
   doc.text(`SAC: ${invoice.sacCode}`);
   doc.moveDown();

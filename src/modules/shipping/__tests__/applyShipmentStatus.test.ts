@@ -94,6 +94,8 @@ describe('applyShipmentStatus idempotency (F-17)', () => {
       id: 'sub-3',
       orderId: 'order-3',
       status: 'SHIPPED',
+      // Issued when it shipped (pricing/taxInvoiceIssue); delivery keeps it.
+      taxInvoiceNumber: 'INK/2627/00000001',
     }));
     mock.method(SubOrder, 'findAll', async () => [{ status: 'DELIVERED' }]);
     mock.method(Order, 'update', async () => [1]);

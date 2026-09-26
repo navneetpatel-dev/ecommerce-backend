@@ -45,8 +45,10 @@ describe('PricingEngine', () => {
     assert.equal(result.commissionBasePaise, 20000);
     assert.equal(result.commissionPaise, 2000);
     assert.equal(result.tcsPaise, 180); // 1% of taxable
-    // The vendor remits the GST, so its net includes it: taxable + tax − commission − TCS.
-    assert.equal(result.netPayoutPaise, 18000 + 3240 - 2000 - 180);
+    // The vendor remits the GST, so its net includes it; the platform funds this coupon,
+    // so it pays the vendor the ₹20 back: taxable + ₹20 + tax − commission − TCS.
+    assert.equal(result.platformFundedDiscountPaise, 2000);
+    assert.equal(result.netPayoutPaise, 18000 + 2000 + 3240 - 2000 - 180);
     assert.equal(
       result.lines.reduce((sum, line) => sum + line.netPayoutPaise, 0),
       result.netPayoutPaise,
@@ -71,9 +73,12 @@ describe('PricingEngine', () => {
     assert.equal(result.commissionBasePaise, 9000);
     assert.equal(result.commissionPaise, 900);
     assert.equal(result.tax.cgst + result.tax.sgst, result.tax.total);
+    // The vendor funds this one: nothing comes back from the platform.
+    assert.equal(result.platformFundedDiscountPaise, 0);
+    assert.equal(result.netPayoutPaise, 9000 + result.tax.total - 900);
   });
 
-  it('reconciles customer payment to payouts (incl. GST) + commission + tcs + shipping', () => {
+  it('reconciles customer payment + platform coupon to payouts + commission + tcs + shipping', () => {
     const result = computeSubOrderBreakdown({
       lines: [
         { key: 'a', unitPricePaise: 9999, quantity: 1 },
@@ -89,7 +94,7 @@ describe('PricingEngine', () => {
       tcsRatePercent: 1,
     });
 
-    const left = result.customerTotalPaise;
+    const left = result.customerTotalPaise + result.platformFundedDiscountPaise;
     const right =
       result.netPayoutPaise +
       result.commissionPaise +
@@ -114,6 +119,12 @@ describe('PricingEngine', () => {
     assert.equal(result.taxablePaise, 17000);
     assert.equal(result.commissionBasePaise, 19000); // subtotal − vendor-borne only
     assert.equal(result.commissionPaise, 1900);
+    // The platform's ₹20 share comes back to the vendor; the vendor's own ₹10 does not.
+    assert.equal(result.platformFundedDiscountPaise, 2000);
+    assert.equal(
+      result.netPayoutPaise,
+      17000 + 2000 + result.tax.total - 1900 - result.tcsPaise,
+    );
   });
 
   it('exposes non-zero roundingAdjustmentPaise when line tax drift is corrected', () => {

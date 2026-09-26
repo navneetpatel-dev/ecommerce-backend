@@ -72,6 +72,7 @@ export function recomputeSubOrder(input: RecomputeInput): RecomputeOutput {
   const taxablePaise = lines.map((_, i) => Math.max(0, lineSubtotalPaise[i]! - lineDiscounts[i]!));
   const taxableTotalPaise = taxablePaise.reduce((a, b) => a + b, 0);
 
+  let platformFundedPaise = 0;
   const lineOutputs: RecomputeLineOutput[] = lines.map((l, i) => {
     const discountPaise = lineDiscounts[i] ?? 0;
     const lineTaxablePaise = taxablePaise[i]!;
@@ -82,6 +83,7 @@ export function recomputeSubOrder(input: RecomputeInput): RecomputeOutput {
         ? Math.round((discountPaise * vendorBornePaise) / merchandiseDiscountPaise)
         : 0;
     const commissionBasePaise = Math.max(0, lineSubtotalPaise[i]! - lineVendorBorne);
+    platformFundedPaise += Math.max(0, discountPaise - lineVendorBorne);
     const commissionPaise = Math.round((commissionBasePaise * l.commissionRatePercent) / 100);
     return {
       key: l.key,
@@ -118,10 +120,11 @@ export function recomputeSubOrder(input: RecomputeInput): RecomputeOutput {
 
   const commissionTotalPaise = lineOutputs.reduce((s, l) => s + toPaise(l.commission), 0);
   const tcsTotalPaise = Math.round((taxableTotalPaise * input.tcsRatePercent) / 100);
-  // The vendor is the supplier and remits the GST, so its net includes the tax.
+  // The vendor is the supplier and remits the GST, so its net includes the tax; the
+  // platform pays the vendor the part of the coupon it funds.
   const netPayoutPaise = Math.max(
     0,
-    taxableTotalPaise + taxTotalPaise - commissionTotalPaise - tcsTotalPaise,
+    taxableTotalPaise + platformFundedPaise + taxTotalPaise - commissionTotalPaise - tcsTotalPaise,
   );
   const customerTotalPaise = taxableTotalPaise + taxTotalPaise + shippingChargedPaise;
 
