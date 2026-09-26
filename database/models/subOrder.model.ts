@@ -1,6 +1,7 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
 import { paiseBackedRupees } from '@modules/pricing/paiseBackedRupees';
 import type { TaxInvoiceSnapshot } from '@modules/pricing/taxInvoiceSnapshot';
+import type { PlatformInvoiceSnapshot } from '@modules/pricing/platformFeeInvoice';
 
 export class SubOrder extends Model<InferAttributes<SubOrder>, InferCreationAttributes<SubOrder>> {
   declare id: CreationOptional<string>;
@@ -37,6 +38,10 @@ export class SubOrder extends Model<InferAttributes<SubOrder>, InferCreationAttr
   declare taxInvoiceIssuedAt: CreationOptional<Date | null>;
   /** Tax invoice amounts as issued at checkout; null on sub-orders placed before it existed. */
   declare taxInvoiceSnapshot: CreationOptional<TaxInvoiceSnapshot | null>;
+  /** The platform's invoice for the shipping charged on this part; numbered at dispatch. */
+  declare shippingInvoiceSnapshot: CreationOptional<PlatformInvoiceSnapshot | null>;
+  /** Section 52 TCS rate frozen at checkout; the collection is recorded at dispatch. */
+  declare tcsRatePercent: CreationOptional<number | null>;
   declare trackingId: string | null;
   declare createdBy: string | null;
   declare updatedBy: string | null;
@@ -90,6 +95,8 @@ export const initSubOrderModel = (sequelize: Sequelize) => {
       taxInvoiceNumber: { type: DataTypes.STRING(64), allowNull: true, unique: true },
       taxInvoiceIssuedAt: { type: DataTypes.DATE, allowNull: true },
       taxInvoiceSnapshot: { type: DataTypes.JSONB, allowNull: true },
+      shippingInvoiceSnapshot: { type: DataTypes.JSONB, allowNull: true },
+      tcsRatePercent: { type: DataTypes.DECIMAL(6, 3), allowNull: true },
       trackingId: { type: DataTypes.STRING, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },

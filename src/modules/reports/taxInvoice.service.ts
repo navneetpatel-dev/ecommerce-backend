@@ -12,6 +12,8 @@ import { ProductVariant } from '@database/models/productVariant.model';
 import { Product } from '@database/models/product.model';
 import { User } from '@database/models/user.model';
 import { TaxRule } from '@database/models/taxRule.model';
+import { ReturnRequest } from '@database/models/returnRequest.model';
+import type { PlatformInvoiceSnapshot } from '@modules/pricing/platformFeeInvoice';
 import {
   renderTaxInvoicePdf,
   toTaxInvoiceSourceFromPlatformInvoice,
@@ -103,12 +105,14 @@ export async function buildSubOrderInvoicePdf(
   return { source, pdf, filename };
 }
 
-/** The platform's own invoice for its fees on the order (gift wrap), when there is one. */
+/**
+ * One of the platform's own invoices on the order — its fees (gift wrap), the shipping
+ * on a part, or a kept return fee — once issued (none before dispatch).
+ */
 async function buildPlatformInvoicePdf(
   order: Order,
+  snapshot: PlatformInvoiceSnapshot | null | undefined,
 ): Promise<{ source: TaxInvoiceSource; pdf: Buffer; filename: string } | null> {
-  const snapshot = order.platformInvoiceSnapshot;
-  // Issued with the order's first dispatch; none on an order not yet shipped.
   if (!snapshot?.invoiceNumber) return null;
   const settings = await settingsService.getPlatformSettings();
   const orderInput = order as unknown as TaxInvoiceOrderInput;
@@ -157,8 +161,20 @@ export async function getCustomerOrderInvoices(input: {
   for (const sub of subOrders.filter((row) => row.taxInvoiceNumber)) {
     rendered.push(await buildSubOrderInvoicePdf(order, sub, hsnByCategory));
   }
-  const platformInvoice = await buildPlatformInvoicePdf(order);
-  if (platformInvoice) rendered.push(platformInvoice);
+  // The platform's own invoices: gift wrap, the shipping on each part, kept return fees.
+  const returnFeeInvoices = await ReturnRequest.findAll({
+    where: { subOrderId: subOrders.map((row) => row.id) },
+    attributes: ['id', 'returnFeeInvoiceSnapshot'],
+  });
+  const platformSnapshots = [
+    order.platformInvoiceSnapshot,
+    ...subOrders.map((row) => row.shippingInvoiceSnapshot),
+    ...returnFeeInvoices.map((row) => row.returnFeeInvoiceSnapshot),
+  ];
+  for (const snapshot of platformSnapshots) {
+    const platformInvoice = await buildPlatformInvoicePdf(order, snapshot);
+    if (platformInvoice) rendered.push(platformInvoice);
+  }
   if (rendered.length === 0) throw new ValidationError(TAX_INVOICE_NOT_ISSUED);
 
   if (rendered.length === 1) {

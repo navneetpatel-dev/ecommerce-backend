@@ -38,6 +38,9 @@ import { env } from '@config/env';
 import { Coupon } from '@database/models/coupon.model';
 import { CouponUsage } from '@database/models/couponUsage.model';
 import { getReportDefinition } from '@modules/reports/engine/reportRegistry';
+import { shippingInvoiceLine, unissuedPlatformInvoice } from '@modules/pricing/platformFeeInvoice';
+import { TcsLedger } from '@database/models/tcsLedger.model';
+import { gstPeriodOf } from '@modules/pricing/gstPeriod';
 import {
   COMMISSION_REFERENCE_TYPE,
   COMMISSION_STATUS,
@@ -311,6 +314,17 @@ async function seedFullOrder(opts: SeedOrderOpts) {
   return { order, sub, item, address };
 }
 
+/** An issued platform shipping invoice on a part, as dispatch leaves it. */
+async function issueShippingInvoice(sub: SubOrder, chargedRupees: number) {
+  const invoice = {
+    ...unissuedPlatformInvoice([shippingInvoiceLine(toPaise(chargedRupees), true)], true),
+    invoiceNumber: `SHIP/TEST/${randomUUID().slice(0, 8)}`,
+    issuedAt: new Date().toISOString(),
+  };
+  await sub.update({ shippingInvoiceSnapshot: invoice });
+  return invoice;
+}
+
 /** A second part (sub-order) on the seeded order, copied from the first. */
 async function addSiblingPart(sub: SubOrder, fields: Record<string, unknown>): Promise<SubOrder> {
   const { id: _id, createdAt: _c, updatedAt: _u, ...plain } = sub.get({ plain: true }) as Record<
@@ -392,6 +406,7 @@ describe('consolidated refund scenarios (seeded)', () => {
           }
           await ReturnRequest.destroy({ where: { subOrderId: sub.id }, force: true });
           await CreditNote.destroy({ where: { orderId }, force: true });
+          await TcsLedger.destroy({ where: { orderId }, force: true });
           await CommissionLedger.destroy({ where: { subOrderId: sub.id }, force: true });
           await OrderItem.destroy({ where: { subOrderId: sub.id }, force: true });
           await sub.destroy({ force: true });
@@ -421,7 +436,7 @@ describe('consolidated refund scenarios (seeded)', () => {
     if (!dbReady) return t.skip('database unavailable');
     const customer = await createCustomer();
     const vendor = await createVendor();
-    const { order, item } = await seedFullOrder({
+    const { order, item, sub } = await seedFullOrder({
       userId: customer.id,
       vendorId: vendor.id,
       paymentMethod: PAYMENT_METHOD.COD,
@@ -430,6 +445,7 @@ describe('consolidated refund scenarios (seeded)', () => {
       lineTaxable: 100,
       lineTax: 18,
     });
+    const shippingInvoice = await issueShippingInvoice(sub, 49);
 
     const rr = await returnsService.create(customer.id, {
       orderItemId: item.id,
@@ -446,13 +462,22 @@ describe('consolidated refund scenarios (seeded)', () => {
     const bal = await walletService.getBalance(customer.id);
     assert.ok(Math.abs(bal - Number(approved.refundAmount)) < 0.02);
 
-    const credit = await CreditNote.findOne({ where: { returnRequestId: rr.id } });
+    const credit = await CreditNote.findOne({ where: { returnRequestId: rr.id, vendorId: vendor.id } });
     assert.ok(credit);
     // The GST split is in paise, like taxPaise, and adds up to it exactly: ₹18 tax on
     // an intra-state line is CGST ₹9 + SGST ₹9 = 900 + 900 paise (it used to store 9 + 9).
     const tb = credit.taxBreakdown as { cgst: number; sgst: number; igst: number };
     assert.equal(Number(credit.taxPaise), 1800);
     assert.deepEqual({ cgst: tb.cgst, sgst: tb.sgst, igst: tb.igst }, { cgst: 900, sgst: 900, igst: 0 });
+    // The vendor's note is for the goods: ₹100 + ₹18, not the ₹167 refunded.
+    assert.equal(Number(credit.totalPaise), 11800);
+    // The ₹49 shipping refunded is reversed on the platform's shipping invoice.
+    const shippingNote = await CreditNote.findOne({ where: { returnRequestId: rr.id, vendorId: null } });
+    assert.ok(shippingNote);
+    assert.equal(shippingNote.againstInvoiceNumber, shippingInvoice.invoiceNumber);
+    assert.equal(Number(shippingNote.totalPaise), 4900);
+    const stb = shippingNote.taxBreakdown as { cgst: number; sgst: number };
+    assert.equal(stb.cgst, stb.sgst);
     await assertReturnRefundPurchasedNonExpiring(customer.id, rr.id);
   });
 
@@ -530,6 +555,11 @@ describe('consolidated refund scenarios (seeded)', () => {
     assert.ok(Math.abs(Number(approved.refundAmount) - 68) < 0.02);
     assert.equal(await walletService.getBalance(customer.id), Number(approved.refundAmount));
     await assertReturnRefundPurchasedNonExpiring(customer.id, rr.id);
+    // The ₹50 fee kept is the platform's supply: its own invoice, GST included.
+    const feeInvoice = (await ReturnRequest.findByPk(rr.id))!.returnFeeInvoiceSnapshot;
+    assert.ok(feeInvoice?.invoiceNumber);
+    assert.equal(feeInvoice.totalPaise, 5000);
+    assert.equal(feeInvoice.lines[0]!.cgstPaise, feeInvoice.lines[0]!.sgstPaise);
   });
 
   it('2c. Return fee larger than the refund keeps the engine merchandise figure', async (t) => {
@@ -557,6 +587,9 @@ describe('consolidated refund scenarios (seeded)', () => {
     // 0 − 18 − 0 + 150 = 132; the stored engine value is the real 100.
     assert.equal(Number(approved.refundAmount), 0);
     assert.equal(Number(approved.refundMerchandiseAmount), 100);
+    // Only the ₹118 actually kept is invoiced as the fee, not the ₹150 set.
+    const feeInvoice = (await ReturnRequest.findByPk(rr.id))!.returnFeeInvoiceSnapshot;
+    assert.equal(feeInvoice?.totalPaise, 11800);
     await setPlatformReturnShippingFee(50);
   });
 
@@ -1682,6 +1715,55 @@ describe('consolidated refund scenarios (seeded)', () => {
     await subordersService.updateStatus(refused.other.id, ORDER_STATUS.CANCELLED, undefined, customer.id);
     assert.equal(await CouponUsage.count({ where: { orderId: refused.order.id } }), 1);
     assert.equal((await Coupon.findByPk(refused.coupon.id))!.usedCount, 1);
+  });
+
+  it('16i. dispatch issues the shipping invoice and records TCS; an RTO reverses both', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    const { order, sub } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.COD,
+      totalAmount: 167,
+      shippingCharged: 49,
+    });
+    await order.update({ paymentStatus: PAYMENT_STATUS.PENDING, status: ORDER_STATUS.CONFIRMED });
+    await sub.update({
+      status: ORDER_STATUS.CONFIRMED,
+      customerTotal: 167,
+      tcsAmountPaise: 50,
+      tcsRatePercent: 0.5,
+      shippingInvoiceSnapshot: unissuedPlatformInvoice([shippingInvoiceLine(4900, true)], true),
+    });
+    // Checkout records no TCS any more: nothing before dispatch.
+    assert.equal(await TcsLedger.count({ where: { subOrderId: sub.id } }), 0);
+
+    const shipment = await createShipment(sub.id, { status: 'PENDING', codAmount: 167 });
+    await shippingService.applyShipmentStatus(shipment, 'PICKED_UP');
+    const dispatched = await SubOrder.findByPk(sub.id);
+    assert.ok(dispatched!.taxInvoiceNumber);
+    const shippingInvoice = dispatched!.shippingInvoiceSnapshot;
+    assert.ok(shippingInvoice?.invoiceNumber);
+    const collection = await TcsLedger.findOne({ where: { subOrderId: sub.id, entryType: 'COLLECTION' } });
+    assert.equal(Number(collection?.tcsAmountPaise), 50);
+    assert.equal(Number(collection?.ratePercent), 0.5);
+    assert.equal(collection?.period, gstPeriodOf(new Date()));
+    // Equal halves: TCS on an intra-state supply is CGST + SGST.
+    assert.equal(Number(collection?.tcsCgstPaise), Number(collection?.tcsSgstPaise));
+
+    await shipment.reload();
+    await shipment.update({ status: 'RTO_INITIATED' });
+    await shippingService.applyShipmentStatus(shipment, 'RTO_DELIVERED');
+    // The collection stays in its period; a reversal nets it out.
+    const rows = await TcsLedger.findAll({ where: { subOrderId: sub.id } });
+    assert.equal(rows.length, 2);
+    assert.equal(rows.reduce((sum, row) => sum + Number(row.tcsAmountPaise), 0), 0);
+    // The shipping invoice is reversed by a platform credit note.
+    const note = await CreditNote.findOne({
+      where: { orderId: order.id, vendorId: null, againstInvoiceNumber: shippingInvoice.invoiceNumber },
+    });
+    assert.equal(Number(note?.totalPaise), 4900);
   });
 
   it('16b. cancelling the last sub-order refunds the order-level gift-wrap fee too', async (t) => {

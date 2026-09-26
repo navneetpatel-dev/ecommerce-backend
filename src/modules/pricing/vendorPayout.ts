@@ -1,6 +1,8 @@
 import { COMMISSION_REFERENCE_TYPE } from '@core/constants/statuses';
 import { frozenPaise, vendorNetPayoutPaise } from './frozenMoneySql';
 import type { Paise } from './money';
+import { gstOnTaxablePaise } from './pricing.engine';
+import { isIntraStateSupply } from './gstPlaceOfSupply';
 
 /** The commission_ledgers columns a payout reads. */
 export interface PayoutLedgerRow {
@@ -23,10 +25,13 @@ export interface PayoutLedgerRow {
  * commission (a payout whose returns hand back more commission than its sales earned)
  * gives the GST back: the same amount, negative, rounded like a charge would be.
  */
-export function commissionGstPaise(commissionTaxablePaise: Paise, gstRatePercent: number): Paise {
-  if (commissionTaxablePaise === 0 || gstRatePercent <= 0) return 0;
-  const gst = Math.round((Math.abs(commissionTaxablePaise) * gstRatePercent) / 100);
-  return commissionTaxablePaise < 0 ? -gst : gst;
+export function commissionGstPaise(
+  commissionTaxablePaise: Paise,
+  gstRatePercent: number,
+  intraState = false,
+): Paise {
+  // Intra-state: CGST and SGST at half the rate each, equal, as the commission invoice shows.
+  return gstOnTaxablePaise(commissionTaxablePaise, gstRatePercent, intraState).total;
 }
 
 /** Section 194-O TDS on a (non-negative) sale value, rounded to the paisa. */
@@ -66,7 +71,7 @@ export type VendorPayoutBreakdown = {
  */
 export function vendorPayoutBreakdown(
   ledgers: PayoutLedgerRow[],
-  rates: { tdsRatePercent: number; commissionGstRatePercent: number },
+  rates: PayoutRates,
 ): VendorPayoutBreakdown {
   let afterTdsPaise = 0;
   let adjustmentPaise = 0;
@@ -96,7 +101,11 @@ export function vendorPayoutBreakdown(
     commissionTaxablePaise += frozenPaise(ledger.commissionAmountPaise);
     return { netPaise, tdsBasePaise, tdsRatePercent, tdsPaise };
   });
-  const gstPaise = commissionGstPaise(commissionTaxablePaise, rates.commissionGstRatePercent);
+  const gstPaise = commissionGstPaise(
+    commissionTaxablePaise,
+    rates.commissionGstRatePercent,
+    rates.commissionIntraState ?? false,
+  );
   // Sales never go below zero on their own (as before adjustments existed); only
   // deductions (cashback cost, returns after payout) larger than the sales can make
   // the balance negative.
@@ -110,14 +119,30 @@ export function vendorPayoutBreakdown(
   };
 }
 
-/** Rates for `vendorPayoutBreakdown` from platform settings. */
-export function payoutRatesFromSettings(settings: {
-  tdsRatePercent?: unknown;
-  commissionGstRatePercent?: unknown;
-}): { tdsRatePercent: number; commissionGstRatePercent: number } {
+export type PayoutRates = {
+  tdsRatePercent: number;
+  commissionGstRatePercent: number;
+  /** The platform and the vendor are in one state: commission GST is CGST + SGST. */
+  commissionIntraState?: boolean;
+};
+
+/**
+ * Rates for `vendorPayoutBreakdown` from platform settings. Pass the vendor's state so
+ * the commission GST is worked out the way its commission invoice charges it.
+ */
+export function payoutRatesFromSettings(
+  settings: {
+    tdsRatePercent?: unknown;
+    commissionGstRatePercent?: unknown;
+    platformState?: string | null;
+  },
+  vendorState?: string | null,
+): PayoutRates {
   return {
     tdsRatePercent: Number(settings.tdsRatePercent ?? 0),
     // Always set in practice (settings DEFAULTS); 18% is the SAC 9985 rate.
     commissionGstRatePercent: Number(settings.commissionGstRatePercent ?? 18),
+    commissionIntraState:
+      vendorState === undefined ? false : isIntraStateSupply(settings.platformState, vendorState),
   };
 }

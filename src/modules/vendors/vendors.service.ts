@@ -828,7 +828,10 @@ export class VendorsService {
       }),
       settingsService.getPlatformSettings(),
     ]);
-    const pendingPayout = vendorPayoutBreakdown(pendingLedgers, payoutRatesFromSettings(settings));
+    const pendingPayout = vendorPayoutBreakdown(
+      pendingLedgers,
+      payoutRatesFromSettings(settings, vendor.state ?? null),
+    );
     return {
       todayOrders: Number(today?.orders ?? 0),
       pendingShipments: Number(pending?.shipments ?? 0),

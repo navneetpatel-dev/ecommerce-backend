@@ -51,12 +51,22 @@ import {
 import { pricingService } from '@modules/pricing/pricing.service';
 import {
   nextVendorDocumentNumber,
+  nextVendorTaxInvoiceNumber,
   VENDOR_DOCUMENT_KIND,
 } from '@modules/pricing/vendorInvoiceSequence';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { Product } from '@database/models/product.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { settingsService } from '@modules/settings/settings.service';
+import { Address } from '@database/models/address.model';
+import { isIntraStateSupply } from '@modules/pricing/gstPlaceOfSupply';
+import { gstPeriodOf } from '@modules/pricing/gstPeriod';
+import {
+  platformInvoiceLineTotalPaise,
+  refundOfInvoiceLine,
+  returnFeeInvoiceLine,
+  unissuedPlatformInvoice,
+} from '@modules/pricing/platformFeeInvoice';
 import { resolveReturnWindowForCategory } from '@modules/products/pdpPolicy';
 import { walletService } from '@modules/wallet/wallet.service';
 import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
@@ -171,7 +181,7 @@ export async function persistTcsReturnAdjustmentLedger(
       tcsCgstPaise: -tcsCgstPaise,
       tcsSgstPaise: -tcsSgstPaise,
       tcsIgstPaise: -tcsIgstPaise,
-      period: params.issuedAt.toISOString().slice(0, 7),
+      period: gstPeriodOf(params.issuedAt),
       section: '52',
       entryType: 'RETURN_ADJUSTMENT',
       vendorGstin: params.originalTcs?.vendorGstin ?? params.vendor?.gstNumber ?? null,
@@ -183,6 +193,86 @@ export async function persistTcsReturnAdjustmentLedger(
     },
     { transaction },
   );
+}
+
+/**
+ * The platform's side of a return refund, with the vendor's credit note:
+ * - shipping refunded with the return: a platform credit note against the part's
+ *   shipping invoice, split the way that invoice was (GST included);
+ * - a return shipping fee kept from the refund: the platform's own supply, invoiced with
+ *   GST included (only what was actually kept when the fee exceeded the refund).
+ */
+async function issuePlatformReturnDocuments(
+  input: {
+    row: ReturnRequest;
+    order: Order;
+    subOrder: SubOrder;
+    goodsPaise: number;
+    actorId: string | null;
+    issuedAt: Date;
+  },
+  t: Transaction,
+): Promise<void> {
+  const { row, order, subOrder, issuedAt } = input;
+  const shippingInvoice = subOrder.shippingInvoiceSnapshot;
+  const shippingLine = shippingInvoice?.lines[0];
+  const shippingRefundPaise = toPaise(Number(row.shippingRefundAmount ?? 0));
+  if (shippingRefundPaise > 0 && shippingInvoice?.invoiceNumber && shippingLine) {
+    const split = refundOfInvoiceLine(
+      shippingLine,
+      Math.min(shippingRefundPaise, platformInvoiceLineTotalPaise(shippingLine)),
+    );
+    const taxPaise = split.cgst + split.sgst + split.igst;
+    const { number } = await nextVendorDocumentNumber(null, VENDOR_DOCUMENT_KIND.CREDIT_NOTE, issuedAt, t);
+    await CreditNote.create(
+      {
+        number,
+        returnRequestId: row.id,
+        orderId: order.id,
+        orderItemId: null,
+        subOrderId: subOrder.id,
+        vendorId: null,
+        againstInvoiceNumber: shippingInvoice.invoiceNumber,
+        userId: row.userId,
+        merchandisePaise: split.taxablePaise,
+        taxPaise,
+        totalPaise: split.taxablePaise + taxPaise,
+        taxBreakdown: { refundTaxPaise: taxPaise, cgst: split.cgst, sgst: split.sgst, igst: split.igst },
+        reason: 'Shipping refunded with the return',
+        issuedAt,
+        createdBy: input.actorId,
+        updatedBy: input.actorId,
+        deletedBy: null,
+      },
+      { transaction: t },
+    );
+  }
+
+  // Fee kept = what the refund would have been without it, less what was refunded.
+  const feePaise = toPaise(Number(row.returnShippingFeeAmount ?? 0));
+  const refundedPaise = toPaise(Number(row.refundAmount ?? 0));
+  const keptFeePaise = Math.min(
+    feePaise,
+    Math.max(0, input.goodsPaise + shippingRefundPaise - refundedPaise),
+  );
+  if (keptFeePaise > 0 && !row.returnFeeInvoiceSnapshot) {
+    const [settings, address] = await Promise.all([
+      settingsService.getPlatformSettings(),
+      Address.findByPk(order.shippingAddressId, { attributes: ['state'], transaction: t }),
+    ]);
+    const intraState = isIntraStateSupply(settings.platformState, address?.state);
+    const invoice = await nextVendorTaxInvoiceNumber(null, issuedAt, t);
+    await row.update(
+      {
+        returnFeeInvoiceSnapshot: {
+          ...unissuedPlatformInvoice([returnFeeInvoiceLine(keptFeePaise, intraState)], intraState),
+          invoiceNumber: invoice.number,
+          issuedAt: invoice.issuedAt.toISOString(),
+        },
+      },
+      { transaction: t },
+    );
+  }
 }
 
 const returnLockInclude = [
@@ -318,7 +408,10 @@ export class ReturnsService {
     returnId: string,
     actor: { id: string; vendorId?: string | null; roleId: string; role: { name: string } },
   ) {
-    const note = await CreditNote.findOne({ where: { returnRequestId: returnId } });
+    // The vendor's note for the goods (refunded shipping has a separate platform note).
+    const note = await CreditNote.findOne({
+      where: { returnRequestId: returnId, vendorId: { [Op.ne]: null } },
+    });
     if (!note) throw new NotFoundError('CreditNote');
 
     return getCreditNotePdfForActor({
@@ -1033,7 +1126,9 @@ export class ReturnsService {
         }
         const merchandisePaise = frozenPaise(row.refundMerchandiseAmountPaise);
         const taxPaise = toPaise(Number(row.refundTaxAmount));
-        const totalPaise = toPaise(Number(row.refundAmount));
+        // The vendor's credit note reverses the goods: taxable value + GST. Refunded
+        // shipping and a kept return fee are the platform's (its own documents below).
+        const totalPaise = merchandisePaise + taxPaise;
         const issuedAt = new Date();
         const vendorId = orderItem.subOrder.vendorId;
         if (!vendorId) {
@@ -1081,6 +1176,17 @@ export class ReturnsService {
             deletedBy: null,
           },
           { transaction: t },
+        );
+        await issuePlatformReturnDocuments(
+          {
+            row,
+            order,
+            subOrder: orderItem.subOrder,
+            goodsPaise: merchandisePaise + taxPaise,
+            actorId: auditActorId,
+            issuedAt,
+          },
+          t,
         );
       }
 

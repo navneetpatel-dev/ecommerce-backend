@@ -3,8 +3,7 @@ import PDFDocument from 'pdfkit';
 import { CommissionInvoice } from '@database/models/commissionInvoice.model';
 import { Vendor } from '@database/models/vendor.model';
 import { fromPaise } from '@modules/pricing/money';
-import { splitTaxAmount } from '@modules/pricing/pricing.engine';
-import { commissionGstPaise } from '@modules/pricing/vendorPayout';
+import { gstOnTaxablePaise } from '@modules/pricing/pricing.engine';
 import {
   nextVendorDocumentNumber,
   VENDOR_DOCUMENT_KIND,
@@ -65,13 +64,14 @@ export async function createCommissionInvoiceForPayout(
     transaction,
   });
   const intra = isIntraStateSupply(settings.platformState, vendor?.state);
-  const gstPaise = commissionGstPaise(input.commissionTaxablePaise, gstRate);
-  // Split the GST's size, then give a credit note's parts the credit note's sign.
-  const sign = gstPaise < 0 ? -1 : 1;
-  const split = splitTaxAmount(Math.abs(gstPaise), intra);
-  const cgstPaise = sign * split.cgst;
-  const sgstPaise = sign * split.sgst;
-  const igstPaise = sign * split.igst;
+  // CGST and SGST each at half the rate (equal), or IGST; a credit note's are negative.
+  // The payout deducted the same total (vendorPayoutBreakdown with the vendor's state).
+  const {
+    cgst: cgstPaise,
+    sgst: sgstPaise,
+    igst: igstPaise,
+    total: gstPaise,
+  } = gstOnTaxablePaise(input.commissionTaxablePaise, gstRate, intra);
 
   return CommissionInvoice.create(
     {

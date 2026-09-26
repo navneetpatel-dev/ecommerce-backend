@@ -100,6 +100,7 @@ export {
   frozenPaise,
   sqlFrozenPaise,
   REPORTABLE_ORDER_SQL,
+  TCS_LEDGER_ORDER_SQL,
   sqlVendorNetPayoutPaise,
 } from '@modules/pricing/frozenMoneySql';
 
@@ -197,13 +198,19 @@ export async function computeReconciliationSummary(filters: {
          )
     ),
     refund_totals AS (
-      SELECT COALESCE(SUM(cn."totalPaise"), 0)::bigint AS "refundsPaise"
-      FROM credit_notes cn
+      -- What customers got back on returns (goods, any refunded shipping, less a kept
+      -- return fee): the refund of each return whose vendor credit note is issued. Not
+      -- the credit notes' totals — the vendor's note is for the goods alone and the
+      -- platform issues its own for shipping. RTO parts are not here: they already left
+      -- customer payments (sqlOrderPaymentPaise), like a cancelled part.
+      SELECT COALESCE(SUM(ROUND(rr."refundAmount"::numeric * 100)), 0)::bigint AS "refundsPaise"
+      FROM return_requests rr
+      INNER JOIN credit_notes cn
+        ON cn."returnRequestId" = rr.id
+        AND cn."vendorId" IS NOT NULL
+        AND cn."deletedAt" IS NULL
       INNER JOIN reportable_orders ro ON ro.id = cn."orderId"
-      WHERE cn."deletedAt" IS NULL
-        -- Return refunds only: an RTO credit note's part already left customer
-        -- payments (sqlOrderPaymentPaise), like a cancelled part.
-        AND cn."returnRequestId" IS NOT NULL
+      WHERE rr."deletedAt" IS NULL
         AND (
           :vendorId::uuid IS NULL
           OR EXISTS (

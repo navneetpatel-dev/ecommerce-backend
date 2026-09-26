@@ -96,6 +96,8 @@ describe('applyShipmentStatus idempotency (F-17)', () => {
       status: 'SHIPPED',
       // Issued when it shipped (pricing/taxInvoiceIssue); delivery keeps it.
       taxInvoiceNumber: 'INK/2627/00000001',
+      // No TCS on this part: nothing to record at dispatch.
+      tcsAmountPaise: 0,
     }));
     mock.method(SubOrder, 'findAll', async () => [{ status: 'DELIVERED' }]);
     mock.method(Order, 'update', async () => [1]);

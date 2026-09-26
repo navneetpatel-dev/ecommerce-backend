@@ -106,7 +106,28 @@ describe('Delivery Module Comprehensive Verification', () => {
         return 1;
       });
 
-      mock.method(TcsLedger, 'destroy', async () => 1);
+      // The part's TCS was recorded at dispatch: the RTO reverses it (no longer deletes it).
+      mock.method(TcsLedger, 'findAll', async () => [
+        {
+          orderId: 'order-1',
+          vendorId: 'vendor-1',
+          entryType: 'COLLECTION',
+          taxableAmountPaise: 100000,
+          ratePercent: 0.5,
+          tcsAmountPaise: 500,
+          tcsCgstPaise: 250,
+          tcsSgstPaise: 250,
+          tcsIgstPaise: 0,
+          vendorGstin: null,
+          placeOfSupplyState: 'KA',
+        },
+      ] as never);
+      const tcsReversals: Array<Record<string, unknown>> = [];
+      mock.method(TcsLedger, 'create', async (values: Record<string, unknown>) => {
+        tcsReversals.push(values);
+        return values as never;
+      });
+      const tcsDestroyed = mock.method(TcsLedger, 'destroy', async () => 1);
 
       mock.method(SubOrder, 'findAll', async () => [
         { status: 'RETURNED' },
@@ -151,6 +172,11 @@ describe('Delivery Module Comprehensive Verification', () => {
       assert.equal(subOrderUpdatedStatus, 'RETURNED');
       assert.equal(stockIncremented, 2);
       assert.equal(commissionDestroyed, true);
+      // TCS reported at dispatch is reversed by a negative adjustment, never deleted.
+      assert.equal(tcsDestroyed.mock.callCount(), 0);
+      assert.equal(tcsReversals.length, 1);
+      assert.equal(tcsReversals[0]?.tcsAmountPaise, -500);
+      assert.equal(tcsReversals[0]?.entryType, 'RETURN_ADJUSTMENT');
       assert.equal(orderUpdatedStatus, 'RETURNED');
       // Paid by card: the refund goes back to the card, not into the wallet as points.
       assert.equal(cardRefundPaise, 125000);

@@ -106,9 +106,9 @@ function mapProductResponse(product: Product, reviewCount = 0) {
 async function mapDetailResponse(product: Product, reviewCount = 0) {
   const mapped = mapProductResponse(product, reviewCount);
   const vendorId = mapped.vendorId ?? mapped.vendor?.id ?? null;
-  const vendorFreeShippingThreshold = vendorId
-    ? await shippingService.getVendorFreeShippingThreshold(vendorId)
-    : null;
+  // The free-shipping promise the product page shows, resolved from the rates that
+  // apply to the seller (the platform-wide ones for a platform product). Null: none.
+  const vendorFreeShippingThreshold = await shippingService.getVendorFreeShippingThreshold(vendorId);
   const policy = await resolvePdpPolicy(product);
   const vendor = mapped.vendor
     ? {

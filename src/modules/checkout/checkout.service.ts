@@ -13,7 +13,6 @@ import { TcsLedger } from '@database/models/tcsLedger.model';
 import { Address } from '@database/models/address.model';
 import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
-import type { Transaction } from 'sequelize';
 import { paymentsService } from '@modules/payments/payments.service';
 import { cartService } from '@modules/cart/cart.service';
 import { settingsService } from '@modules/settings/settings.service';
@@ -27,7 +26,6 @@ import {
   type CartLineForCoupon,
 } from '@modules/coupons/couponEngine';
 import { fromPaise, roundMoney, sumRupees, toPaise } from '@modules/pricing/money';
-import { splitTaxAmount } from '@modules/pricing/pricing.engine';
 import { checkoutAmountDue, combinedDiscount, lineTotal } from '@modules/pricing/displayMoney';
 import {
   buildVendorPricingRows,
@@ -72,6 +70,8 @@ import {
 import {
   giftWrapInvoiceLine,
   platformInvoiceLineTotalPaise,
+  shippingInvoiceLine,
+  unissuedPlatformInvoice,
   type PlatformInvoiceSnapshot,
 } from '@modules/pricing/platformFeeInvoice';
 import { isIntraStateSupply } from '@modules/pricing/gstPlaceOfSupply';
@@ -83,50 +83,8 @@ function resolveGiftWrapFee(giftWrap?: boolean): number {
   return giftWrap ? GIFT_WRAP_FEE_RUPEES : 0;
 }
 
-export async function persistTcsCollectionLedger(
-  params: {
-    tcsTotal: number;
-    taxIgst: number;
-    orderId: string;
-    subOrderId: string;
-    vendorId: string;
-    taxableAmountPaise: number;
-    ratePercent: number;
-    vendorGstin: string | null;
-    placeOfSupplyState: string | null;
-    actorId: string;
-  },
-  transaction: Transaction,
-) {
-  const useIgst = Number(params.taxIgst ?? 0) > 0;
-  const { cgst: tcsCgstPaise, sgst: tcsSgstPaise, igst: tcsIgstPaise } = splitTaxAmount(
-    params.tcsTotal,
-    !useIgst,
-  );
-  return TcsLedger.create(
-    {
-      orderId: params.orderId,
-      subOrderId: params.subOrderId,
-      vendorId: params.vendorId,
-      taxableAmountPaise: params.taxableAmountPaise,
-      ratePercent: params.ratePercent,
-      tcsAmountPaise: params.tcsTotal,
-      tcsCgstPaise,
-      tcsSgstPaise,
-      tcsIgstPaise,
-      period: new Date().toISOString().slice(0, 7),
-      section: '52',
-      entryType: 'COLLECTION',
-      vendorGstin: params.vendorGstin,
-      placeOfSupplyState: params.placeOfSupplyState,
-      returnRequestId: null,
-      createdBy: params.actorId,
-      updatedBy: params.actorId,
-      deletedBy: null,
-    },
-    { transaction },
-  );
-}
+/** Moved to pricing/tcsLedger: TCS is recorded at dispatch. Re-exported for callers. */
+export { persistTcsCollectionLedger } from '@modules/pricing/tcsLedger';
 
 type CartWithItems = Cart & {
   items: (CartItem & { variant: ProductVariant & { product: any } })[];
@@ -542,9 +500,6 @@ export class CheckoutService {
         transaction: t,
       });
       const { shippingByVendor, shippingTotal } = plan;
-      const vendorMap = Object.fromEntries(
-        plan.rows.filter((row) => row.vendor).map((row) => [row.vendorId, row.vendor!]),
-      );
       const vendorPrep = Object.fromEntries(
         plan.rows.map((row) => [
           row.vendorId,
@@ -673,8 +628,9 @@ export class CheckoutService {
       // the platform's tax invoice. Amounts freeze now; the number is issued at dispatch
       // (pricing/taxInvoiceIssue), so an order cancelled before shipping gets none.
       let platformInvoiceSnapshot: PlatformInvoiceSnapshot | null = null;
+      const platformIntraState = isIntraStateSupply(settings.platformState, shippingAddress.state);
       if (data.giftWrap && giftWrapFeeAmount > 0) {
-        const intraState = isIntraStateSupply(settings.platformState, shippingAddress.state);
+        const intraState = platformIntraState;
         const line = giftWrapInvoiceLine(giftWrapFeeAmount, intraState);
         platformInvoiceSnapshot = {
           invoiceNumber: null,
@@ -777,6 +733,17 @@ export class CheckoutService {
           tcsAmountPaise: p.tcsPaise,
           netPayoutAmountPaise: p.netPayoutPaise,
           roundingAdjustmentPaise: p.roundingAdjustmentPaise,
+          // Section 52 TCS rate the sale was priced with; its TCS is recorded at dispatch.
+          tcsRatePercent: Number(settings.tcsRatePercent ?? 0),
+          // Shipping is the platform's own service: 18% GST included in the fee, on the
+          // platform's invoice for this part (numbered at its dispatch), not the vendor's.
+          shippingInvoiceSnapshot:
+            p.shippingChargedPaise > 0
+              ? unissuedPlatformInvoice(
+                  [shippingInvoiceLine(p.shippingChargedPaise, platformIntraState)],
+                  platformIntraState,
+                )
+              : null,
           // The tax invoice number is issued at dispatch (pricing/taxInvoiceIssue).
           taxInvoiceNumber: null,
           taxInvoiceIssuedAt: null,
@@ -818,7 +785,9 @@ export class CheckoutService {
           });
         }
         await subOrder.update(
-          { taxInvoiceSnapshot: { totalPaise: p.customerTotalPaise, lines: invoiceLines } },
+          // The vendor's invoice is for the goods: taxable value + GST. The shipping on
+          // this part is on the platform's shipping invoice.
+          { taxInvoiceSnapshot: { totalPaise: p.taxablePaise + p.tax.total, lines: invoiceLines } },
           { transaction: t },
         );
 
@@ -844,23 +813,8 @@ export class CheckoutService {
             status: COMMISSION_STATUS.PENDING,
           }, { transaction: t });
 
-          if (p.tcsPaise > 0) {
-            await persistTcsCollectionLedger(
-              {
-                tcsTotal: p.tcsPaise,
-                taxIgst: p.tax.igst,
-                orderId: orderRow.id,
-                subOrderId: subOrder.id,
-                vendorId,
-                taxableAmountPaise: p.taxablePaise,
-                ratePercent: settings.tcsRatePercent,
-                vendorGstin: vendorMap[vendorId]?.gstNumber ?? null,
-                placeOfSupplyState: shippingAddress.state ?? vendorMap[vendorId]?.state ?? null,
-                actorId: userId,
-              },
-              t,
-            );
-          }
+          // TCS is recorded when the part is dispatched and invoiced (pricing/tcsLedger),
+          // at the rate frozen on the sub-order here.
         }
       }
 

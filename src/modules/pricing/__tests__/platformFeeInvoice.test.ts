@@ -8,13 +8,15 @@ import {
 import { isIntraStateSupply } from '../gstPlaceOfSupply';
 
 describe('gift-wrap GST', () => {
-  it('splits the ₹49 fee into ₹41.53 taxable and ₹7.47 GST, adding up exactly', () => {
+  it('splits the ₹49 fee into taxable value and GST, adding up exactly, CGST = SGST', () => {
+    // Intra-state: ₹41.52 + CGST ₹3.74 + SGST ₹3.74 (equal halves, as on a GST invoice).
     assert.deepEqual(gstInclusiveSplit(4900, 18, true), {
-      taxablePaise: 4153,
-      cgst: 373,
+      taxablePaise: 4152,
+      cgst: 374,
       sgst: 374,
       igst: 0,
     });
+    // Inter-state: ₹41.53 + IGST ₹7.47.
     const interState = giftWrapInvoiceLine(49, false);
     assert.equal(interState.taxablePaise, 4153);
     assert.equal(interState.igstPaise, 747);
