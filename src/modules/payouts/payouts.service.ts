@@ -169,7 +169,6 @@ export class PayoutsService {
   async process(actorId: string) {
     const settings = await settingsService.getPlatformSettings();
     const payoutRates = payoutRatesFromSettings(settings);
-    const tdsRate = payoutRates.tdsRatePercent;
     const windowCutoff = payoutReturnWindowCutoff(Number(settings.defaultReturnWindow ?? 7));
     const subOrderInclude = payoutEligibleSubOrderInclude(windowCutoff);
     const ledgers = await CommissionLedger.findAll({
@@ -227,16 +226,18 @@ export class PayoutsService {
             orderId: string;
             subOrderId: string;
             taxableAmountPaise: number;
+            ratePercent: number;
             tdsAmountPaise: number;
           }> = [];
           locked.forEach((row, index) => {
-            const { tdsBasePaise, tdsPaise } = breakdown.rows[index]!;
+            const { tdsBasePaise, tdsRatePercent, tdsPaise } = breakdown.rows[index]!;
             const subOrder = (row as any).SubOrder as SubOrder | undefined;
             if (tdsPaise > 0 && subOrder?.orderId) {
               tdsRows.push({
                 orderId: subOrder.orderId,
                 subOrderId: row.subOrderId,
                 taxableAmountPaise: tdsBasePaise,
+                ratePercent: tdsRatePercent,
                 tdsAmountPaise: tdsPaise,
               });
             }
@@ -277,7 +278,7 @@ export class PayoutsService {
                 vendorId,
                 payoutId: payoutRow.id,
                 taxableAmountPaise: tds.taxableAmountPaise,
-                ratePercent: tdsRate,
+                ratePercent: tds.ratePercent,
                 tdsAmountPaise: tds.tdsAmountPaise,
                 section: '194O',
                 period,

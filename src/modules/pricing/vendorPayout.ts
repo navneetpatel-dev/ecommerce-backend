@@ -7,6 +7,8 @@ export interface PayoutLedgerRow {
   commissionAmountPaise?: unknown;
   /** Sale value excluding GST: the Section 194-O TDS base. */
   taxableAmountPaise?: unknown;
+  /** TDS rate frozen at checkout; null falls back to the current platform rate. */
+  tdsRatePercent?: unknown;
   /**
    * Null on a sale ledger. Set on an adjustment row — a vendor-borne cashback cost
    * (negative) or its reversal (positive) — which is not a sale: no TDS, not commission.
@@ -23,9 +25,9 @@ export function commissionGstPaise(commissionTaxablePaise: Paise, gstRatePercent
 export type VendorPayoutBreakdown = {
   /**
    * Per ledger, in input order: net before TDS, the TDS base (sale value excluding
-   * GST) and the TDS withheld on it.
+   * GST), the rate applied and the TDS withheld on it.
    */
-  rows: Array<{ netPaise: Paise; tdsBasePaise: Paise; tdsPaise: Paise }>;
+  rows: Array<{ netPaise: Paise; tdsBasePaise: Paise; tdsRatePercent: number; tdsPaise: Paise }>;
   commissionTaxablePaise: Paise;
   commissionGstPaise: Paise;
   /**
@@ -42,7 +44,8 @@ export type VendorPayoutBreakdown = {
  * What a vendor is paid for a set of commission ledgers — the one definition the
  * payout run and the vendor dashboard share:
  * - each sale ledger's net payout, less Section 194-O TDS on its sale value excluding
- *   GST (the ledger's taxable amount, net of returns);
+ *   GST (the ledger's taxable amount, net of returns), at the rate frozen on the
+ *   ledger at checkout (`rates.tdsRatePercent` only for ledgers without one);
  * - less GST on the platform's commission across the sale ledgers;
  * - plus adjustment rows as they stand: a vendor-borne cashback cost is deducted,
  *   its reversal added back. Adjustments carry no TDS and are not commission.
@@ -58,14 +61,16 @@ export function vendorPayoutBreakdown(
     const netPaise = vendorNetPayoutPaise(ledger);
     if (ledger.referenceType) {
       adjustmentPaise += netPaise;
-      return { netPaise, tdsBasePaise: 0, tdsPaise: 0 };
+      return { netPaise, tdsBasePaise: 0, tdsRatePercent: 0, tdsPaise: 0 };
     }
     const tdsBasePaise = Math.max(0, frozenPaise(ledger.taxableAmountPaise));
+    const tdsRatePercent =
+      ledger.tdsRatePercent != null ? Number(ledger.tdsRatePercent) : rates.tdsRatePercent;
     const tdsPaise =
-      rates.tdsRatePercent > 0 ? Math.round((tdsBasePaise * rates.tdsRatePercent) / 100) : 0;
+      tdsRatePercent > 0 ? Math.round((tdsBasePaise * tdsRatePercent) / 100) : 0;
     afterTdsPaise += Math.max(0, netPaise - tdsPaise);
     commissionTaxablePaise += frozenPaise(ledger.commissionAmountPaise);
-    return { netPaise, tdsBasePaise, tdsPaise };
+    return { netPaise, tdsBasePaise, tdsRatePercent, tdsPaise };
   });
   const gstPaise = commissionGstPaise(commissionTaxablePaise, rates.commissionGstRatePercent);
   // Sales never go below zero on their own (as before adjustments existed); only a

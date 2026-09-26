@@ -5,7 +5,10 @@ export type PlatformSettingsPayload = {
   defaultCommissionRate: number;
   /** Marketplace TCS percent on taxable value (0 disables). */
   tcsRatePercent: number;
-  /** TDS u/s 194-O percent on the sale value excluding GST, at payout (0 disables). */
+  /**
+   * TDS u/s 194-O percent on the sale value excluding GST (0 disables). Frozen on each
+   * sale at checkout and withheld at payout, so a change applies to later sales only.
+   */
   tdsRatePercent: number;
   /** GST % on marketplace commission invoices to vendors (SAC 9985). */
   commissionGstRatePercent: number;

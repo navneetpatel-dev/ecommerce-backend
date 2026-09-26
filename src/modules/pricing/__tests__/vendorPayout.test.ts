@@ -17,13 +17,36 @@ describe('vendorPayoutBreakdown', () => {
     const result = vendorPayoutBreakdown(ledgers, { tdsRatePercent: 0.1, commissionGstRatePercent: 18 });
     // TDS is on the taxable ₹1,000, not the ₹1,075 net (which includes GST).
     assert.deepEqual(result.rows, [
-      { netPaise: 107500, tdsBasePaise: 100000, tdsPaise: 100 },
-      { netPaise: 20001, tdsBasePaise: 20001, tdsPaise: 20 },
+      { netPaise: 107500, tdsBasePaise: 100000, tdsRatePercent: 0.1, tdsPaise: 100 },
+      { netPaise: 20001, tdsBasePaise: 20001, tdsRatePercent: 0.1, tdsPaise: 20 },
     ]);
     assert.equal(result.commissionTaxablePaise, 12000);
     assert.equal(result.commissionGstPaise, 2160);
     // (107500 − 100) + (20001 − 20) − 2160
     assert.equal(result.payoutPaise, 125221);
+  });
+
+  it('withholds TDS at the rate frozen on each sale, not the current rate', () => {
+    const result = vendorPayoutBreakdown(
+      [
+        // Sold while the rate was 1% (DECIMAL arrives as a string).
+        { netPayoutAmountPaise: 107500, commissionAmountPaise: 0, taxableAmountPaise: 100000, tdsRatePercent: '1.000' },
+        // Sold after it moved to 0.1%.
+        { netPayoutAmountPaise: 107500, commissionAmountPaise: 0, taxableAmountPaise: 100000, tdsRatePercent: 0.1 },
+        // No frozen rate: the current platform rate applies.
+        { netPayoutAmountPaise: 107500, commissionAmountPaise: 0, taxableAmountPaise: 100000, tdsRatePercent: null },
+      ],
+      { tdsRatePercent: 0.5, commissionGstRatePercent: 0 },
+    );
+    assert.deepEqual(
+      result.rows.map((row) => [row.tdsRatePercent, row.tdsPaise]),
+      [
+        [1, 1000],
+        [0.1, 100],
+        [0.5, 500],
+      ],
+    );
+    assert.equal(result.payoutPaise, 107500 * 3 - 1000 - 100 - 500);
   });
 
   it('is the plain net when there is no TDS or GST', () => {
@@ -58,8 +81,8 @@ describe('vendorPayoutBreakdown with vendor-borne cashback', () => {
   it('deducts the cost after TDS and GST, which it is outside of', () => {
     const result = vendorPayoutBreakdown([sale, cost], rates);
     assert.deepEqual(result.rows, [
-      { netPaise: 89000, tdsBasePaise: 89000, tdsPaise: 890 },
-      { netPaise: -5000, tdsBasePaise: 0, tdsPaise: 0 },
+      { netPaise: 89000, tdsBasePaise: 89000, tdsRatePercent: 1, tdsPaise: 890 },
+      { netPaise: -5000, tdsBasePaise: 0, tdsRatePercent: 0, tdsPaise: 0 },
     ]);
     // Commission GST is on the sale's ₹100 commission only.
     assert.equal(result.commissionTaxablePaise, 10000);
