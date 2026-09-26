@@ -8,6 +8,7 @@ import {
 } from '@core/constants/statuses';
 import { walletService } from './wallet.service';
 import { WALLET_DESCRIPTIONS } from './wallet.constants';
+import { fromPaise, toPaise } from '@modules/pricing/money';
 
 const ROLLBACK_SUFFIX = ' rollback';
 
@@ -81,9 +82,96 @@ async function resolveOriginalPromotionalExpiry(
   return expiresAt;
 }
 
+const PART_RETURN_MARKER = ' returned for cancelled part ';
+
+function partReturnDescription(subOrderId: string): string {
+  return `${WALLET_DESCRIPTIONS.CHECKOUT_SPEND}${PART_RETURN_MARKER}${subOrderId}`;
+}
+
+/** What earlier part cancellations of this order already returned, by point source. */
+async function returnedForCancelledParts(
+  orderId: string,
+  transaction: Transaction,
+): Promise<{ promotional: number; purchased: number }> {
+  const rows = await WalletLedger.findAll({
+    where: {
+      referenceType: WALLET_REFERENCE_TYPE.ORDER,
+      referenceId: orderId,
+      type: WALLET_LEDGER_TYPE.CREDIT,
+      description: { [Op.like]: `%${PART_RETURN_MARKER}%` },
+    },
+    attributes: ['amount', 'pointSource'],
+    transaction,
+  });
+  const sum = (source: string) =>
+    fromPaise(
+      rows
+        .filter((row) => row.pointSource === source)
+        .reduce((total, row) => total + toPaise(Number(row.amount)), 0),
+    );
+  return {
+    promotional: sum(WALLET_POINT_SOURCE.PROMOTIONAL),
+    purchased: sum(WALLET_POINT_SOURCE.PURCHASED),
+  };
+}
+
+/**
+ * Return the wallet share of one cancelled part (sub-order) of an order straight away,
+ * in the same promotional / purchased mix as the checkout debit. Without it a partial
+ * cancellation refunded only the cash part and the wallet part came back only if every
+ * part was cancelled. `rollbackOrderWalletIfNeeded` later returns only what is left.
+ * Idempotent per sub-order. Returns true when a credit was written.
+ */
+export async function returnWalletShareForCancelledPart(
+  order: { id: string; walletAmountUsed?: number | null },
+  subOrderId: string,
+  sharePaise: number,
+  userId: string,
+  transaction: Transaction,
+): Promise<boolean> {
+  if (sharePaise <= 0 || Number(order.walletAmountUsed ?? 0) <= 0) return false;
+  const description = partReturnDescription(subOrderId);
+  const already = await WalletLedger.findOne({
+    where: {
+      referenceType: WALLET_REFERENCE_TYPE.ORDER,
+      referenceId: order.id,
+      type: WALLET_LEDGER_TYPE.CREDIT,
+      description,
+    },
+    transaction,
+  });
+  if (already) return false;
+
+  const ref = { type: WALLET_REFERENCE_TYPE.ORDER, id: order.id };
+  const debit = await findCheckoutDebit(order.id, transaction);
+  const promoPaise = toPaise(Number(debit?.pointSourceBreakdown?.promotional ?? 0));
+  const purchasedPaise = toPaise(Number(debit?.pointSourceBreakdown?.purchased ?? 0));
+  const splitTotal = promoPaise + purchasedPaise;
+  // Same mix as the debit; no recorded mix is treated as promotional, like the full rollback.
+  const promoShare = splitTotal > 0 ? Math.round((sharePaise * promoPaise) / splitTotal) : sharePaise;
+  const purchasedShare = sharePaise - promoShare;
+  const originalPromotionalExpiry = debit
+    ? await resolveOriginalPromotionalExpiry(userId, debit, transaction)
+    : null;
+
+  if (promoShare > 0) {
+    await walletService.credit(userId, fromPaise(promoShare), ref, description, transaction, {
+      pointSource: WALLET_POINT_SOURCE.PROMOTIONAL,
+      ...(originalPromotionalExpiry ? { expiresAt: originalPromotionalExpiry } : {}),
+    });
+  }
+  if (purchasedShare > 0) {
+    await walletService.credit(userId, fromPaise(purchasedShare), ref, description, transaction, {
+      pointSource: WALLET_POINT_SOURCE.PURCHASED,
+    });
+  }
+  return true;
+}
+
 /**
  * Idempotently restore wallet points debited at checkout for a cancelled order.
- * Restores purchased vs promotional split when the original debit recorded it.
+ * Restores purchased vs promotional split when the original debit recorded it, less what
+ * earlier part cancellations already returned.
  * Returns true when a new credit was written.
  */
 export async function rollbackOrderWalletIfNeeded(
@@ -99,13 +187,22 @@ export async function rollbackOrderWalletIfNeeded(
   const description = walletRollbackDescription();
   const debit = await findCheckoutDebit(order.id, transaction);
   const breakdown = debit?.pointSourceBreakdown;
-  const promoAmount = Number(breakdown?.promotional ?? 0);
-  const purchasedAmount = Number(breakdown?.purchased ?? 0);
+  const returned = await returnedForCancelledParts(order.id, transaction);
+  const promoAmount = Math.max(
+    0,
+    fromPaise(toPaise(Number(breakdown?.promotional ?? 0)) - toPaise(returned.promotional)),
+  );
+  const purchasedAmount = Math.max(
+    0,
+    fromPaise(toPaise(Number(breakdown?.purchased ?? 0)) - toPaise(returned.purchased)),
+  );
+  const hasBreakdown =
+    Number(breakdown?.promotional ?? 0) > 0 || Number(breakdown?.purchased ?? 0) > 0;
   const originalPromotionalExpiry = debit
     ? await resolveOriginalPromotionalExpiry(userId, debit, transaction)
     : null;
 
-  if (promoAmount > 0 || purchasedAmount > 0) {
+  if (hasBreakdown) {
     if (promoAmount > 0) {
       await walletService.credit(
         userId,
@@ -129,12 +226,16 @@ export async function rollbackOrderWalletIfNeeded(
         { pointSource: WALLET_POINT_SOURCE.PURCHASED },
       );
     }
-    return true;
+    return promoAmount > 0 || purchasedAmount > 0;
   }
 
+  const remaining = fromPaise(
+    toPaise(walletUsed) - toPaise(returned.promotional) - toPaise(returned.purchased),
+  );
+  if (remaining <= 0) return false;
   await walletService.credit(
     userId,
-    walletUsed,
+    remaining,
     ref,
     description,
     transaction,

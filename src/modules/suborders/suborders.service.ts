@@ -31,9 +31,13 @@ import { shippingService } from '@modules/shipping/shipping.service';
 import { paymentsService } from '@modules/payments/payments.service';
 import { walletService } from '@modules/wallet/wallet.service';
 import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
-import { rollbackOrderWalletIfNeeded } from '@modules/wallet/walletOrderRollback';
+import {
+  returnWalletShareForCancelledPart,
+  rollbackOrderWalletIfNeeded,
+} from '@modules/wallet/walletOrderRollback';
 import type { GetSubOrdersQuery } from './suborders.dto';
 import { issueTaxInvoicesOnDispatch } from '@modules/pricing/taxInvoiceIssue';
+import { codAmountForSubOrder } from '@modules/shipping/codCollection';
 
 /**
  * Transitions reachable through this manual, vendor/admin-facing endpoint.
@@ -88,10 +92,10 @@ function assertSubOrderTransition(from: string, to: string) {
 }
 
 /**
- * Non-wallet (cash/Razorpay/COD) share of a suborder refund. The wallet-funded
- * share is restored only by `rollbackOrderWalletIfNeeded` when the parent order
- * is fully cancelled — never credited here as WALLET_REFUND. The split itself is
- * the one returns use (pricing/refundSplit).
+ * Non-wallet (cash/Razorpay/COD) share of a suborder refund. The wallet-funded share
+ * goes back to the wallet as the checkout spend it was (returnWalletShareForCancelledPart,
+ * or rollbackOrderWalletIfNeeded for the last part) — never as a WALLET_REFUND. The
+ * split itself is the one returns use (pricing/refundSplit).
  */
 function suborderCancelCashShare(order: Order, customerRefund: number): number {
   if (isWalletFundedOrder(order)) return 0;
@@ -223,9 +227,9 @@ export class SubordersService {
           transaction,
         });
 
-        // 3. Customer refund: restore wallet spend only via rollbackOrderWalletIfNeeded when the
-        // whole order is cancelled (same sentinel `cancelPaidOrder` uses). Never credit the
-        // gross suborder total as WALLET_REFUND — that double-credits the wallet-funded share.
+        // 3. Customer refund: this part's wallet share goes back as checkout spend (the last
+        // part via rollbackOrderWalletIfNeeded, the sentinel `cancelPaidOrder` uses). Never
+        // credit the gross suborder total as WALLET_REFUND — that double-credits the wallet share.
         const parentOrder = await Order.findByPk(row.orderId, {
           transaction,
           lock: transaction.LOCK.UPDATE,
@@ -248,11 +252,21 @@ export class SubordersService {
           const allCancelled = sisterSubOrders.every(
             (s) => s.id === id || s.status === ORDER_STATUS.CANCELLED,
           );
+          const customerRefund = roundMoney(Number(row.customerTotal ?? row.subtotal));
           if (allCancelled) {
+            // Whatever wallet spend earlier part cancellations did not already return.
             await rollbackOrderWalletIfNeeded(parentOrder, parentOrder.userId, transaction);
+          } else {
+            // This part's wallet share goes back now; its cash share is refunded below.
+            await returnWalletShareForCancelledPart(
+              parentOrder,
+              id,
+              walletShareOfRefundPaise(parentOrder, toPaise(customerRefund)),
+              parentOrder.userId,
+              transaction,
+            );
           }
 
-          const customerRefund = roundMoney(Number(row.customerTotal ?? row.subtotal));
           if (
             parentOrder.paymentStatus === PAYMENT_STATUS.PAID &&
             customerRefund > 0
@@ -326,10 +340,23 @@ export class SubordersService {
       if (status === ORDER_STATUS.SHIPPED && trackingId) {
         const parentOrder = await Order.findByPk(row.orderId, {
           transaction,
-          attributes: ['paymentMethod'],
+          attributes: [
+            'id',
+            'paymentMethod',
+            'walletAmountUsed',
+            'giftWrapFeeAmount',
+            'originalTotalAmount',
+            'totalAmount',
+            'razorpayAmountPaid',
+            'razorpayPaymentId',
+          ],
         });
+        // What is still owed at the door for this shipment: its share of the order, less
+        // the wallet already applied, plus the gift-wrap fee on the first shipment.
         const codAmount =
-          parentOrder?.paymentMethod === 'COD' ? Number(row.customerTotal ?? row.subtotal) : null;
+          parentOrder?.paymentMethod === 'COD'
+            ? await codAmountForSubOrder(parentOrder, id, transaction)
+            : null;
         const [shipment, created] = await Shipment.findOrCreate({
           where: { subOrderId: id },
           defaults: {
