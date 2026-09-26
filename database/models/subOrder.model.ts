@@ -1,5 +1,6 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
 import { paiseBackedRupees } from '@modules/pricing/paiseBackedRupees';
+import type { TaxInvoiceSnapshot } from '@modules/pricing/taxInvoiceSnapshot';
 
 export class SubOrder extends Model<InferAttributes<SubOrder>, InferCreationAttributes<SubOrder>> {
   declare id: CreationOptional<string>;
@@ -34,6 +35,8 @@ export class SubOrder extends Model<InferAttributes<SubOrder>, InferCreationAttr
   /** Vendor-scoped GST tax invoice number allocated at order placement. */
   declare taxInvoiceNumber: CreationOptional<string | null>;
   declare taxInvoiceIssuedAt: CreationOptional<Date | null>;
+  /** Tax invoice amounts as issued at checkout; null on sub-orders placed before it existed. */
+  declare taxInvoiceSnapshot: CreationOptional<TaxInvoiceSnapshot | null>;
   declare trackingId: string | null;
   declare createdBy: string | null;
   declare updatedBy: string | null;
@@ -86,6 +89,7 @@ export const initSubOrderModel = (sequelize: Sequelize) => {
       roundingAdjustmentPaise: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
       taxInvoiceNumber: { type: DataTypes.STRING(64), allowNull: true, unique: true },
       taxInvoiceIssuedAt: { type: DataTypes.DATE, allowNull: true },
+      taxInvoiceSnapshot: { type: DataTypes.JSONB, allowNull: true },
       trackingId: { type: DataTypes.STRING, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },

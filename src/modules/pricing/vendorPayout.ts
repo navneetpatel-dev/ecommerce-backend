@@ -5,6 +5,8 @@ import type { Paise } from './money';
 export interface PayoutLedgerRow {
   netPayoutAmountPaise?: unknown;
   commissionAmountPaise?: unknown;
+  /** Sale value excluding GST: the Section 194-O TDS base. */
+  taxableAmountPaise?: unknown;
   /**
    * Null on a sale ledger. Set on an adjustment row — a vendor-borne cashback cost
    * (negative) or its reversal (positive) — which is not a sale: no TDS, not commission.
@@ -19,8 +21,11 @@ export function commissionGstPaise(commissionTaxablePaise: Paise, gstRatePercent
 }
 
 export type VendorPayoutBreakdown = {
-  /** Per ledger, in input order: net before TDS and the TDS withheld on it. */
-  rows: Array<{ netPaise: Paise; tdsPaise: Paise }>;
+  /**
+   * Per ledger, in input order: net before TDS, the TDS base (sale value excluding
+   * GST) and the TDS withheld on it.
+   */
+  rows: Array<{ netPaise: Paise; tdsBasePaise: Paise; tdsPaise: Paise }>;
   commissionTaxablePaise: Paise;
   commissionGstPaise: Paise;
   /**
@@ -36,7 +41,8 @@ export type VendorPayoutBreakdown = {
 /**
  * What a vendor is paid for a set of commission ledgers — the one definition the
  * payout run and the vendor dashboard share:
- * - each sale ledger's net payout, less Section 194-O TDS on that net;
+ * - each sale ledger's net payout, less Section 194-O TDS on its sale value excluding
+ *   GST (the ledger's taxable amount, net of returns);
  * - less GST on the platform's commission across the sale ledgers;
  * - plus adjustment rows as they stand: a vendor-borne cashback cost is deducted,
  *   its reversal added back. Adjustments carry no TDS and are not commission.
@@ -52,13 +58,14 @@ export function vendorPayoutBreakdown(
     const netPaise = vendorNetPayoutPaise(ledger);
     if (ledger.referenceType) {
       adjustmentPaise += netPaise;
-      return { netPaise, tdsPaise: 0 };
+      return { netPaise, tdsBasePaise: 0, tdsPaise: 0 };
     }
+    const tdsBasePaise = Math.max(0, frozenPaise(ledger.taxableAmountPaise));
     const tdsPaise =
-      rates.tdsRatePercent > 0 ? Math.round((netPaise * rates.tdsRatePercent) / 100) : 0;
+      rates.tdsRatePercent > 0 ? Math.round((tdsBasePaise * rates.tdsRatePercent) / 100) : 0;
     afterTdsPaise += Math.max(0, netPaise - tdsPaise);
     commissionTaxablePaise += frozenPaise(ledger.commissionAmountPaise);
-    return { netPaise, tdsPaise };
+    return { netPaise, tdsBasePaise, tdsPaise };
   });
   const gstPaise = commissionGstPaise(commissionTaxablePaise, rates.commissionGstRatePercent);
   // Sales never go below zero on their own (as before adjustments existed); only a

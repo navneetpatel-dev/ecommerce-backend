@@ -143,6 +143,8 @@ type SeedOrderOpts = {
   shippingCharged?: number;
   lineTaxable?: number;
   lineTax?: number;
+  /** Units on the single order line (default 1); taxable and tax are for all of them. */
+  lineQuantity?: number;
 };
 
 /**
@@ -249,8 +251,8 @@ async function seedFullOrder(opts: SeedOrderOpts) {
     subOrderId: sub.id,
     variantId: await resolveVariantId(),
     productName: 'Test Item',
-    quantity: 1,
-    unitPrice: taxable,
+    quantity: opts.lineQuantity ?? 1,
+    unitPrice: taxable / (opts.lineQuantity ?? 1),
     discountAmount: 0,
     taxableAmount: taxable,
     taxAmount: tax,
@@ -258,7 +260,7 @@ async function seedFullOrder(opts: SeedOrderOpts) {
     commissionAmount: 10,
     tcsAmount: 1,
     netPayoutAmount: taxable - 10 - 1,
-    unitPricePaise: toPaise(taxable),
+    unitPricePaise: toPaise(taxable) / (opts.lineQuantity ?? 1),
     discountAmountPaise: 0,
     taxableAmountPaise: toPaise(taxable),
     taxAmountPaise: toPaise(tax),
@@ -750,6 +752,48 @@ describe('consolidated refund scenarios (seeded)', () => {
     assert.ok(reversal);
     assert.equal(Number(reversal!.commissionAmount), 50);
     assert.equal(reversal!.status, COMMISSION_STATUS.PENDING);
+  });
+
+  it('8b. Return before cashback is credited shrinks it by the share returned', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    const { order, item } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.COD,
+      totalAmount: 236,
+      shippingCharged: 0,
+      lineTaxable: 200,
+      lineTax: 36,
+      lineQuantity: 2,
+      pendingCashbackAmount: 50,
+      cashbackDiscountBearer: DISCOUNT_BEARER.VENDOR,
+      cashbackVendorId: vendor.id,
+    });
+
+    // One of the two units comes back before the cashback delay has passed.
+    const rr = await returnsService.create(customer.id, {
+      orderItemId: item.id,
+      reasonCode: RETURN_REASON.DAMAGED,
+      reason: 'Damaged',
+      returnQuantity: 1,
+    });
+    await returnsService.transition(rr.id, RETURN_STATUS.APPROVED, customer.id);
+    const afterReturn = await Order.findByPk(order.id);
+    assert.equal(Number(afterReturn!.pendingCashbackAmount), 25);
+
+    const balanceBefore = await walletService.getBalance(customer.id);
+    assert.equal(await creditPendingCashbackForOrder(order.id), true);
+    // Half the merchandise was kept, so half the cashback is paid — not all ₹50.
+    assert.equal(await walletService.getBalance(customer.id), balanceBefore + 25);
+    const cost = await CommissionLedger.findOne({
+      where: {
+        vendorId: vendor.id,
+        referenceType: COMMISSION_REFERENCE_TYPE.CASHBACK_COST,
+      },
+    });
+    assert.equal(Number(cost!.commissionAmount), -25);
   });
 
   it('9. PLATFORM cashback → no CommissionLedger cost; write-off bornBy PLATFORM', async (t) => {

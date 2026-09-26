@@ -66,6 +66,10 @@ import { resolveCodForCatalogItems } from '@modules/products/pdpPolicy';
 import { notifyOrderConfirmed } from '@modules/notifications/orderNotifications';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { buildCheckoutOrderTotals, resolveShippingDisplayKey, resolveTaxDisplayKey } from './checkoutOrderTotals';
+import {
+  taxInvoiceSnapshotLine,
+  type TaxInvoiceSnapshotLine,
+} from '@modules/pricing/taxInvoiceSnapshot';
 
 /** Flat platform fee for checkout-time gift wrapping (v1: hardcoded, not vendor-specific). */
 export const GIFT_WRAP_FEE_RUPEES = 49;
@@ -769,10 +773,11 @@ export class CheckoutService {
           priced.rupees.lines.map((row) => [row.key, row]),
         );
 
+        const invoiceLines: TaxInvoiceSnapshotLine[] = [];
         for (const item of prep.items) {
           const linePaise = lineByKey[item.id]!;
           const lineRupees = lineRupeesByKey[item.id]!;
-          await OrderItem.create({
+          const orderItem = await OrderItem.create({
             subOrderId: subOrder.id,
             variantId: item.variantId,
             productName: item.variant.product.name,
@@ -788,12 +793,17 @@ export class CheckoutService {
             tcsAmountPaise: linePaise.tcsPaise,
             netPayoutAmountPaise: linePaise.netPayoutPaise,
           }, { transaction: t });
+          invoiceLines.push(taxInvoiceSnapshotLine(orderItem.id, linePaise));
 
           await item.variant.decrement('stock', {
             by: item.quantity,
             transaction: t,
           });
         }
+        await subOrder.update(
+          { taxInvoiceSnapshot: { totalPaise: p.customerTotalPaise, lines: invoiceLines } },
+          { transaction: t },
+        );
 
         if (vendorId !== 'platform') {
           await CommissionLedger.create({

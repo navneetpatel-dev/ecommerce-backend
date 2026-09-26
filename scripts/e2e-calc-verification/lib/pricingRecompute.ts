@@ -118,7 +118,11 @@ export function recomputeSubOrder(input: RecomputeInput): RecomputeOutput {
 
   const commissionTotalPaise = lineOutputs.reduce((s, l) => s + toPaise(l.commission), 0);
   const tcsTotalPaise = Math.round((taxableTotalPaise * input.tcsRatePercent) / 100);
-  const netPayoutPaise = Math.max(0, taxableTotalPaise - commissionTotalPaise - tcsTotalPaise);
+  // The vendor is the supplier and remits the GST, so its net includes the tax.
+  const netPayoutPaise = Math.max(
+    0,
+    taxableTotalPaise + taxTotalPaise - commissionTotalPaise - tcsTotalPaise,
+  );
   const customerTotalPaise = taxableTotalPaise + taxTotalPaise + shippingChargedPaise;
 
   return {

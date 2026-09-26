@@ -123,10 +123,24 @@ function splitTax(taxablePaise: Paise, gstPercentage: number, intraState: boolea
   return { cgst, sgst, igst, total, gstPercentage };
 }
 
+/** A line's vendor net: taxable + GST − commission − TCS, never below zero. */
+function lineNetPayoutPaise(line: {
+  taxablePaise: Paise;
+  tax: { total: Paise };
+  commissionPaise: Paise;
+  tcsPaise: Paise;
+}): Paise {
+  return Math.max(0, line.taxablePaise + line.tax.total - line.commissionPaise - line.tcsPaise);
+}
+
 /**
  * Authoritative per-SubOrder pricing. All money in paise.
  * Order: line subtotals → merchandise discount → tax on post-discount (per-line GST) →
  * commission per-line (excludes tax/shipping) → TCS → net payout.
+ *
+ * Net payout is what the vendor is owed: the taxable value plus the GST the customer paid
+ * on it (the vendor is the supplier on the tax invoice and remits that GST), less commission
+ * and TCS. Shipping stays with the platform.
  */
 export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderPricingBreakdown {
   const lines = input.lines.map((line) => {
@@ -204,7 +218,7 @@ export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderP
   for (let i = 0; i < pricedLines.length; i += 1) {
     const line = pricedLines[i]!;
     line.tcsPaise = lineTcs[i] ?? 0;
-    line.netPayoutPaise = Math.max(0, line.taxablePaise - line.commissionPaise - line.tcsPaise);
+    line.netPayoutPaise = lineNetPayoutPaise(line);
   }
 
   let taxTotal = pricedLines.reduce((sum, line) => sum + line.tax.total, 0);
@@ -228,10 +242,7 @@ export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderP
       } else {
         target.tax.igst += appliedRoundingAdjustmentPaise;
       }
-      target.netPayoutPaise = Math.max(
-        0,
-        target.taxablePaise - target.commissionPaise - target.tcsPaise,
-      );
+      target.netPayoutPaise = lineNetPayoutPaise(target);
       taxTotal = expected.total;
       taxCgst = pricedLines.reduce((sum, line) => sum + line.tax.cgst, 0);
       taxSgst = pricedLines.reduce((sum, line) => sum + line.tax.sgst, 0);
@@ -243,7 +254,7 @@ export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderP
 
   const commissionBasePaise = pricedLines.reduce((sum, line) => sum + line.commissionBasePaise, 0);
   const commissionPaise = pricedLines.reduce((sum, line) => sum + line.commissionPaise, 0);
-  const netPayoutPaise = Math.max(0, taxablePaise - commissionPaise - tcsPaise);
+  const netPayoutPaise = Math.max(0, taxablePaise + taxTotal - commissionPaise - tcsPaise);
   const customerTotalPaise = taxablePaise + taxTotal + shippingChargedPaise;
 
   const displayGst =

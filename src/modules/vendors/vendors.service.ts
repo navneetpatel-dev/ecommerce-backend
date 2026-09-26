@@ -818,7 +818,12 @@ export class VendorsService {
     const [pendingLedgers, settings] = await Promise.all([
       CommissionLedger.findAll({
         where: { vendorId, status: COMMISSION_STATUS.PENDING },
-        attributes: ['netPayoutAmountPaise', 'commissionAmountPaise', 'referenceType'],
+        attributes: [
+          'netPayoutAmountPaise',
+          'commissionAmountPaise',
+          'taxableAmountPaise',
+          'referenceType',
+        ],
       }),
       settingsService.getPlatformSettings(),
     ]);

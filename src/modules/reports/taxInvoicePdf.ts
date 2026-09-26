@@ -20,7 +20,8 @@ import {
   type PdfTotalsLine,
 } from '@core/pdf';
 import { invoiceLineTaxBreakdown } from '@modules/pricing/displayMoney';
-import { coerceRupees, roundMoney, sumRupees } from '@modules/pricing/money';
+import { coerceRupees, fromPaise, roundMoney, sumRupees } from '@modules/pricing/money';
+import type { TaxInvoiceSnapshot } from '@modules/pricing/taxInvoiceSnapshot';
 import { TAX_INVOICE_COPY as COPY } from './reports.constants';
 
 export type TaxInvoiceAddress = {
@@ -77,6 +78,8 @@ export type TaxInvoiceSubOrderInput = {
   customerTotal?: number | null;
   taxableAmount?: number | null;
   taxAmount?: number | null;
+  /** Amounts as issued at checkout; when set, the invoice renders from these. */
+  taxInvoiceSnapshot?: TaxInvoiceSnapshot | null;
   vendor?: {
     businessName?: string | null;
     gstNumber?: string | null;
@@ -84,6 +87,7 @@ export type TaxInvoiceSubOrderInput = {
     slug?: string | null;
   } | null;
   items?: Array<{
+    id?: string;
     productName: string;
     quantity: number;
     unitPrice: number;
@@ -168,19 +172,49 @@ function mapInvoiceLineTax(item: {
   });
 }
 
+type InvoiceItemInput = NonNullable<TaxInvoiceSubOrderInput['items']>[number];
+
+function itemHsn(item: InvoiceItemInput | undefined, hsnByCategory: Map<string, string>): string {
+  const catId = item?.variant?.product?.categoryId ?? undefined;
+  const hsn = catId ? (hsnByCategory.get(catId) ?? '') : '';
+  return hsn || COPY.emptyValue;
+}
+
+/** Lines as issued at checkout; returns since then are on the credit note, not here. */
+function mapSnapshotItems(
+  sub: TaxInvoiceSubOrderInput,
+  snapshot: TaxInvoiceSnapshot,
+  hsnByCategory: Map<string, string>,
+): TaxInvoiceLine[] {
+  const itemsById = new Map((sub.items ?? []).map((item) => [item.id, item]));
+  return snapshot.lines.map((line) => {
+    const item = itemsById.get(line.orderItemId);
+    return {
+      productName: item?.productName ?? COPY.emptyValue,
+      sku: item?.variant?.sku ?? null,
+      hsn: itemHsn(item, hsnByCategory),
+      quantity: line.quantity,
+      unitPrice: fromPaise(line.unitPricePaise),
+      taxable: fromPaise(line.taxablePaise),
+      cgst: fromPaise(line.cgstPaise),
+      sgst: fromPaise(line.sgstPaise),
+      igst: fromPaise(line.igstPaise),
+    };
+  });
+}
+
 function mapSubOrderItems(
   sub: TaxInvoiceSubOrderInput,
   hsnByCategory: Map<string, string>,
 ): TaxInvoiceLine[] {
+  if (sub.taxInvoiceSnapshot) return mapSnapshotItems(sub, sub.taxInvoiceSnapshot, hsnByCategory);
   const items: TaxInvoiceLine[] = [];
   for (const item of sub.items ?? []) {
     const tb = mapInvoiceLineTax(item);
-    const catId = item.variant?.product?.categoryId ?? undefined;
-    const hsn = catId ? (hsnByCategory.get(catId) ?? '') : '';
     items.push({
       productName: item.productName,
       sku: item.variant?.sku ?? null,
-      hsn: hsn || COPY.emptyValue,
+      hsn: itemHsn(item, hsnByCategory),
       quantity: Math.trunc(coerceRupees(item.quantity)) || 0,
       unitPrice: roundMoney(item.unitPrice),
       taxable: roundMoney(item.taxableAmount),
@@ -205,9 +239,9 @@ export function toTaxInvoiceSourceFromSubOrder(
   const items = mapSubOrderItems(subOrder, hsnByCategory);
   const vendor = subOrder.vendor;
   const lineTotal = sumRupees(items.map(lineAmount));
-  const totalAmount = roundMoney(
-    subOrder.customerTotal != null ? subOrder.customerTotal : lineTotal,
-  );
+  const totalAmount = subOrder.taxInvoiceSnapshot
+    ? fromPaise(subOrder.taxInvoiceSnapshot.totalPaise)
+    : roundMoney(subOrder.customerTotal != null ? subOrder.customerTotal : lineTotal);
 
   return {
     invoiceNo,
