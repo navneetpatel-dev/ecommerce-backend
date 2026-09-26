@@ -11,7 +11,12 @@ import {
   DISCOUNT_BEARER,
   COMMISSION_STATUS,
 } from '../engine/queryHelpers';
-import { GMV_SUB_ORDER_SQL, sqlLineSubtotalPaise } from '@modules/pricing/frozenMoneySql';
+import {
+  GMV_SUB_ORDER_SQL,
+  PAID_OR_COD_ORDER_SQL,
+  sqlLineSubtotalPaise,
+} from '@modules/pricing/frozenMoneySql';
+import { PART_RETURN_DESCRIPTION_PREFIX } from '@modules/wallet/walletOrderRollback';
 import { platformSupplyLinesSql } from '../engine/platformSupplySql';
 import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
 import { ERROR_MESSAGES } from '@core/constants/errors';
@@ -432,6 +437,10 @@ async function reconciliation(filters: ReportFilters) {
     vendorId: resolveVendorId(filters),
   });
 
+  // Wallet money in and out over the period. Recharges count net of the ones refunded
+  // (e.g. over the wallet limit); gift cards count when redeemed into a wallet.
+  // Checkout spend counts COD orders too (not only paid online ones), less the wallet
+  // share given back when a part was cancelled or came back undelivered.
   const [walletRows] = await sequelize.query(
     `
     SELECT
@@ -441,19 +450,44 @@ async function reconciliation(filters: ReportFilters) {
         WHERE wro.status = 'PAID'
           AND wro."paidAt" BETWEEN :from AND :to
           AND wro."deletedAt" IS NULL
+          AND wro."refundStatus"::text NOT IN ('INITIATED', 'COMPLETED')
       ), 0) AS "walletRechargeInflow",
+      COALESCE((
+        SELECT SUM(g.amount)::numeric
+        FROM gift_cards g
+        WHERE g."redeemedAt" BETWEEN :from AND :to
+          AND g."deletedAt" IS NULL
+      ), 0) AS "giftCardRedemptionInflow",
       COALESCE((
         SELECT SUM(o."walletAmountUsed")::numeric
         FROM orders o
         WHERE o."createdAt" BETWEEN :from AND :to
           AND o."deletedAt" IS NULL
-          AND o."paymentStatus" = 'PAID'
+          AND ${PAID_OR_COD_ORDER_SQL}
+      ), 0)
+      - COALESCE((
+        SELECT SUM(wl.amount)::numeric
+        FROM wallet_ledgers wl
+        INNER JOIN orders o ON o.id::text = wl."referenceId"::text
+        WHERE wl."deletedAt" IS NULL
+          AND wl.type = 'CREDIT'
+          AND wl.description LIKE :partReturnPrefix
+          AND o."createdAt" BETWEEN :from AND :to
+          AND o."deletedAt" IS NULL
+          AND ${PAID_OR_COD_ORDER_SQL}
       ), 0) AS "walletPointsRedeemedAtCheckout"
     `,
-    { replacements: { from: filters.from, to: filters.to } },
+    {
+      replacements: {
+        from: filters.from,
+        to: filters.to,
+        partReturnPrefix: `${PART_RETURN_DESCRIPTION_PREFIX}%`,
+      },
+    },
   );
   const walletMeta = (walletRows as Array<Record<string, number>>)[0] ?? {};
   const walletRechargeInflow = Number(walletMeta.walletRechargeInflow ?? 0);
+  const giftCardRedemptionInflow = Number(walletMeta.giftCardRedemptionInflow ?? 0);
   const walletPointsRedeemedAtCheckout = Number(walletMeta.walletPointsRedeemedAtCheckout ?? 0);
 
   const customerPayments = fromPaise(summary.customerPaymentsPaise);
@@ -481,6 +515,7 @@ async function reconciliation(filters: ReportFilters) {
     shippingCollected,
     refundsToCustomer,
     walletRechargeInflow,
+    giftCardRedemptionInflow,
     walletPointsRedeemedAtCheckout,
     accountedTotal: fromPaise(accountedPaise),
     difference: fromPaise(differencePaise),
@@ -1163,6 +1198,7 @@ export const adminFinanceReports: ReportDefinition[] = [
       { key: 'shippingCollected', labelKey: 'shippingCollected', format: 'currency' },
       { key: 'refundsToCustomer', labelKey: 'refundsToCustomer', format: 'currency' },
       { key: 'walletRechargeInflow', labelKey: 'walletRechargeInflow', format: 'currency' },
+      { key: 'giftCardRedemptionInflow', labelKey: 'giftCardRedemptionInflow', format: 'currency' },
       { key: 'walletPointsRedeemedAtCheckout', labelKey: 'walletPointsRedeemedAtCheckout', format: 'points' },
       { key: 'accountedTotal', labelKey: 'accountedTotal', format: 'currency' },
       { key: 'difference', labelKey: 'difference', format: 'currency' },

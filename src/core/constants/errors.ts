@@ -44,6 +44,7 @@ export const ERROR_CODES = {
   WALLET_RECHARGE_BELOW_MIN: 'WALLET_RECHARGE_BELOW_MIN',
   WALLET_RECHARGE_ABOVE_MAX: 'WALLET_RECHARGE_ABOVE_MAX',
   WALLET_MAX_BALANCE_EXCEEDED: 'WALLET_MAX_BALANCE_EXCEEDED',
+  GIFT_CARD_WALLET_MAX_BALANCE_EXCEEDED: 'GIFT_CARD_WALLET_MAX_BALANCE_EXCEEDED',
   WALLET_RECHARGE_ALREADY_PAID: 'WALLET_RECHARGE_ALREADY_PAID',
   RETURN_INVALID_TRANSITION: 'RETURN_INVALID_TRANSITION',
   RETURN_NOT_RECEIVED: 'RETURN_NOT_RECEIVED',
@@ -212,6 +213,8 @@ export const ERROR_MESSAGES = {
   WALLET_RECHARGE_BELOW_MIN: 'Recharge amount is below the minimum',
   WALLET_RECHARGE_ABOVE_MAX: 'Recharge amount exceeds the maximum per transaction',
   WALLET_MAX_BALANCE_EXCEEDED: 'Recharge would exceed your maximum points balance',
+  GIFT_CARD_WALLET_MAX_BALANCE_EXCEEDED:
+    'Redeeming this gift card would exceed your maximum points balance. It stays valid — redeem it after spending some points.',
   WALLET_RECHARGE_ALREADY_PAID: 'This recharge has already been completed',
   RETURN_INVALID_TRANSITION: 'This return status transition is not allowed',
   RETURN_NOT_RECEIVED: 'Return must be received before it can be closed',
