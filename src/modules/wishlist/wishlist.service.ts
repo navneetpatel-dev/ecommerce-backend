@@ -27,6 +27,8 @@ function mapWishlistProduct(product: Product | null | undefined) {
   const vendor = plain.vendor ?? plain.Vendor ?? null;
   const stock = Number(plain.stock ?? stockFromVariants);
   const basePrice = roundMoney(plain.basePrice);
+  const variantPrices = variants.map((variant: { price: number }) => variant.price);
+  const priceRangeMax = variantPrices.length ? roundMoney(Math.max(...variantPrices)) : basePrice;
   const compareAtPrice = plain.compareAtPrice == null ? null : roundMoney(plain.compareAtPrice);
   const { isAvailable, unavailableReason } = resolveItemAvailability({
     product: plain,
@@ -42,6 +44,8 @@ function mapWishlistProduct(product: Product | null | undefined) {
     compareAtPrice,
     discountPercent: productDiscountPercent(basePrice, compareAtPrice),
     showMrp: productShowMrp(basePrice, compareAtPrice),
+    priceRangeMax,
+    hasPriceRange: priceRangeMax > basePrice,
     avgRating: Number(plain.avgRating ?? 0),
     stock,
     imageUrl: primaryImage,
@@ -170,13 +174,14 @@ export class WishlistService {
 
       const wishlistItem = wishlistItemResult as WishlistItem & { product: Product & { variants: any[] } };
 
-      // Pick a deterministic default variant (oldest first, matching the product listing's
-      // convention) and require it to actually be in stock — the unordered association include
-      // previously let this pick an arbitrary, possibly zero-stock or wrong variant.
+      // The wishlist shows (and tracks price drops on) the product's listed price, its
+      // lowest variant price: add the cheapest in-stock variant, oldest first on a tie,
+      // so the cart holds the price the customer saw. It must actually be in stock.
       const variants = (wishlistItem.product.variants ?? [])
         .slice()
         .sort(
           (a, b) =>
+            Number(a.price) - Number(b.price) ||
             new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime(),
         );
       if (variants.length === 0) {

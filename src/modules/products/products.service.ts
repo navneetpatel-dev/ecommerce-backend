@@ -82,6 +82,9 @@ export function mapProductResponse(product: Product, reviewCount = 0) {
 
   const basePrice = roundMoney(plain.basePrice ?? 0);
   const compareAtPrice = compareAtPriceForVariants;
+  // Variants at different prices: the card says "From ₹<lowest>".
+  const variantPrices = variants.map((variant: { price: number }) => variant.price);
+  const priceRangeMax = variantPrices.length ? roundMoney(Math.max(...variantPrices)) : basePrice;
 
   return {
     ...plain,
@@ -91,6 +94,8 @@ export function mapProductResponse(product: Product, reviewCount = 0) {
     compareAtPrice,
     discountPercent: productDiscountPercent(basePrice, compareAtPrice),
     showMrp: productShowMrp(basePrice, compareAtPrice),
+    priceRangeMax,
+    hasPriceRange: priceRangeMax > basePrice,
     specs: plain.specs && typeof plain.specs === 'object' ? plain.specs : {},
     highlights: Array.isArray(plain.highlights) ? plain.highlights : [],
     brand: plain.brand ?? null,
@@ -132,6 +137,9 @@ async function mapDetailResponse(product: Product, reviewCount = 0) {
       codEligibleAtUnitPrice: policy.codEnabled
         ? await resolveCodEligibleAtPrice(catalogProduct, variant.price)
         : false,
+      // The GST-inclusive figure for this variant's own price (the page shows the
+      // selected variant's price, so the "incl. GST" line must follow it).
+      taxInclusivePrice: taxInclusivePrice(variant.price, policy.gstPercentage, policy.taxInclusive),
     })),
   );
   const defaultVariant = variants[0];
@@ -164,6 +172,22 @@ async function mapDetailResponse(product: Product, reviewCount = 0) {
       policy.taxInclusive,
     ),
   };
+}
+
+/**
+ * A product's listed price is the lowest price any of its variants sells at, so the
+ * card, search, price filter and price sort never show a figure nobody can buy at.
+ * Kept in step whenever variants change; a product with no variants keeps its own.
+ */
+export async function syncProductBasePrice(productId: string, transaction: Transaction): Promise<void> {
+  const lowest = await ProductVariant.min<number, ProductVariant>('price', {
+    where: { productId },
+    transaction,
+  });
+  if (lowest == null || !Number.isFinite(Number(lowest))) return;
+  const product = await Product.findByPk(productId, { attributes: ['id', 'basePrice'], transaction });
+  if (!product || roundMoney(product.basePrice) === roundMoney(lowest)) return;
+  await product.update({ basePrice: roundMoney(lowest) }, { transaction });
 }
 
 async function syncSecondaryCategories(
@@ -456,6 +480,8 @@ export class ProductsService {
       if (Object.keys(updateData).length) {
         await productsRepository.update(id, updateData, { transaction: t });
       }
+      // A product with variants lists its lowest variant price, whatever was sent.
+      if (updateData.basePrice !== undefined) await syncProductBasePrice(id, t);
 
       const primaryCategoryId = productFields.categoryId ?? product.categoryId;
       if (secondaryCategoryIds !== undefined) {
@@ -707,6 +733,7 @@ export class ProductsService {
         productId,
         ...data,
       }, { transaction: t });
+      await syncProductBasePrice(productId, t);
 
       return variant;
     });
@@ -718,6 +745,7 @@ export class ProductsService {
       if (!variant) throw new NotFoundError('ProductVariant');
 
       await variant.update(data, { transaction: t });
+      if (data.price !== undefined) await syncProductBasePrice(variant.productId, t);
       return variant;
     });
   }
@@ -729,6 +757,7 @@ export class ProductsService {
 
       // Hard delete variants - they're detail records
       await variant.destroy({ transaction: t });
+      await syncProductBasePrice(variant.productId, t);
     });
   }
 
