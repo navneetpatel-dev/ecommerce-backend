@@ -31,10 +31,11 @@ describe('coupon shipping preview', () => {
     mock.method(ShippingRate, 'findAll', async (options) => {
       const where = options?.where as
         | {
-            maxWeightGrams?: { [Op.gte]?: number };
+            minWeightGrams?: { [Op.lte]?: number };
           }
         | undefined;
-      queriedWeight = where?.maxWeightGrams?.[Op.gte];
+      // Slabs are looked up by the part's weight (every slab starting at or below it).
+      queriedWeight = where?.minWeightGrams?.[Op.lte];
       return [
         {
           zoneId: 'zone-1',
@@ -87,10 +88,11 @@ describe('coupon shipping preview', () => {
     mock.method(ShippingRate, 'findAll', async (options) => {
       const where = options?.where as
         | {
-            maxWeightGrams?: { [Op.gte]?: number };
+            minWeightGrams?: { [Op.lte]?: number };
           }
         | undefined;
-      queriedWeight = where?.maxWeightGrams?.[Op.gte];
+      // Slabs are looked up by the part's weight (every slab starting at or below it).
+      queriedWeight = where?.minWeightGrams?.[Op.lte];
       return [
         {
           zoneId: 'zone-1',

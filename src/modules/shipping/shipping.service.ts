@@ -38,6 +38,7 @@ import { issueTaxInvoicesOnDispatch } from '@modules/pricing/taxInvoiceIssue';
 import { issueRtoCreditNotes, refundReturnedUndeliveredPart } from './rtoSettlement';
 import { isReversedPart } from '@modules/pricing/partReversal';
 import { reverseTcsForReturnedPart } from '@modules/pricing/tcsLedger';
+import { fromPaise, toPaise } from '@modules/pricing/money';
 
 /** The platform-wide free-shipping threshold (settings), or null when none is set. */
 function platformFreeShippingThreshold(settings: { freeShippingThreshold?: unknown }): number | null {
@@ -108,6 +109,16 @@ const SHIPMENT_STATUS_TRANSITIONS: Record<string, readonly string[]> = {
   DELIVERED: [],
   RTO_DELIVERED: [],
 };
+
+/**
+ * Shipping for a part heavier than the highest configured slab: split into parcels of
+ * that slab's maximum weight, each charged the slab price. Worked in paise.
+ */
+export function slabParcelsCost(slabPrice: number, slabMaxWeightGrams: number, weightGrams: number): number {
+  if (!(slabMaxWeightGrams > 0) || weightGrams <= slabMaxWeightGrams) return slabPrice;
+  const parcels = Math.ceil(weightGrams / slabMaxWeightGrams);
+  return fromPaise(toPaise(slabPrice) * parcels);
+}
 
 function isTerminalShipmentStatus(status: string): boolean {
   return status === 'DELIVERED' || status === 'RTO_DELIVERED';
@@ -329,21 +340,14 @@ export const shippingService = {
       ...methodFilter,
     } as any;
 
-    let rates = await ShippingRate.findAll({
-      where: {
-        ...weightFloorWhere,
-        maxWeightGrams: { [Op.gte]: params.weightGrams },
-      } as any,
-      order: [['price', 'ASC']],
+    // Every slab that starts at or below this weight; per method, the cheapest slab that
+    // covers it, else — heavier than that method's highest slab — the highest slab
+    // charged per parcel of its weight (a 45 kg part on a 15 kg top slab is three
+    // parcels), never one slab price for any weight.
+    const rates = await ShippingRate.findAll({
+      where: weightFloorWhere,
+      order: [['maxWeightGrams', 'DESC'], ['price', 'ASC']],
     });
-
-    // Heavy carts may exceed the highest configured slab — use the top tier instead.
-    if (!rates.length) {
-      rates = await ShippingRate.findAll({
-        where: weightFloorWhere,
-        order: [['maxWeightGrams', 'DESC'], ['price', 'ASC']],
-      });
-    }
 
     let scoped = rates;
     if (params.vendorId) {
@@ -356,18 +360,28 @@ export const shippingService = {
     const platformThreshold = platformFreeShippingThreshold(
       await settingsService.getPlatformSettings(),
     );
-    const cheapestByMethod = new Map<string, ShippingQuoteRate>();
+    const byMethod = new Map<string, ShippingRate[]>();
     for (const rate of scoped) {
-      if (!cheapestByMethod.has(rate.method)) {
-        cheapestByMethod.set(rate.method, {
-          method: rate.method,
-          cost: Number(rate.price),
-          shippingDisplayKey: resolveShippingDisplayKey(Number(rate.price)),
-          estimatedDays: Number(rate.estimatedDays),
-          freeShippingThreshold: effectiveFreeShippingThreshold(rate, platformThreshold),
-          zoneId: rate.zoneId,
-        });
-      }
+      byMethod.set(rate.method, [...(byMethod.get(rate.method) ?? []), rate]);
+    }
+    const cheapestByMethod = new Map<string, ShippingQuoteRate>();
+    for (const [method, methodRates] of byMethod) {
+      const covering = methodRates
+        .filter((rate) => Number(rate.maxWeightGrams) >= params.weightGrams)
+        .sort((a, b) => Number(a.price) - Number(b.price))[0];
+      // `methodRates` is ordered highest slab first, cheapest first within it.
+      const rate = covering ?? methodRates[0]!;
+      const cost = covering
+        ? Number(rate.price)
+        : slabParcelsCost(Number(rate.price), Number(rate.maxWeightGrams), params.weightGrams);
+      cheapestByMethod.set(method, {
+        method: rate.method,
+        cost,
+        shippingDisplayKey: resolveShippingDisplayKey(cost),
+        estimatedDays: Number(rate.estimatedDays),
+        freeShippingThreshold: effectiveFreeShippingThreshold(rate, platformThreshold),
+        zoneId: rate.zoneId,
+      });
     }
     return [...cheapestByMethod.values()];
   },
