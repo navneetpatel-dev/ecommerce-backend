@@ -33,6 +33,7 @@ import { payoutRatesFromSettings, vendorPayoutBreakdown } from '@modules/pricing
 import { createCommissionInvoiceForPayout } from '@modules/commissions/commissionInvoice.service';
 import { logAudit } from '@modules/audit/audit.service';
 import type { MarkPayoutFailedRequest, MarkPayoutPaidRequest } from './payouts.dto';
+import { subOrdersInReturnWindow, type DeliveredSubOrder } from './returnWindowHold';
 
 async function notifyPayoutFailed(params: {
   vendorId: string;
@@ -119,6 +120,21 @@ function payoutEligibleSubOrderInclude(windowCutoff: Date) {
   };
 }
 
+/** Delivered sub-orders (with their delivery time) behind a set of candidate ledgers. */
+function deliveredSubOrdersOf(ledgers: CommissionLedger[]): DeliveredSubOrder[] {
+  const byId = new Map<string, DeliveredSubOrder>();
+  for (const ledger of ledgers) {
+    const { SubOrder: subOrder } = ledger as CommissionLedger & {
+      SubOrder?: { shipment?: { deliveredAt?: Date | null } };
+    };
+    const deliveredAt = subOrder?.shipment?.deliveredAt;
+    if (deliveredAt) {
+      byId.set(ledger.subOrderId, { id: ledger.subOrderId, deliveredAt: new Date(deliveredAt) });
+    }
+  }
+  return [...byId.values()];
+}
+
 export class PayoutsService {
   async list(query: { page: number; limit: number }, vendorId?: string | null) {
     const offset = paginationOffset(query.page, query.limit);
@@ -171,10 +187,13 @@ export class PayoutsService {
     const payoutRates = payoutRatesFromSettings(settings);
     const windowCutoff = payoutReturnWindowCutoff(Number(settings.defaultReturnWindow ?? 7));
     const subOrderInclude = payoutEligibleSubOrderInclude(windowCutoff);
-    const ledgers = await CommissionLedger.findAll({
+    const candidates = await CommissionLedger.findAll({
       where: { status: COMMISSION_STATUS.PENDING },
       include: [subOrderInclude],
     });
+    // Also hold sales still inside their items' own (longer) category return window.
+    const held = await subOrdersInReturnWindow(deliveredSubOrdersOf(candidates));
+    const ledgers = candidates.filter((ledger) => !held.has(ledger.subOrderId));
     const grouped = new Map<string, { amountPaise: number; start: Date; end: Date; rows: CommissionLedger[] }>();
     for (const ledger of ledgers) {
       const current = grouped.get(ledger.vendorId) ?? {
@@ -212,8 +231,9 @@ export class PayoutsService {
           // (pricing/vendorPayout).
           const breakdown = vendorPayoutBreakdown(locked, payoutRates);
           if (breakdown.balancePaise < 0) {
-            // Cashback cost exceeds what the sales earned: pay nothing and leave every
-            // ledger pending, so the cost nets against the vendor's next sales.
+            // Deductions (cashback cost, returns after payout) exceed what the sales
+            // earned: pay nothing and leave every ledger pending, so they net against
+            // the vendor's next sales.
             logger.info('Payout carried forward: vendor balance is negative', {
               vendorId,
               balancePaise: breakdown.balancePaise,

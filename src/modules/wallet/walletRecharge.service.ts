@@ -17,7 +17,7 @@ import { settingsService } from '@modules/settings/settings.service';
 import { roundMoney, toPaise } from '@modules/pricing/money';
 import { paymentsService } from '@modules/payments/payments.service';
 import { walletService } from './wallet.service';
-import { WALLET_DESCRIPTIONS } from './wallet.constants';
+import { WALLET_DESCRIPTIONS, WALLET_POINTS_PER_RUPEE } from './wallet.constants';
 import { ensureWalletRechargeInvoice } from './walletRechargeInvoice.service';
 import {
   checkWalletRechargeAmountRange,
@@ -43,7 +43,6 @@ export class WalletRechargeService {
       maxInr: settings.walletMaxRechargeInr,
       maxBalance: settings.walletMaxBalancePoints,
       presetsInr: settings.walletRechargePresetsInr,
-      pointsPerRupee: settings.pointsPerRupee,
     };
   }
 
@@ -66,7 +65,6 @@ export class WalletRechargeService {
         maxInr: limits.maxInr,
         maxBalance: limits.maxBalance,
         presetsInr: limits.presetsInr,
-        pointsPerRupee: limits.pointsPerRupee,
       },
     };
   }
@@ -102,7 +100,7 @@ export class WalletRechargeService {
         }),
       );
     }
-    const pointsToCredit = roundMoney(amount * settings.pointsPerRupee);
+    const pointsToCredit = roundMoney(amount * WALLET_POINTS_PER_RUPEE);
     const balance = await walletService.getBalance(userId);
     if (balance + pointsToCredit > settings.walletMaxBalancePoints) {
       throw new ValidationError(ERROR_MESSAGES.WALLET_MAX_BALANCE_EXCEEDED);
@@ -141,7 +139,7 @@ export class WalletRechargeService {
       };
     }
 
-    const pointsToCredit = roundMoney(amount * settings.pointsPerRupee);
+    const pointsToCredit = roundMoney(amount * WALLET_POINTS_PER_RUPEE);
     const balance = await walletService.getBalance(userId);
     if (balance + pointsToCredit > settings.walletMaxBalancePoints) {
       return {
@@ -171,7 +169,7 @@ export class WalletRechargeService {
       );
     }
 
-    const { amount, pointsToCredit, settings } = await this.validateRechargeAmount(userId, amountInr);
+    const { amount, pointsToCredit } = await this.validateRechargeAmount(userId, amountInr);
 
     if (idempotencyKey) {
       const existing = await WalletRechargeOrder.findOne({
@@ -217,7 +215,7 @@ export class WalletRechargeService {
         await existing.update({
           amountInr: amount,
           pointsCredited: pointsToCredit,
-          pointsPerRupee: (await settingsService.getPlatformSettings()).pointsPerRupee,
+          pointsPerRupee: WALLET_POINTS_PER_RUPEE,
           razorpayOrderId: rzpOrder.id,
           updatedBy: userId,
         });
@@ -286,7 +284,7 @@ export class WalletRechargeService {
       userId,
       amountInr: amount,
       pointsCredited: pointsToCredit,
-      pointsPerRupee: settings.pointsPerRupee,
+      pointsPerRupee: WALLET_POINTS_PER_RUPEE,
       status: 'PENDING',
       refundStatus: 'NONE',
       idempotencyKey: idempotencyKey ?? null,

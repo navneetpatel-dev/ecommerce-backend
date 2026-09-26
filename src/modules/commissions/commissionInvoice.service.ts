@@ -10,18 +10,7 @@ import {
   VENDOR_DOCUMENT_KIND,
 } from '@modules/pricing/vendorInvoiceSequence';
 import { settingsService } from '@modules/settings/settings.service';
-
-function normalizeState(value: string | null | undefined): string {
-  return (value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
-}
-
-function sameState(a: string | null | undefined, b: string | null | undefined): boolean {
-  const left = normalizeState(a);
-  const right = normalizeState(b);
-  // Until platform state is configured, default to CGST/SGST (not forced IGST).
-  if (!left && right) return true;
-  return Boolean(left && right && left === right);
-}
+import { isIntraStateSupply } from '@modules/pricing/gstPlaceOfSupply';
 
 export type CreateCommissionInvoiceInput = {
   vendorId: string;
@@ -64,7 +53,7 @@ export async function createCommissionInvoiceForPayout(
     attributes: ['id', 'state', 'gstNumber', 'businessName'],
     transaction,
   });
-  const intra = sameState(settings.platformState, vendor?.state);
+  const intra = isIntraStateSupply(settings.platformState, vendor?.state);
   const gstPaise = commissionGstPaise(input.commissionTaxablePaise, gstRate);
   const { cgst: cgstPaise, sgst: sgstPaise, igst: igstPaise } = splitTaxAmount(gstPaise, intra);
 

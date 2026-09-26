@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import type { PlatformInvoiceSnapshot } from '@modules/pricing/platformFeeInvoice';
 
 export class Order extends Model<InferAttributes<Order>, InferCreationAttributes<Order>> {
   declare id: CreationOptional<string>;
@@ -35,6 +36,8 @@ export class Order extends Model<InferAttributes<Order>, InferCreationAttributes
   declare giftMessage: CreationOptional<string | null>;
   /** Frozen gift-wrap fee charged at checkout (null when giftWrap is false). */
   declare giftWrapFeeAmount: CreationOptional<number | null>;
+  /** The platform's own tax invoice for its fees (gift wrap), frozen at checkout. */
+  declare platformInvoiceSnapshot: CreationOptional<PlatformInvoiceSnapshot | null>;
   /** Sequential GST tax invoice number (allocated on first PDF download). */
   declare taxInvoiceNumber: CreationOptional<string | null>;
   /** Vendor that bears VENDOR cashback (coupon.vendorId). */
@@ -91,6 +94,7 @@ export const initOrderModel = (sequelize: Sequelize) => {
       giftWrap: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
       giftMessage: { type: DataTypes.TEXT, allowNull: true },
       giftWrapFeeAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+      platformInvoiceSnapshot: { type: DataTypes.JSONB, allowNull: true },
       taxInvoiceNumber: { type: DataTypes.STRING(32), allowNull: true, unique: true },
       cashbackVendorId: { type: DataTypes.UUID, allowNull: true },
       shippingAddressId: { type: DataTypes.UUID, allowNull: false },

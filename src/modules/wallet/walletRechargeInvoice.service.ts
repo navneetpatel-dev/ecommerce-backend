@@ -12,72 +12,30 @@ import {
 } from '@core/pdf';
 import { WalletRechargeOrder } from '@database/models/walletRechargeOrder.model';
 import { User } from '@database/models/user.model';
-import { settingsService } from '@modules/settings/settings.service';
-import { fromPaise, toPaise } from '@modules/pricing/money';
-import { splitTaxAmount } from '@modules/pricing/pricing.engine';
 
-function nextInvoiceNumber(): string {
+function nextReceiptNumber(): string {
   const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const suffix = Math.floor(Math.random() * 900000 + 100000);
   return `WRC-${stamp}-${suffix}`;
 }
 
 /**
- * GST inside a recharge amount (the amount is tax-inclusive), worked out in paise:
- * taxable + CGST + SGST is exactly the amount paid. Halving the tax in rupees and
- * rounding each half added a paisa whenever the tax had odd paise
- * (₹100 at 18%: ₹7.63 + ₹7.63 on ₹15.25 of tax).
+ * Receipt number for a paid wallet top-up, allocated once. A top-up is prepaid store
+ * credit, not a supply: it carries no GST (the goods bought with it are taxed at
+ * checkout), so this is a payment receipt, not a tax invoice.
  */
-export function walletRechargeGstSplit(
-  amountInr: unknown,
-  gstRatePercent: number,
-): { taxableAmount: number; cgst: number; sgst: number; igst: number } {
-  const amountPaise = toPaise(Number(amountInr ?? 0));
-  const taxablePaise =
-    gstRatePercent > 0 ? Math.round((amountPaise * 100) / (100 + gstRatePercent)) : amountPaise;
-  const { cgst, sgst, igst } = splitTaxAmount(amountPaise - taxablePaise, true);
-  return {
-    taxableAmount: fromPaise(taxablePaise),
-    cgst: fromPaise(cgst),
-    sgst: fromPaise(sgst),
-    igst: fromPaise(igst),
-  };
-}
-
-export async function ensureWalletRechargeInvoice(rechargeId: string): Promise<{
-  invoiceNumber: string;
-  taxableAmount: number;
-  cgst: number;
-  sgst: number;
-  igst: number;
-}> {
+export async function ensureWalletRechargeInvoice(
+  rechargeId: string,
+): Promise<{ invoiceNumber: string }> {
   const recharge = await WalletRechargeOrder.findByPk(rechargeId);
   if (!recharge || recharge.status !== 'PAID') {
     throw new NotFoundError('WalletRechargeOrder');
   }
+  if (recharge.invoiceNumber) return { invoiceNumber: recharge.invoiceNumber };
 
-  if (recharge.invoiceNumber) {
-    return {
-      invoiceNumber: recharge.invoiceNumber,
-      taxableAmount: Number(recharge.taxableAmount ?? recharge.amountInr),
-      cgst: Number(recharge.cgst ?? 0),
-      sgst: Number(recharge.sgst ?? 0),
-      igst: Number(recharge.igst ?? 0),
-    };
-  }
-
-  const settings = await settingsService.getPlatformSettings();
-  const gstRate = Number(settings.commissionGstRatePercent ?? 0);
-  const split = walletRechargeGstSplit(recharge.amountInr, gstRate);
-
-  const invoiceNumber = nextInvoiceNumber();
-  await recharge.update({
-    invoiceNumber,
-    ...split,
-    invoiceGeneratedAt: new Date(),
-  });
-
-  return { invoiceNumber, ...split };
+  const invoiceNumber = nextReceiptNumber();
+  await recharge.update({ invoiceNumber, invoiceGeneratedAt: new Date() });
+  return { invoiceNumber };
 }
 
 export async function getWalletRechargeInvoicePdf(
@@ -89,18 +47,18 @@ export async function getWalletRechargeInvoicePdf(
     throw new NotFoundError('WalletRechargeOrder');
   }
   if (recharge.status !== 'PAID') {
-    throw new ValidationError('Invoice available only for paid recharges');
+    throw new ValidationError('Receipt available only for paid recharges');
   }
 
-  const invoice = await ensureWalletRechargeInvoice(rechargeId);
+  const receipt = await ensureWalletRechargeInvoice(rechargeId);
   const user = await User.findByPk(userId);
   const paidAt = recharge.paidAt ?? recharge.updatedAt;
 
   const doc = createBrandedPdfDocument({
-    title: `Wallet recharge ${invoice.invoiceNumber}`,
-    subject: 'Prepaid store credit invoice',
+    title: `Wallet recharge ${receipt.invoiceNumber}`,
+    subject: 'Wallet recharge receipt',
   });
-  const layout = new PdfPageLayout(doc, 'Wallet Recharge Invoice');
+  const layout = new PdfPageLayout(doc, 'Wallet Recharge Receipt');
   layout.startPage();
 
   const cardH = drawPdfMetaCards(
@@ -109,7 +67,7 @@ export async function getWalletRechargeInvoicePdf(
     layout.y,
     layout.contentWidth,
     [
-      { label: 'Invoice', value: invoice.invoiceNumber },
+      { label: 'Receipt', value: receipt.invoiceNumber },
       { label: 'Date', value: formatPrintDate(paidAt) },
       { label: 'Customer', value: user?.name ?? userId },
     ],
@@ -124,11 +82,7 @@ export async function getWalletRechargeInvoicePdf(
   layout.y += cardH + 16;
 
   const boxH = drawPdfTotalsBox(doc, layout.margin, layout.y, layout.contentWidth, {
-    lines: [
-      { label: 'Taxable value', value: formatInrAmount(invoice.taxableAmount) },
-      { label: 'CGST', value: formatInrAmount(invoice.cgst) },
-      { label: 'SGST', value: formatInrAmount(invoice.sgst) },
-    ],
+    lines: [{ label: 'Points credited', value: String(Number(recharge.pointsCredited)) }],
     grandTotalLabel: 'Total paid',
     grandTotalValue: formatInrAmount(Number(recharge.amountInr)),
   });
@@ -140,9 +94,9 @@ export async function getWalletRechargeInvoicePdf(
     layout.y,
     layout.contentWidth,
     'Note',
-    'Prepaid store credit — not a merchandise tax invoice.',
+    'Prepaid store credit, 1 point per rupee. No GST is charged on a top-up; GST applies to the goods you buy with it.',
   );
 
   const buffer = await finalizePdfDocument(doc);
-  return { buffer, filename: `${invoice.invoiceNumber}.pdf` };
+  return { buffer, filename: `${receipt.invoiceNumber}.pdf` };
 }

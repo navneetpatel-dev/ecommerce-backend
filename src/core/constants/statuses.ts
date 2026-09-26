@@ -291,6 +291,8 @@ export type WalletPointSource =
 export const COMMISSION_REFERENCE_TYPE = {
   CASHBACK_COST: 'CashbackCost',
   CASHBACK_COST_REVERSAL: 'CashbackCostReversal',
+  /** A return approved after the sale was paid out: recovered from the vendor's next payout. */
+  RETURN_CLAWBACK: 'ReturnClawback',
 } as const;
 
 export const SHIPMENT_STATUS = {

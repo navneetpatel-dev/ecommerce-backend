@@ -27,10 +27,6 @@ export class WalletRechargeOrder extends Model<
   declare razorpayRefundId: string | null;
   declare refundFailureReason: string | null;
   declare invoiceNumber: string | null;
-  declare taxableAmount: number | null;
-  declare cgst: number | null;
-  declare sgst: number | null;
-  declare igst: number | null;
   declare invoiceGeneratedAt: Date | null;
   declare pointsPerRupee: number | null;
   declare createdBy: string | null;
@@ -70,10 +66,6 @@ export const initWalletRechargeOrderModel = (sequelize: Sequelize) => {
       razorpayRefundId: { type: DataTypes.STRING(64), allowNull: true },
       refundFailureReason: { type: DataTypes.STRING(255), allowNull: true },
       invoiceNumber: { type: DataTypes.STRING(32), allowNull: true },
-      taxableAmount: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
-      cgst: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
-      sgst: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
-      igst: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
       invoiceGeneratedAt: { type: DataTypes.DATE, allowNull: true },
       pointsPerRupee: { type: DataTypes.DECIMAL(8, 2), allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },

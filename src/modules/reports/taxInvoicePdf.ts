@@ -22,6 +22,7 @@ import {
 import { invoiceLineTaxBreakdown } from '@modules/pricing/displayMoney';
 import { coerceRupees, fromPaise, roundMoney, sumRupees } from '@modules/pricing/money';
 import type { TaxInvoiceSnapshot } from '@modules/pricing/taxInvoiceSnapshot';
+import type { PlatformInvoiceSnapshot } from '@modules/pricing/platformFeeInvoice';
 import { TAX_INVOICE_COPY as COPY } from './reports.constants';
 
 export type TaxInvoiceAddress = {
@@ -224,6 +225,45 @@ function mapSubOrderItems(
     });
   }
   return items;
+}
+
+/**
+ * The platform's own tax invoice for its fees on an order (gift wrapping), from the
+ * snapshot frozen at checkout. The seller is the platform, with its GSTIN and state.
+ */
+export function toTaxInvoiceSourceFromPlatformInvoice(
+  order: TaxInvoiceOrderInput,
+  snapshot: PlatformInvoiceSnapshot,
+  platform: { legalName?: string | null; gstin?: string | null; state?: string | null },
+): TaxInvoiceSource {
+  return {
+    invoiceNo: snapshot.invoiceNumber,
+    orderId: order.id,
+    invoiceDate: new Date(snapshot.issuedAt),
+    paymentMethod: order.paymentMethod ?? null,
+    paymentStatus: order.paymentStatus,
+    walletAmountUsed: roundMoney(order.walletAmountUsed ?? 0),
+    razorpayAmountPaid: roundMoney(order.razorpayAmountPaid ?? 0),
+    totalAmount: fromPaise(snapshot.totalPaise),
+    buyerName: order.user?.name ?? null,
+    shippingAddress: order.shippingAddress ?? null,
+    seller: {
+      businessName: platform.legalName || COPY.platformSeller,
+      gstNumber: platform.gstin || null,
+      state: platform.state || null,
+      items: snapshot.lines.map((line) => ({
+        productName: line.description,
+        sku: null,
+        hsn: line.sac,
+        quantity: line.quantity,
+        unitPrice: fromPaise(line.taxablePaise),
+        taxable: fromPaise(line.taxablePaise),
+        cgst: fromPaise(line.cgstPaise),
+        sgst: fromPaise(line.sgstPaise),
+        igst: fromPaise(line.igstPaise),
+      })),
+    },
+  };
 }
 
 /** Map one sub-order into a single-vendor tax invoice source. */

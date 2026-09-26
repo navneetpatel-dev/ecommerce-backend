@@ -419,6 +419,46 @@ describe('consolidated refund scenarios (seeded)', () => {
     await assertReturnRefundPurchasedNonExpiring(customer.id, rr.id);
   });
 
+  it('1b. Return on a sale already paid out → pending deduction from the vendor', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    const { sub, item } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.COD,
+      totalAmount: 118,
+      shippingCharged: 0,
+      lineTaxable: 100,
+      lineTax: 18,
+    });
+    const sale = await CommissionLedger.findOne({
+      where: { subOrderId: sub.id, referenceType: null },
+    });
+    await sale!.update({ status: COMMISSION_STATUS.SETTLED });
+    const paidNetPaise = Number(sale!.netPayoutAmountPaise);
+
+    const rr = await returnsService.create(customer.id, {
+      orderItemId: item.id,
+      reasonCode: RETURN_REASON.DAMAGED,
+      reason: 'Damaged',
+    });
+    await returnsService.transition(rr.id, RETURN_STATUS.APPROVED, customer.id);
+
+    // The paid record is left as paid...
+    await sale!.reload();
+    assert.equal(sale!.status, COMMISSION_STATUS.SETTLED);
+    assert.equal(Number(sale!.netPayoutAmountPaise), paidNetPaise);
+    // ...and the return is recovered from the vendor's next payout.
+    const clawback = await CommissionLedger.findOne({
+      where: { subOrderId: sub.id, referenceType: COMMISSION_REFERENCE_TYPE.RETURN_CLAWBACK },
+    });
+    assert.ok(clawback);
+    assert.equal(clawback!.status, COMMISSION_STATUS.PENDING);
+    assert.equal(Number(clawback!.netPayoutAmountPaise), -paidNetPaise);
+    assert.equal(Number(clawback!.commissionAmountPaise), -toPaise(10));
+  });
+
   it('2. COD NO_LONGER_NEEDED → excludes shipping, deducts return fee', async (t) => {
     if (!dbReady) return t.skip('database unavailable');
     await setPlatformReturnShippingFee(50);
@@ -1269,6 +1309,53 @@ describe('consolidated refund scenarios (seeded)', () => {
     assert.equal(createRefund.mock.callCount(), 1);
     const refundPaise = createRefund.mock.calls[0]?.arguments[1];
     assert.equal(refundPaise, toPaise(700));
+
+    createRefund.mock.restore();
+  });
+
+  it('16b. cancelling the last sub-order refunds the order-level gift-wrap fee too', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    const paymentId = `pay_${randomUUID().slice(0, 10)}`;
+    // Two ₹500 sub-orders plus the ₹49 gift-wrap fee, all paid through Razorpay.
+    const { order, sub } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.RAZORPAY,
+      totalAmount: 1049,
+      razorpayAmountPaid: 1049,
+      razorpayPaymentId: paymentId,
+      shippingCharged: 0,
+      lineTaxable: 423.73,
+      lineTax: 76.27,
+    });
+    await order.update({ status: ORDER_STATUS.CONFIRMED, giftWrapFeeAmount: 49 } as never);
+    await sub.update({ status: ORDER_STATUS.CONFIRMED, customerTotal: 500 });
+    const { id: _id, createdAt: _c, updatedAt: _u, ...fields } = sub.get({ plain: true }) as Record<
+      string,
+      unknown
+    >;
+    const sibling = await SubOrder.create({
+      ...fields,
+      taxInvoiceNumber: null,
+      taxInvoiceSnapshot: null,
+      status: ORDER_STATUS.CONFIRMED,
+      customerTotal: 500,
+    } as never);
+
+    const createRefund = mock.method(
+      paymentsService,
+      'createRazorpayRefund',
+      async () => `rfnd_${randomUUID().slice(0, 8)}`,
+    );
+
+    await subordersService.updateStatus(sub.id, ORDER_STATUS.CANCELLED, undefined, customer.id);
+    await subordersService.updateStatus(sibling.id, ORDER_STATUS.CANCELLED, undefined, customer.id);
+
+    const refunds = createRefund.mock.calls.map((call) => call.arguments[1]);
+    // The first cancellation returns its ₹500; the last returns the rest, fee included.
+    assert.deepEqual(refunds, [toPaise(500), toPaise(549)]);
 
     createRefund.mock.restore();
   });

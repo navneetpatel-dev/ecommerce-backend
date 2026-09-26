@@ -23,7 +23,6 @@ export const getPublicSettings = asyncHandler(async (_req: Request, res: Respons
     walletMaxRechargeInr: settings.walletMaxRechargeInr,
     walletRechargePresetsInr: settings.walletRechargePresetsInr,
     walletMaxBalancePoints: settings.walletMaxBalancePoints,
-    pointsPerRupee: settings.pointsPerRupee,
   }));
 });
 
