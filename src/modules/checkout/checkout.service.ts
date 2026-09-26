@@ -822,6 +822,8 @@ export class CheckoutService {
             tcsAmountPaise: p.tcsPaise,
             netPayoutAmountPaise: p.netPayoutPaise,
             shippingCollectedPaise: p.shippingChargedPaise,
+            // Frozen here so a later platform rate change only affects later sales.
+            tdsRatePercent: settings.tdsRatePercent,
             status: COMMISSION_STATUS.PENDING,
           }, { transaction: t });
 

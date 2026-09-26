@@ -8,6 +8,7 @@ import { SubOrder } from '@database/models/subOrder.model';
 import { Vendor } from '@database/models/vendor.model';
 import { User } from '@database/models/user.model';
 import { Role } from '@database/models/role.model';
+import { TdsLedger } from '@database/models/tdsLedger.model';
 import { settingsService } from '@modules/settings/settings.service';
 import { payoutsService } from '../payouts.service';
 import { ORDER_STATUS, RETURN_STATUS } from '@core/constants/statuses';
@@ -208,5 +209,49 @@ describe('PayoutsService.process return-window and dispute hold', () => {
     assert.deepEqual(created, []);
     assert.equal(payouts.mock.callCount(), 0);
     assert.equal(settled.mock.callCount(), 0);
+  });
+
+  it('withholds TDS at the rate frozen on the sale, and records that rate', async () => {
+    // The platform rate has since moved to 0.1%; the sale was placed at 1%.
+    mock.method(settingsService, 'getPlatformSettings', async () => ({
+      tdsRatePercent: 0.1,
+      commissionGstRatePercent: 18,
+      defaultReturnWindow: 7,
+    }));
+    const rows = [
+      {
+        id: 'cl-sale',
+        vendorId: 'vendor-1',
+        subOrderId: 'so-1',
+        createdAt: new Date(),
+        netPayoutAmountPaise: 107500,
+        commissionAmountPaise: 0,
+        taxableAmountPaise: 100000,
+        tdsRatePercent: '1.000',
+        referenceType: null,
+        SubOrder: { orderId: 'order-1' },
+      },
+    ];
+    mock.method(CommissionLedger, 'findAll', async () => rows as never);
+    mock.method(CommissionLedger, 'update', async () => [1] as never);
+    mock.method(sequelize, 'transaction', async (callback: (t: { LOCK: { UPDATE: string } }) => Promise<unknown>) => {
+      return callback({ LOCK: { UPDATE: 'UPDATE' } });
+    });
+    const payouts = mock.method(Payout, 'create', async (fields: Record<string, unknown>) => {
+      return { id: 'payout-1', ...fields } as never;
+    });
+    const tds = mock.method(TdsLedger, 'create', async () => ({}) as never);
+    mock.method(User, 'findOne', async () => null);
+    mock.method(Role, 'findOne', async () => null);
+
+    await payoutsService.process('actor-1');
+
+    assert.equal(tds.mock.callCount(), 1);
+    const tdsRow = tds.mock.calls[0]!.arguments[0] as Record<string, unknown>;
+    assert.equal(tdsRow.ratePercent, 1);
+    assert.equal(tdsRow.taxableAmountPaise, 100000);
+    assert.equal(tdsRow.tdsAmountPaise, 1000);
+    // ₹1,075 net less ₹10 TDS.
+    assert.equal(payouts.mock.calls[0]!.arguments[0].amount, 1065);
   });
 });
