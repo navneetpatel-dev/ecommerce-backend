@@ -37,6 +37,7 @@ import { WebhookPayloadSchema } from './shipping.dto';
 import { deliveryAgentPayoutsService } from '@modules/deliveryAgents/deliveryAgentPayouts.service';
 import { issueTaxInvoicesOnDispatch } from '@modules/pricing/taxInvoiceIssue';
 import { issueRtoCreditNotes, refundReturnedUndeliveredPart } from './rtoSettlement';
+import { isReversedPart } from '@modules/pricing/partReversal';
 
 /** Shipment statuses that mean the goods have been dispatched. */
 const DISPATCHED_SHIPMENT_STATUSES = new Set([
@@ -191,7 +192,14 @@ async function cascadeRtoDeliveredAndSettle(
         : allReturned
           ? ORDER_STATUS.RETURNED
           : ORDER_STATUS.CANCELLED;
-      await Order.update({ status: targetStatus }, { where: { id: order.id }, transaction });
+      await Order.update(
+        {
+          status: targetStatus,
+          // Nothing was delivered: no cashback will ever be due (as on a full cancellation).
+          ...(anyDelivered ? {} : { pendingCashbackAmount: 0 }),
+        },
+        { where: { id: order.id }, transaction },
+      );
     }
 
     // 4. Refund the part the way a cancellation does: its wallet share back as the
@@ -201,6 +209,8 @@ async function cascadeRtoDeliveredAndSettle(
     // 5. Credit note for the tax invoice issued at dispatch: the supply was reversed.
     await issueRtoCreditNotes(subOrder, order, siblings, transaction);
   }
+  // 6. A COD order whose other parcels were already delivered and paid is paid in full now.
+  await settleCodPaymentIfComplete(subOrderId, transaction);
 }
 
 /** Prompts the customer to reschedule (or informs them of RTO) after a failed doorstep attempt. */
@@ -224,18 +234,29 @@ async function notifyCustomerOfFailedAttempt(
   });
 }
 
-/** Marks the order PAID once every COD shipment on it has had cash collected at the door. */
+/**
+ * Marks the order PAID once every COD shipment still owed has had cash collected at the
+ * door. A parcel that came back undelivered (RTO) owes nothing — its part is reversed —
+ * so it no longer holds the order unpaid once the other parcels are delivered and paid.
+ * Runs on delivery and on RTO, whichever settles the order last.
+ */
 async function settleCodPaymentIfComplete(subOrderId: string, transaction: Transaction) {
   const subOrder = await SubOrder.findByPk(subOrderId, { transaction });
   if (!subOrder) return;
   const order = await Order.findByPk(subOrder.orderId, { transaction });
   if (!order || order.paymentMethod !== 'COD' || order.paymentStatus === PAYMENT_STATUS.PAID) return;
 
-  const siblingShipments = await Shipment.findAll({
-    include: [{ association: 'subOrder', where: { orderId: order.id }, attributes: [] }],
+  const siblingShipments = (await Shipment.findAll({
+    include: [{ association: 'subOrder', where: { orderId: order.id }, attributes: ['status'] }],
     transaction,
-  });
-  const codShipments = siblingShipments.filter((s) => s.codAmount != null);
+  })) as (Shipment & { subOrder?: SubOrder })[];
+  const codShipments = siblingShipments.filter(
+    (s) =>
+      s.codAmount != null &&
+      s.status !== 'RTO_INITIATED' &&
+      s.status !== 'RTO_DELIVERED' &&
+      !isReversedPart(s.subOrder?.status),
+  );
   const allCollected = codShipments.length > 0 && codShipments.every((s) => s.codCollected);
   if (allCollected) {
     await order.update({ paymentStatus: PAYMENT_STATUS.PAID }, { transaction });

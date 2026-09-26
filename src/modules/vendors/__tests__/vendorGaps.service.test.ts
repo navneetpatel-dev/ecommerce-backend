@@ -4,6 +4,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { Product } from '@database/models/product.model';
 import { SubOrder } from '@database/models/subOrder.model';
+import { CouponUsage } from '@database/models/couponUsage.model';
 import { Order } from '@database/models/order.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { TcsLedger } from '@database/models/tcsLedger.model';
@@ -175,6 +176,8 @@ describe('Vendor Modules Gap Fixes Verification', () => {
       ] as unknown as SubOrder[]);
 
       let orderUpdatedStatus = '';
+      // No coupon on the order: nothing to give back when the last part is cancelled.
+      mock.method(CouponUsage, 'findAll', async () => []);
       mock.method(Order, 'update', async (fields: any) => {
         orderUpdatedStatus = fields.status;
         return [1];
