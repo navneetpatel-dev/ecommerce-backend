@@ -4,6 +4,7 @@ import { NotFoundError } from '@core/errors/NotFoundError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ValidationError } from '@core/errors/ValidationError';
 import {
+  COMMISSION_REFERENCE_TYPE,
   COMMISSION_STATUS,
   ORDER_STATUS,
   PAYMENT_METHOD,
@@ -835,7 +836,32 @@ export class ReturnsService {
       },
       transaction: t,
     });
-    if (ledger) {
+    if (ledger?.status === COMMISSION_STATUS.SETTLED) {
+      // Already paid out: leave the paid record as it was and post the return as a
+      // pending deduction, which the vendor's next payout recovers.
+      await CommissionLedger.create(
+        {
+          vendorId: ledger.vendorId,
+          subOrderId: ledger.subOrderId,
+          commissionRate: ledger.commissionRate,
+          discountBearer: ledger.discountBearer,
+          saleAmountPaise: -reversal.refundMerchandisePaise,
+          commissionAmountPaise: -reversal.refundCommissionPaise,
+          taxableAmountPaise: -reversal.refundMerchandisePaise,
+          discountAmountPaise: -reversal.refundDiscountPaise,
+          taxAmountPaise: -reversal.refundTaxPaise,
+          tcsAmountPaise: -reversal.refundTcsPaise,
+          netPayoutAmountPaise: -reversal.refundNetClawbackPaise,
+          shippingCollectedPaise: 0,
+          referenceType: COMMISSION_REFERENCE_TYPE.RETURN_CLAWBACK,
+          status: COMMISSION_STATUS.PENDING,
+          createdBy: actorId,
+          updatedBy: actorId,
+          deletedBy: null,
+        },
+        { transaction: t },
+      );
+    } else if (ledger) {
       const salePaise = Math.max(
         0,
         frozenPaise(ledger.saleAmountPaise) - reversal.refundMerchandisePaise,

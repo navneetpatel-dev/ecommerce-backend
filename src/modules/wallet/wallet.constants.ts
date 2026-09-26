@@ -10,3 +10,6 @@ export const WALLET_DESCRIPTIONS = {
   ADMIN_ADJUSTMENT: 'Admin adjustment',
   GIFT_CARD_REDEMPTION: 'Gift card redeemed',
 } as const;
+
+/** A wallet top-up credits one point per rupee paid; each point spends as ₹1. */
+export const WALLET_POINTS_PER_RUPEE = 1;

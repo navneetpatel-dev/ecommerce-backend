@@ -1,3 +1,4 @@
+import { COMMISSION_REFERENCE_TYPE } from '@core/constants/statuses';
 import { frozenPaise, vendorNetPayoutPaise } from './frozenMoneySql';
 import type { Paise } from './money';
 
@@ -11,7 +12,8 @@ export interface PayoutLedgerRow {
   tdsRatePercent?: unknown;
   /**
    * Null on a sale ledger. Set on an adjustment row — a vendor-borne cashback cost
-   * (negative) or its reversal (positive) — which is not a sale: no TDS, not commission.
+   * (negative), its reversal (positive), or a return after payout (negative) — which
+   * is not a sale: no TDS. Only a return's commission counts toward commission GST.
    */
   referenceType?: string | null;
 }
@@ -47,8 +49,9 @@ export type VendorPayoutBreakdown = {
  *   GST (the ledger's taxable amount, net of returns), at the rate frozen on the
  *   ledger at checkout (`rates.tdsRatePercent` only for ledgers without one);
  * - less GST on the platform's commission across the sale ledgers;
- * - plus adjustment rows as they stand: a vendor-borne cashback cost is deducted,
- *   its reversal added back. Adjustments carry no TDS and are not commission.
+ * - plus adjustment rows as they stand: a vendor-borne cashback cost is deducted, its
+ *   reversal added back, and a return after payout recovers the net the vendor was
+ *   paid for it (its commission also lowers the commission-GST base). No TDS on them.
  */
 export function vendorPayoutBreakdown(
   ledgers: PayoutLedgerRow[],
@@ -61,6 +64,11 @@ export function vendorPayoutBreakdown(
     const netPaise = vendorNetPayoutPaise(ledger);
     if (ledger.referenceType) {
       adjustmentPaise += netPaise;
+      // A return after payout also hands back the commission on it, so the GST charged
+      // on that commission falls with it. Cashback cost is not commission.
+      if (ledger.referenceType === COMMISSION_REFERENCE_TYPE.RETURN_CLAWBACK) {
+        commissionTaxablePaise += frozenPaise(ledger.commissionAmountPaise);
+      }
       return { netPaise, tdsBasePaise: 0, tdsRatePercent: 0, tdsPaise: 0 };
     }
     const tdsBasePaise = Math.max(0, frozenPaise(ledger.taxableAmountPaise));
@@ -73,8 +81,9 @@ export function vendorPayoutBreakdown(
     return { netPaise, tdsBasePaise, tdsRatePercent, tdsPaise };
   });
   const gstPaise = commissionGstPaise(commissionTaxablePaise, rates.commissionGstRatePercent);
-  // Sales never go below zero on their own (as before adjustments existed); only a
-  // cashback cost larger than the sales can make the balance negative.
+  // Sales never go below zero on their own (as before adjustments existed); only
+  // deductions (cashback cost, returns after payout) larger than the sales can make
+  // the balance negative.
   const balancePaise = Math.max(0, afterTdsPaise - gstPaise) + adjustmentPaise;
   return {
     rows,

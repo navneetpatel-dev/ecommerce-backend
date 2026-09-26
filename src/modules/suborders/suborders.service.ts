@@ -271,7 +271,9 @@ export class SubordersService {
                     ),
                 );
                 const remaining = roundMoney(Math.max(0, razorpayPaid - alreadyRefunded));
-                cashShare = roundMoney(Math.min(cashShare, remaining));
+                // The last cancellation returns everything Razorpay still holds, which
+                // includes order-level charges no sub-order carries (the gift-wrap fee).
+                cashShare = allCancelled ? remaining : roundMoney(Math.min(cashShare, remaining));
               }
             }
 

@@ -14,9 +14,12 @@ import { User } from '@database/models/user.model';
 import { TaxRule } from '@database/models/taxRule.model';
 import {
   renderTaxInvoicePdf,
+  toTaxInvoiceSourceFromPlatformInvoice,
   toTaxInvoiceSourceFromSubOrder,
+  type TaxInvoiceOrderInput,
   type TaxInvoiceSource,
 } from './taxInvoicePdf';
+import { settingsService } from '@modules/settings/settings.service';
 import { zipBuffers } from './invoiceZip.service';
 
 const orderInvoiceInclude = [
@@ -99,6 +102,23 @@ export async function buildSubOrderInvoicePdf(
   return { source, pdf, filename };
 }
 
+/** The platform's own invoice for its fees on the order (gift wrap), when there is one. */
+async function buildPlatformInvoicePdf(
+  order: Order,
+): Promise<{ source: TaxInvoiceSource; pdf: Buffer; filename: string } | null> {
+  const snapshot = order.platformInvoiceSnapshot;
+  if (!snapshot) return null;
+  const settings = await settingsService.getPlatformSettings();
+  const orderInput = order as unknown as TaxInvoiceOrderInput;
+  const source = toTaxInvoiceSourceFromPlatformInvoice(orderInput, snapshot, {
+    legalName: settings.platformLegalName,
+    gstin: settings.platformGstin,
+    state: settings.platformState,
+  });
+  const pdf = await renderTaxInvoicePdf(source);
+  return { source, pdf, filename: buildTaxInvoicePdfFilename(source.invoiceNo, 'platform') };
+}
+
 export async function getCustomerSubOrderInvoice(input: {
   userId: string;
   orderId: string;
@@ -134,6 +154,8 @@ export async function getCustomerOrderInvoices(input: {
   for (const sub of subOrders) {
     rendered.push(await buildSubOrderInvoicePdf(order, sub, hsnByCategory));
   }
+  const platformInvoice = await buildPlatformInvoicePdf(order);
+  if (platformInvoice) rendered.push(platformInvoice);
 
   if (rendered.length === 1) {
     const only = rendered[0]!;

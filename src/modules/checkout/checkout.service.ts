@@ -70,6 +70,12 @@ import {
   taxInvoiceSnapshotLine,
   type TaxInvoiceSnapshotLine,
 } from '@modules/pricing/taxInvoiceSnapshot';
+import {
+  giftWrapInvoiceLine,
+  platformInvoiceLineTotalPaise,
+  type PlatformInvoiceSnapshot,
+} from '@modules/pricing/platformFeeInvoice';
+import { isIntraStateSupply } from '@modules/pricing/gstPlaceOfSupply';
 
 /** Flat platform fee for checkout-time gift wrapping (v1: hardcoded, not vendor-specific). */
 export const GIFT_WRAP_FEE_RUPEES = 49;
@@ -664,6 +670,22 @@ export class CheckoutService {
         }
       }
 
+      // Gift wrapping is the platform's own service: its fee includes 18% GST and gets
+      // the platform's tax invoice, numbered in the platform series.
+      let platformInvoiceSnapshot: PlatformInvoiceSnapshot | null = null;
+      if (data.giftWrap && giftWrapFeeAmount > 0) {
+        const intraState = isIntraStateSupply(settings.platformState, shippingAddress.state);
+        const line = giftWrapInvoiceLine(giftWrapFeeAmount, intraState);
+        const invoice = await nextVendorTaxInvoiceNumber(null, new Date(), t);
+        platformInvoiceSnapshot = {
+          invoiceNumber: invoice.number,
+          issuedAt: invoice.issuedAt.toISOString(),
+          intraState,
+          lines: [line],
+          totalPaise: platformInvoiceLineTotalPaise(line),
+        };
+      }
+
       const orderRow = await Order.create({
         userId,
         shippingAddressId: data.shippingAddressId,
@@ -679,6 +701,7 @@ export class CheckoutService {
         giftWrap: data.giftWrap ?? false,
         giftMessage: data.giftWrap ? (data.giftMessage ?? null) : null,
         giftWrapFeeAmount: data.giftWrap ? giftWrapFeeAmount : null,
+        platformInvoiceSnapshot,
         status: ORDER_STATUS.PENDING,
         paymentStatus: PAYMENT_STATUS.PENDING,
         paymentMethod: data.paymentMethod,

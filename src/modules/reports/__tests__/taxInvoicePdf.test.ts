@@ -10,6 +10,7 @@ import {
   renderTaxInvoicePdf,
   rupeesInWords,
   toTaxInvoiceSource,
+  toTaxInvoiceSourceFromPlatformInvoice,
   toTaxInvoiceSourceFromSubOrder,
 } from '../taxInvoicePdf';
 
@@ -355,5 +356,50 @@ describe('toTaxInvoiceSourceFromSubOrder', () => {
     assert.equal(line?.cgst, 90);
     assert.equal(line?.sgst, 90);
     assert.equal(source.totalAmount, 1180.01);
+  });
+
+  it('maps the platform invoice for the gift-wrap fee, seller being the platform', () => {
+    const source = toTaxInvoiceSourceFromPlatformInvoice(
+      {
+        id: 'order-gift',
+        createdAt: new Date('2026-09-01T00:00:00.000Z'),
+        paymentMethod: 'RAZORPAY',
+        paymentStatus: 'PAID',
+      },
+      {
+        invoiceNumber: 'PL/2627/00000007',
+        issuedAt: '2026-09-01T00:00:00.000Z',
+        intraState: true,
+        totalPaise: 4900,
+        lines: [
+          {
+            description: 'Gift wrapping',
+            sac: '9985',
+            quantity: 1,
+            gstRatePercent: 18,
+            taxablePaise: 4153,
+            cgstPaise: 373,
+            sgstPaise: 374,
+            igstPaise: 0,
+          },
+        ],
+      },
+      { legalName: 'Ink & Brass Pvt Ltd', gstin: '29AAACI0000A1Z5', state: 'Karnataka' },
+    );
+    assert.equal(source.invoiceNo, 'PL/2627/00000007');
+    assert.equal(source.seller.businessName, 'Ink & Brass Pvt Ltd');
+    assert.equal(source.seller.gstNumber, '29AAACI0000A1Z5');
+    assert.deepEqual(source.seller.items[0], {
+      productName: 'Gift wrapping',
+      sku: null,
+      hsn: '9985',
+      quantity: 1,
+      unitPrice: 41.53,
+      taxable: 41.53,
+      cgst: 3.73,
+      sgst: 3.74,
+      igst: 0,
+    });
+    assert.equal(source.totalAmount, 49);
   });
 });

@@ -38,7 +38,6 @@ export type PlatformSettingsPayload = {
   walletMaxRechargeInr: number;
   walletMaxBalancePoints: number;
   walletRechargePresetsInr: number[];
-  pointsPerRupee: number;
   promotionalPointsTtlDays: number;
   refundSlaBusinessDays: number;
   /** Flat estimate paid per completed delivery/pickup task, for the agent shift summary. */
@@ -83,7 +82,6 @@ const DEFAULTS: PlatformSettingsPayload = {
   walletMaxRechargeInr: 10000,
   walletMaxBalancePoints: 50000,
   walletRechargePresetsInr: [500, 1000, 2000, 5000],
-  pointsPerRupee: 1,
   promotionalPointsTtlDays: 0,
   refundSlaBusinessDays: 7,
   deliveryAgentPerTaskEarning: 20,

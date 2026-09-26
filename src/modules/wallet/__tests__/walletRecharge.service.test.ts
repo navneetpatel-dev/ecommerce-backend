@@ -17,6 +17,7 @@ const defaultSettings = {
   walletMaxRechargeInr: 10000,
   walletMaxBalancePoints: 50000,
   walletRechargePresetsInr: [500, 1000],
+  // A stale multiplier left in stored settings must not change what a top-up credits.
   pointsPerRupee: 2,
   promotionalPointsTtlDays: 0,
 };
@@ -61,21 +62,21 @@ describe('WalletRechargeService.validateRechargeAmount', () => {
     );
   });
 
-  it('rejects when bonus points would exceed max balance', async () => {
+  it('rejects when the top-up would exceed max balance', async () => {
     mock.method(settingsService, 'getPlatformSettings', async () => defaultSettings);
-    mock.method(walletService, 'getBalance', async () => 49900);
+    mock.method(walletService, 'getBalance', async () => 49950);
     await assert.rejects(
       () => walletRechargeService.validateRechargeAmount('user-1', 100),
       (err) => isValidation(err, ERROR_MESSAGES.WALLET_MAX_BALANCE_EXCEEDED),
     );
   });
 
-  it('returns points using pointsPerRupee', async () => {
+  it('credits one point per rupee: ₹500 is 500 points', async () => {
     mock.method(settingsService, 'getPlatformSettings', async () => defaultSettings);
     mock.method(walletService, 'getBalance', async () => 0);
     const result = await walletRechargeService.validateRechargeAmount('user-1', 500);
     assert.equal(result.amount, 500);
-    assert.equal(result.pointsToCredit, 1000);
+    assert.equal(result.pointsToCredit, 500);
   });
 });
 
@@ -87,12 +88,12 @@ describe('WalletRechargeService.previewRechargeAmount', () => {
     mock.method(walletService, 'getBalance', async () => 0);
     const preview = await walletRechargeService.previewRechargeAmount('user-1', 500);
     assert.equal(preview.validationCode, 'ok');
-    assert.equal(preview.pointsToCredit, 1000);
+    assert.equal(preview.pointsToCredit, 500);
   });
 
   it('returns max-balance without throwing', async () => {
     mock.method(settingsService, 'getPlatformSettings', async () => defaultSettings);
-    mock.method(walletService, 'getBalance', async () => 49900);
+    mock.method(walletService, 'getBalance', async () => 49950);
     const preview = await walletRechargeService.previewRechargeAmount('user-1', 100);
     assert.equal(preview.validationCode, 'max-balance');
   });
@@ -136,7 +137,7 @@ describe('WalletRechargeService.handlePaymentCaptured max balance', () => {
       userId: 'user-cap',
       status: 'PENDING',
       pointsCredited: 1000,
-      amountInr: 500,
+      amountInr: 1000,
       creditedLedgerId: null,
       razorpayRefundId: null,
       refundStatus: REFUND_STATUS.NONE,
