@@ -43,6 +43,7 @@ import type {
 import { deliveryAgentsRepository as repo } from './deliveryAgents.repository';
 import { deliveryAgentPayoutsService } from './deliveryAgentPayouts.service';
 import { deliveryRatingsService } from './deliveryRatings.service';
+import { istStartOfDay } from '@modules/pricing/istCalendar';
 
 const DELIVERY_TRANSITIONS: Record<string, readonly string[]> = {
   PENDING: ['PICKED_UP', 'FAILED'],
@@ -657,8 +658,8 @@ export class DeliveryAgentsService {
 
   /** Daily shift card: completed counts + COD cash the agent is holding for hub deposit. */
   async shiftSummary(deliveryAgentId: string) {
-    const dayStart = new Date();
-    dayStart.setHours(0, 0, 0, 0);
+    // "Today" in India time: from midnight IST, not the server's (UTC) midnight.
+    const dayStart = istStartOfDay(new Date());
 
     const [deliveredToday, pickupsToday, codCollectedAllTime, depositedOrPending, settings] =
       await Promise.all([

@@ -1,5 +1,4 @@
-/** India Standard Time is UTC+05:30 all year (no daylight saving). */
-const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
+import { IST_OFFSET_MS } from './istCalendar';
 
 /**
  * The GST / TDS return period (YYYY-MM) a moment falls in. Returns are filed by Indian

@@ -55,14 +55,22 @@ function generateSlug(name: string): string {
     .replace(/(^-|-$)/g, '');
 }
 
-function mapProductResponse(product: Product, reviewCount = 0) {
+export function mapProductResponse(product: Product, reviewCount = 0) {
   const plain: any = typeof product.get === 'function' ? product.get({ plain: true }) : product;
   const primaryImage =
     plain.images?.find((img: any) => img.isPrimary)?.url || plain.images?.[0]?.url || plain.imageUrl || '';
+  const compareAtPriceForVariants =
+    plain.compareAtPrice != null && plain.compareAtPrice !== ''
+      ? roundMoney(plain.compareAtPrice)
+      : null;
+  // Each variant's own "X% off" against the product's MRP: the product page shows the
+  // selected variant's price, so its badge and struck-through MRP must follow it too.
   const variants = (plain.variants ?? []).map((variant: any) => ({
     ...variant,
     price: Number(variant.price ?? 0),
     stock: Number(variant.stock ?? 0),
+    discountPercent: productDiscountPercent(variant.price ?? 0, compareAtPriceForVariants),
+    showMrp: productShowMrp(variant.price ?? 0, compareAtPriceForVariants),
   }));
   const stockFromVariants = variants.reduce((sum: number, variant: { stock: number }) => sum + variant.stock, 0);
   const secondaryCategories = (plain.secondaryCategories ?? []).map((category: any) => ({
@@ -73,10 +81,7 @@ function mapProductResponse(product: Product, reviewCount = 0) {
   }));
 
   const basePrice = roundMoney(plain.basePrice ?? 0);
-  const compareAtPrice =
-    plain.compareAtPrice != null && plain.compareAtPrice !== ''
-      ? roundMoney(plain.compareAtPrice)
-      : null;
+  const compareAtPrice = compareAtPriceForVariants;
 
   return {
     ...plain,
