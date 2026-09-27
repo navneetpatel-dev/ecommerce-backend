@@ -23,6 +23,7 @@ import {
   AddImageSchema,
   ReplaceImageSchema,
   TrackRecentlyViewedSchema,
+  GstPreviewQuerySchema,
 } from './products.dto';
 
 const router = Router();
@@ -57,6 +58,15 @@ router.get('/slug/:slug', optionalAuthenticate, productsController.getProductByS
 // Recently viewed (registered before `/:id` so the literal path wins the match)
 router.get('/recently-viewed', authenticate, productsController.getRecentlyViewed);
 router.post('/recently-viewed', authenticate, validate(TrackRecentlyViewedSchema), productsController.trackRecentlyViewed);
+
+// Vendor product form: customer price with GST for a pre-GST price (before `/:id`).
+router.get(
+  '/gst-preview',
+  authenticate,
+  authorize(PERMISSIONS.PRODUCT_CREATE, PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE),
+  validate(GstPreviewQuerySchema, 'query'),
+  productsController.getGstPreview,
+);
 
 router.get('/:id', optionalAuthenticate, productsController.getProductById);
 // Public, no auth — reads only the precomputed product_affinities table.

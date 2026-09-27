@@ -29,8 +29,9 @@ import { shippingService } from '@modules/shipping/shipping.service';
 import { logAudit } from '@modules/audit/audit.service';
 import type { Transaction } from 'sequelize';
 import { resolvePdpPolicy, resolveCodEligibleAtPrice, type PdpPolicy } from './pdpPolicy';
-import { priceWithGst, productDiscountPercent, productShowMrp, taxInclusivePrice } from '@modules/pricing/displayMoney';
+import { productDiscountPercent, productShowMrp, taxInclusivePrice } from '@modules/pricing/displayMoney';
 import { taxService } from '@modules/tax/tax.service';
+import { gstRuleResolver, priceWithRuleGst } from '@modules/tax/gstPricing';
 import { roundMoney, toPaise } from '@modules/pricing/money';
 import { gstRateForPieces } from '@modules/pricing/pricing.engine';
 import { CreateProductSchema } from './products.dto';
@@ -163,21 +164,26 @@ async function mapDetailResponse(product: Product, reviewCount = 0) {
     vendor,
   };
   const variants = await Promise.all(
-    mapped.variants.map(async (variant: { id: string; price: number; stock: number }) => ({
-      ...variant,
-      codEligibleAtUnitPrice: policy.codEnabled
-        ? await resolveCodEligibleAtPrice(catalogProduct, variant.price)
-        : false,
-      // This variant's own GST rate and GST-inclusive figure (the page shows the
-      // selected variant's price).
-      ...pdpTaxAtPrice(policy, variant.price),
-      ...pdpDisplayPricing(policy, variant.price, mapped.compareAtPrice),
-    })),
+    mapped.variants.map(async (variant: { id: string; price: number; stock: number }) => {
+      // This variant's price as the customer pays it (GST included), its "% off", and its
+      // own GST rate (the page shows the selected variant's price).
+      const display = pdpDisplayPricing(policy, variant.price, mapped.compareAtPrice);
+      return {
+        ...variant,
+        // COD limits are on what the customer pays.
+        codEligibleAtUnitPrice: policy.codEnabled
+          ? await resolveCodEligibleAtPrice(catalogProduct, display.displayPrice)
+          : false,
+        ...pdpTaxAtPrice(policy, variant.price),
+        ...display,
+      };
+    }),
   );
+  const productDisplay = pdpDisplayPricing(policy, mapped.basePrice, mapped.compareAtPrice);
   const defaultVariant = variants[0];
   return {
     ...mapped,
-    ...pdpDisplayPricing(policy, mapped.basePrice, mapped.compareAtPrice),
+    ...productDisplay,
     variants,
     vendor,
     vendorFreeShippingThreshold,
@@ -193,7 +199,7 @@ async function mapDetailResponse(product: Product, reviewCount = 0) {
     codEligibleAtUnitPrice: defaultVariant
       ? defaultVariant.codEligibleAtUnitPrice
       : policy.codEnabled
-        ? await resolveCodEligibleAtPrice(catalogProduct, mapped.basePrice)
+        ? await resolveCodEligibleAtPrice(catalogProduct, productDisplay.displayPrice)
         : false,
     codMinOrderValue: policy.codMinOrderValue,
     codMaxOrderValue: policy.codMaxOrderValue,
@@ -232,26 +238,21 @@ export async function productDisplayPrice(categoryId: string | null, basePrice: 
   return priceWithRuleGst(await taxService.getGstRateRule(categoryId ?? undefined), basePrice);
 }
 
-export type GstRateRule = Awaited<ReturnType<typeof taxService.getGstRateRule>>;
+export { gstRuleResolver, priceWithRuleGst, type GstRateRule } from '@modules/tax/gstPricing';
 
-/** A pre-GST price for one piece with GST at `rule` (its band rate when the price is above the band). */
-export function priceWithRuleGst(rule: GstRateRule, price: unknown): number {
-  const rate = gstRateForPieces(rule.gstPercentage, rule.gstPriceBand, toPaise(roundMoney(price)), 1);
-  return priceWithGst(price, rate);
-}
-
-/** Resolves GST rules per category once — for pages and jobs that price many products. */
-export function gstRuleResolver(): (categoryId: string | null | undefined) => Promise<GstRateRule> {
-  const cache = new Map<string, Promise<GstRateRule>>();
-  return (categoryId) => {
-    const key = categoryId ?? '';
-    let rule = cache.get(key);
-    if (!rule) {
-      rule = taxService.getGstRateRule(categoryId ?? undefined);
-      cache.set(key, rule);
-    }
-    return rule;
-  };
+/**
+ * The MRP includes GST, so it may not be below what the customer pays: the listed
+ * (pre-GST) price with GST at the category's rate.
+ */
+async function assertMrpCoversGstPrice(
+  categoryId: string | null,
+  basePrice: unknown,
+  compareAtPrice: number | null,
+): Promise<void> {
+  if (compareAtPrice == null) return;
+  if (roundMoney(compareAtPrice) < (await productDisplayPrice(categoryId, basePrice))) {
+    throw new ValidationError(ERROR_MESSAGES.PRODUCT_COMPARE_AT_BELOW_PRICE_WITH_GST);
+  }
 }
 
 export async function refreshProductDisplayPrice(productId: string, transaction?: Transaction): Promise<void> {
@@ -343,6 +344,7 @@ export class ProductsService {
       }
 
       await categoriesService.assertActiveCategory(data.categoryId, t);
+      await assertMrpCoversGstPrice(data.categoryId, data.basePrice, data.compareAtPrice ?? null);
 
       const product = await productsRepository.create({
         ...productFields,
@@ -393,6 +395,19 @@ export class ProductsService {
     }
 
     return results;
+  }
+
+  /**
+   * What a customer pays for one piece at a pre-GST `price` in a category (GST included)
+   * and the GST rate charged — for the vendor product form. The rate is the band rate
+   * when the price is above the category's band.
+   */
+  async gstPreview(categoryId: string, price: number): Promise<{ gstPercentage: number; displayPrice: number }> {
+    const rule = await taxService.getGstRateRule(categoryId);
+    return {
+      gstPercentage: gstRateForPieces(rule.gstPercentage, rule.gstPriceBand, toPaise(roundMoney(price)), 1),
+      displayPrice: priceWithRuleGst(rule, price),
+    };
   }
 
   async getProducts(
@@ -588,6 +603,14 @@ export class ProductsService {
             : Number(product.compareAtPrice);
       if (nextCompareAt != null && nextCompareAt < nextBasePrice) {
         throw new ValidationError(ERROR_MESSAGES.PRODUCT_COMPARE_AT_BELOW_PRICE);
+      }
+      // Checked when the price, MRP or category (its GST rate) changes.
+      if (
+        productFields.basePrice != null ||
+        productFields.compareAtPrice !== undefined ||
+        productFields.categoryId !== undefined
+      ) {
+        await assertMrpCoversGstPrice(productFields.categoryId ?? product.categoryId, nextBasePrice, nextCompareAt);
       }
 
       if (productFields.name) {

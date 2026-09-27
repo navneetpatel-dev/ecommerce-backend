@@ -674,14 +674,13 @@ module.exports = {
         createdAt: now, updatedAt: now,
       });
     }
-    // Add a few platform-wide default rules (no specific category)
-    for (const rate of gstRates) {
-      taxRules.push({
-        id: uuidv4(), categoryId: null, hsnCode: `DEFAULT-${rate}`,
-        gstPercentage: rate,
-        createdAt: now, updatedAt: now,
-      });
-    }
+    // One platform-wide default rule (no category): 18%, the standard GST rate. The app
+    // allows only one — with several, which rate applied was arbitrary.
+    taxRules.push({
+      id: uuidv4(), categoryId: null, hsnCode: 'DEFAULT-18',
+      gstPercentage: 18,
+      createdAt: now, updatedAt: now,
+    });
     await queryInterface.bulkInsert('tax_rules', taxRules);
     console.log(`✓ Created ${taxRules.length} tax rules`);
 

@@ -20,6 +20,7 @@ import {
   AddImageSchema,
   ReplaceImageSchema,
   TrackRecentlyViewedSchema,
+  GstPreviewQuerySchema,
 } from './products.dto';
 
 /** Admin/vendor dashboards stay unscoped; shoppers use customerVisible. */
@@ -32,6 +33,12 @@ async function isCatalogModerator(req: Request): Promise<boolean> {
     await userHasPermission(req.user, PERMISSIONS.PRODUCT_MANAGE)
   );
 }
+
+/** The GST rate and GST-inclusive price customers see for a pre-GST price (vendor form). */
+export const getGstPreview = asyncHandler(async (req: Request, res: Response) => {
+  const query = GstPreviewQuerySchema.parse(req.query);
+  res.json(ok(await productsService.gstPreview(query.categoryId, query.price)));
+});
 
 export const createProduct = asyncHandler(async (req: Request, res: Response) => {
   const dto = CreateProductSchema.parse(req.body);

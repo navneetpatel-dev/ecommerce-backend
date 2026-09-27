@@ -169,3 +169,61 @@ describe('mapOrderResponse', () => {
     assert.equal(mapped.taxDisplayKey, 'GST');
   });
 });
+
+describe('order bill as the customer saw it (GST included)', () => {
+  const vendor = { id: 'v1', businessName: 'Seller' };
+
+  it('shows each line with GST and what the coupon took off, adding up to the total', () => {
+    // Two ₹1,000 (pre-GST) pieces at 18% IGST and a ₹200 coupon (₹169.49 off pre-GST).
+    const couponed = {
+      id: 'i1',
+      quantity: 2,
+      unitPrice: 1000,
+      lineSubtotal: 2000,
+      discountAmount: 169.49,
+      taxableAmount: 1830.51,
+      taxAmount: 329.49,
+      taxBreakdown: { cgst: 0, sgst: 0, igst: 329.49, total: 329.49, gstPercentage: 18 },
+    };
+    const plain = {
+      id: 'i2',
+      quantity: 1,
+      unitPrice: 99.99,
+      lineSubtotal: 99.99,
+      discountAmount: 0,
+      taxableAmount: 99.99,
+      taxAmount: 18,
+      taxBreakdown: { cgst: 9, sgst: 9, igst: 0, total: 18, gstPercentage: 18 },
+    };
+    const item = mapOrderItem(couponed);
+    assert.equal(item.displayUnitPrice, 1180);
+    assert.equal(item.lineDisplaySubtotal, 2360);
+    // No coupon: exactly what was paid for the line.
+    assert.equal(mapOrderItem(plain).lineDisplaySubtotal, 117.99);
+
+    const order = mapOrderResponse({
+      id: 'o1',
+      totalAmount: 2277.99,
+      walletAmountUsed: 0,
+      paymentMethod: 'COD',
+      subOrders: [
+        {
+          id: 's1',
+          vendor,
+          status: 'CONFIRMED',
+          subtotal: 2099.99,
+          shippingCost: 0,
+          shippingDiscountAmount: 0,
+          discountAmount: 169.49,
+          taxableAmount: 1930.5,
+          taxAmount: 347.49,
+          items: [couponed, plain],
+        },
+      ],
+    });
+    assert.equal(order.itemsTotal, 2477.99);
+    assert.equal(order.couponSavings, 200);
+    // items − coupon savings + shipping = total
+    assert.equal(Math.round((order.itemsTotal - order.couponSavings) * 100), Math.round(order.totalAmount * 100));
+  });
+});

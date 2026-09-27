@@ -39,6 +39,8 @@ import { issueRtoCreditNotes, refundReturnedUndeliveredPart } from './rtoSettlem
 import { isReversedPart } from '@modules/pricing/partReversal';
 import { reverseTcsForReturnedPart } from '@modules/pricing/tcsLedger';
 import { fromPaise, toPaise } from '@modules/pricing/money';
+import { priceWithRuleGst } from '@modules/tax/gstPricing';
+import { taxService } from '@modules/tax/tax.service';
 
 /** The platform-wide free-shipping threshold (settings), or null when none is set. */
 function platformFreeShippingThreshold(settings: { freeShippingThreshold?: unknown }): number | null {
@@ -406,7 +408,11 @@ export const shippingService = {
         : variants[0] ?? null;
       if (query.variantId && !variant) throw new NotFoundError('ProductVariant');
       weightGrams = Number(variant?.weightGrams ?? DEFAULT_VARIANT_WEIGHT_GRAMS);
-      productPrice = Number(variant?.price ?? product.basePrice ?? 0);
+      // The free-shipping threshold is on what the customer pays, GST included.
+      productPrice = priceWithRuleGst(
+        await taxService.getGstRateRule(product.categoryId ?? undefined),
+        Number(variant?.price ?? product.basePrice ?? 0),
+      );
     } else if (query.vendorId) {
       weightGrams = await resolveCartVendorWeightGrams({
         userId: cartContext?.userId ?? null,

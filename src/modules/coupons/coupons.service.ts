@@ -40,6 +40,7 @@ import {
   type CartLineForCoupon,
 } from './couponEngine';
 import { generateCouponCode } from './coupon.utils';
+import { withGstInclusiveUnitPrices } from '@modules/tax/gstPricing';
 
 /**
  * One coupon redemption's discount still given, in paise (aliases: `cu` = coupon_usages,
@@ -194,7 +195,8 @@ async function loadCartLines(userId: string): Promise<{
     };
   });
 
-  return { cart, lines };
+  // Coupons are set against the prices the customer sees, GST included.
+  return { cart, lines: await withGstInclusiveUnitPrices(lines) };
 }
 
 /** Single-product lines for PDP eligible-offer preview (qty 1, primary variant price). */
@@ -223,7 +225,7 @@ async function loadProductPreviewLines(productId: string): Promise<CartLineForCo
   });
   if (!availability.isAvailable) return [];
 
-  return [
+  return withGstInclusiveUnitPrices([
     {
       productId: String(product.id),
       variantId: String(variant.id),
@@ -234,7 +236,7 @@ async function loadProductPreviewLines(productId: string): Promise<CartLineForCo
       weightGrams: Number(variant.weightGrams ?? 500),
       isCustomerVisible: true,
     },
-  ];
+  ]);
 }
 
 async function assertVendorOwnsScopeProducts(
