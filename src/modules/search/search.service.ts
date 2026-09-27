@@ -23,6 +23,8 @@ export class SearchService {
     return {
       items: rows.map((row) => {
         const basePrice = roundMoney(row.basePrice ?? 0);
+        // GST-inclusive; the MRP includes GST, so "% off" compares it with this.
+        const displayPrice = row.displayPrice != null ? roundMoney(row.displayPrice) : basePrice;
         const compareAtPrice =
           row.compareAtPrice != null && row.compareAtPrice !== ''
             ? roundMoney(row.compareAtPrice)
@@ -33,9 +35,10 @@ export class SearchService {
           name: row.name,
           slug: row.slug,
           basePrice,
+          displayPrice,
           compareAtPrice,
-          discountPercent: productDiscountPercent(basePrice, compareAtPrice),
-          showMrp: productShowMrp(basePrice, compareAtPrice),
+          discountPercent: productDiscountPercent(displayPrice, compareAtPrice),
+          showMrp: productShowMrp(displayPrice, compareAtPrice),
           priceRangeMax: row.priceRangeMax != null ? roundMoney(row.priceRangeMax) : basePrice,
           hasPriceRange: row.priceRangeMax != null && roundMoney(row.priceRangeMax) > basePrice,
           brand: row.brand ?? null,

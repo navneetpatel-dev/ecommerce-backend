@@ -270,6 +270,18 @@ export function productDiscountPercent(
   return Math.round((1 - price / compare) * 100);
 }
 
+/**
+ * A pre-GST price with its GST added (what the customer pays for one piece before
+ * shipping), computed in paise. Shown wherever a customer sees a price: the stored price
+ * is before GST, and GST is only a separate line in the cart.
+ */
+export function priceWithGst(price: unknown, gstPercentage: unknown): number {
+  const pricePaise = toPaise(roundMoney(price));
+  const pct = Number(gstPercentage ?? 0);
+  if (!Number.isFinite(pct) || pct <= 0) return fromPaise(pricePaise);
+  return fromPaise(pricePaise + Math.round((pricePaise * pct) / 100));
+}
+
 export function taxInclusivePrice(
   basePrice: unknown,
   gstPercentage: unknown,

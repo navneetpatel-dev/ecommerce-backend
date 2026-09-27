@@ -7,6 +7,7 @@ import { CartItem } from '@database/models/cartItem.model';
 import { wishlistRepository } from '../wishlist.repository';
 import { wishlistService } from '../wishlist.service';
 import { ValidationError } from '@core/errors/ValidationError';
+import { taxService } from '@modules/tax/tax.service';
 
 describe('WishlistService.moveToCart stock clamp', () => {
   afterEach(() => {
@@ -86,7 +87,7 @@ describe('WishlistService.getWishlist price drop', () => {
     mock.restoreAll();
   });
 
-  function item(priceAtAdd: string, basePrice: string) {
+  function item(priceAtAdd: string, basePrice: string, displayPrice: string) {
     return {
       get: () => ({
         id: `wi-${priceAtAdd}-${basePrice}`,
@@ -96,6 +97,8 @@ describe('WishlistService.getWishlist price drop', () => {
           id: 'p-1',
           status: 'ACTIVE',
           basePrice,
+          displayPrice,
+          categoryId: 'c-1',
           compareAtPrice: null,
           images: [],
           variants: [],
@@ -108,14 +111,17 @@ describe('WishlistService.getWishlist price drop', () => {
 
   it('returns the server-computed drop, or null when the price did not fall', async () => {
     mock.method(wishlistRepository, 'findByUserId', async () => ({ id: 'wl-1' }));
+    mock.method(taxService, 'getGstRateRule', async () => ({ gstPercentage: 18, gstPriceBand: null }));
     mock.method(WishlistItem, 'findAll', async () => [
-      item('1299.00', '999.50'),
-      item('999.00', '1099.00'),
+      item('1299.00', '999.50', '1179.41'),
+      item('999.00', '1099.00', '1296.82'),
     ] as never);
 
     const { items } = await wishlistService.getWishlist('user-1');
 
-    assert.equal(items[0]?.priceDropAmount, 299.5);
+    // Saved at ₹1,299 before GST (₹1,532.82 with 18%), now ₹1,179.41 with GST: the drop
+    // is in the prices the customer sees.
+    assert.equal(items[0]?.priceDropAmount, 353.41);
     assert.equal(items[1]?.priceDropAmount, null);
   });
 });

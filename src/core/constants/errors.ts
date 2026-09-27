@@ -108,6 +108,7 @@ export const ERROR_CODES = {
   RETURN_NO_RAZORPAY_PAYMENT: 'RETURN_NO_RAZORPAY_PAYMENT',
   PART_REFUND_RETRY_FAILED_ONLY: 'PART_REFUND_RETRY_FAILED_ONLY',
   PART_REFUND_FAILED: 'PART_REFUND_FAILED',
+  TAX_DEFAULT_RULE_EXISTS: 'TAX_DEFAULT_RULE_EXISTS',
   WALLET_RECHARGE_RAZORPAY_MIN: 'WALLET_RECHARGE_RAZORPAY_MIN',
   NOT_YOUR_ORDER: 'NOT_YOUR_ORDER',
   NOT_YOUR_PRODUCT_REVIEW: 'NOT_YOUR_PRODUCT_REVIEW',
@@ -296,6 +297,8 @@ export const ERROR_MESSAGES = {
   RETURN_NO_RAZORPAY_PAYMENT: 'This order has no online payment to refund',
   PART_REFUND_RETRY_FAILED_ONLY: 'Only a failed card refund can be retried',
   PART_REFUND_FAILED: 'The card refund could not be issued. Try again later.',
+  TAX_DEFAULT_RULE_EXISTS:
+    'A default tax rule (no category) already exists. Edit it, or give this rule a category.',
   WALLET_RECHARGE_RAZORPAY_MIN: 'Recharge amount is below the minimum allowed for online payment',
   NOT_YOUR_PRODUCT_REVIEW: 'You do not have access to this product review',
   AUTH_RATE_LIMITED: 'Too many login attempts. Please wait a few minutes and try again.',

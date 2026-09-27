@@ -10,6 +10,7 @@ import {
   deleteS3ObjectIfReplaced,
 } from '@core/s3';
 import { productsRepository } from './products.repository';
+import { logger } from '@core/logger';
 import { Category } from '@database/models/category.model';
 import { Vendor } from '@database/models/vendor.model';
 import { ProductVariant } from '@database/models/productVariant.model';
@@ -28,7 +29,8 @@ import { shippingService } from '@modules/shipping/shipping.service';
 import { logAudit } from '@modules/audit/audit.service';
 import type { Transaction } from 'sequelize';
 import { resolvePdpPolicy, resolveCodEligibleAtPrice, type PdpPolicy } from './pdpPolicy';
-import { productDiscountPercent, productShowMrp, taxInclusivePrice } from '@modules/pricing/displayMoney';
+import { priceWithGst, productDiscountPercent, productShowMrp, taxInclusivePrice } from '@modules/pricing/displayMoney';
+import { taxService } from '@modules/tax/tax.service';
 import { roundMoney, toPaise } from '@modules/pricing/money';
 import { gstRateForPieces } from '@modules/pricing/pricing.engine';
 import { CreateProductSchema } from './products.dto';
@@ -60,18 +62,12 @@ export function mapProductResponse(product: Product, reviewCount = 0) {
   const plain: any = typeof product.get === 'function' ? product.get({ plain: true }) : product;
   const primaryImage =
     plain.images?.find((img: any) => img.isPrimary)?.url || plain.images?.[0]?.url || plain.imageUrl || '';
-  const compareAtPriceForVariants =
-    plain.compareAtPrice != null && plain.compareAtPrice !== ''
-      ? roundMoney(plain.compareAtPrice)
-      : null;
-  // Each variant's own "X% off" against the product's MRP: the product page shows the
-  // selected variant's price, so its badge and struck-through MRP must follow it too.
+  // Each variant's GST-inclusive price and "% off" need its tax rule, so the product page
+  // (mapDetailResponse) adds them.
   const variants = (plain.variants ?? []).map((variant: any) => ({
     ...variant,
     price: Number(variant.price ?? 0),
     stock: Number(variant.stock ?? 0),
-    discountPercent: productDiscountPercent(variant.price ?? 0, compareAtPriceForVariants),
-    showMrp: productShowMrp(variant.price ?? 0, compareAtPriceForVariants),
   }));
   const stockFromVariants = variants.reduce((sum: number, variant: { stock: number }) => sum + variant.stock, 0);
   const secondaryCategories = (plain.secondaryCategories ?? []).map((category: any) => ({
@@ -82,7 +78,11 @@ export function mapProductResponse(product: Product, reviewCount = 0) {
   }));
 
   const basePrice = roundMoney(plain.basePrice ?? 0);
-  const compareAtPrice = compareAtPriceForVariants;
+  const compareAtPrice =
+    plain.compareAtPrice != null && plain.compareAtPrice !== '' ? roundMoney(plain.compareAtPrice) : null;
+  // What the customer pays for one piece, GST included (kept on the product). The MRP
+  // includes GST, so the "% off" compares it with this, not with the pre-GST price.
+  const displayPrice = plain.displayPrice != null ? roundMoney(plain.displayPrice) : basePrice;
   // Variants at different prices: the card says "From ₹<lowest>".
   const variantPrices = variants.map((variant: { price: number }) => variant.price);
   const priceRangeMax = variantPrices.length ? roundMoney(Math.max(...variantPrices)) : basePrice;
@@ -93,8 +93,9 @@ export function mapProductResponse(product: Product, reviewCount = 0) {
     secondaryCategories,
     basePrice,
     compareAtPrice,
-    discountPercent: productDiscountPercent(basePrice, compareAtPrice),
-    showMrp: productShowMrp(basePrice, compareAtPrice),
+    displayPrice,
+    discountPercent: productDiscountPercent(displayPrice, compareAtPrice),
+    showMrp: productShowMrp(displayPrice, compareAtPrice),
     priceRangeMax,
     hasPriceRange: priceRangeMax > basePrice,
     specs: plain.specs && typeof plain.specs === 'object' ? plain.specs : {},
@@ -126,6 +127,23 @@ export function pdpTaxAtPrice(
   return { gstPercentage, taxInclusivePrice: taxInclusivePrice(price, gstPercentage, policy.taxInclusive) };
 }
 
+/**
+ * What the customer pays for one piece at `price`, GST included (at the band rate for a
+ * banded category), and its "% off" against the MRP, which includes GST.
+ */
+export function pdpDisplayPricing(
+  policy: Pick<PdpPolicy, 'gstPercentage' | 'gstPriceBand'>,
+  price: number,
+  compareAtPrice: number | null,
+): { displayPrice: number; discountPercent: number | null; showMrp: boolean } {
+  const displayPrice = priceWithRuleGst(policy, price);
+  return {
+    displayPrice,
+    discountPercent: productDiscountPercent(displayPrice, compareAtPrice),
+    showMrp: productShowMrp(displayPrice, compareAtPrice),
+  };
+}
+
 async function mapDetailResponse(product: Product, reviewCount = 0) {
   const mapped = mapProductResponse(product, reviewCount);
   const vendorId = mapped.vendorId ?? mapped.vendor?.id ?? null;
@@ -153,11 +171,13 @@ async function mapDetailResponse(product: Product, reviewCount = 0) {
       // This variant's own GST rate and GST-inclusive figure (the page shows the
       // selected variant's price).
       ...pdpTaxAtPrice(policy, variant.price),
+      ...pdpDisplayPricing(policy, variant.price, mapped.compareAtPrice),
     })),
   );
   const defaultVariant = variants[0];
   return {
     ...mapped,
+    ...pdpDisplayPricing(policy, mapped.basePrice, mapped.compareAtPrice),
     variants,
     vendor,
     vendorFreeShippingThreshold,
@@ -194,10 +214,101 @@ export async function syncProductBasePrice(productId: string, transaction: Trans
     where: { productId },
     transaction,
   });
-  if (lowest == null || !Number.isFinite(Number(lowest))) return;
-  const product = await Product.findByPk(productId, { attributes: ['id', 'basePrice'], transaction });
-  if (!product || roundMoney(product.basePrice) === roundMoney(lowest)) return;
-  await product.update({ basePrice: roundMoney(lowest) }, { transaction });
+  if (lowest != null && Number.isFinite(Number(lowest))) {
+    const product = await Product.findByPk(productId, { attributes: ['id', 'basePrice'], transaction });
+    if (product && roundMoney(product.basePrice) !== roundMoney(lowest)) {
+      await product.update({ basePrice: roundMoney(lowest) }, { transaction });
+    }
+  }
+  await refreshProductDisplayPrice(productId, transaction);
+}
+
+/**
+ * The price customers see for a product: its listed (lowest) price with GST at its
+ * category's rate — the band rate for that price when the rule has one. Stored so the
+ * price filter and sort work on the same figure the cards show.
+ */
+export async function productDisplayPrice(categoryId: string | null, basePrice: unknown): Promise<number> {
+  return priceWithRuleGst(await taxService.getGstRateRule(categoryId ?? undefined), basePrice);
+}
+
+export type GstRateRule = Awaited<ReturnType<typeof taxService.getGstRateRule>>;
+
+/** A pre-GST price for one piece with GST at `rule` (its band rate when the price is above the band). */
+export function priceWithRuleGst(rule: GstRateRule, price: unknown): number {
+  const rate = gstRateForPieces(rule.gstPercentage, rule.gstPriceBand, toPaise(roundMoney(price)), 1);
+  return priceWithGst(price, rate);
+}
+
+/** Resolves GST rules per category once — for pages and jobs that price many products. */
+export function gstRuleResolver(): (categoryId: string | null | undefined) => Promise<GstRateRule> {
+  const cache = new Map<string, Promise<GstRateRule>>();
+  return (categoryId) => {
+    const key = categoryId ?? '';
+    let rule = cache.get(key);
+    if (!rule) {
+      rule = taxService.getGstRateRule(categoryId ?? undefined);
+      cache.set(key, rule);
+    }
+    return rule;
+  };
+}
+
+export async function refreshProductDisplayPrice(productId: string, transaction?: Transaction): Promise<void> {
+  const product = await Product.findByPk(productId, {
+    attributes: ['id', 'categoryId', 'basePrice', 'displayPrice'],
+    transaction,
+  });
+  if (!product) return;
+  const displayPrice = await productDisplayPrice(product.categoryId ?? null, product.basePrice);
+  if (product.displayPrice == null || roundMoney(product.displayPrice) !== displayPrice) {
+    await product.update({ displayPrice }, { transaction });
+  }
+}
+
+/**
+ * Recompute every product's displayed price — after a tax rule changes, which can move
+ * the GST on any category below it. Rules are resolved once per category.
+ */
+export async function refreshAllProductDisplayPrices(): Promise<number> {
+  const ruleFor = gstRuleResolver();
+  let changed = 0;
+  let offset = 0;
+  const pageSize = 500;
+  for (;;) {
+    const page = await Product.unscoped().findAll({
+      attributes: ['id', 'categoryId', 'basePrice', 'displayPrice'],
+      order: [['id', 'ASC']],
+      limit: pageSize,
+      offset,
+    });
+    if (page.length === 0) break;
+    for (const product of page) {
+      const displayPrice = priceWithRuleGst(await ruleFor(product.categoryId), product.basePrice);
+      if (product.displayPrice == null || roundMoney(product.displayPrice) !== displayPrice) {
+        await product.update({ displayPrice });
+        changed += 1;
+      }
+    }
+    offset += page.length;
+  }
+  return changed;
+}
+
+/**
+ * Refresh every product's GST-inclusive price without holding up the request — after a
+ * change that can move the GST rule a product falls under (a tax rule edited, a category
+ * moved, products moved to another category). Never throws.
+ */
+export function refreshAllProductDisplayPricesInBackground(trigger: string): void {
+  void refreshAllProductDisplayPrices()
+    .then((changed) => logger.info('Product display prices refreshed', { trigger, changed }))
+    .catch((error) =>
+      logger.error('Refreshing product display prices failed', {
+        trigger,
+        reason: error instanceof Error ? error.message : String(error),
+      }),
+    );
 }
 
 async function syncSecondaryCategories(
@@ -242,6 +353,7 @@ export class ProductsService {
       }, { transaction: t });
 
       await syncSecondaryCategories(product.id, data.categoryId, secondaryCategoryIds, t);
+      await refreshProductDisplayPrice(product.id, t);
 
       return this.getProductById(product.id);
     });
@@ -492,6 +604,8 @@ export class ProductsService {
       }
       // A product with variants lists its lowest variant price, whatever was sent.
       if (updateData.basePrice !== undefined) await syncProductBasePrice(id, t);
+      // A new category can mean a different GST rate on the displayed price.
+      else if (updateData.categoryId !== undefined) await refreshProductDisplayPrice(id, t);
 
       const primaryCategoryId = productFields.categoryId ?? product.categoryId;
       if (secondaryCategoryIds !== undefined) {

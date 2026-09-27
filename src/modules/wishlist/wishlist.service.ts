@@ -12,6 +12,7 @@ import { resolveItemAvailability, isProductCustomerVisible } from '@core/catalog
 import { productDiscountPercent, productShowMrp, wishlistPriceDrop } from '@modules/pricing/displayMoney';
 import { roundMoney } from '@modules/pricing/money';
 import { MAX_CART_LINE_QUANTITY } from '@modules/cart/cart.constants';
+import { gstRuleResolver, priceWithRuleGst } from '@modules/products/products.service';
 
 function mapWishlistProduct(product: Product | null | undefined) {
   if (!product) return null;
@@ -27,6 +28,8 @@ function mapWishlistProduct(product: Product | null | undefined) {
   const vendor = plain.vendor ?? plain.Vendor ?? null;
   const stock = Number(plain.stock ?? stockFromVariants);
   const basePrice = roundMoney(plain.basePrice);
+  // The GST-inclusive price customers see; the MRP includes GST, so "% off" uses it.
+  const displayPrice = plain.displayPrice != null ? roundMoney(plain.displayPrice) : basePrice;
   const variantPrices = variants.map((variant: { price: number }) => variant.price);
   const priceRangeMax = variantPrices.length ? roundMoney(Math.max(...variantPrices)) : basePrice;
   const compareAtPrice = plain.compareAtPrice == null ? null : roundMoney(plain.compareAtPrice);
@@ -41,9 +44,10 @@ function mapWishlistProduct(product: Product | null | undefined) {
     ...plain,
     variants,
     basePrice,
+    displayPrice,
     compareAtPrice,
-    discountPercent: productDiscountPercent(basePrice, compareAtPrice),
-    showMrp: productShowMrp(basePrice, compareAtPrice),
+    discountPercent: productDiscountPercent(displayPrice, compareAtPrice),
+    showMrp: productShowMrp(displayPrice, compareAtPrice),
     priceRangeMax,
     hasPriceRange: priceRangeMax > basePrice,
     avgRating: Number(plain.avgRating ?? 0),
@@ -80,21 +84,30 @@ export class WishlistService {
       }],
     });
 
+    const ruleFor = gstRuleResolver();
     return {
-      items: items.map((item) => {
+      items: await Promise.all(items.map(async (item) => {
         const plain = item.get({ plain: true }) as any;
         const product = mapWishlistProduct(plain.product);
         const priceAtAdd = roundMoney(plain.priceAtAdd);
+        // The saved price is before GST; the drop is shown in the GST-inclusive prices
+        // the customer sees.
+        const priceDropAmount = product
+          ? wishlistPriceDrop(
+              priceWithRuleGst(await ruleFor(product.categoryId), priceAtAdd),
+              product.displayPrice,
+            )
+          : null;
         return {
           id: plain.id,
           productId: plain.productId,
           priceAtAdd,
-          priceDropAmount: product ? wishlistPriceDrop(priceAtAdd, product.basePrice) : null,
+          priceDropAmount,
           isAvailable: product?.isAvailable ?? false,
           unavailableReason: product?.unavailableReason ?? null,
           product,
         };
-      }),
+      })),
     };
   }
 

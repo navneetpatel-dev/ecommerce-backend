@@ -6,6 +6,9 @@ import { sequelize } from '@database/models';
 import { Op } from 'sequelize';
 import { REVIEW_STATUS, type ProductStatus } from '@core/constants/statuses';
 
+/** The GST-inclusive price customers see; filter and sort by it so they match the cards. */
+const displayPriceColumn = sequelize.fn('COALESCE', sequelize.col('Product.displayPrice'), sequelize.col('Product.basePrice'));
+
 const reviewCountLiteral = [
   sequelize.literal(`(
     SELECT COUNT(*)::int
@@ -82,10 +85,12 @@ function buildListWhere(filters: ProductListFilters) {
     ];
   }
 
+  // On the GST-inclusive price the cards show.
   if (filters.minPrice !== undefined || filters.maxPrice !== undefined) {
-    where.basePrice = {};
-    if (filters.minPrice !== undefined) where.basePrice[Op.gte] = filters.minPrice;
-    if (filters.maxPrice !== undefined) where.basePrice[Op.lte] = filters.maxPrice;
+    const range: Record<symbol, number> = {};
+    if (filters.minPrice !== undefined) range[Op.gte] = filters.minPrice;
+    if (filters.maxPrice !== undefined) range[Op.lte] = filters.maxPrice;
+    where[Op.and] = [...(where[Op.and] ?? []), sequelize.where(displayPriceColumn, range)];
   }
 
   if (filters.rating !== undefined) {
@@ -99,8 +104,8 @@ function buildListOrder(sort?: string) {
   if (sort === 'trending' || sort === 'popular' || sort === 'rating') {
     return [['avgRating', 'DESC'], ['createdAt', 'DESC']];
   }
-  if (sort === 'price_asc') return [['basePrice', 'ASC']];
-  if (sort === 'price_desc') return [['basePrice', 'DESC']];
+  if (sort === 'price_asc') return [[displayPriceColumn, 'ASC']];
+  if (sort === 'price_desc') return [[displayPriceColumn, 'DESC']];
   return [['createdAt', 'DESC']];
 }
 
