@@ -21,7 +21,6 @@ import {
   resolveCartCouponCodes,
   recordCouponUsagesForOrder,
   destroyCouponUsageForOrder,
-  breakdownFromPerCoupon,
   type AppliedCouponBreakdownEntry,
   type CartLineForCoupon,
 } from '@modules/coupons/couponEngine';
@@ -77,6 +76,7 @@ import {
 import { isIntraStateSupply } from '@modules/pricing/gstPlaceOfSupply';
 import { tdsRateForSale } from '@modules/pricing/tds194o';
 import { withGstInclusiveUnitPrices } from '@modules/tax/gstPricing';
+import { preGstCouponBreakdown } from './couponUsageAmounts';
 
 /** Flat platform fee for checkout-time gift wrapping (v1: hardcoded, not vendor-specific). */
 export const GIFT_WRAP_FEE_RUPEES = 49;
@@ -522,8 +522,7 @@ export class CheckoutService {
       );
 
       const couponCodes = resolveCheckoutCouponCodes(data, cart);
-      // What the coupons take off the GST-inclusive prices (per-coupon usage records).
-      let couponDiscountTotal = 0;
+      let couponResult: Awaited<ReturnType<typeof validateCouponSet>> | null = null;
       let cashbackAmount = 0;
       let cashbackDiscountBearer: 'PLATFORM' | 'VENDOR' | null = null;
       let cashbackVendorId: string | null = null;
@@ -546,14 +545,13 @@ export class CheckoutService {
         if (!result.valid) {
           throw new ValidationError(result.reason ?? ERROR_MESSAGES.COUPON_INVALID);
         }
-        couponDiscountTotal = result.discount;
+        couponResult = result;
         cashbackAmount = result.cashbackAmount;
         coupons = result.coupons;
         primaryCoupon = result.primaryCoupon;
         vendorDiscountShares = result.vendorDiscountShares;
         vendorShippingDiscountShares = result.vendorShippingDiscountShares;
         vendorBorneDiscountShares = result.vendorBorneDiscountShares;
-        appliedCouponBreakdown = breakdownFromPerCoupon(result.perCoupon, coupons);
         const cashbackCoupon = coupons.find((c) => c.type === 'CASHBACK');
         if (cashbackCoupon) {
           cashbackDiscountBearer =
@@ -589,6 +587,10 @@ export class CheckoutService {
       // The discount as the engine applied it (off the pre-GST value), like the parts'
       // own discount amounts that returns and invoices reverse.
       const discountTotal = fromPaise(orderDiscountPaise);
+      // Each coupon's part of it, for its usage record (what the coupon cost its funder).
+      if (couponResult) {
+        appliedCouponBreakdown = preGstCouponBreakdown(couponResult.perCoupon, coupons, pricedByVendor);
+      }
       const merchandiseSubtotal = fromPaise(merchandisePaise);
       const orderTaxTotal = fromPaise(orderTaxPaise);
       const orderShippingTotal = fromPaise(orderShippingPaise);
@@ -715,7 +717,7 @@ export class CheckoutService {
           await recordCouponUsagesForOrder({
             coupons,
             breakdown: appliedCouponBreakdown,
-            discountTotal: couponDiscountTotal,
+            discountTotal,
             userId,
             orderId: orderRow.id,
             actorId: userId,
@@ -851,7 +853,7 @@ export class CheckoutService {
         await recordCouponUsagesForOrder({
           coupons,
           breakdown: appliedCouponBreakdown,
-          discountTotal: couponDiscountTotal,
+          discountTotal,
           userId,
           orderId: orderRow.id,
           actorId: userId,

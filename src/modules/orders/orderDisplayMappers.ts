@@ -29,9 +29,17 @@ function orderItemImageUrl(item: Record<string, unknown>): string | null {
  * no coupon share is exactly what was paid for it.
  */
 function orderItemInclusive(item: Record<string, unknown>, unitPrice: number, quantity: number) {
-  // Lines placed before per-line GST was recorded carry no breakdown: no figure, so the
-  // page keeps its pre-GST one.
-  if (item.taxBreakdown == null) return null;
+  if (item.taxBreakdown == null) {
+    // A fully returned line is zeroed (breakdown cleared): nothing of it is left on the bill.
+    const zeroed =
+      toPaise(roundMoney(item.lineSubtotal)) === 0 &&
+      toPaise(roundMoney(item.taxableAmount)) === 0 &&
+      toPaise(roundMoney(item.taxAmount)) === 0;
+    if (zeroed) return { displayUnitPrice: null, lineDisplaySubtotal: 0, paidPaise: 0 };
+    // Lines placed before per-line GST was recorded carry no breakdown: no figure, so the
+    // page keeps its pre-GST one.
+    return null;
+  }
   const tax = item.taxBreakdown as { cgst?: unknown; sgst?: unknown; gstPercentage?: unknown };
   const rate = Number(tax.gstPercentage ?? 0);
   const intraState = coerceRupees(tax.cgst) > 0 || coerceRupees(tax.sgst) > 0;
@@ -169,6 +177,20 @@ function sumTaxFromSubOrders(subOrders: Record<string, unknown>[]) {
   return { cgst: roundMoney(cgst), sgst: roundMoney(sgst), igst: roundMoney(igst) };
 }
 
+function returnAdjustment(
+  itemsPaise: number | null,
+  couponSavingsPaise: number,
+  aggregates: { totalAmount: number; shippingTotal: number },
+  giftWrapFeeAmount: unknown,
+): { amount: number; credit: boolean } | null {
+  if (itemsPaise == null) return null;
+  const billPaise =
+    itemsPaise - couponSavingsPaise + toPaise(aggregates.shippingTotal) + toPaise(roundMoney(giftWrapFeeAmount ?? 0));
+  const differencePaise = toPaise(aggregates.totalAmount) - billPaise;
+  if (differencePaise === 0) return null;
+  return { amount: fromPaise(Math.abs(differencePaise)), credit: differencePaise < 0 };
+}
+
 export function mapOrderResponse(order: Record<string, unknown>) {
   const plain =
     typeof (order as { get?: () => unknown }).get === 'function'
@@ -237,6 +259,13 @@ export function mapOrderResponse(order: Record<string, unknown>) {
      */
     itemsTotal: itemsPaise == null ? null : fromPaise(itemsPaise),
     couponSavings: itemsPaise == null ? null : fromPaise(couponSavingsPaise),
+    /**
+     * What returns changed on the bill beyond the returned items themselves: outbound
+     * shipping refunded (`credit`) or a return shipping fee kept. With it the bill adds up
+     * to the total: itemsTotal − couponSavings + shippingTotal + giftWrapFeeAmount,
+     * less a credit (or plus a charge), is totalAmount. Null when there is none.
+     */
+    returnAdjustment: returnAdjustment(itemsPaise, couponSavingsPaise, aggregates, plain.giftWrapFeeAmount),
     taxTotal: aggregates.taxTotal,
     shippingTotal: aggregates.shippingTotal,
     shippingDisplayKey: resolveShippingDisplayKey(aggregates.shippingTotal),
