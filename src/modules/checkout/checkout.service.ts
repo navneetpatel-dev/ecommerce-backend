@@ -76,6 +76,7 @@ import {
 } from '@modules/pricing/platformFeeInvoice';
 import { isIntraStateSupply } from '@modules/pricing/gstPlaceOfSupply';
 import { tdsRateForSale } from '@modules/pricing/tds194o';
+import { withGstInclusiveUnitPrices } from '@modules/tax/gstPricing';
 
 /** Flat platform fee for checkout-time gift wrapping (v1: hardcoded, not vendor-specific). */
 export const GIFT_WRAP_FEE_RUPEES = 49;
@@ -211,10 +212,11 @@ function catalogItemsForCod(
   });
 }
 
+/** Coupon lines at the prices the customer sees (GST included): coupons are set in those terms. */
 function toCouponLines(
   items: (CartItem & { variant: ProductVariant & { product: any } })[],
-): CartLineForCoupon[] {
-  return items.map((item) => {
+): Promise<CartLineForCoupon[]> {
+  const lines = items.map((item) => {
     const product = item.variant.product;
     return {
       productId: String(product.id),
@@ -227,6 +229,7 @@ function toCouponLines(
       isCustomerVisible: true,
     };
   });
+  return withGstInclusiveUnitPrices(lines);
 }
 
 function resolveCheckoutCouponCodes(
@@ -341,7 +344,7 @@ export class CheckoutService {
       const result = await validateCouponSet({
         codes: couponCodes,
         userId,
-        lines: toCouponLines(quoteCart.items),
+        lines: await toCouponLines(quoteCart.items),
         shippingTotal,
         shippingByVendor,
       });
@@ -367,7 +370,7 @@ export class CheckoutService {
       }
     }
 
-    const { pricedByVendor } = priceVendorRows({
+    const { pricedByVendor, inclusiveByVendor } = priceVendorRows({
       rows: baseVendorRows,
       shares: {
         vendorDiscountShares,
@@ -381,6 +384,7 @@ export class CheckoutService {
     const vendorBreakdowns = baseVendorRows.map((row) => {
       const vendor = row.vendor;
       const r = pricedByVendor[row.vendorId]!.rupees;
+      const inclusive = inclusiveByVendor[row.vendorId];
       return {
         vendorId: row.vendorId,
         vendor: vendor
@@ -402,9 +406,18 @@ export class CheckoutService {
             unitPrice: line.unitPrice,
             lineSubtotal: priced?.lineSubtotal ?? 0,
             lineTotal: priced ? lineTotal(priced.taxableAmount, priced.tax.total) : 0,
+            // As the customer sees it: price per piece with GST, and the line before coupons.
+            displayUnitPrice: fromPaise(inclusive?.lines[line.key]?.unitPricePaise ?? toPaise(line.unitPrice)),
+            lineDisplaySubtotal: fromPaise(inclusive?.lines[line.key]?.lineTotalPaise ?? 0),
           };
         }),
         subtotal: r.subtotal,
+        /** The vendor's items as the customer sees them, GST included, before coupons. */
+        itemsTotal: fromPaise(inclusive?.itemsPaise ?? 0),
+        /** What coupons take off those items, GST included. */
+        couponSavings: fromPaise(
+          Math.max(0, (inclusive?.itemsPaise ?? 0) - toPaise(r.taxableAmount) - toPaise(r.tax.total)),
+        ),
         /** Net of shipping discount — `shippingCharged`, not the gross rate. */
         shippingCost: r.shippingCharged,
         shippingDisplayKey: resolveShippingDisplayKey(r.shippingCharged),
@@ -509,7 +522,8 @@ export class CheckoutService {
       );
 
       const couponCodes = resolveCheckoutCouponCodes(data, cart);
-      let discountTotal = 0;
+      // What the coupons take off the GST-inclusive prices (per-coupon usage records).
+      let couponDiscountTotal = 0;
       let cashbackAmount = 0;
       let cashbackDiscountBearer: 'PLATFORM' | 'VENDOR' | null = null;
       let cashbackVendorId: string | null = null;
@@ -524,7 +538,7 @@ export class CheckoutService {
         const result = await validateCouponSet({
           codes: couponCodes,
           userId,
-          lines: toCouponLines(cart.items),
+          lines: await toCouponLines(cart.items),
           shippingTotal,
           shippingByVendor,
           transaction: t,
@@ -532,7 +546,7 @@ export class CheckoutService {
         if (!result.valid) {
           throw new ValidationError(result.reason ?? ERROR_MESSAGES.COUPON_INVALID);
         }
-        discountTotal = result.discount;
+        couponDiscountTotal = result.discount;
         cashbackAmount = result.cashbackAmount;
         coupons = result.coupons;
         primaryCoupon = result.primaryCoupon;
@@ -565,11 +579,16 @@ export class CheckoutService {
       let merchandisePaise = 0;
       let orderTaxPaise = 0;
       let orderShippingPaise = 0;
+      let orderDiscountPaise = 0;
       for (const priced of Object.values(pricedByVendor)) {
         merchandisePaise += priced.paise.subtotalPaise;
         orderTaxPaise += priced.paise.tax.total;
         orderShippingPaise += priced.paise.shippingChargedPaise;
+        orderDiscountPaise += priced.paise.merchandiseDiscountPaise + priced.paise.shippingDiscountPaise;
       }
+      // The discount as the engine applied it (off the pre-GST value), like the parts'
+      // own discount amounts that returns and invoices reverse.
+      const discountTotal = fromPaise(orderDiscountPaise);
       const merchandiseSubtotal = fromPaise(merchandisePaise);
       const orderTaxTotal = fromPaise(orderTaxPaise);
       const orderShippingTotal = fromPaise(orderShippingPaise);
@@ -696,7 +715,7 @@ export class CheckoutService {
           await recordCouponUsagesForOrder({
             coupons,
             breakdown: appliedCouponBreakdown,
-            discountTotal,
+            discountTotal: couponDiscountTotal,
             userId,
             orderId: orderRow.id,
             actorId: userId,
@@ -832,7 +851,7 @@ export class CheckoutService {
         await recordCouponUsagesForOrder({
           coupons,
           breakdown: appliedCouponBreakdown,
-          discountTotal,
+          discountTotal: couponDiscountTotal,
           userId,
           orderId: orderRow.id,
           actorId: userId,

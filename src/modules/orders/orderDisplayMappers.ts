@@ -1,9 +1,11 @@
-import { coerceRupees, fromPaise, roundMoney } from '@modules/pricing/money';
+import { coerceRupees, fromPaise, roundMoney, toPaise } from '@modules/pricing/money';
+import { gstOnTaxablePaise } from '@modules/pricing/pricing.engine';
 import {
   checkoutAmountDue,
   combinedDiscount,
   lineTotal,
   orderItemDisplayLineSubtotal,
+  priceWithGst,
   recomputeOrderDisplayFields,
   shippingCharged,
   subOrderCustomerTotal,
@@ -21,11 +23,34 @@ function orderItemImageUrl(item: Record<string, unknown>): string | null {
   return typeof url === 'string' && url ? url : null;
 }
 
+/**
+ * An order line as the customer saw it when buying: the price per piece with GST, and
+ * the line with GST before any coupon — at the rate the line was charged. A line with
+ * no coupon share is exactly what was paid for it.
+ */
+function orderItemInclusive(item: Record<string, unknown>, unitPrice: number, quantity: number) {
+  // Lines placed before per-line GST was recorded carry no breakdown: no figure, so the
+  // page keeps its pre-GST one.
+  if (item.taxBreakdown == null) return null;
+  const tax = item.taxBreakdown as { cgst?: unknown; sgst?: unknown; gstPercentage?: unknown };
+  const rate = Number(tax.gstPercentage ?? 0);
+  const intraState = coerceRupees(tax.cgst) > 0 || coerceRupees(tax.sgst) > 0;
+  const displayUnitPrice = priceWithGst(unitPrice, rate);
+  const paidPaise = toPaise(roundMoney(item.taxableAmount)) + toPaise(roundMoney(item.taxAmount));
+  if (toPaise(roundMoney(item.discountAmount)) <= 0) {
+    return { displayUnitPrice, lineDisplaySubtotal: fromPaise(paidPaise), paidPaise };
+  }
+  const linePaise = toPaise(unitPrice) * quantity;
+  const grossPaise = linePaise + gstOnTaxablePaise(linePaise, Number.isFinite(rate) ? rate : 0, intraState).total;
+  return { displayUnitPrice, lineDisplaySubtotal: fromPaise(grossPaise), paidPaise };
+}
+
 export function mapOrderItem(item: Record<string, unknown>) {
   const unitPrice = roundMoney(item.unitPrice);
   const quantity = Math.trunc(coerceRupees(item.quantity)) || 0;
   const taxableAmount = roundMoney(item.taxableAmount);
   const taxAmount = roundMoney(item.taxAmount);
+  const inclusive = orderItemInclusive(item, unitPrice, quantity);
   return {
     id: item.id,
     variantId: item.variantId,
@@ -49,7 +74,28 @@ export function mapOrderItem(item: Record<string, unknown>) {
       storedLineSubtotal: item.lineSubtotal,
     }),
     lineTotal: lineTotal(taxableAmount, taxAmount),
+    /** Price per piece as the customer saw it, GST included (null for lines without a GST breakdown). */
+    displayUnitPrice: inclusive?.displayUnitPrice ?? null,
+    /** The line with GST, before any coupon. */
+    lineDisplaySubtotal: inclusive?.lineDisplaySubtotal ?? null,
   };
+}
+
+/**
+ * A part's items as the customer saw them (GST included) and what coupons took off them;
+ * null when a line has no GST breakdown to show it from.
+ */
+function partInclusiveItems(
+  items: Array<{ lineDisplaySubtotal: number | null; taxableAmount: number; taxAmount: number }>,
+) {
+  let itemsPaise = 0;
+  let paidPaise = 0;
+  for (const item of items) {
+    if (item.lineDisplaySubtotal == null) return null;
+    itemsPaise += toPaise(item.lineDisplaySubtotal);
+    paidPaise += toPaise(item.taxableAmount) + toPaise(item.taxAmount);
+  }
+  return { itemsPaise, couponSavingsPaise: Math.max(0, itemsPaise - paidPaise) };
 }
 
 export function mapSubOrder(sub: Record<string, unknown>) {
@@ -61,6 +107,7 @@ export function mapSubOrder(sub: Record<string, unknown>) {
   const shippingChargedVal = shippingCharged(shippingCost, shippingDiscountAmount);
   const tb = (sub.taxBreakdown ?? {}) as { cgst?: unknown; sgst?: unknown; igst?: unknown };
   const items = ((sub.items as Record<string, unknown>[]) ?? []).map(mapOrderItem);
+  const inclusive = partInclusiveItems(items);
   return {
     id: sub.id,
     orderId: sub.orderId,
@@ -76,6 +123,10 @@ export function mapSubOrder(sub: Record<string, unknown>) {
     taxableAmount,
     discountAmount,
     discountTotal: combinedDiscount(discountAmount, shippingDiscountAmount),
+    /** The items as the customer saw them, GST included, before coupons. */
+    itemsTotal: inclusive ? fromPaise(inclusive.itemsPaise) : null,
+    /** What coupons took off those items, GST included. */
+    couponSavings: inclusive ? fromPaise(inclusive.couponSavingsPaise) : null,
     taxDisplayKey: resolveTaxDisplayKey({
       cgst: roundMoney(tb.cgst),
       sgst: roundMoney(tb.sgst),
@@ -153,6 +204,19 @@ export function mapOrderResponse(order: Record<string, unknown>) {
   // Tax lines of the parts still standing (every part when all were reversed).
   const standingRaw = rawSubOrders.filter((sub) => !isReversedPart(sub.status as string));
   const orderTax = sumTaxFromSubOrders(standingRaw.length > 0 ? standingRaw : rawSubOrders);
+  // The bill as the customer sees it (GST-inclusive), over the same parts as the totals.
+  const standingParts = subOrders.filter((sub) => !isReversedPart(sub.status));
+  const countedParts = standingParts.length > 0 ? standingParts : subOrders;
+  let itemsPaise: number | null = 0;
+  let couponSavingsPaise = 0;
+  for (const sub of countedParts) {
+    if (sub.itemsTotal == null || sub.couponSavings == null) {
+      itemsPaise = null;
+      break;
+    }
+    itemsPaise += toPaise(sub.itemsTotal);
+    couponSavingsPaise += toPaise(sub.couponSavings);
+  }
   return {
     id: plain.id,
     userId: plain.userId,
@@ -167,6 +231,12 @@ export function mapOrderResponse(order: Record<string, unknown>) {
     razorpayAmountPaid,
     amountDue: aggregates.amountDue,
     merchandiseSubtotal: aggregates.merchandiseSubtotal,
+    /**
+     * The bill as the customer sees it, all GST-inclusive: itemsTotal − couponSavings +
+     * shippingTotal (+ gift wrap) = totalAmount; taxTotal is the GST inside it.
+     */
+    itemsTotal: itemsPaise == null ? null : fromPaise(itemsPaise),
+    couponSavings: itemsPaise == null ? null : fromPaise(couponSavingsPaise),
     taxTotal: aggregates.taxTotal,
     shippingTotal: aggregates.shippingTotal,
     shippingDisplayKey: resolveShippingDisplayKey(aggregates.shippingTotal),

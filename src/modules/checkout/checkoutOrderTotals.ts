@@ -15,6 +15,12 @@ export type CheckoutOrderTotals = {
   taxDisplayKey: 'IGST' | 'CGST_SGST' | 'GST';
   /** Flat checkout-time gift-wrap fee (0 when not selected) — not per vendor. */
   giftWrapFeeAmount: number;
+  /**
+   * The bill as the customer sees it, all GST-inclusive: itemsTotal − couponSavings +
+   * shippingTotal (+ gift wrap) is the grand total; taxTotal is the GST inside it.
+   */
+  itemsTotal: number;
+  couponSavings: number;
 };
 
 type VendorBreakdownRow = {
@@ -22,6 +28,8 @@ type VendorBreakdownRow = {
   shippingCost: number;
   tax: { cgst: number; sgst: number; igst: number; total: number };
   discount: number;
+  itemsTotal?: number;
+  couponSavings?: number;
 };
 
 export function resolveVendorIdForShippingRates(vendorId: string): string | null {
@@ -60,8 +68,12 @@ export function buildCheckoutOrderTotals(
   let sgstPaise = 0;
   let igstPaise = 0;
   let discountPaise = 0;
+  let itemsPaise = 0;
+  let couponSavingsPaise = 0;
 
   for (const row of vendorBreakdowns) {
+    itemsPaise += toPaise(row.itemsTotal ?? 0);
+    couponSavingsPaise += toPaise(row.couponSavings ?? 0);
     merchandisePaise += toPaise(row.subtotal);
     shippingPaise += toPaise(row.shippingCost);
     cgstPaise += toPaise(row.tax.cgst);
@@ -88,5 +100,7 @@ export function buildCheckoutOrderTotals(
     discountTotal,
     taxDisplayKey: resolveTaxDisplayKey({ cgst, sgst, igst }),
     giftWrapFeeAmount: roundMoney(giftWrapFeeAmount),
+    itemsTotal: fromPaise(itemsPaise),
+    couponSavings: fromPaise(couponSavingsPaise),
   };
 }

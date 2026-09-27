@@ -177,6 +177,8 @@ export const ERROR_MESSAGES = {
   VENDOR_ENTITY_TYPE_REQUIRED: 'Business entity type is required',
   PRODUCT_NAME_EXISTS: 'Product name already exists',
   PRODUCT_COMPARE_AT_BELOW_PRICE: 'MRP must be greater than or equal to the selling price',
+  PRODUCT_COMPARE_AT_BELOW_PRICE_WITH_GST:
+    'MRP includes GST, so it must be at least the selling price with GST (what the customer pays)',
   PRODUCT_SPECS_TOO_MANY: `Too many specification rows (maximum ${PRODUCT_FIELD_LIMITS.SPECS_MAX})`,
   PRODUCT_SPEC_KEY_INVALID: `Specification labels must be between 1 and ${PRODUCT_FIELD_LIMITS.SPEC_KEY_MAX} characters`,
   PRODUCT_SPEC_DUPLICATE_KEY: 'Specification labels must be unique',

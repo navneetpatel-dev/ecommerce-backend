@@ -17,6 +17,7 @@ import { Product } from '@database/models/product.model';
 import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
 import type { AddToCartRequest, UpdateCartItemRequest } from './cart.dto';
+import { gstRuleResolver, priceWithRuleGst } from '@modules/tax/gstPricing';
 
 export type CartViewItem = {
   id: string;
@@ -28,7 +29,10 @@ export type CartViewItem = {
    * otherwise the stepper counts past stock and snaps back on the response.
    */
   maxQuantity: number;
+  /** Before GST (what the pricing engine works on). */
   lineSubtotal: number;
+  /** The line as the customer sees it: price per piece with GST × quantity, before any coupon. */
+  lineDisplaySubtotal: number;
   isAvailable: boolean;
   unavailableReason: UnavailableReason | null;
   product: {
@@ -36,7 +40,10 @@ export type CartViewItem = {
     name: string;
     slug: string;
     imageUrl: string;
+    /** Price per piece before GST. */
     price: number;
+    /** Price per piece as the customer sees it, GST included. */
+    displayPrice: number;
     vendor: {
       id: string;
       businessName: string;
@@ -65,6 +72,13 @@ export type CartView = {
     shippingTotal: number;
     shippingDisplayKey: 'FREE' | 'PAID';
     grandTotal: number;
+    /**
+     * The bill as the customer sees it, all GST-inclusive: items − couponSavings +
+     * shippingTotal = grandTotal exactly; taxTotal is the GST inside that total.
+     */
+    itemsTotal: number;
+    /** What coupons take off the items, GST included (a free-shipping coupon shows in shipping). */
+    couponSavings: number;
     /**
      * What the preview's tax and shipping were based on. The cart has no chosen
      * address or shipping method, so anything but EXACT is an estimate the FE
@@ -113,6 +127,7 @@ function mapCartItem(item: CartItem & { variant?: ProductVariant & { product?: a
     quantity,
     maxQuantity: clampQuantity(MAX_CART_LINE_QUANTITY, stock),
     lineSubtotal: lineSubtotal(price, quantity),
+    lineDisplaySubtotal: lineSubtotal(price, quantity),
     isAvailable,
     unavailableReason,
     product: {
@@ -121,6 +136,7 @@ function mapCartItem(item: CartItem & { variant?: ProductVariant & { product?: a
       slug: product?.slug ?? '',
       imageUrl: primaryImage,
       price,
+      displayPrice: price,
       vendor: vendor
         ? {
             id: String(vendor.id),
@@ -199,7 +215,20 @@ export class CartService {
       ],
     })) as (CartItem & { variant: ProductVariant & { product: any } })[];
 
-    const mappedItems = items.map(mapCartItem);
+    // Prices as the customer sees them (GST included) — the cart shows the same figures
+    // as the product cards; the lines being bought get their exact totals below.
+    const ruleFor = gstRuleResolver();
+    const mappedItems = await Promise.all(
+      items.map(async (item) => {
+        const mapped = mapCartItem(item);
+        const displayPrice = priceWithRuleGst(await ruleFor(item.variant?.product?.categoryId), mapped.product.price);
+        return {
+          ...mapped,
+          lineDisplaySubtotal: lineSubtotal(displayPrice, mapped.quantity),
+          product: { ...mapped.product, displayPrice },
+        };
+      }),
+    );
     const available = mappedItems.filter((item) => item.isAvailable);
     const merchandiseSubtotal = sumRupees(available.map((item) => item.lineSubtotal));
 
@@ -220,7 +249,7 @@ export class CartService {
       vendorBorneDiscountShares = revalidated.appliedCoupon?.vendorBorneDiscountShares ?? {};
     }
 
-    const pricingPreview = await this.buildPricingPreview({
+    const { preview: pricingPreview, inclusiveLines } = await this.buildPricingPreview({
       userId,
       items: available,
       vendorDiscountShares,
@@ -228,6 +257,11 @@ export class CartService {
       vendorBorneDiscountShares,
       merchandiseDiscountTotal: appliedCoupon?.discount ?? 0,
     });
+    // The priced lines' GST-inclusive totals come from the engine, so they add up to the bill.
+    for (const item of mappedItems) {
+      const inclusive = inclusiveLines[item.id];
+      if (inclusive) item.lineDisplaySubtotal = inclusive.lineTotal;
+    }
 
     if (appliedCoupon && appliedCoupon.cashbackAmount > 0) {
       appliedCoupon = {
@@ -264,17 +298,25 @@ export class CartService {
     vendorShippingDiscountShares: Record<string, number>;
     vendorBorneDiscountShares: Record<string, number>;
     merchandiseDiscountTotal: number;
-  }): Promise<NonNullable<CartView['pricingPreview']>> {
+  }): Promise<{
+    preview: NonNullable<CartView['pricingPreview']>;
+    inclusiveLines: Record<string, { lineTotal: number }>;
+  }> {
     const merchandiseSubtotal = sumRupees(input.items.map((item) => item.lineSubtotal));
     if (input.items.length === 0) {
       return {
-        merchandiseSubtotal: 0,
-        discount: 0,
-        taxTotal: 0,
-        shippingTotal: 0,
-        shippingDisplayKey: 'FREE',
-        grandTotal: 0,
-        basisKey: 'NO_ADDRESS',
+        preview: {
+          merchandiseSubtotal: 0,
+          discount: 0,
+          taxTotal: 0,
+          shippingTotal: 0,
+          shippingDisplayKey: 'FREE',
+          grandTotal: 0,
+          itemsTotal: 0,
+          couponSavings: 0,
+          basisKey: 'NO_ADDRESS',
+        },
+        inclusiveLines: {},
       };
     }
 
@@ -328,7 +370,7 @@ export class CartService {
       onMissingRate: 'estimate',
     });
 
-    const { pricedByVendor } = priceVendorRows({
+    const { pricedByVendor, inclusiveByVendor } = priceVendorRows({
       rows: plan.rows,
       shares: {
         vendorDiscountShares: input.vendorDiscountShares,
@@ -344,12 +386,23 @@ export class CartService {
     let taxPaise = 0;
     let shippingPaise = 0;
     let grandTotalPaise = 0;
-    for (const priced of Object.values(pricedByVendor)) {
+    let itemsPaise = 0;
+    let itemsPayablePaise = 0;
+    const inclusiveLines: Record<string, { lineTotal: number }> = {};
+    for (const [vendorId, priced] of Object.entries(pricedByVendor)) {
       const p = priced.paise;
       discountPaise += p.merchandiseDiscountPaise + p.shippingDiscountPaise;
       taxPaise += p.tax.total;
       shippingPaise += p.shippingChargedPaise;
       grandTotalPaise += p.customerTotalPaise;
+      itemsPayablePaise += p.taxablePaise + p.tax.total;
+      const inclusive = inclusiveByVendor[vendorId];
+      if (inclusive) {
+        itemsPaise += inclusive.itemsPaise;
+        for (const [key, line] of Object.entries(inclusive.lines)) {
+          inclusiveLines[key] = { lineTotal: fromPaise(line.lineTotalPaise) };
+        }
+      }
     }
     let discount = fromPaise(discountPaise);
     const taxTotal = fromPaise(taxPaise);
@@ -361,15 +414,20 @@ export class CartService {
     }
 
     return {
-      merchandiseSubtotal: roundMoney(merchandiseSubtotal),
-      discount: roundMoney(discount),
-      taxTotal: roundMoney(taxTotal),
-      shippingTotal: roundMoney(shippingTotal),
-      shippingDisplayKey: resolveShippingDisplayKey(shippingTotal),
-      grandTotal: roundMoney(grandTotal),
-      // Report the weakest link: a missing rate makes the shipping figure a
-      // placeholder, which is less certain than merely guessing the address.
-      basisKey: !shippingAddress ? 'NO_ADDRESS' : plan.hasEstimatedShipping ? 'NO_SHIPPING_RATE' : 'DEFAULT_ADDRESS',
+      preview: {
+        merchandiseSubtotal: roundMoney(merchandiseSubtotal),
+        discount: roundMoney(discount),
+        taxTotal: roundMoney(taxTotal),
+        shippingTotal: roundMoney(shippingTotal),
+        shippingDisplayKey: resolveShippingDisplayKey(shippingTotal),
+        grandTotal: roundMoney(grandTotal),
+        itemsTotal: fromPaise(itemsPaise),
+        couponSavings: fromPaise(Math.max(0, itemsPaise - itemsPayablePaise)),
+        // Report the weakest link: a missing rate makes the shipping figure a
+        // placeholder, which is less certain than merely guessing the address.
+        basisKey: !shippingAddress ? 'NO_ADDRESS' : plan.hasEstimatedShipping ? 'NO_SHIPPING_RATE' : 'DEFAULT_ADDRESS',
+      },
+      inclusiveLines,
     };
   }
 

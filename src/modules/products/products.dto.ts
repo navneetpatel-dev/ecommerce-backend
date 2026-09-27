@@ -140,6 +140,12 @@ export const TrackRecentlyViewedSchema = z.object({
   productId: z.string().uuid(),
 });
 
+/** Vendor form: the customer price (GST included) for a pre-GST price in a category. */
+export const GstPreviewQuerySchema = z.object({
+  categoryId: z.string().uuid(),
+  price: z.coerce.number().min(0),
+});
+
 export const ApproveProductSchema = z.object({});
 
 export const RejectProductSchema = z.object({
@@ -184,6 +190,7 @@ export interface BulkImportRowResult {
   error?: string;
 }
 
+export type GstPreviewQuery = z.infer<typeof GstPreviewQuerySchema>;
 export type CreateProductRequest = z.infer<typeof CreateProductSchema>;
 export type UpdateProductRequest = z.infer<typeof UpdateProductSchema>;
 export type GetProductsQuery = z.infer<typeof GetProductsQuerySchema>;
