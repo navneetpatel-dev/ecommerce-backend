@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  priceWithGst,
   cashDepositDiscrepancy,
   checkoutAmountDue,
   wishlistPriceDrop,
@@ -207,5 +208,18 @@ describe('wishlistPriceDrop', () => {
   it('returns null when the price held or rose', () => {
     assert.equal(wishlistPriceDrop(999, 999), null);
     assert.equal(wishlistPriceDrop(999, 1099), null);
+  });
+});
+
+describe('priceWithGst', () => {
+  it('adds GST to a pre-GST price in paise', () => {
+    assert.equal(priceWithGst(1000, 18), 1180);
+    assert.equal(priceWithGst(476.45, 5), 500.27);
+    assert.equal(priceWithGst('99.99', 12), 111.99);
+  });
+
+  it('leaves the price alone without a positive rate', () => {
+    assert.equal(priceWithGst(250, 0), 250);
+    assert.equal(priceWithGst(250, null), 250);
   });
 });

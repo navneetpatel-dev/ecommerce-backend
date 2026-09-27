@@ -31,6 +31,7 @@ export interface SearchResultRow {
   id: string;
   name: string;
   basePrice: string;
+  displayPrice: string;
   priceRangeMax: string | null;
   compareAtPrice: string | null;
   brand: string | null;
@@ -56,6 +57,7 @@ interface ProductAutocompleteRow {
   name: string;
   slug: string;
   basePrice: string;
+  displayPrice: string;
   imageUrl: string;
   sku: string | null;
 }
@@ -124,6 +126,9 @@ const skuMatchExists = `
   )
 `;
 
+/** The GST-inclusive price customers see (the filter matches what the cards show). */
+const displayPriceSql = `COALESCE(p."displayPrice", p."basePrice")`;
+
 export class SearchRepository {
   async countSearchProducts(params: Omit<SearchParams, 'limit' | 'offset'>): Promise<number> {
     const { prefixPattern } = buildAutocompleteLikePatterns(params.term.trim());
@@ -140,8 +145,8 @@ export class SearchRepository {
         AND ${liveProductFilters}
         AND (:categoryId::uuid IS NULL OR p."categoryId" = :categoryId::uuid)
         AND (:vendorId::uuid IS NULL OR p."vendorId" = :vendorId::uuid)
-        AND (:minPrice::numeric IS NULL OR p."basePrice" >= :minPrice::numeric)
-        AND (:maxPrice::numeric IS NULL OR p."basePrice" <= :maxPrice::numeric)
+        AND (:minPrice::numeric IS NULL OR ${displayPriceSql} >= :minPrice::numeric)
+        AND (:maxPrice::numeric IS NULL OR ${displayPriceSql} <= :maxPrice::numeric)
       `,
       {
         replacements: this.searchReplacements(params, prefixPattern),
@@ -160,6 +165,7 @@ export class SearchRepository {
         p.id,
         p.name,
         p."basePrice",
+        ${displayPriceSql} AS "displayPrice",
         (
           SELECT MAX(pv.price)
           FROM product_variants pv
@@ -208,8 +214,8 @@ export class SearchRepository {
         AND ${liveProductFilters}
         AND (:categoryId::uuid IS NULL OR p."categoryId" = :categoryId::uuid)
         AND (:vendorId::uuid IS NULL OR p."vendorId" = :vendorId::uuid)
-        AND (:minPrice::numeric IS NULL OR p."basePrice" >= :minPrice::numeric)
-        AND (:maxPrice::numeric IS NULL OR p."basePrice" <= :maxPrice::numeric)
+        AND (:minPrice::numeric IS NULL OR ${displayPriceSql} >= :minPrice::numeric)
+        AND (:maxPrice::numeric IS NULL OR ${displayPriceSql} <= :maxPrice::numeric)
       ORDER BY rank DESC, p.name ASC
       LIMIT :limit OFFSET :offset
       `,
@@ -249,6 +255,7 @@ export class SearchRepository {
         p.name,
         p.slug,
         p."basePrice",
+        ${displayPriceSql} AS "displayPrice",
         COALESCE(img.url, '') AS "imageUrl",
         (
           SELECT pv.sku
@@ -325,6 +332,7 @@ export class SearchRepository {
       name: row.name,
       slug: row.slug,
       basePrice: Number(row.basePrice ?? 0),
+      displayPrice: Number(row.displayPrice ?? row.basePrice ?? 0),
       imageUrl: row.imageUrl ?? '',
       sku: row.sku,
     }));

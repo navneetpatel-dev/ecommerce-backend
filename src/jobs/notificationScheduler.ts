@@ -120,7 +120,8 @@ async function processWishlistPriceDrops(): Promise<number> {
 
     const log = await notificationsService.sendPriceDropAlert(wishlist.userId, product.id, {
       productName: product.name,
-      price: currentPrice,
+      // The GST-inclusive price the product page shows.
+      price: Number(product.displayPrice ?? currentPrice),
     });
     if (log) sent += 1;
   }

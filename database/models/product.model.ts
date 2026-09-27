@@ -11,6 +11,8 @@ export class Product extends Model<InferAttributes<Product>, InferCreationAttrib
   declare slug: string;
   declare description: string;
   declare basePrice: number;
+  /** basePrice with GST at the category's rate (price band included): what customers see. */
+  declare displayPrice: CreationOptional<number | null>;
   declare compareAtPrice: number | null;
   declare brand: string | null;
   declare specs: CreationOptional<Record<string, string>>;
@@ -79,6 +81,7 @@ export const initProductModel = (sequelize: Sequelize) => {
       slug: { type: DataTypes.STRING, unique: true, allowNull: false },
       description: { type: DataTypes.TEXT, allowNull: false },
       basePrice: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
+      displayPrice: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       compareAtPrice: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       brand: { type: DataTypes.STRING, allowNull: true },
       specs: { type: DataTypes.JSONB, allowNull: false, defaultValue: {} },

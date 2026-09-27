@@ -63,9 +63,18 @@ export const getCategoryFacets = asyncHandler(async (req: Request, res: Response
   res.json(ok(result));
 });
 
+/** Products' GST-inclusive prices follow their category's tax rule, so recompute them. */
+function refreshDisplayPricesAfterCategoryChange(trigger: string): void {
+  void import('@modules/products/products.service').then(({ refreshAllProductDisplayPricesInBackground }) =>
+    refreshAllProductDisplayPricesInBackground(trigger),
+  );
+}
+
 export const updateCategory = asyncHandler(async (req: Request, res: Response) => {
   const dto = UpdateCategorySchema.parse(req.body);
   const category = await categoriesService.updateCategory(req.params.id!, dto);
+  // A moved category can fall under another ancestor's tax rule.
+  if (dto.parentId !== undefined) refreshDisplayPricesAfterCategoryChange('category moved');
   res.json(ok(category));
 });
 
@@ -78,6 +87,7 @@ export const reorderCategories = asyncHandler(async (req: Request, res: Response
 export const reassignProducts = asyncHandler(async (req: Request, res: Response) => {
   const dto = ReassignProductsSchema.parse(req.body);
   const result = await categoriesService.reassignProducts(dto.fromCategoryId, dto.toCategoryId);
+  refreshDisplayPricesAfterCategoryChange('products reassigned');
   res.json(ok(result));
 });
 

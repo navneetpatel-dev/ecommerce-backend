@@ -5,6 +5,16 @@ import { pageLimitQuerySchema } from '@core/http/pagination';
 import { taxService } from './tax.service';
 import { CreateTaxRuleSchema, UpdateTaxRuleSchema } from './tax.dto';
 
+/**
+ * A tax rule change can move the GST on every product below its category, so the
+ * GST-inclusive prices customers see are recomputed.
+ */
+function refreshDisplayPricesAfterRuleChange(): void {
+  void import('@modules/products/products.service').then(({ refreshAllProductDisplayPricesInBackground }) =>
+    refreshAllProductDisplayPricesInBackground('tax rule change'),
+  );
+}
+
 export const listRules = asyncHandler(async (req: Request, res: Response) => {
   const query = pageLimitQuerySchema.parse(req.query);
   const result = await taxService.getTaxRules(query);
@@ -14,16 +24,19 @@ export const listRules = asyncHandler(async (req: Request, res: Response) => {
 export const createRule = asyncHandler(async (req: Request, res: Response) => {
   const dto = CreateTaxRuleSchema.parse(req.body);
   const rule = await taxService.createTaxRule(dto, req.user!.id);
+  refreshDisplayPricesAfterRuleChange();
   res.status(201).json(ok(rule));
 });
 
 export const updateRule = asyncHandler(async (req: Request, res: Response) => {
   const dto = UpdateTaxRuleSchema.parse(req.body);
   const rule = await taxService.updateTaxRule(req.params.id!, dto, req.user!.id);
+  refreshDisplayPricesAfterRuleChange();
   res.json(ok(rule));
 });
 
 export const deleteRule = asyncHandler(async (req: Request, res: Response) => {
   await taxService.deleteTaxRule(req.params.id!, req.user!.id);
+  refreshDisplayPricesAfterRuleChange();
   res.status(204).send();
 });

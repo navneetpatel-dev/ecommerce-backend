@@ -34,6 +34,8 @@ export type SearchSuggestionDto = {
   /** Slash-separated category slug path for nested URLs. */
   path?: string | null;
   basePrice?: number;
+  /** The GST-inclusive price customers see. */
+  displayPrice?: number;
   imageUrl?: string;
   /** Present when a product match came from a variant SKU. */
   sku?: string | null;

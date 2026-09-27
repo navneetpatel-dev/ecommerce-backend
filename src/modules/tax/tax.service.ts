@@ -1,4 +1,6 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
+import { ValidationError } from '@core/errors/ValidationError';
+import { ERROR_MESSAGES } from '@core/constants/errors';
 import { taxRepository } from './tax.repository';
 import { TaxRule } from '@database/models/taxRule.model';
 import { Category } from '@database/models/category.model';
@@ -146,6 +148,10 @@ export class TaxService {
     },
     actorId?: string,
   ) {
+    // One default rule (no category): with several, which GST applied was arbitrary.
+    if (!data.categoryId && (await taxRepository.countDefaults()) > 0) {
+      throw new ValidationError(ERROR_MESSAGES.TAX_DEFAULT_RULE_EXISTS);
+    }
     return sequelize.transaction(async (t) => {
       const rule = await TaxRule.create({
         categoryId: data.categoryId ?? null,
