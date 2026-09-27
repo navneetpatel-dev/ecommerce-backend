@@ -82,6 +82,8 @@ export type ValidateCouponSetResult = {
     discount: number;
     cashbackAmount: number;
     freeShipping: boolean;
+    /** This coupon's own share by vendor (after stacking caps), as `discount` is split. */
+    vendorShares: Record<string, number>;
   }>;
 };
 
@@ -449,6 +451,7 @@ export async function validateCouponSet(input: {
       discount: result.discount,
       cashbackAmount: result.cashbackAmount,
       freeShipping: result.freeShipping,
+      vendorShares: { ...result.vendorDiscountShares },
     });
     if (result.freeShipping) freeShipping = true;
     const bearer = resolveDiscountBearer(coupon);

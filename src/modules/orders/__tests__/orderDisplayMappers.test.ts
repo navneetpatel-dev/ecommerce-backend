@@ -227,3 +227,70 @@ describe('order bill as the customer saw it (GST included)', () => {
     assert.equal(Math.round((order.itemsTotal - order.couponSavings) * 100), Math.round(order.totalAmount * 100));
   });
 });
+
+describe('order bill after returns', () => {
+  const vendor = { id: 'v1', businessName: 'Seller' };
+  const kept = {
+    id: 'k1',
+    quantity: 1,
+    unitPrice: 1000,
+    lineSubtotal: 1000,
+    discountAmount: 0,
+    taxableAmount: 1000,
+    taxAmount: 180,
+    taxBreakdown: { cgst: 0, sgst: 0, igst: 180, total: 180, gstPercentage: 18 },
+  };
+  // Fully returned: the line is zeroed and its breakdown cleared.
+  const returned = {
+    id: 'r1',
+    quantity: 1,
+    unitPrice: 500,
+    lineSubtotal: 0,
+    discountAmount: 0,
+    taxableAmount: 0,
+    taxAmount: 0,
+    taxBreakdown: null,
+  };
+
+  function order(totalAmount: number, giftWrapFeeAmount: number | null = null) {
+    return mapOrderResponse({
+      id: 'o1',
+      totalAmount,
+      giftWrapFeeAmount,
+      walletAmountUsed: 0,
+      paymentMethod: 'COD',
+      subOrders: [
+        {
+          id: 's1',
+          vendor,
+          status: 'DELIVERED',
+          subtotal: 1000,
+          shippingCost: 49,
+          shippingDiscountAmount: 0,
+          discountAmount: 0,
+          taxableAmount: 1000,
+          taxAmount: 180,
+          items: [kept, returned],
+        },
+      ],
+    });
+  }
+
+  it('leaves a fully returned line off the bill instead of dropping the bill', () => {
+    const bill = order(1229);
+    assert.equal(bill.itemsTotal, 1180);
+    assert.equal(bill.couponSavings, 0);
+    assert.equal(bill.returnAdjustment, null);
+  });
+
+  it('shows shipping refunded or a return fee kept, so the bill adds up to the total', () => {
+    // The ₹49 shipping was refunded with the return: the total is ₹49 less than the rows.
+    assert.deepEqual(order(1180).returnAdjustment, { amount: 49, credit: true });
+    // A ₹30 return shipping fee was kept from the refund.
+    assert.deepEqual(order(1259).returnAdjustment, { amount: 30, credit: false });
+  });
+
+  it('counts the gift-wrap fee in the bill', () => {
+    assert.equal(order(1279, 50).returnAdjustment, null);
+  });
+});
