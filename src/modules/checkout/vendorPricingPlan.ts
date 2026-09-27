@@ -115,6 +115,42 @@ async function resolveLineRates(
 }
 
 /**
+ * Each line's value as the customer sees it — GST included, before any coupon — in paise,
+ * priced by the same engine pass the bill shows (`inclusiveByVendor`), so a threshold
+ * checked against these agrees with the displayed items total to the paisa.
+ */
+export function gstInclusiveLinePaise(input: {
+  lines: Array<{ unitPrice: number; quantity: number }>;
+  rates: Array<{ gstPercentage: number; gstPriceBand: GstPriceBand | null }>;
+  vendor: Vendor | null;
+  shippingStateCode: string;
+}): Paise[] {
+  if (input.lines.length === 0) return [];
+  const vendorStateCode = vendorOriginState(input.vendor);
+  const gross = pricingService.computeVendorBreakdown({
+    lines: input.lines.map((line, index) => ({
+      key: String(index),
+      unitPrice: line.unitPrice,
+      quantity: line.quantity,
+      gstPercentage: input.rates[index]?.gstPercentage ?? 0,
+      gstPriceBand: input.rates[index]?.gstPriceBand ?? null,
+      commissionRatePercent: 0,
+    })),
+    merchandiseDiscount: 0,
+    vendorBorneMerchandiseDiscount: 0,
+    shippingDiscount: 0,
+    shippingCost: 0,
+    gstPercentage: input.rates[0]?.gstPercentage ?? 0,
+    vendorStateCode,
+    shippingStateCode: input.shippingStateCode || vendorStateCode,
+    commissionRatePercent: 0,
+    discountBearer: null,
+    tcsRatePercent: 0,
+  }).paise;
+  return gross.lines.map((line) => line.taxablePaise + line.tax.total);
+}
+
+/**
  * Group lines by vendor and resolve shipping + GST + commission for each bucket.
  *
  * `onMissingRate` is the only real difference between callers: checkout must reject an
@@ -141,15 +177,23 @@ export async function buildVendorPricingRows(input: {
   for (const [vendorId, lines] of Object.entries(linesByVendor)) {
     const vendor = vendorMap[vendorId] ?? null;
     const resolved = await resolveLineRates(lines, vendor, input.settings.defaultCommissionRate);
+    // The free-shipping threshold is on what the customer pays for the items (GST
+    // included), valued as the bill shows them.
+    const inclusivePaise = gstInclusiveLinePaise({
+      lines,
+      rates: lines.map((line) => resolved.lineRates[line.key]!),
+      vendor,
+      shippingStateCode: input.destination?.state ?? '',
+    });
     const shipping = await resolveVendorShippingQuote({
       destination: input.destination,
       vendorId: vendorId !== PLATFORM_VENDOR_ID ? vendorId : null,
       method: requestedMethod(input.shippingMethodByVendor[vendorId]),
-      // The free-shipping threshold is on what the customer pays for the items (GST included).
-      lines: lines.map((line) => ({
+      lines: lines.map((line, index) => ({
         unitPrice: priceWithRuleGst(resolved.lineRates[line.key]!, line.unitPrice),
         quantity: line.quantity,
         weightGrams: line.weightGrams,
+        lineAmountPaise: inclusivePaise[index],
       })),
     });
     if (!shipping.rate) {

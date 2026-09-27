@@ -12,6 +12,12 @@ export type CartLineForCoupon = {
   weightGrams?: number | null;
   /** When false, line is excluded from coupon eligibility (customerVisible gate). */
   isCustomerVisible?: boolean;
+  /**
+   * The line's value as the customer sees it, in paise, when it is not simply
+   * `unitPrice × quantity`: GST is billed per line, so a line can differ by a paisa from
+   * its per-piece price times the quantity.
+   */
+  lineAmountPaise?: number;
 };
 
 export { roundMoney };
@@ -37,6 +43,7 @@ export function prorateDiscount(
 }
 
 export function lineAmount(line: CartLineForCoupon): number {
+  if (line.lineAmountPaise != null) return fromPaise(line.lineAmountPaise);
   return lineSubtotal(line.unitPrice, line.quantity);
 }
 

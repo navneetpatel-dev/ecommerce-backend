@@ -10,7 +10,10 @@ export type DeliveryAgentPayoutPaymentMethod =
   | 'CASH'
   | 'OTHER';
 
-/** A batch payout of settled delivery-agent task earnings — mirrors vendor Payout, minus GST/TDS. */
+/**
+ * A batch payout of settled delivery-agent task earnings. `amount` is the gross earnings;
+ * TDS under s.194C is deducted from it and `netAmount` is what the agent is paid.
+ */
 export class DeliveryAgentPayout extends Model<
   InferAttributes<DeliveryAgentPayout>,
   InferCreationAttributes<DeliveryAgentPayout>
@@ -18,6 +21,9 @@ export class DeliveryAgentPayout extends Model<
   declare id: CreationOptional<string>;
   declare deliveryAgentId: string;
   declare amount: number;
+  declare tdsAmount: CreationOptional<number>;
+  declare tdsRatePercent: CreationOptional<number | null>;
+  declare netAmount: number;
   declare periodStart: Date;
   declare periodEnd: Date;
   declare status: CreationOptional<DeliveryAgentPayoutStatus>;
@@ -48,6 +54,9 @@ export const initDeliveryAgentPayoutModel = (sequelize: Sequelize) => {
       id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
       deliveryAgentId: { type: DataTypes.UUID, allowNull: false },
       amount: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
+      tdsAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+      tdsRatePercent: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
+      netAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
       periodStart: { type: DataTypes.DATE, allowNull: false },
       periodEnd: { type: DataTypes.DATE, allowNull: false },
       status: { type: DataTypes.ENUM('PENDING', 'PAID', 'FAILED'), allowNull: false, defaultValue: 'PENDING' },

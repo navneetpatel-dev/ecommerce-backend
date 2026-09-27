@@ -47,6 +47,14 @@ export type PlatformSettingsPayload = {
   refundSlaBusinessDays: number;
   /** Flat estimate paid per completed delivery/pickup task, for the agent shift summary. */
   deliveryAgentPerTaskEarning: number;
+  /** TDS u/s 194C on agent payouts (agents are contractors): individual rate with a PAN. */
+  deliveryAgentTdsRatePercent: number;
+  /** s.206AA: the rate when the agent has no PAN on file. */
+  deliveryAgentTdsNoPanRatePercent: number;
+  /** 194C applies to a single payment above this (₹)… */
+  deliveryAgentTdsSingleThreshold: number;
+  /** …or once the financial year's payments to the agent exceed this (₹). */
+  deliveryAgentTdsAnnualThreshold: number;
   /** Master switch for the automated weekly admin report email digest. */
   scheduledReportsEnabled: boolean;
   /** Report catalog `type` keys to include in the digest. */
@@ -91,6 +99,10 @@ const DEFAULTS: PlatformSettingsPayload = {
   promotionalPointsTtlDays: 0,
   refundSlaBusinessDays: 7,
   deliveryAgentPerTaskEarning: 20,
+  deliveryAgentTdsRatePercent: 1,
+  deliveryAgentTdsNoPanRatePercent: 20,
+  deliveryAgentTdsSingleThreshold: 30000,
+  deliveryAgentTdsAnnualThreshold: 100000,
   scheduledReportsEnabled: false,
   scheduledReportsTypes: ['reconciliation', 'gmv-sales'],
   scheduledReportsRecipients: [],

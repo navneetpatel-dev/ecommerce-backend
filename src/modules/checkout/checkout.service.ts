@@ -75,8 +75,8 @@ import {
 } from '@modules/pricing/platformFeeInvoice';
 import { isIntraStateSupply } from '@modules/pricing/gstPlaceOfSupply';
 import { tdsRateForSale } from '@modules/pricing/tds194o';
-import { withGstInclusiveUnitPrices } from '@modules/tax/gstPricing';
 import { preGstCouponBreakdown } from './couponUsageAmounts';
+import { withGstInclusiveLineValues } from './gstInclusiveLines';
 
 /** Flat platform fee for checkout-time gift wrapping (v1: hardcoded, not vendor-specific). */
 export const GIFT_WRAP_FEE_RUPEES = 49;
@@ -215,6 +215,7 @@ function catalogItemsForCod(
 /** Coupon lines at the prices the customer sees (GST included): coupons are set in those terms. */
 function toCouponLines(
   items: (CartItem & { variant: ProductVariant & { product: any } })[],
+  shippingStateCode: string,
 ): Promise<CartLineForCoupon[]> {
   const lines = items.map((item) => {
     const product = item.variant.product;
@@ -229,7 +230,7 @@ function toCouponLines(
       isCustomerVisible: true,
     };
   });
-  return withGstInclusiveUnitPrices(lines);
+  return withGstInclusiveLineValues(lines, shippingStateCode);
 }
 
 function resolveCheckoutCouponCodes(
@@ -344,7 +345,7 @@ export class CheckoutService {
       const result = await validateCouponSet({
         codes: couponCodes,
         userId,
-        lines: await toCouponLines(quoteCart.items),
+        lines: await toCouponLines(quoteCart.items, shippingAddress.state),
         shippingTotal,
         shippingByVendor,
       });
@@ -537,7 +538,7 @@ export class CheckoutService {
         const result = await validateCouponSet({
           codes: couponCodes,
           userId,
-          lines: await toCouponLines(cart.items),
+          lines: await toCouponLines(cart.items, shippingAddress.state),
           shippingTotal,
           shippingByVendor,
           transaction: t,

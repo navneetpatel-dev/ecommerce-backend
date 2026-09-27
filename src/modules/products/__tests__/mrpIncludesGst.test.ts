@@ -5,6 +5,7 @@ import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { categoriesService } from '@modules/categories/categories.service';
 import { taxService } from '@modules/tax/tax.service';
+import { ProductVariant } from '@database/models/productVariant.model';
 import { productsRepository } from '../products.repository';
 import { productsService } from '../products.service';
 
@@ -56,5 +57,45 @@ describe('MRP includes GST', () => {
     }));
     assert.deepEqual(await productsService.gstPreview(product.categoryId, 2000), { gstPercentage: 5, displayPrice: 2100 });
     assert.deepEqual(await productsService.gstPreview(product.categoryId, 3000), { gstPercentage: 18, displayPrice: 3540 });
+  });
+});
+
+describe('no variant sells above the MRP', () => {
+  afterEach(() => mock.restoreAll());
+
+  function stubProduct(compareAtPrice: number | null) {
+    mock.method(sequelize, 'transaction', async (callback: (t: unknown) => Promise<unknown>) => callback({}));
+    mock.method(productsRepository, 'findById', async () => ({ id: 'p1', categoryId: 'c1', compareAtPrice }) as never);
+    mock.method(taxService, 'getGstRateRule', async () => ({ gstPercentage: 18, gstPriceBand: null }));
+  }
+
+  it('refuses a variant whose price with GST is above the MRP', async () => {
+    stubProduct(1200);
+    mock.method(ProductVariant, 'findOne', async () => null);
+    const create = mock.method(ProductVariant, 'create', async () => ({}) as never);
+    // ₹1,100 + 18% is ₹1,298: above the ₹1,200 MRP.
+    await assert.rejects(
+      productsService.addVariant('p1', { sku: 'K-XL', price: 1100, stock: 5, attributes: {} } as never),
+      (error: unknown) =>
+        error instanceof ValidationError && error.message === ERROR_MESSAGES.PRODUCT_VARIANT_ABOVE_MRP,
+    );
+    assert.equal(create.mock.callCount(), 0);
+  });
+
+  it("checks the product's MRP against its dearest variant", async () => {
+    mock.method(sequelize, 'transaction', async (callback: (t: unknown) => Promise<unknown>) => callback({}));
+    mock.method(productsRepository, 'findById', async () =>
+      ({ id: 'p1', vendorId: null, categoryId: 'c1', basePrice: 1000, compareAtPrice: 1500 }) as never,
+    );
+    mock.method(taxService, 'getGstRateRule', async () => ({ gstPercentage: 18, gstPriceBand: null }));
+    // Variants at ₹1,000 and ₹1,200: the dearer one is ₹1,416 with GST.
+    mock.method(ProductVariant, 'findAll', async () => [{ price: 1000 }, { price: 1200 }] as never);
+    const update = mock.method(productsRepository, 'update', async () => [1] as never);
+    await assert.rejects(
+      productsService.updateProduct('p1', null, { compareAtPrice: 1400 } as never),
+      (error: unknown) =>
+        error instanceof ValidationError && error.message === ERROR_MESSAGES.PRODUCT_COMPARE_AT_BELOW_PRICE_WITH_GST,
+    );
+    assert.equal(update.mock.callCount(), 0);
   });
 });
