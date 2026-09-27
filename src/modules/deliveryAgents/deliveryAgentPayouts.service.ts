@@ -7,7 +7,9 @@ import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
-import { roundMoney, sumRupees } from '@modules/pricing/money';
+import { fromPaise, roundMoney, toPaise } from '@modules/pricing/money';
+import { istFinancialYearStart } from '@modules/pricing/istCalendar';
+import { tds194cForPayout, tds194cRate } from './tds194c';
 import { settingsService } from '@modules/settings/settings.service';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { logAudit } from '@modules/audit/audit.service';
@@ -26,6 +28,9 @@ function serializePayout(row: DeliveryAgentPayout) {
   return {
     ...rest,
     amount: roundMoney(rest.amount),
+    tdsAmount: roundMoney(rest.tdsAmount ?? 0),
+    tdsRatePercent: rest.tdsRatePercent == null ? null : Number(rest.tdsRatePercent),
+    netAmount: roundMoney(rest.netAmount ?? rest.amount),
     agentName: deliveryAgent?.fullName ?? null,
     agentHubOrZone: deliveryAgent?.hubOrZone ?? null,
   };
@@ -40,10 +45,10 @@ const agentInclude = {
 /**
  * Real earnings/payout ledger for delivery agents — mirrors the vendor
  * Payout/CommissionLedger operational pattern (per-task ledger row → batch
- * process → mark paid/failed → retry). Deliberately omits the GST/TDS/
- * commission-invoice machinery from vendor payouts: that's specific to
- * marketplace commission settlement under Section 194-O and does not apply
- * to a flat delivery-task wage.
+ * process → mark paid/failed → retry). Agents are contractors, so TDS under
+ * s.194C is deducted from each payout once its limits are crossed (see
+ * tds194c.ts); the marketplace machinery of vendor payouts (194-O, GST on
+ * commission) does not apply to a flat delivery-task fee.
  */
 export class DeliveryAgentPayoutsService {
   /** Credits one task's flat rate to the ledger — called from confirmDelivery/confirmPickup. */
@@ -130,11 +135,24 @@ export class DeliveryAgentPayoutsService {
         { key: 'date', label: 'Date', align: 'left' },
         { key: 'amount', label: 'Amount (Rs.)', align: 'right' },
       ],
-      rows: earnings.map((row) => ({
-        taskType: row.sourceType === 'DELIVERY' ? 'Delivery' : 'Return pickup',
-        date: new Date(row.earnedAt).toLocaleDateString(),
-        amount: Number(row.amount).toFixed(2),
-      })),
+      rows: [
+        ...earnings.map((row) => ({
+          taskType: row.sourceType === 'DELIVERY' ? 'Delivery' : 'Return pickup',
+          date: new Date(row.earnedAt).toLocaleDateString(),
+          amount: Number(row.amount).toFixed(2),
+        })),
+        // Totals: gross earnings, TDS u/s 194C and the net amount paid.
+        { taskType: 'Total earnings', date: '', amount: Number(payout.amount).toFixed(2) },
+        {
+          taskType:
+            Number(payout.tdsAmount ?? 0) > 0
+              ? `Less TDS u/s 194C @ ${Number(payout.tdsRatePercent ?? 0)}%`
+              : 'Less TDS u/s 194C',
+          date: '',
+          amount: (-Number(payout.tdsAmount ?? 0)).toFixed(2),
+        },
+        { taskType: 'Net paid', date: '', amount: Number(payout.netAmount ?? payout.amount).toFixed(2) },
+      ],
       emptyMessage: 'No settled tasks on this payout.',
     });
 
@@ -195,11 +213,15 @@ export class DeliveryAgentPayoutsService {
         });
         if (!locked.length) throw new Error('No pending earnings');
 
-        const amount = sumRupees(locked.map((row) => row.amount));
+        const grossPaise = locked.reduce((sum, row) => sum + toPaise(roundMoney(row.amount)), 0);
+        const tds = await this.tdsForPayout(deliveryAgentId, grossPaise, transaction);
         const payoutRow = await DeliveryAgentPayout.create(
           {
             deliveryAgentId,
-            amount,
+            amount: fromPaise(grossPaise),
+            tdsAmount: fromPaise(tds.tdsPaise),
+            tdsRatePercent: tds.tdsPaise > 0 ? tds.ratePercent : null,
+            netAmount: fromPaise(grossPaise - tds.tdsPaise),
             periodStart: group.start,
             periodEnd: group.end,
             status: 'PENDING',
@@ -226,13 +248,42 @@ export class DeliveryAgentPayoutsService {
       created.push(payout);
       const agent = await DeliveryAgent.findByPk(deliveryAgentId, { attributes: ['userId'] });
       if (agent) {
+        // What the agent will receive, after TDS.
         void notificationsService.sendPayoutProcessed(agent.userId, payout.id, {
-          amount: Number(payout.amount),
+          amount: Number(payout.netAmount),
         });
       }
     }
 
     return created.map(serializePayout);
+  }
+
+  /**
+   * TDS u/s 194C for a new payout of `grossPaise`: against the agent's payouts earlier
+   * this financial year (IST), at the contractor rate with a PAN on file, else s.206AA's.
+   */
+  private async tdsForPayout(
+    deliveryAgentId: string,
+    grossPaise: number,
+    transaction: Transaction,
+  ): Promise<{ tdsPaise: number; ratePercent: number }> {
+    const settings = await settingsService.getPlatformSettings();
+    const agent = await DeliveryAgent.findByPk(deliveryAgentId, { attributes: ['bankDetails'], transaction });
+    const ratePercent = tds194cRate(agent?.bankDetails?.pan, settings);
+    const earlier = await DeliveryAgentPayout.findAll({
+      where: { deliveryAgentId, createdAt: { [Op.gte]: istFinancialYearStart(new Date()) } },
+      attributes: ['amount', 'tdsAmount'],
+      transaction,
+    });
+    const tdsPaise = tds194cForPayout({
+      grossPaise,
+      financialYearGrossPaise: earlier.reduce((sum, row) => sum + toPaise(roundMoney(row.amount)), 0),
+      financialYearTdsPaise: earlier.reduce((sum, row) => sum + toPaise(roundMoney(row.tdsAmount ?? 0)), 0),
+      ratePercent,
+      singleThresholdPaise: toPaise(Number(settings.deliveryAgentTdsSingleThreshold) || 0),
+      annualThresholdPaise: toPaise(Number(settings.deliveryAgentTdsAnnualThreshold) || 0),
+    });
+    return { tdsPaise, ratePercent };
   }
 
   async markPaid(payoutId: string, actorId: string, input: MarkAgentPayoutPaidRequest) {
@@ -267,6 +318,8 @@ export class DeliveryAgentPayoutsService {
         metadata: {
           deliveryAgentId: payout.deliveryAgentId,
           amount: Number(payout.amount),
+          tdsAmount: Number(payout.tdsAmount ?? 0),
+          netAmount: Number(payout.netAmount),
           paymentMethod: input.paymentMethod,
           paymentReferenceNumber: input.paymentReferenceNumber,
         },
@@ -278,7 +331,7 @@ export class DeliveryAgentPayoutsService {
     const agent = await DeliveryAgent.findByPk(updated.deliveryAgentId, { attributes: ['userId'] });
     if (agent) {
       void notificationsService.sendPayoutPaid(agent.userId, updated.id, {
-        amount: Number(updated.amount),
+        amount: Number(updated.netAmount),
         paymentMethod: updated.paymentMethod,
         paymentReferenceNumber: updated.paymentReferenceNumber,
         paidAt: updated.paidAt,
@@ -315,7 +368,7 @@ export class DeliveryAgentPayoutsService {
     const agent = await DeliveryAgent.findByPk(updated.deliveryAgentId, { attributes: ['userId'] });
     if (agent) {
       void notificationsService.sendPayoutFailed(agent.userId, updated.id, {
-        amount: Number(updated.amount),
+        amount: Number(updated.netAmount),
         reason: input.reason,
       });
     }

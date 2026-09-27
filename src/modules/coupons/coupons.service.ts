@@ -1,5 +1,6 @@
 import { Op, QueryTypes } from 'sequelize';
 import { Coupon } from '@database/models/coupon.model';
+import { Address } from '@database/models/address.model';
 import { CouponBatch } from '@database/models/couponBatch.model';
 import { CouponUsage } from '@database/models/couponUsage.model';
 import { Cart } from '@database/models/cart.model';
@@ -40,7 +41,6 @@ import {
   type CartLineForCoupon,
 } from './couponEngine';
 import { generateCouponCode } from './coupon.utils';
-import { withGstInclusiveUnitPrices } from '@modules/tax/gstPricing';
 
 /**
  * One coupon redemption's discount still given, in paise (aliases: `cu` = coupon_usages,
@@ -136,6 +136,29 @@ async function previewShippingTotal(
   return { total, byVendor: lines.length > 0 ? { [vendorId]: total } : {} };
 }
 
+/** The state of the customer's default address ('' without one), as the cart preview bills to. */
+async function defaultShippingState(userId: string | null): Promise<string> {
+  if (!userId) return '';
+  const address = await Address.findOne({
+    where: { userId },
+    order: [
+      ['isDefault', 'DESC'],
+      ['updatedAt', 'DESC'],
+    ],
+    attributes: ['state'],
+  });
+  return String(address?.state ?? '').trim();
+}
+
+/** Coupon lines at GST-inclusive prices (checkout imports coupons: loaded lazily). */
+async function gstInclusiveCouponLines(
+  lines: CartLineForCoupon[],
+  shippingStateCode: string,
+): Promise<CartLineForCoupon[]> {
+  const { withGstInclusiveLineValues } = await import('@modules/checkout/gstInclusiveLines');
+  return withGstInclusiveLineValues(lines, shippingStateCode);
+}
+
 async function loadCartLines(userId: string): Promise<{
   cart: Cart | null;
   lines: CartLineForCoupon[];
@@ -195,12 +218,16 @@ async function loadCartLines(userId: string): Promise<{
     };
   });
 
-  // Coupons are set against the prices the customer sees, GST included.
-  return { cart, lines: await withGstInclusiveUnitPrices(lines) };
+  // Coupons are set against the prices the customer sees, GST included, valued as the
+  // cart bills them (to the customer's default address, as the cart preview is).
+  return { cart, lines: await gstInclusiveCouponLines(lines, await defaultShippingState(userId)) };
 }
 
 /** Single-product lines for PDP eligible-offer preview (qty 1, primary variant price). */
-async function loadProductPreviewLines(productId: string): Promise<CartLineForCoupon[]> {
+async function loadProductPreviewLines(
+  productId: string,
+  userId: string | null,
+): Promise<CartLineForCoupon[]> {
   const product = await Product.findByPk(productId, {
     include: [
       { model: Vendor, as: 'vendor' },
@@ -225,7 +252,7 @@ async function loadProductPreviewLines(productId: string): Promise<CartLineForCo
   });
   if (!availability.isAvailable) return [];
 
-  return withGstInclusiveUnitPrices([
+  return gstInclusiveCouponLines([
     {
       productId: String(product.id),
       variantId: String(variant.id),
@@ -236,7 +263,7 @@ async function loadProductPreviewLines(productId: string): Promise<CartLineForCo
       weightGrams: Number(variant.weightGrams ?? 500),
       isCustomerVisible: true,
     },
-  ]);
+  ], await defaultShippingState(userId));
 }
 
 async function assertVendorOwnsScopeProducts(
@@ -952,7 +979,7 @@ export class CouponsService {
   > {
     const limit = opts.limit ?? 5;
     const lines = opts.productId
-      ? await loadProductPreviewLines(opts.productId)
+      ? await loadProductPreviewLines(opts.productId, userId)
       : userId
         ? (await loadCartLines(userId)).lines
         : [];

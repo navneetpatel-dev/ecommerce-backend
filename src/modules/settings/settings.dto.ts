@@ -31,6 +31,10 @@ export const UpdateSettingsSchema = z.object({
   promotionalPointsTtlDays: z.number().int().min(0).default(0),
   refundSlaBusinessDays: z.number().int().positive().max(30).default(7),
   deliveryAgentPerTaskEarning: z.number().min(0).default(20),
+  deliveryAgentTdsRatePercent: z.number().min(0).max(100).default(1),
+  deliveryAgentTdsNoPanRatePercent: z.number().min(0).max(100).default(20),
+  deliveryAgentTdsSingleThreshold: z.number().min(0).default(30000),
+  deliveryAgentTdsAnnualThreshold: z.number().min(0).default(100000),
   /** Master switch for the automated weekly admin report email digest. */
   scheduledReportsEnabled: z.boolean().default(false),
   /** Report catalog `type` keys (see reports.constants ADMIN_SCHEDULABLE_REPORT_TYPES) to include. */

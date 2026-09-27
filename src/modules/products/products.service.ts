@@ -241,18 +241,29 @@ export async function productDisplayPrice(categoryId: string | null, basePrice: 
 export { gstRuleResolver, priceWithRuleGst, type GstRateRule } from '@modules/tax/gstPricing';
 
 /**
- * The MRP includes GST, so it may not be below what the customer pays: the listed
- * (pre-GST) price with GST at the category's rate.
+ * The MRP includes GST and is printed for the product, so no piece may sell above it:
+ * every price it is sold at (each variant's, or the product's own without variants),
+ * with GST at the category's rate — the band rate for a piece above the band — must be
+ * within it.
  */
-async function assertMrpCoversGstPrice(
+async function assertMrpCoversGstPrices(
   categoryId: string | null,
-  basePrice: unknown,
+  prices: unknown[],
   compareAtPrice: number | null,
+  message: string = ERROR_MESSAGES.PRODUCT_COMPARE_AT_BELOW_PRICE_WITH_GST,
 ): Promise<void> {
-  if (compareAtPrice == null) return;
-  if (roundMoney(compareAtPrice) < (await productDisplayPrice(categoryId, basePrice))) {
-    throw new ValidationError(ERROR_MESSAGES.PRODUCT_COMPARE_AT_BELOW_PRICE_WITH_GST);
+  if (compareAtPrice == null || prices.length === 0) return;
+  const rule = await taxService.getGstRateRule(categoryId ?? undefined);
+  const mrpPaise = toPaise(roundMoney(compareAtPrice));
+  if (prices.some((price) => toPaise(priceWithRuleGst(rule, price)) > mrpPaise)) {
+    throw new ValidationError(message);
   }
+}
+
+/** The prices a product sells at: its variants', or its own when it has none. */
+async function sellingPrices(productId: string, ownPrice: unknown, transaction: Transaction): Promise<unknown[]> {
+  const variants = await ProductVariant.findAll({ where: { productId }, attributes: ['price'], transaction });
+  return variants.length > 0 ? variants.map((variant) => variant.price) : [ownPrice];
 }
 
 export async function refreshProductDisplayPrice(productId: string, transaction?: Transaction): Promise<void> {
@@ -344,7 +355,7 @@ export class ProductsService {
       }
 
       await categoriesService.assertActiveCategory(data.categoryId, t);
-      await assertMrpCoversGstPrice(data.categoryId, data.basePrice, data.compareAtPrice ?? null);
+      await assertMrpCoversGstPrices(data.categoryId, [data.basePrice], data.compareAtPrice ?? null);
 
       const product = await productsRepository.create({
         ...productFields,
@@ -610,7 +621,11 @@ export class ProductsService {
         productFields.compareAtPrice !== undefined ||
         productFields.categoryId !== undefined
       ) {
-        await assertMrpCoversGstPrice(productFields.categoryId ?? product.categoryId, nextBasePrice, nextCompareAt);
+        await assertMrpCoversGstPrices(
+          productFields.categoryId ?? product.categoryId,
+          await sellingPrices(id, nextBasePrice, t),
+          nextCompareAt,
+        );
       }
 
       if (productFields.name) {
@@ -876,6 +891,14 @@ export class ProductsService {
         throw new ValidationError('SKU already exists');
       }
 
+      // A piece may not sell above the product's MRP (which includes GST).
+      await assertMrpCoversGstPrices(
+        product.categoryId,
+        [data.price],
+        product.compareAtPrice == null ? null : Number(product.compareAtPrice),
+        ERROR_MESSAGES.PRODUCT_VARIANT_ABOVE_MRP,
+      );
+
       const variant = await ProductVariant.create({
         productId,
         ...data,
@@ -890,6 +913,19 @@ export class ProductsService {
     return sequelize.transaction(async (t) => {
       const variant = await ProductVariant.findByPk(variantId, { transaction: t });
       if (!variant) throw new NotFoundError('ProductVariant');
+
+      if (data.price !== undefined) {
+        const product = await Product.findByPk(variant.productId, {
+          attributes: ['id', 'categoryId', 'compareAtPrice'],
+          transaction: t,
+        });
+        await assertMrpCoversGstPrices(
+          product?.categoryId ?? null,
+          [data.price],
+          product?.compareAtPrice == null ? null : Number(product.compareAtPrice),
+          ERROR_MESSAGES.PRODUCT_VARIANT_ABOVE_MRP,
+        );
+      }
 
       await variant.update(data, { transaction: t });
       if (data.price !== undefined) await syncProductBasePrice(variant.productId, t);

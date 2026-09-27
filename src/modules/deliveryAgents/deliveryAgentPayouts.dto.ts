@@ -27,6 +27,14 @@ export const UpdateBankDetailsSchema = z.object({
   accountNumber: z.string().trim().min(4).max(34),
   ifscCode: z.string().trim().toUpperCase().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, 'Invalid IFSC code'),
   upiId: z.string().trim().max(120).optional().nullable(),
+  /** For TDS u/s 194C: without a PAN, s.206AA's higher rate applies. */
+  pan: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^[A-Z]{5}[0-9]{4}[A-Z]$/, 'Invalid PAN')
+    .optional()
+    .nullable(),
 });
 
 export type MarkAgentPayoutPaidRequest = z.infer<typeof MarkAgentPayoutPaidSchema>;

@@ -1,5 +1,5 @@
 import { lineSubtotal } from '@modules/pricing/displayMoney';
-import { roundMoney } from '@modules/pricing/money';
+import { fromPaise, roundMoney, toPaise } from '@modules/pricing/money';
 import { resolveShippingDisplayKey } from '@modules/checkout/checkoutOrderTotals';
 import { shippingService, type ShippingQuoteRate } from './shipping.service';
 import { computeVendorShippingWeightGrams } from './shippingWeight';
@@ -8,6 +8,8 @@ export type VendorShippingLine = {
   unitPrice: number;
   quantity: number;
   weightGrams?: number | null;
+  /** The line's value when it is not simply price × quantity (GST-inclusive, as billed). */
+  lineAmountPaise?: number;
 };
 
 export type VendorShippingDestination = {
@@ -29,7 +31,13 @@ export async function resolveVendorShippingQuote(input: {
   method: 'STANDARD' | 'EXPRESS';
   lines: VendorShippingLine[];
 }): Promise<VendorShippingQuote> {
-  const subtotal = roundMoney(input.lines.reduce((sum, line) => sum + lineSubtotal(line.unitPrice, line.quantity), 0));
+  // Summed in paise: a float sum can land a paisa under an exact threshold.
+  const subtotal = fromPaise(
+    input.lines.reduce(
+      (sum, line) => sum + (line.lineAmountPaise ?? toPaise(lineSubtotal(line.unitPrice, line.quantity))),
+      0,
+    ),
+  );
   const weightGrams = computeVendorShippingWeightGrams(
     input.lines.map((line) => ({
       quantity: line.quantity,

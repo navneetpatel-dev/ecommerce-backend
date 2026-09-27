@@ -51,6 +51,7 @@ export async function resolveCartShippingPreviewForCoupon(
         unitPrice: line.unitPrice,
         quantity: line.quantity,
         weightGrams: line.weightGrams,
+        lineAmountPaise: line.lineAmountPaise,
       })),
     });
     byVendorShipping[vendorId] = shipping.shippingCost;

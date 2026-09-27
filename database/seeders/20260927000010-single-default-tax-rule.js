@@ -6,7 +6,8 @@
  * which made the fallback GST arbitrary. Every other default rule is soft-deleted, as the
  * admin "delete rule" does, and every product's GST-inclusive price is recomputed (which
  * also fills it in for products seeded after the display-price migration). Seeded MRPs
- * below that price are given GST too (the MRP includes GST).
+ * that fall short of any variant's price with GST are given GST too (the MRP includes GST
+ * and no piece may sell above it).
  *
  * Safe to re-run.
  */
@@ -61,7 +62,7 @@ module.exports = {
     await refreshProductDisplayPrices(queryInterface);
     console.log('✓ Product GST-inclusive prices recomputed');
     const aligned = await alignMrpWithGstPrices(queryInterface);
-    console.log(`✓ ${aligned} MRP(s) below the GST-inclusive price given GST`);
+    console.log(`✓ ${aligned} MRP(s) below a variant's GST-inclusive price given GST`);
   },
 
   // The removed rules were duplicates that made the default GST arbitrary; they are not

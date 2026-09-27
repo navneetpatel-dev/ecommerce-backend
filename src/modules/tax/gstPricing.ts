@@ -31,16 +31,6 @@ export function gstRuleResolver(): (categoryId: string | null | undefined) => Pr
   };
 }
 
-/** Lines with each unit price as the customer pays it (GST included), for coupon and threshold checks. */
-export async function withGstInclusiveUnitPrices<T extends { categoryId: string | null; unitPrice: number }>(
-  lines: T[],
-  ruleFor: (categoryId: string | null | undefined) => Promise<GstRateRule> = gstRuleResolver(),
-): Promise<T[]> {
-  return Promise.all(
-    lines.map(async (line) => ({ ...line, unitPrice: priceWithRuleGst(await ruleFor(line.categoryId), line.unitPrice) })),
-  );
-}
-
 /** One line as the pricing engine sees it: pre-GST unit price and its GST rule. */
 export type GstRatedLine = {
   unitPricePaise: Paise;
