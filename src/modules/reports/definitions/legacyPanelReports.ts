@@ -16,11 +16,18 @@ import {
   sqlFrozenPaise,
   sqlVendorNetPayoutPaise,
   COMMISSION_STATUS,
-  DISCOUNT_BEARER,
 } from '../engine/queryHelpers';
 import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
+import { queryOrderRates } from '../engine/orderRates';
 import { roundMoney } from '@modules/pricing/money';
-import { GMV_SUB_ORDER_SQL, sqlGmvPaise, sqlLedgerOnPaidOrder } from '@modules/pricing/frozenMoneySql';
+import {
+  GMV_SUB_ORDER_SQL,
+  PAID_OR_COD_ORDER_SQL,
+  sqlGmvPaise,
+  sqlLedgerOnPaidOrder,
+  sqlLedgerPlatformDiscountPaise,
+  sqlLedgerVendorDiscountPaise,
+} from '@modules/pricing/frozenMoneySql';
 import { vendorPayablePaise } from '../engine/vendorPayable';
 import { sqlIstDay } from '@modules/pricing/istCalendar';
 import { COMMISSION_REFERENCE_TYPE, PAYMENT_STATUS } from '@core/constants/statuses';
@@ -59,20 +66,13 @@ function fifoPurchasedRemainingSql(alias = 'us'): string {
 
 export function walletLiabilitySelectSql(): string {
   return `
-    WITH active_users AS (
-      SELECT DISTINCT "userId"
-      FROM wallet_ledgers
-      WHERE "deletedAt" IS NULL
-        AND "createdAt" BETWEEN :from AND :to
-    ),
-    ${walletLiabilityUserSourcesCte()},
+    WITH ${walletLiabilityUserSourcesCte()},
     latest AS (
       SELECT DISTINCT ON (wl."userId")
         wl."userId" AS "userId",
         wl."balanceAfter"::numeric AS balance,
         wl."createdAt" AS "asOf"
       FROM wallet_ledgers wl
-      INNER JOIN active_users au ON au."userId" = wl."userId"
       WHERE wl."deletedAt" IS NULL
         AND wl."createdAt" <= :to
       ORDER BY wl."userId", wl."createdAt" DESC
@@ -89,23 +89,20 @@ export function walletLiabilitySelectSql(): string {
   `;
 }
 
+/**
+ * Wallet liability as of the range's end: every customer's balance then, whether or not
+ * their wallet moved within the range — the same set the points totals count.
+ */
 export async function walletLiabilityTotals(filters: {
   from: Date;
   to: Date;
 }): Promise<{ customerCount: number; totalLiability: number }> {
   const [[totals]] = (await sequelize.query(
-    `WITH active_users AS (
-       SELECT DISTINCT "userId"
-       FROM wallet_ledgers
-       WHERE "deletedAt" IS NULL
-         AND "createdAt" BETWEEN :from AND :to
-     ),
-     latest AS (
+    `WITH latest AS (
        SELECT DISTINCT ON (wl."userId")
          wl."userId",
          wl."balanceAfter"
        FROM wallet_ledgers wl
-       INNER JOIN active_users au ON au."userId" = wl."userId"
        WHERE wl."deletedAt" IS NULL
          AND wl."createdAt" <= :to
        ORDER BY wl."userId", wl."createdAt" DESC
@@ -223,18 +220,11 @@ async function walletLiabilityQuery(filters: ReportFilters) {
   let customerCount = knownTotal ?? 0;
   if (!skipCount) {
     const [[totals]] = (await sequelize.query(
-      `WITH active_users AS (
-         SELECT DISTINCT "userId"
-         FROM wallet_ledgers
-         WHERE "deletedAt" IS NULL
-           AND "createdAt" BETWEEN :from AND :to
-       ),
-       latest AS (
+      `WITH latest AS (
          SELECT DISTINCT ON (wl."userId")
            wl."userId",
            wl."balanceAfter"
          FROM wallet_ledgers wl
-         INNER JOIN active_users au ON au."userId" = wl."userId"
          WHERE wl."deletedAt" IS NULL
            AND wl."createdAt" <= :to
          ORDER BY wl."userId", wl."createdAt" DESC
@@ -420,27 +410,24 @@ async function cashbackWriteOffExport(
 
 async function platformAnalyticsQuery(filters: ReportFilters) {
   assertReportRange(filters);
-  const [rangeStats] = await sequelize.query<{
-    orderCount: string;
-    customerCount: string;
-    cancelledCount: string;
-    returnCount: string;
-  }>(
-    `
-    SELECT
-      COUNT(*)::int AS "orderCount",
-      COUNT(DISTINCT o."userId")::int AS "customerCount",
-      COUNT(*) FILTER (WHERE o.status = 'CANCELLED')::int AS "cancelledCount",
-      0::int AS "returnCount"
-    FROM orders o
-    WHERE o."createdAt" BETWEEN :from AND :to
-      AND o."deletedAt" IS NULL
-    `,
-    {
-      replacements: { from: filters.from, to: filters.to },
-      type: QueryTypes.SELECT,
-    },
-  );
+  // Orders actually placed in the range (COD, or paid online — not abandoned or failed
+  // checkouts), and cancellation / return rates on their parts (engine/orderRates).
+  const [rangeStats, rates] = await Promise.all([
+    sequelize.query<{ customerCount: string }>(
+      `
+      SELECT COUNT(DISTINCT o."userId")::int AS "customerCount"
+      FROM orders o
+      WHERE o."createdAt" BETWEEN :from AND :to
+        AND o."deletedAt" IS NULL
+        AND ${PAID_OR_COD_ORDER_SQL}
+      `,
+      {
+        replacements: { from: filters.from, to: filters.to },
+        type: QueryTypes.SELECT,
+      },
+    ),
+    queryOrderRates({ from: filters.from, to: filters.to }),
+  ]);
   const [gmvStats] = await sequelize.query<{
     gmvPaise: string;
     paidGmvPaise: string;
@@ -463,23 +450,12 @@ async function platformAnalyticsQuery(filters: ReportFilters) {
       type: QueryTypes.SELECT,
     },
   );
-  const stats = rangeStats ?? {
-    orderCount: '0',
-    customerCount: '0',
-    cancelledCount: '0',
-    returnCount: '0',
-  };
-  const orderCount = Number(stats.orderCount ?? 0);
   const gmvPaise = Number(gmvStats?.gmvPaise ?? 0);
   const gmvOrderCount = Number(gmvStats?.gmvOrderCount ?? 0);
   const gmv = fromPaise(gmvPaise);
   const paidGmv = fromPaise(Number(gmvStats?.paidGmvPaise ?? 0));
   // AOV averages over the orders that contribute GMV, as on the admin dashboard.
   const aov = gmvOrderCount > 0 ? fromPaise(Math.round(gmvPaise / gmvOrderCount)) : 0;
-  const cancelRate =
-    orderCount > 0
-      ? Math.round((Number(stats.cancelledCount ?? 0) / orderCount) * 10_000) / 100
-      : 0;
 
   const orderVolumeRows = await sequelize.query<{ date: string; count: string; revenuePaise: string }>(
     `SELECT to_char(${sqlIstDay('o."createdAt"')}, 'YYYY-MM-DD') AS date,
@@ -501,9 +477,11 @@ async function platformAnalyticsQuery(filters: ReportFilters) {
     { metric: 'GMV (in range)', value: gmv, extra: null },
     { metric: 'Paid GMV (in range)', value: paidGmv, extra: null },
     { metric: 'AOV (in range)', value: aov, extra: null },
-    { metric: 'Orders (in range)', value: orderCount, extra: null },
-    { metric: 'Customers (in range)', value: Number(stats.customerCount ?? 0), extra: null },
-    { metric: 'Cancellation rate % (in range)', value: cancelRate, extra: null },
+    { metric: 'Orders (in range)', value: rates.placedOrders, extra: null },
+    { metric: 'Customers (in range)', value: Number(rangeStats[0]?.customerCount ?? 0), extra: null },
+    { metric: 'Cancellation rate % (in range)', value: rates.cancellationRate, extra: null },
+    { metric: 'Returns (in range)', value: rates.returnCount, extra: null },
+    { metric: 'Return rate % (in range)', value: rates.returnRate, extra: null },
     ...orderVolumeRows.map((row) => ({
       metric: `Volume ${row.date}`,
       value: Number(row.count),
@@ -549,7 +527,6 @@ async function vendorSummaryQuery(filters: ReportFilters) {
   const netExpr = sqlVendorNetPayoutPaise('cl');
   const taxableExpr = sqlFrozenPaise('cl', 'taxableAmountPaise');
   const tcsExpr = sqlFrozenPaise('cl', 'tcsAmountPaise');
-  const discountExpr = sqlFrozenPaise('cl', 'discountAmountPaise');
 
   const [[rows], upcoming] = await Promise.all([
     sequelize.query(
@@ -560,8 +537,12 @@ async function vendorSummaryQuery(filters: ReportFilters) {
         COALESCE(SUM(${commissionExpr}), 0)::bigint AS "commissionPaise",
         COALESCE(SUM(${tcsExpr}), 0)::bigint AS "tcsPaise",
         COALESCE(SUM(${netExpr}), 0)::bigint AS "netPaise",
-        COALESCE(SUM(CASE WHEN cl."discountBearer" = '${DISCOUNT_BEARER.VENDOR}' THEN ${discountExpr} ELSE 0 END), 0)::bigint AS "vendorDiscountPaise",
-        COALESCE(SUM(CASE WHEN cl."discountBearer" IS DISTINCT FROM '${DISCOUNT_BEARER.VENDOR}' THEN ${discountExpr} ELSE 0 END), 0)::bigint AS "platformDiscountPaise",
+        -- Each sale's (or return's) discount split between the vendor's own coupons and
+        -- the platform's, whatever the ledger's single bearer; not cashback rows.
+        COALESCE(SUM(CASE WHEN cl."referenceType" IS NULL OR cl."referenceType" = :clawback
+          THEN ${sqlLedgerVendorDiscountPaise('cl')} ELSE 0 END), 0)::bigint AS "vendorDiscountPaise",
+        COALESCE(SUM(CASE WHEN cl."referenceType" IS NULL OR cl."referenceType" = :clawback
+          THEN ${sqlLedgerPlatformDiscountPaise('cl')} ELSE 0 END), 0)::bigint AS "platformDiscountPaise",
         (
           SELECT COALESCE(SUM(ROUND(p.amount::numeric * 100)), 0)::bigint
           FROM payouts p
@@ -754,7 +735,7 @@ export const legacyPanelReports: ReportDefinition[] = [
     columns: [
       { key: 'metric', labelKey: 'metric' },
       { key: 'value', labelKey: 'value' },
-      { key: 'extra', labelKey: 'revenue', format: 'currency' },
+      { key: 'extra', labelKey: 'gmv', format: 'currency' },
     ],
     query: platformAnalyticsQuery,
     exportQuery: createSingleShotExportQuery(platformAnalyticsQuery),
@@ -789,7 +770,7 @@ export const legacyPanelReports: ReportDefinition[] = [
     financial: true,
     columns: [
       { key: 'vendorId', labelKey: 'vendorId' },
-      { key: 'sales', labelKey: 'sales', format: 'currency' },
+      { key: 'sales', labelKey: 'netSales', format: 'currency' },
       { key: 'commissionDeducted', labelKey: 'commissionDeducted', format: 'currency' },
       { key: 'tcsDeducted', labelKey: 'tcsDeducted', format: 'currency' },
       { key: 'discountOwnCoupons', labelKey: 'discountOwnCoupons', format: 'currency' },

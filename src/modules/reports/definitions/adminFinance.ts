@@ -7,15 +7,18 @@ import {
   pagedSqlQuery,
   computeReconciliationSummary,
   sqlFrozenPaise,
-  DISCOUNT_BEARER,
   COMMISSION_STATUS,
 } from '../engine/queryHelpers';
 import {
   GMV_SUB_ORDER_SQL,
   PAID_OR_COD_ORDER_SQL,
   sqlLedgerOnPaidOrder,
+  sqlLedgerPlatformDiscountPaise,
+  sqlLedgerPlatformGstPaise,
+  sqlLedgerVendorDiscountPaise,
   sqlLineSubtotalPaise,
 } from '@modules/pricing/frozenMoneySql';
+import { COMMISSION_REFERENCE_TYPE } from '@core/constants/statuses';
 import { IST_TIME_ZONE } from '@modules/pricing/istCalendar';
 import { roundMoney } from '@modules/pricing/money';
 import { vendorPayablePaise } from '../engine/vendorPayable';
@@ -740,8 +743,8 @@ function commissionRevenueSelectSql(): string {
     SELECT
       s."vendorId"::text AS "vendorId",
       MAX(v."businessName") AS "vendorName",
-      p."categoryId"::text AS "categoryId",
-      COALESCE(p."categoryId"::text, '') AS "categorySort",
+      (COALESCE(oi."categoryId", p."categoryId"))::text AS "categoryId",
+      COALESCE((COALESCE(oi."categoryId", p."categoryId"))::text, '') AS "categorySort",
       ${periodExpr} AS period,
       SUM(oi."commissionAmountPaise")::bigint AS "commissionPaise"
     FROM order_items oi
@@ -754,8 +757,8 @@ function commissionRevenueSelectSql(): string {
       AND o."createdAt" BETWEEN :from AND :to
       AND ${GMV_SUB_ORDER_SQL}
       AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
-      AND (:categoryId::uuid IS NULL OR p."categoryId" = :categoryId)
-    GROUP BY s."vendorId", p."categoryId", ${periodExpr}
+      AND (:categoryId::uuid IS NULL OR COALESCE(oi."categoryId", p."categoryId") = :categoryId)
+    GROUP BY s."vendorId", COALESCE(oi."categoryId", p."categoryId"), ${periodExpr}
   `;
 }
 
@@ -875,49 +878,64 @@ async function couponDiscountCost(filters: ReportFilters) {
   assertReportRange(filters);
   return pagedSqlQuery({
     selectSql: couponDiscountSelectSql(),
-    orderBySql: `"vendorName" ASC, "discountBearer" ASC`,
+    orderBySql: `"vendorName" ASC, "vendorId" ASC`,
     replacements: sqlReplacements(filters),
     filters,
     mapRow: mapCouponDiscountRow,
   });
 }
 
+/**
+ * What coupons cost, per vendor, for ledgers created in the range on sales that count:
+ * each ledger's discount split between the vendor and the platform (a stacked order
+ * carries both, whatever the ledger's single bearer), the GST the platform pays on its
+ * share, and the shipping the coupons waived (the platform's cost). Discounts exclude
+ * GST; shipping is as charged. Returns after payout take their share back.
+ */
 function couponDiscountSelectSql(): string {
-  const discountExpr = sqlFrozenPaise('cl', 'discountAmountPaise');
-  const bearerExpr = `CASE
-    WHEN cl."discountBearer" = '${DISCOUNT_BEARER.VENDOR}' THEN '${DISCOUNT_BEARER.VENDOR}'
-    ELSE '${DISCOUNT_BEARER.PLATFORM}'
-  END`;
+  const saleOrReturn = `(cl."referenceType" IS NULL OR cl."referenceType" = '${COMMISSION_REFERENCE_TYPE.RETURN_CLAWBACK}')`;
   return `
     SELECT
       cl."vendorId"::text AS "vendorId",
       MAX(v."businessName") AS "vendorName",
-      ${bearerExpr} AS "discountBearer",
-      SUM(${discountExpr})::bigint AS "discountPaise"
+      SUM(${sqlLedgerVendorDiscountPaise('cl')})::bigint AS "vendorDiscountPaise",
+      SUM(${sqlLedgerPlatformDiscountPaise('cl')})::bigint AS "platformDiscountPaise",
+      SUM(${sqlLedgerPlatformGstPaise('cl')})::bigint AS "platformGstPaise",
+      SUM(CASE WHEN cl."referenceType" IS NULL
+        THEN COALESCE(s."shippingDiscountAmountPaise", 0) ELSE 0 END)::bigint AS "freeShippingPaise"
     FROM commission_ledgers cl
     INNER JOIN vendors v ON v.id = cl."vendorId" AND v."deletedAt" IS NULL
+    LEFT JOIN sub_orders s ON s.id = cl."subOrderId"
     WHERE cl."deletedAt" IS NULL
       AND cl."createdAt" BETWEEN :from AND :to
       AND cl.status <> '${COMMISSION_STATUS.CLAWED_BACK}'
+      AND ${saleOrReturn}
       AND ${sqlLedgerOnPaidOrder('cl')}
       AND (:vendorId::uuid IS NULL OR cl."vendorId" = :vendorId)
-      AND (${discountExpr}) > 0
-    GROUP BY cl."vendorId", ${bearerExpr}
+    GROUP BY cl."vendorId"
+    HAVING SUM(cl."discountAmountPaise") <> 0
+      OR SUM(CASE WHEN cl."referenceType" IS NULL
+        THEN COALESCE(s."shippingDiscountAmountPaise", 0) ELSE 0 END) <> 0
   `;
 }
 
 function mapCouponDiscountRow(row: Record<string, unknown>) {
+  const platformPaise = Number(row.platformDiscountPaise ?? 0);
+  const platformGstPaise = Number(row.platformGstPaise ?? 0);
+  const freeShippingPaise = Number(row.freeShippingPaise ?? 0);
   return {
     vendorId: String(row.vendorId ?? ''),
     vendorName: String(row.vendorName ?? ''),
-    discountBearer: String(row.discountBearer ?? DISCOUNT_BEARER.PLATFORM),
-    discountAmount: fromPaise(Number(row.discountPaise ?? 0)),
+    vendorDiscount: fromPaise(Number(row.vendorDiscountPaise ?? 0)),
+    platformDiscount: fromPaise(platformPaise),
+    platformDiscountGst: fromPaise(platformGstPaise),
+    freeShippingCost: fromPaise(freeShippingPaise),
+    platformCouponCost: fromPaise(platformPaise + platformGstPaise + freeShippingPaise),
   };
 }
 
 const COUPON_DISCOUNT_KEYSET: KeysetOrderCol[] = [
   { column: 'vendorName', direction: 'ASC' },
-  { column: 'discountBearer', direction: 'ASC' },
   { column: 'vendorId', direction: 'ASC' },
 ];
 
@@ -947,7 +965,7 @@ async function gmvSales(filters: ReportFilters) {
       SELECT
         s."vendorId"::text AS "vendorId",
         MAX(v."businessName") AS "vendorName",
-        p."categoryId"::text AS "categoryId",
+        (COALESCE(oi."categoryId", p."categoryId"))::text AS "categoryId",
         SUM(${sqlLineSubtotalPaise('oi')})::bigint AS "gmvPaise"
       FROM order_items oi
       INNER JOIN sub_orders s ON s.id = oi."subOrderId" AND s."deletedAt" IS NULL
@@ -958,9 +976,9 @@ async function gmvSales(filters: ReportFilters) {
       WHERE oi."deletedAt" IS NULL
         AND o."createdAt" BETWEEN :from AND :to
         AND ${GMV_SUB_ORDER_SQL}
-        AND p."categoryId" = :categoryId
+        AND COALESCE(oi."categoryId", p."categoryId") = :categoryId
         AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
-      GROUP BY s."vendorId", p."categoryId"
+      GROUP BY s."vendorId", COALESCE(oi."categoryId", p."categoryId")
     `;
 
     return pagedSqlQuery({
@@ -1030,7 +1048,7 @@ async function gmvSalesExport(
       SELECT
         s."vendorId"::text AS "vendorId",
         MAX(v."businessName") AS "vendorName",
-        p."categoryId"::text AS "categoryId",
+        (COALESCE(oi."categoryId", p."categoryId"))::text AS "categoryId",
         SUM(${sqlLineSubtotalPaise('oi')})::bigint AS "gmvPaise"
       FROM order_items oi
       INNER JOIN sub_orders s ON s.id = oi."subOrderId" AND s."deletedAt" IS NULL
@@ -1041,9 +1059,9 @@ async function gmvSalesExport(
       WHERE oi."deletedAt" IS NULL
         AND o."createdAt" BETWEEN :from AND :to
         AND ${GMV_SUB_ORDER_SQL}
-        AND p."categoryId" = :categoryId
+        AND COALESCE(oi."categoryId", p."categoryId") = :categoryId
         AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
-      GROUP BY s."vendorId", p."categoryId"
+      GROUP BY s."vendorId", COALESCE(oi."categoryId", p."categoryId")
     `;
     const page = await keysetSqlQuery({
       selectSql,
@@ -1389,8 +1407,11 @@ export const adminFinanceReports: ReportDefinition[] = [
     columns: [
       { key: 'vendorId', labelKey: 'vendorId' },
       { key: 'vendorName', labelKey: 'vendorName' },
-      { key: 'discountBearer', labelKey: 'discountBearer' },
-      { key: 'discountAmount', labelKey: 'discountAmount', format: 'currency' },
+      { key: 'vendorDiscount', labelKey: 'vendorDiscount', format: 'currency' },
+      { key: 'platformDiscount', labelKey: 'platformDiscount', format: 'currency' },
+      { key: 'platformDiscountGst', labelKey: 'platformDiscountGst', format: 'currency' },
+      { key: 'freeShippingCost', labelKey: 'freeShippingCost', format: 'currency' },
+      { key: 'platformCouponCost', labelKey: 'platformCouponCost', format: 'currency' },
     ],
     query: couponDiscountCost,
     exportQuery: couponDiscountCostExport,

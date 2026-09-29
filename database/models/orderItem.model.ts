@@ -5,6 +5,8 @@ export class OrderItem extends Model<InferAttributes<OrderItem>, InferCreationAt
   declare id: CreationOptional<string>;
   declare subOrderId: string;
   declare variantId: string;
+  /** The product's category when sold; null on rows written before it was kept. */
+  declare categoryId: CreationOptional<string | null>;
   declare productName: string;
   declare quantity: number;
   declare unitPrice: CreationOptional<number>;
@@ -49,6 +51,7 @@ export const initOrderItemModel = (sequelize: Sequelize) => {
       id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
       subOrderId: { type: DataTypes.UUID, allowNull: false },
       variantId: { type: DataTypes.UUID, allowNull: false },
+      categoryId: { type: DataTypes.UUID, allowNull: true },
       productName: { type: DataTypes.STRING, allowNull: false },
       quantity: { type: DataTypes.INTEGER, allowNull: false },
       unitPrice: paiseBackedRupees('unitPricePaise'),

@@ -7,6 +7,8 @@ import { fromPaise, toPaise } from '@modules/pricing/money';
 import {
   REPORTABLE_ORDER_SQL,
   sqlFrozenPaise,
+  sqlLedgerPlatformDiscountPaise,
+  sqlLedgerVendorDiscountPaise,
   sqlOrderPaymentPaise,
 } from '@modules/pricing/frozenMoneySql';
 import {
@@ -177,7 +179,6 @@ export async function computeReconciliationSummary(filters: {
   const shipDisc = sqlFrozenPaise('s', 'shippingDiscountAmountPaise');
   const subtotalExpr = sqlFrozenPaise('s', 'subtotalPaise');
   const merchDiscExpr = sqlFrozenPaise('s', 'discountAmountPaise');
-  const ledgerDisc = sqlFrozenPaise('cl', 'discountAmountPaise');
   // What a ledger's net holds beyond taxable + GST − commission − TCS: the platform's coupon share.
   const platformFundedExpr = `(cl."netPayoutAmountPaise" - cl."taxableAmountPaise" - cl."taxAmountPaise"
     + cl."commissionAmountPaise" + cl."tcsAmountPaise")`;
@@ -224,14 +225,10 @@ export async function computeReconciliationSummary(filters: {
         COALESCE(SUM(cl."netPayoutAmountPaise"), 0)::bigint AS "netPaise",
         COALESCE(SUM(cl."tcsAmountPaise"), 0)::bigint AS "tcsPaise",
         COALESCE(SUM(${platformFundedExpr}), 0)::bigint AS "platformFundedPaise",
-        COALESCE(SUM(CASE
-          WHEN cl."discountBearer" = '${DISCOUNT_BEARER.VENDOR}' THEN ${ledgerDisc}
-          ELSE 0
-        END), 0)::bigint AS "vendorDiscountPaise",
-        COALESCE(SUM(CASE
-          WHEN cl."discountBearer" IS DISTINCT FROM '${DISCOUNT_BEARER.VENDOR}' THEN ${ledgerDisc}
-          ELSE 0
-        END), 0)::bigint AS "platformDiscountPaise"
+        -- Each ledger's discount split between vendor and platform (a stacked order
+        -- carries both, whatever its single bearer).
+        COALESCE(SUM(${sqlLedgerVendorDiscountPaise('cl')}), 0)::bigint AS "vendorDiscountPaise",
+        COALESCE(SUM(${sqlLedgerPlatformDiscountPaise('cl')}), 0)::bigint AS "platformDiscountPaise"
       FROM commission_ledgers cl
       INNER JOIN scoped_subs s ON s.id = cl."subOrderId"
       WHERE cl."deletedAt" IS NULL

@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import { ORDER_STATUS } from '@core/constants/statuses';
 import { paiseBackedRupees } from '@modules/pricing/paiseBackedRupees';
 import type { TaxInvoiceSnapshot } from '@modules/pricing/taxInvoiceSnapshot';
 import type { PlatformInvoiceSnapshot } from '@modules/pricing/platformFeeInvoice';
@@ -51,6 +52,8 @@ export class SubOrder extends Model<InferAttributes<SubOrder>, InferCreationAttr
   declare shippingInvoiceSnapshot: CreationOptional<PlatformInvoiceSnapshot | null>;
   /** Section 52 TCS rate frozen at checkout; the collection is recorded at dispatch. */
   declare tcsRatePercent: CreationOptional<number | null>;
+  /** When the part was cancelled; set by the model whenever its status becomes CANCELLED. */
+  declare cancelledAt: CreationOptional<Date | null>;
   declare trackingId: string | null;
   declare createdBy: string | null;
   declare updatedBy: string | null;
@@ -113,6 +116,7 @@ export const initSubOrderModel = (sequelize: Sequelize) => {
       taxInvoiceSnapshot: { type: DataTypes.JSONB, allowNull: true },
       shippingInvoiceSnapshot: { type: DataTypes.JSONB, allowNull: true },
       tcsRatePercent: { type: DataTypes.DECIMAL(6, 3), allowNull: true },
+      cancelledAt: { type: DataTypes.DATE, allowNull: true },
       trackingId: { type: DataTypes.STRING, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
@@ -121,7 +125,20 @@ export const initSubOrderModel = (sequelize: Sequelize) => {
       updatedAt: DataTypes.DATE,
       deletedAt: DataTypes.DATE,
     },
-    { sequelize, tableName: 'sub_orders', timestamps: true, paranoid: true },
+    {
+      sequelize,
+      tableName: 'sub_orders',
+      timestamps: true,
+      paranoid: true,
+      hooks: {
+        // Every cancel path (customer, vendor, admin, failed payment) records the time.
+        beforeSave(subOrder) {
+          if (subOrder.changed('status') && subOrder.status === ORDER_STATUS.CANCELLED && !subOrder.cancelledAt) {
+            subOrder.cancelledAt = new Date();
+          }
+        },
+      },
+    },
   );
   return SubOrder;
 };

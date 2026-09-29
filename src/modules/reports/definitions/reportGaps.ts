@@ -6,7 +6,10 @@ import {
   REFUND_STATUS,
 } from '@core/constants/statuses';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
+import { QueryTypes } from 'sequelize';
 import { sequelize } from '@database/models';
+import { toPaise } from '@modules/pricing/money';
+import { gstInclusiveValuePaise, gstRuleResolver } from '@modules/tax/gstPricing';
 import { WalletLedger } from '@database/models/walletLedger.model';
 import { SupportTicket } from '@database/models/supportTicket.model';
 import { Vendor } from '@database/models/vendor.model';
@@ -365,11 +368,13 @@ async function giftCardLiability(filters: ReportFilters) {
   assertReportRange(filters);
   const paid = `g.status::text IN ('${GIFT_CARD_STATUS.ACTIVE}', '${GIFT_CARD_STATUS.REDEEMED}', '${GIFT_CARD_STATUS.EXPIRED}')`;
   const amountPaise = 'ROUND(g.amount * 100)';
+  // Sold when paid for, not when checkout started (older cards: their creation).
+  const paidAtSql = 'COALESCE(g."paidAt", g."createdAt")';
   const [rows] = await sequelize.query(
     `
     SELECT 'SOLD'::text AS line, COUNT(*)::int AS "cardCount", COALESCE(SUM(${amountPaise}), 0)::bigint AS "amountPaise"
       FROM gift_cards g
-     WHERE g."deletedAt" IS NULL AND ${paid} AND g."createdAt" BETWEEN :from AND :to
+     WHERE g."deletedAt" IS NULL AND ${paid} AND ${paidAtSql} BETWEEN :from AND :to
     UNION ALL
     SELECT 'REDEEMED'::text, COUNT(*)::int, COALESCE(SUM(${amountPaise}), 0)::bigint
       FROM gift_cards g
@@ -383,7 +388,7 @@ async function giftCardLiability(filters: ReportFilters) {
     SELECT 'OUTSTANDING_AT_END'::text, COUNT(*)::int, COALESCE(SUM(${amountPaise}), 0)::bigint
       FROM gift_cards g
      WHERE g."deletedAt" IS NULL AND ${paid}
-       AND g."createdAt" <= :to
+       AND ${paidAtSql} <= :to
        AND (g."redeemedAt" IS NULL OR g."redeemedAt" > :to)
        AND g."expiresAt" > :to
     `,
@@ -666,11 +671,7 @@ async function abandonedCartReport(filters: ReportFilters) {
       u.email AS "userEmail",
       u.name AS "userName",
       c."updatedAt" AS "lastActivityAt",
-      COUNT(ci.id)::int AS "itemCount",
-      -- A cart has no frozen price by design, so live variant price IS the DB truth
-      -- here. This is merchandise value only — no tax, shipping or discount — which is
-      -- why the column is labelled as an estimate.
-      COALESCE(SUM(ci.quantity * pv.price), 0)::float AS "cartValue"
+      COUNT(ci.id)::int AS "itemCount"
     FROM carts c
     INNER JOIN cart_items ci ON ci."cartId" = c.id AND ci."deletedAt" IS NULL
     INNER JOIN product_variants pv ON pv.id = ci."variantId" AND pv."deletedAt" IS NULL
@@ -686,7 +687,7 @@ async function abandonedCartReport(filters: ReportFilters) {
       )
     GROUP BY c.id, c."userId", u.email, u.name, c."updatedAt"
   `;
-  return pagedSqlQuery({
+  const page = await pagedSqlQuery({
     selectSql,
     orderBySql: `"lastActivityAt" DESC`,
     replacements: sqlReplacements(filters),
@@ -698,9 +699,52 @@ async function abandonedCartReport(filters: ReportFilters) {
       userName: row.userName ?? '',
       lastActivityAt: row.lastActivityAt,
       itemCount: Number(row.itemCount ?? 0),
-      cartValue: Number(row.cartValue ?? 0),
     }),
   });
+  const valueByCart = await abandonedCartValuesPaise(page.rows.map((row) => String(row.cartId)));
+  return {
+    ...page,
+    rows: page.rows.map((row) => ({
+      ...row,
+      cartValue: fromPaise(valueByCart.get(String(row.cartId)) ?? 0),
+    })),
+  };
+}
+
+/**
+ * Each cart's value as the customer sees it — every piece at today's price with GST
+ * (a cart has no frozen price by design), before coupons and shipping.
+ */
+async function abandonedCartValuesPaise(cartIds: string[]): Promise<Map<string, number>> {
+  const values = new Map<string, number>();
+  if (cartIds.length === 0) return values;
+  const items = await sequelize.query<{
+    cartId: string;
+    quantity: number;
+    price: string;
+    categoryId: string | null;
+  }>(
+    `SELECT ci."cartId" AS "cartId", ci.quantity, pv.price, p."categoryId" AS "categoryId"
+     FROM cart_items ci
+     INNER JOIN product_variants pv ON pv.id = ci."variantId" AND pv."deletedAt" IS NULL
+     INNER JOIN products p ON p.id = pv."productId"
+     WHERE ci."cartId" IN (:cartIds) AND ci."deletedAt" IS NULL`,
+    { replacements: { cartIds }, type: QueryTypes.SELECT },
+  );
+  const ruleFor = gstRuleResolver();
+  for (const item of items) {
+    const rule = await ruleFor(item.categoryId);
+    const valuePaise = gstInclusiveValuePaise([
+      {
+        unitPricePaise: toPaise(Number(item.price ?? 0)),
+        quantity: Number(item.quantity ?? 0),
+        gstPercentage: rule.gstPercentage,
+        gstPriceBand: rule.gstPriceBand,
+      },
+    ]);
+    values.set(item.cartId, (values.get(item.cartId) ?? 0) + valuePaise);
+  }
+  return values;
 }
 
 async function platformInventory(filters: ReportFilters) {
@@ -774,7 +818,15 @@ async function customerAnalytics(filters: ReportFilters) {
       COALESCE(SUM(${sqlOrderKeptPaymentPaise('o')}), 0)::bigint AS "totalSpentPaise",
       MIN(o."createdAt") AS "firstOrderAt",
       MAX(o."createdAt") AS "lastOrderAt",
-      CASE WHEN COUNT(o.id) <= 1 THEN 'NEW' ELSE 'RETURNING' END AS segment
+      -- By the customer's lifetime orders, not those in the range: NEW when their first
+      -- order that counts was placed in the range, RETURNING when they ordered before it.
+      CASE WHEN EXISTS (
+        SELECT 1 FROM orders o
+        WHERE o."userId" = u.id
+          AND o."deletedAt" IS NULL
+          AND o."createdAt" < :from
+          AND ${REPORTABLE_ORDER_SQL}
+      ) THEN 'RETURNING' ELSE 'NEW' END AS segment
     FROM users u
     INNER JOIN orders o ON o."userId" = u.id AND o."deletedAt" IS NULL
     WHERE o."createdAt" BETWEEN :from AND :to

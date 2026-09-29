@@ -403,6 +403,8 @@ export class CheckoutService {
           return {
             id: item.id,
             variantId: item.variantId,
+            // Frozen: category reports keep the category the product was sold under.
+            categoryId: item.variant.product.categoryId ?? null,
             productName: item.variant.product.name,
             quantity: item.quantity,
             unitPrice: line.unitPrice,

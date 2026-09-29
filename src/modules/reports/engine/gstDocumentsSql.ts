@@ -72,7 +72,7 @@ export function gstDocumentLinesSql(): string {
       so."orderId",
       so.id AS "subOrderId",
       (line->>'orderItemId')::uuid AS "orderItemId",
-      p."categoryId",
+      COALESCE(oi."categoryId", p."categoryId") AS "categoryId",
       ${goodsLine('line')},
       (line->>'quantity')::int AS qty,
       (line->>'taxablePaise')::bigint AS "taxablePaise",
@@ -109,7 +109,7 @@ export function gstDocumentLinesSql(): string {
       cn."orderId",
       cn."subOrderId",
       cn."orderItemId",
-      p."categoryId",
+      COALESCE(oi."categoryId", p."categoryId") AS "categoryId",
       COALESCE(inv_line->>'hsnCode', fee_line->>'sac'),
       COALESCE((inv_line->>'gstPercentage')::numeric, (fee_line->>'gstRatePercent')::numeric),
       -COALESCE(

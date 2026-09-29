@@ -88,22 +88,38 @@ parts, sale ledgers and returns; older rows fall back to the taxable value).
 
 ## Phase 5 — Analytics and ops reports
 
-- [ ] **#19** Vendor sales, vendor GST sales, product/category performance exclude
+Status: done (migration `20260929000004` adds `sub_orders.cancelledAt`,
+`order_items.categoryId` and `gift_cards.paidAt`, each backfilled).
+
+- [x] **#19** Vendor sales, vendor GST sales, product/category performance exclude
       cancelled and RTO'd parts.
-- [ ] **#20** One meaning per label: GMV (before discount) vs net sales (after discount).
-- [ ] **#22** Coupon cost: vendor vs platform share per ledger, free-shipping cost,
-      GST-inclusive basis labelled.
-- [ ] **#23** Coupon "discount given" net of returns.
-- [ ] **#28** Admin cancellation / return rates on placed orders.
-- [ ] **#29** Platform analytics return count.
-- [ ] **#30** Wallet liability total includes every balance.
-- [ ] **#31** Cancellations report: no double counting, one amount basis, real
-      cancel time.
-- [ ] **#33** Fulfilment SLA from the shipment's delivered time.
-- [ ] **#34** Customer segment by lifetime orders.
-- [ ] **#35** Customer order history: GST-inclusive coupon savings.
+- [x] **#20** One meaning per label: GMV (before discount) vs net sales (after discount);
+      dashboards say GMV, the performance reports show both.
+- [x] **#22** Coupon cost: vendor vs platform share per ledger (a stacked order carries
+      both), the GST the platform pays on its share, free-shipping cost; labelled
+      excl. GST. Reconciliation and vendor summary use the same split.
+- [x] **#23** Coupon "discount given" net of returns (over each part's discount at
+      checkout).
+- [x] **#28** Admin cancellation / return rates on placed orders: cancelled parts over
+      placed parts; delivered parts with an accepted return over delivered parts.
+- [x] **#29** Platform analytics return count and rate (same helper,
+      `reports/engine/orderRates.ts`).
+- [x] **#30** Wallet liability total includes every balance as of the range end.
+- [x] **#31** Cancellations report: one row per cancelled part, amount incl. GST and
+      shipping, real cancel time (`cancelledAt`), placed orders only.
+- [x] **#33** Fulfilment SLA from the shipment's delivered time (admin, vendor report,
+      vendor dashboard).
+- [x] **#34** Customer segment by lifetime orders.
+- [x] **#35** Customer order history: GST-inclusive coupon savings (as the order page).
 - [x] **#36** Vendor GST sales tax split equals the tax (phase 2: read from the invoice
       and credit-note lines as issued).
-- [ ] **#40** Abandoned cart value GST-inclusive.
-- [ ] **#41** Gift cards sold by paid date.
-- [ ] **#43** Top-vendor share denominator; top categories by frozen category.
+- [x] **#40** Abandoned cart value GST-inclusive.
+- [x] **#41** Gift cards sold by paid date (`paidAt`).
+- [x] **#43** Top-vendor / top-category share of the whole platform GMV; top categories
+      and category reports by the category each line was sold under.
+
+## Notes
+
+- The return fee stays platform income when a vendor overrides its amount: the platform
+  runs the reverse pickup; the vendor setting only sets the fee (#39).
+- Deploy: run migrations `20260929000001` to `20260929000004` in order.
