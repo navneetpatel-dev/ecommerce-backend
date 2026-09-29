@@ -44,11 +44,17 @@ describe('PricingEngine', () => {
     // PLATFORM bearer → commission on pre-discount subtotal
     assert.equal(result.commissionBasePaise, 20000);
     assert.equal(result.commissionPaise, 2000);
-    assert.equal(result.tcsPaise, 180); // 1% of taxable
-    // The vendor remits the GST, so its net includes it; the platform funds this coupon,
-    // so it pays the vendor the ₹20 back: taxable + ₹20 + tax − commission − TCS.
+    // The platform funds this coupon and pays the vendor the ₹20 back, so the vendor's
+    // value of supply is ₹200: its GST (₹36) and TCS (1% = ₹2) are on that value, and the
+    // platform pays the ₹3.60 GST the customer did not.
     assert.equal(result.platformFundedDiscountPaise, 2000);
-    assert.equal(result.netPayoutPaise, 18000 + 2000 + 3240 - 2000 - 180);
+    assert.equal(result.supplyTaxablePaise, 20000);
+    assert.equal(result.supplyTax.total, 3600);
+    assert.equal(result.supplyTax.igst, 3600);
+    assert.equal(result.platformGstSubsidyPaise, 360);
+    assert.equal(result.tcsPaise, 200);
+    // The vendor remits the GST, so its net includes it: supply + GST − commission − TCS.
+    assert.equal(result.netPayoutPaise, 20000 + 3600 - 2000 - 200);
     assert.equal(
       result.lines.reduce((sum, line) => sum + line.netPayoutPaise, 0),
       result.netPayoutPaise,
@@ -94,7 +100,11 @@ describe('PricingEngine', () => {
       tcsRatePercent: 1,
     });
 
-    const left = result.customerTotalPaise + result.platformFundedDiscountPaise;
+    // The platform adds its coupon share and the GST on it to what the customer paid.
+    const left =
+      result.customerTotalPaise +
+      result.platformFundedDiscountPaise +
+      result.platformGstSubsidyPaise;
     const right =
       result.netPayoutPaise +
       result.commissionPaise +
@@ -120,11 +130,13 @@ describe('PricingEngine', () => {
     assert.equal(result.commissionBasePaise, 19000); // subtotal − vendor-borne only
     assert.equal(result.commissionPaise, 1900);
     // The platform's ₹20 share comes back to the vendor; the vendor's own ₹10 does not.
+    // So the value of supply is ₹190: GST ₹34.20, TCS ₹1.90.
     assert.equal(result.platformFundedDiscountPaise, 2000);
-    assert.equal(
-      result.netPayoutPaise,
-      17000 + 2000 + result.tax.total - 1900 - result.tcsPaise,
-    );
+    assert.equal(result.supplyTaxablePaise, 19000);
+    assert.equal(result.supplyTax.total, 3420);
+    assert.equal(result.tax.total, 3060);
+    assert.equal(result.tcsPaise, 190);
+    assert.equal(result.netPayoutPaise, 19000 + 3420 - 1900 - 190);
   });
 
   it('exposes non-zero roundingAdjustmentPaise when line tax drift is corrected', () => {

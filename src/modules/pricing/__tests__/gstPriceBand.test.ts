@@ -9,7 +9,12 @@ import { CreateTaxRuleSchema } from '@modules/tax/tax.dto';
 // Apparel-style band: up to ₹2,500 a piece 5%, above it 18%.
 const band = { thresholdPaise: 250_000, gstPercentageAbove: 18 };
 
-function price(unitPricePaise: number, quantity: number, merchandiseDiscountPaise = 0) {
+function price(
+  unitPricePaise: number,
+  quantity: number,
+  merchandiseDiscountPaise = 0,
+  discountBearer: 'VENDOR' | 'PLATFORM' | null = null,
+) {
   return computeSubOrderBreakdown({
     lines: [{ key: 'l1', unitPricePaise, quantity, gstPercentage: 5, gstPriceBand: band }],
     merchandiseDiscountPaise,
@@ -18,7 +23,7 @@ function price(unitPricePaise: number, quantity: number, merchandiseDiscountPais
     gstPercentage: 5,
     intraState: false,
     commissionRatePercent: 10,
-    discountBearer: null,
+    discountBearer,
     tcsRatePercent: 0,
   });
 }
@@ -43,12 +48,24 @@ describe('GST price band', () => {
     assert.equal(jacket.tax.igst, 72_000);
   });
 
-  it('uses the value after the coupon: a discount can move a piece into the lower band', () => {
-    // ₹2,700 less ₹300 off is ₹2,400 a piece: 5%, not 18%.
-    const discounted = price(270_000, 1, 30_000);
+  it("uses the value of supply: the vendor's own discount can move a piece into the lower band", () => {
+    // ₹2,700 less the vendor's ₹300 off is ₹2,400 a piece: 5%, not 18%.
+    const discounted = price(270_000, 1, 30_000, 'VENDOR');
     assert.equal(discounted.lines[0]!.taxablePaise, 240_000);
     assert.equal(discounted.lines[0]!.tax.gstPercentage, 5);
     assert.equal(discounted.tax.total, 12_000);
+    assert.equal(discounted.supplyTaxablePaise, 240_000);
+  });
+
+  it("a platform-funded coupon does not lower the value of supply, so not the band either", () => {
+    // The platform pays the vendor its ₹300: the piece is still sold for ₹2,700 (18%).
+    const discounted = price(270_000, 1, 30_000, 'PLATFORM');
+    assert.equal(discounted.supplyTaxablePaise, 270_000);
+    assert.equal(discounted.supplyTax.total, 48_600);
+    assert.equal(discounted.lines[0]!.tax.gstPercentage, 18);
+    // The customer pays GST on their ₹2,400; the platform pays the other ₹54.
+    assert.equal(discounted.tax.total, 43_200);
+    assert.equal(discounted.platformGstSubsidyPaise, 5_400);
   });
 
   it('resolves the band from the category tax rule', async () => {

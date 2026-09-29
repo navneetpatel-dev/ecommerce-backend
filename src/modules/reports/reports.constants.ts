@@ -23,6 +23,8 @@ export const TAX_INVOICE_COPY = {
   taxableTotal: 'Taxable total',
   taxTotal: 'Tax total',
   grandTotal: 'Grand total',
+  invoiceValue: 'Invoice value',
+  platformContribution: 'Less: coupon paid by the platform (incl. GST)',
   walletApplied: 'Wallet applied',
   onlinePaid: 'Online / Razorpay',
   cashOnDelivery: 'Cash on delivery',

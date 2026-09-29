@@ -75,8 +75,12 @@ export type TaxInvoiceSource = {
   razorpayAmountPaid?: number;
   /** Cash collected at the door for this invoice (COD). */
   cashOnDeliveryAmount?: number;
-  /** Vendor slice grand total (customerTotal). */
+  /** What the customer pays for this invoice (the invoice value less any platform contribution). */
   totalAmount: number;
+  /** Value of supply + GST, when the platform pays part of it. */
+  invoiceValue?: number;
+  /** The platform's share of a coupon it funds, with the GST on it. */
+  platformContribution?: number;
   buyerName?: string | null;
   shippingAddress?: TaxInvoiceAddress | null;
   seller: TaxInvoiceSeller;
@@ -343,8 +347,12 @@ export function toTaxInvoiceSourceFromSubOrder(
   const items = mapSubOrderItems(subOrder, hsnByItem);
   const vendor = subOrder.vendor;
   const lineTotal = sumRupees(items.map(lineAmount));
-  const totalAmount = subOrder.taxInvoiceSnapshot
-    ? fromPaise(subOrder.taxInvoiceSnapshot.totalPaise)
+  const snapshot = subOrder.taxInvoiceSnapshot;
+  const contributionPaise = Math.max(0, Number(snapshot?.platformContributionPaise ?? 0));
+  // The invoice is the value of supply + GST; the customer pays it less what the platform
+  // pays for a coupon it funds.
+  const totalAmount = snapshot
+    ? fromPaise(snapshot.totalPaise - contributionPaise)
     : roundMoney(subOrder.customerTotal != null ? subOrder.customerTotal : lineTotal);
 
   return {
@@ -356,6 +364,12 @@ export function toTaxInvoiceSourceFromSubOrder(
     paymentStatus: order.paymentStatus,
     ...invoicePaymentSplit(order, totalAmount),
     totalAmount,
+    ...(contributionPaise > 0 && snapshot
+      ? {
+          invoiceValue: fromPaise(snapshot.totalPaise),
+          platformContribution: fromPaise(contributionPaise),
+        }
+      : {}),
     buyerName: order.user?.name ?? null,
     shippingAddress: order.shippingAddress ?? null,
     seller: {
@@ -676,6 +690,12 @@ function paintTaxInvoice(doc: PDFKit.PDFDocument, source: TaxInvoiceSource) {
     { label: COPY.igst, value: formatInvoiceMoney(totals.igst) },
     { label: COPY.taxTotal, value: formatInvoiceMoney(tax) },
   ];
+  if (source.platformContribution && source.invoiceValue != null) {
+    totalLines.push(
+      { label: COPY.invoiceValue, value: formatInvoiceMoney(source.invoiceValue) },
+      { label: COPY.platformContribution, value: `-${formatInvoiceMoney(source.platformContribution)}` },
+    );
+  }
 
   const totalsBoxH = 10 + totalLines.length * 16 + 10 + 36;
   layout.ensure(totalsBoxH + 44);

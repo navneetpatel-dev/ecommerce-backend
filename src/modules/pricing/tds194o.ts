@@ -36,7 +36,7 @@ export async function vendorFinancialYearGrossPaise(
   transaction?: Transaction,
 ): Promise<Paise> {
   const rows = await sequelize.query<{ grossPaise: string | number | null }>(
-    `SELECT COALESCE(SUM(cl."taxableAmountPaise"), 0)::bigint AS "grossPaise"
+    `SELECT COALESCE(SUM(COALESCE(cl."supplyTaxablePaise", cl."taxableAmountPaise")), 0)::bigint AS "grossPaise"
        FROM commission_ledgers cl
        INNER JOIN sub_orders s ON s.id = cl."subOrderId"
        INNER JOIN orders o ON o.id = s."orderId"
@@ -126,7 +126,7 @@ export async function tds194oCatchUp(input: {
   const fyStart = istFinancialYearStart(at);
   const rows = await sequelize.query<{ basePaise: string | number | null; takenPaise: string | number | null }>(
     `SELECT
-       (SELECT COALESCE(SUM(cl."taxableAmountPaise"), 0)::bigint
+       (SELECT COALESCE(SUM(COALESCE(cl."supplyTaxablePaise", cl."taxableAmountPaise")), 0)::bigint
           FROM commission_ledgers cl
           INNER JOIN sub_orders s ON s.id = cl."subOrderId"
           INNER JOIN orders o ON o.id = s."orderId"

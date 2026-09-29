@@ -328,13 +328,11 @@ async function issuePlatformReturnDocuments(
     );
   }
 
-  // Fee kept = what the refund would have been without it, less what was refunded.
+  // Fee kept = the fee, up to what the refund would have been without it (the refund
+  // never goes below zero). Not read from the refund recorded, which a capped wallet or
+  // card share can make smaller.
   const feePaise = toPaise(Number(row.returnShippingFeeAmount ?? 0));
-  const refundedPaise = toPaise(Number(row.refundAmount ?? 0));
-  const keptFeePaise = Math.min(
-    feePaise,
-    Math.max(0, input.goodsPaise + shippingRefundPaise - refundedPaise),
-  );
+  const keptFeePaise = Math.min(feePaise, Math.max(0, input.goodsPaise + shippingRefundPaise));
   if (keptFeePaise > 0 && !row.returnFeeInvoiceSnapshot) {
     const [settings, address] = await Promise.all([
       settingsService.getPlatformSettings(),
@@ -739,14 +737,24 @@ export class ReturnsService {
     const order = await Order.findByPk(orderItem.subOrder.orderId, { transaction: t });
     if (!order) throw new NotFoundError('Order');
 
-    const priorShippingRefund = await ReturnRequest.findOne({
+    // This part's earlier returns: the shipping they refunded and whether the return fee
+    // (charged once per parcel) was already taken.
+    const priorReturns = await ReturnRequest.findAll({
       where: {
         subOrderId: orderItem.subOrderId,
         id: { [Op.ne]: row.id },
-        shippingRefundAmount: { [Op.gt]: 0 },
+        status: { [Op.ne]: RETURN_STATUS.REJECTED },
       },
+      attributes: ['shippingRefundAmount', 'returnShippingFeeAmount'],
       transaction: t,
     });
+    const shippingRefundedPaise = priorReturns.reduce(
+      (sum, prior) => sum + toPaise(Number(prior.shippingRefundAmount ?? 0)),
+      0,
+    );
+    const returnFeeAlreadyCharged = priorReturns.some(
+      (prior) => toPaise(Number(prior.returnShippingFeeAmount ?? 0)) > 0,
+    );
 
     const shippingChargedPaise = Math.max(
       0,
@@ -773,13 +781,18 @@ export class ReturnsService {
       commissionAmountPaise: frozenPaise(orderItem.commissionAmountPaise),
       tcsAmountPaise: frozenPaise(orderItem.tcsAmountPaise),
       netPayoutAmountPaise: frozenPaise(orderItem.netPayoutAmountPaise),
+      supplyTaxablePaise: orderItem.supplyTaxablePaise,
+      supplyTaxPaise: orderItem.supplyTaxPaise,
     });
 
     const reversal = pricingService.reverseLineFromFrozen(frozen, returnQty, {
       reasonCode: row.reasonCode,
       shippingChargedPaise,
       returnShippingFeePaise,
-      shippingAlreadyRefunded: Boolean(priorShippingRefund),
+      shippingRefundedPaise,
+      // The part's goods still standing (reduced in place by earlier returns).
+      standingTaxablePaise: frozenPaise(orderItem.subOrder.taxableAmountPaise),
+      returnFeeAlreadyCharged,
     });
 
     const vendorId = orderItem.subOrder.vendorId;
@@ -843,6 +856,17 @@ export class ReturnsService {
       0,
       frozenPaise(sub.netPayoutAmountPaise) - reversal.refundNetClawbackPaise,
     );
+    // The vendor's supply value and its GST (older rows: the taxable value and tax).
+    const nextSupplyTaxablePaise = Math.max(
+      0,
+      (sub.supplyTaxablePaise != null ? Number(sub.supplyTaxablePaise) : frozenPaise(sub.taxableAmountPaise)) -
+        reversal.refundSupplyTaxablePaise,
+    );
+    const nextSupplyTaxPaise = Math.max(
+      0,
+      (sub.supplyTaxPaise != null ? Number(sub.supplyTaxPaise) : frozenPaise(sub.taxAmountPaise)) -
+        reversal.refundSupplyTaxPaise,
+    );
     const subDisplay = recomputeSubOrderDisplayFields({
       taxableAmount: fromPaise(nextTaxablePaise),
       taxAmount: fromPaise(nextTaxPaise),
@@ -860,6 +884,8 @@ export class ReturnsService {
         commissionAmountPaise: nextCommissionPaise,
         tcsAmountPaise: nextTcsPaise,
         netPayoutAmountPaise: nextNetPaise,
+        supplyTaxablePaise: nextSupplyTaxablePaise,
+        supplyTaxPaise: nextSupplyTaxPaise,
         updatedBy: actorId,
       },
       { transaction: t },
@@ -894,6 +920,8 @@ export class ReturnsService {
             commissionAmountPaise: 0,
             tcsAmountPaise: 0,
             netPayoutAmountPaise: 0,
+            supplyTaxablePaise: 0,
+            supplyTaxPaise: 0,
             updatedBy: actorId,
           }
         : (() => {
@@ -941,6 +969,8 @@ export class ReturnsService {
               commissionAmountPaise: nextItemCommissionPaise,
               tcsAmountPaise: nextItemTcsPaise,
               netPayoutAmountPaise: nextItemNetPaise,
+              supplyTaxablePaise: Math.max(0, frozen.supplyTaxablePaise - reversal.refundSupplyTaxablePaise),
+              supplyTaxPaise: Math.max(0, frozen.supplyTax.total - reversal.refundSupplyTaxPaise),
               updatedBy: actorId,
             };
           })(),
@@ -991,6 +1021,7 @@ export class ReturnsService {
           saleAmountPaise: -reversal.refundMerchandisePaise,
           commissionAmountPaise: -reversal.refundCommissionPaise,
           taxableAmountPaise: -reversal.refundMerchandisePaise,
+          supplyTaxablePaise: -reversal.refundSupplyTaxablePaise,
           discountAmountPaise: -reversal.refundDiscountPaise,
           taxAmountPaise: -reversal.refundTaxPaise,
           tcsAmountPaise: -reversal.refundTcsPaise,
@@ -1038,6 +1069,12 @@ export class ReturnsService {
           taxAmountPaise: taxPaise,
           netPayoutAmountPaise: netPaise,
           discountAmountPaise: discountPaise,
+          supplyTaxablePaise: Math.max(
+            0,
+            (ledger.supplyTaxablePaise != null
+              ? Number(ledger.supplyTaxablePaise)
+              : frozenPaise(ledger.taxableAmountPaise)) - reversal.refundSupplyTaxablePaise,
+          ),
           status: netPaise <= 0 ? COMMISSION_STATUS.CLAWED_BACK : ledger.status,
           updatedBy: actorId,
         },
@@ -1134,20 +1171,23 @@ export class ReturnsService {
 
     // Same wallet/cash proportion sub-order cancellations use (pricing/refundSplit),
     // capped by what earlier returns on this order already gave back.
-    const walletProportionPaise = walletShareOfRefundPaise(order, toPaise(customerRefund));
-    let walletShare = roundMoney(Math.min(fromPaise(walletProportionPaise), walletRemaining));
-    let razorpayShare = roundMoney(customerRefund - walletShare);
-    if (razorpayShare > razorpayRemaining) {
-      const overflow = razorpayShare - razorpayRemaining;
-      razorpayShare = razorpayRemaining;
-      walletShare = Math.min(customerRefund - razorpayShare, walletRemaining);
-      void overflow;
+    // A card share over what the card still holds goes to the wallet, up to what the
+    // wallet still holds; past both, nothing more was paid, so nothing more is refunded
+    // (the caller records wallet + card as the refund).
+    const refundPaise = toPaise(customerRefund);
+    const walletRemainingPaise = toPaise(walletRemaining);
+    const razorpayRemainingPaise = toPaise(razorpayRemaining);
+    let walletSharePaise = Math.min(walletShareOfRefundPaise(order, refundPaise), walletRemainingPaise);
+    let razorpaySharePaise = refundPaise - walletSharePaise;
+    if (razorpaySharePaise > razorpayRemainingPaise) {
+      razorpaySharePaise = razorpayRemainingPaise;
+      walletSharePaise = Math.min(refundPaise - razorpaySharePaise, walletRemainingPaise);
     }
 
     return {
-      walletRefund: walletShare,
-      razorpayRefund: razorpayShare,
-      refundMethod: razorpayShare > 0 ? REFUND_METHOD.RAZORPAY : REFUND_METHOD.WALLET_CREDIT,
+      walletRefund: fromPaise(walletSharePaise),
+      razorpayRefund: fromPaise(razorpaySharePaise),
+      refundMethod: razorpaySharePaise > 0 ? REFUND_METHOD.RAZORPAY : REFUND_METHOD.WALLET_CREDIT,
     };
   }
 
@@ -1187,8 +1227,17 @@ export class ReturnsService {
         if (row.refundMerchandiseAmountPaise == null || row.refundTaxAmount == null) {
           throw new ValidationError(ERROR_MESSAGES.RETURN_CREDIT_NOTE_AMOUNTS_MISSING);
         }
-        const merchandisePaise = frozenPaise(row.refundMerchandiseAmountPaise);
-        const taxPaise = toPaise(Number(row.refundTaxAmount));
+        // The vendor's credit note reverses the value of supply and its GST (for a coupon
+        // the platform funded, more than the customer gets back: the rest is the
+        // platform's share). Older returns kept no supply value: the customer's.
+        const merchandisePaise =
+          row.refundSupplyTaxablePaise != null
+            ? Number(row.refundSupplyTaxablePaise)
+            : frozenPaise(row.refundMerchandiseAmountPaise);
+        const taxPaise =
+          row.refundSupplyTaxPaise != null
+            ? Number(row.refundSupplyTaxPaise)
+            : toPaise(Number(row.refundTaxAmount));
         // The vendor's credit note reverses the goods: taxable value + GST. Refunded
         // shipping and a kept return fee are the platform's (its own documents below).
         const totalPaise = merchandisePaise + taxPaise;
@@ -1257,7 +1306,10 @@ export class ReturnsService {
             row,
             order,
             subOrder: orderItem.subOrder,
-            goodsPaise: merchandisePaise + taxPaise,
+            // What the customer's goods refund would be without a fee (not the supply
+            // value on the vendor's note, which includes the platform's coupon share).
+            goodsPaise:
+              frozenPaise(row.refundMerchandiseAmountPaise) + toPaise(Number(row.refundTaxAmount)),
             actorId: auditActorId,
             issuedAt,
           },
@@ -1345,12 +1397,13 @@ export class ReturnsService {
         const customerRefund = fromPaise(reversal.customerRefundPaise);
         const split = await this.splitRefundAmounts(order, customerRefund, t);
 
-        // Restore order.totalAmount base for split: freeze already reduced it.
-        // splitRefundAmounts reconstructs original using current + refund.
-
-        patch.refundAmount = customerRefund;
+        // The refund recorded is what goes back: the wallet and card shares, which fall
+        // short of the reversal only when earlier refunds on the order took the rest.
+        patch.refundAmount = fromPaise(toPaise(split.walletRefund) + toPaise(split.razorpayRefund));
         patch.refundTaxAmount = fromPaise(reversal.refundTaxPaise);
         patch.refundMerchandiseAmountPaise = reversal.refundMerchandisePaise;
+        patch.refundSupplyTaxablePaise = reversal.refundSupplyTaxablePaise;
+        patch.refundSupplyTaxPaise = reversal.refundSupplyTaxPaise;
         patch.refundCommissionAmount = fromPaise(reversal.refundCommissionPaise);
         patch.refundTcsAmount = fromPaise(reversal.refundTcsPaise);
         patch.refundNetClawback = fromPaise(reversal.refundNetClawbackPaise);

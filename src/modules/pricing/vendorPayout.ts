@@ -1,4 +1,4 @@
-import { COMMISSION_REFERENCE_TYPE } from '@core/constants/statuses';
+import { COMMISSION_REFERENCE_TYPE, COMMISSION_STATUS } from '@core/constants/statuses';
 import { frozenPaise, vendorNetPayoutPaise } from './frozenMoneySql';
 import type { Paise } from './money';
 import { gstOnTaxablePaise } from './pricing.engine';
@@ -8,10 +8,21 @@ import { isIntraStateSupply } from './gstPlaceOfSupply';
 export interface PayoutLedgerRow {
   netPayoutAmountPaise?: unknown;
   commissionAmountPaise?: unknown;
-  /** Sale value excluding GST: the Section 194-O TDS base. */
+  /** Sale value excluding GST (the customer's share). */
   taxableAmountPaise?: unknown;
-  /** TDS rate frozen at checkout; null falls back to the current platform rate. */
+  /**
+   * The sale's value of supply — including a coupon share the platform pays: the
+   * Section 194-O TDS base. Null on older rows, where it equals `taxableAmountPaise`.
+   */
+  supplyTaxablePaise?: unknown;
+  /**
+   * 194-O rate on the ledger: 0 when the sale was exempt at checkout (194-O(4)); on a
+   * settled sale, the rate its payout deducted at; on a return after payout, the rate
+   * its sale was deducted at. Null falls back to the current platform rate.
+   */
   tdsRatePercent?: unknown;
+  /** PENDING or SETTLED: a pending sale is deducted at the rate in force now (the payout). */
+  status?: unknown;
   /**
    * Null on a sale ledger. Set on an adjustment row — a vendor-borne cashback cost
    * (negative), its reversal (positive), or a return after payout (negative) — which
@@ -32,6 +43,13 @@ export function commissionGstPaise(
 ): Paise {
   // Intra-state: CGST and SGST at half the rate each, equal, as the commission invoice shows.
   return gstOnTaxablePaise(commissionTaxablePaise, gstRatePercent, intraState).total;
+}
+
+/** A ledger's 194-O base: its value of supply (older rows: its taxable value). */
+function tdsBaseOf(ledger: PayoutLedgerRow): Paise {
+  return ledger.supplyTaxablePaise != null
+    ? Number(ledger.supplyTaxablePaise)
+    : frozenPaise(ledger.taxableAmountPaise);
 }
 
 /** Section 194-O TDS on a (non-negative) sale value, rounded to the paisa. */
@@ -76,8 +94,9 @@ export type VendorPayoutBreakdown = {
  * What a vendor is paid for a set of commission ledgers — the one definition the
  * payout run and the vendor dashboard share:
  * - each sale ledger's net payout, less Section 194-O TDS on its sale value excluding
- *   GST (the ledger's taxable amount, net of returns), at the rate frozen on the
- *   ledger at checkout (`rates.tdsRatePercent` only for ledgers without one);
+ *   GST (its value of supply, net of returns), at the rate in force at the payout
+ *   (`rates.tdsRatePercent`) — 0 for a sale exempt at checkout, and the rate already
+ *   used for a settled sale;
  * - less GST on the platform's commission across the sale ledgers;
  * - plus adjustment rows: a vendor-borne cashback cost is deducted and its reversal
  *   added back (no TDS); a return after payout recovers the net the vendor was paid
@@ -97,13 +116,13 @@ export function vendorPayoutBreakdown(
   let returnsCommissionPaise = 0;
   const rows = ledgers.map((ledger) => {
     const netPaise = vendorNetPayoutPaise(ledger);
-    const tdsRatePercent =
-      ledger.tdsRatePercent != null ? Number(ledger.tdsRatePercent) : rates.tdsRatePercent;
+    const frozenRatePercent = ledger.tdsRatePercent != null ? Number(ledger.tdsRatePercent) : null;
     if (ledger.referenceType === COMMISSION_REFERENCE_TYPE.RETURN_CLAWBACK) {
+      const tdsRatePercent = frozenRatePercent ?? rates.tdsRatePercent;
       // A return after payout: the vendor gives back the net it was paid, and gets back
       // the TDS withheld on the returned sale value (a negative TDS row) and the GST on
       // the commission refunded with it.
-      const tdsBasePaise = Math.min(0, frozenPaise(ledger.taxableAmountPaise));
+      const tdsBasePaise = Math.min(0, tdsBaseOf(ledger));
       const tdsPaise = -tdsOnPaise(-tdsBasePaise, tdsRatePercent);
       adjustmentPaise += netPaise - tdsPaise;
       adjustmentNetPaise += netPaise;
@@ -117,7 +136,15 @@ export function vendorPayoutBreakdown(
       adjustmentNetPaise += netPaise;
       return { netPaise, tdsBasePaise: 0, tdsRatePercent: 0, tdsPaise: 0 };
     }
-    const tdsBasePaise = Math.max(0, frozenPaise(ledger.taxableAmountPaise));
+    // TDS is deducted when the payout credits the vendor, at the rate in force then: a
+    // pending sale takes the current rate (unless it was exempt), a settled one keeps
+    // the rate its payout used.
+    const tdsRatePercent =
+      frozenRatePercent !== null &&
+      (frozenRatePercent === 0 || ledger.status === COMMISSION_STATUS.SETTLED)
+        ? frozenRatePercent
+        : rates.tdsRatePercent;
+    const tdsBasePaise = Math.max(0, tdsBaseOf(ledger));
     const tdsPaise = tdsOnPaise(tdsBasePaise, tdsRatePercent);
     afterTdsPaise += Math.max(0, netPaise - tdsPaise);
     salesNetPaise += netPaise;

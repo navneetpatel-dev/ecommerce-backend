@@ -24,6 +24,9 @@ export class OrderItem extends Model<InferAttributes<OrderItem>, InferCreationAt
   declare discountAmountPaise: CreationOptional<number>;
   declare taxableAmountPaise: CreationOptional<number>;
   declare taxAmountPaise: CreationOptional<number>;
+  /** The vendor's GST value of supply (before the platform's coupon share); null on older rows. */
+  declare supplyTaxablePaise: CreationOptional<number | null>;
+  declare supplyTaxPaise: CreationOptional<number | null>;
   declare commissionAmountPaise: CreationOptional<number>;
   declare tcsAmountPaise: CreationOptional<number>;
   declare netPayoutAmountPaise: CreationOptional<number>;
@@ -62,6 +65,8 @@ export const initOrderItemModel = (sequelize: Sequelize) => {
       discountAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       taxableAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       taxAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      supplyTaxablePaise: { type: DataTypes.BIGINT, allowNull: true },
+      supplyTaxPaise: { type: DataTypes.BIGINT, allowNull: true },
       commissionAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       tcsAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       netPayoutAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },

@@ -71,12 +71,20 @@ order-less 194-O catch-up rows).
 
 ## Phase 4 — Pricing and refund policy
 
-- [ ] **#18** Platform-funded coupon: GST/TCS/194-O on the value before the platform's
-      share; platform pays the extra GST.
-- [ ] **#39** Return fee once per part; pro-rata shipping refund on seller-fault
-      partial returns.
-- [ ] **#38** Refund recorded = wallet + card actually refunded.
-- [ ] **#42** TCS rate taken at dispatch, 194-O rate at payout.
+Status: done (migration `20260929000003` adds the supply value and its GST to items,
+parts, sale ledgers and returns; older rows fall back to the taxable value).
+
+- [x] **#18** Platform-funded coupon: GST/TCS/194-O on the value before the platform's
+      share; platform pays the extra GST (engine `supplyTaxablePaise`, `supplyTax`,
+      `platformGstSubsidyPaise`; the vendor invoice and credit note carry the supply
+      value, the customer's total is unchanged).
+- [x] **#39** Return fee once per part; pro-rata shipping refund on seller-fault
+      partial returns (the last return refunds the rest).
+- [x] **#38** Refund recorded = wallet + card actually refunded (split in paise; the
+      kept return fee no longer read from the recorded refund).
+- [x] **#42** TCS rate taken at dispatch (the part, its items and unpaid sale ledger
+      are re-rated when the rate changed), 194-O rate at payout (stamped on the sale
+      for later return reversals; a sale exempt at checkout stays exempt).
 
 ## Phase 5 — Analytics and ops reports
 

@@ -222,8 +222,8 @@ describe('PayoutsService.process return-window and dispute hold', () => {
     assert.equal(settled.mock.callCount(), 0);
   });
 
-  it('withholds TDS at the rate frozen on the sale, and records that rate', async () => {
-    // The platform rate has since moved to 0.1%; the sale was placed at 1%.
+  it('withholds TDS at the rate in force at the payout, and stamps it on the sale', async () => {
+    // The sale was placed at 1%; the rate is 0.1% when the payout deducts it.
     mock.method(settingsService, 'getPlatformSettings', async () => ({
       tdsRatePercent: 0.1,
       commissionGstRatePercent: 18,
@@ -244,7 +244,7 @@ describe('PayoutsService.process return-window and dispute hold', () => {
       },
     ];
     mock.method(CommissionLedger, 'findAll', async () => rows as never);
-    mock.method(CommissionLedger, 'update', async () => [1] as never);
+    const ledgerUpdates = mock.method(CommissionLedger, 'update', async () => [1] as never);
     mock.method(sequelize, 'transaction', async (callback: (t: { LOCK: { UPDATE: string } }) => Promise<unknown>) => {
       return callback({ LOCK: { UPDATE: 'UPDATE' } });
     });
@@ -259,15 +259,20 @@ describe('PayoutsService.process return-window and dispute hold', () => {
 
     assert.equal(tds.mock.callCount(), 1);
     const tdsRow = tds.mock.calls[0]!.arguments[0] as Record<string, unknown>;
-    assert.equal(tdsRow.ratePercent, 1);
+    assert.equal(tdsRow.ratePercent, 0.1);
     assert.equal(tdsRow.taxableAmountPaise, 100000);
-    assert.equal(tdsRow.tdsAmountPaise, 1000);
-    // ₹1,075 net less ₹10 TDS.
-    assert.equal(payouts.mock.calls[0]!.arguments[0].amount, 1065);
+    assert.equal(tdsRow.tdsAmountPaise, 100);
+    // ₹1,075 net less ₹1 TDS.
+    assert.equal(payouts.mock.calls[0]!.arguments[0].amount, 1074);
+    // The sale keeps the rate it was deducted at, for a later return to reverse.
+    const stamped = ledgerUpdates.mock.calls.find(
+      (call) => (call.arguments[0] as Record<string, unknown>).tdsRatePercent !== undefined,
+    );
+    assert.equal((stamped!.arguments[0] as Record<string, unknown>).tdsRatePercent, 0.1);
     // The payout records what the amount is made of.
     const payoutFields = payouts.mock.calls[0]!.arguments[0] as Record<string, unknown>;
     assert.equal(payoutFields.grossPaise, 107500);
-    assert.equal(payoutFields.tdsPaise, 1000);
+    assert.equal(payoutFields.tdsPaise, 100);
     assert.equal(payoutFields.commissionGstPaise, 0);
     assert.equal(payoutFields.adjustmentPaise, 0);
     // Filed in the month the payout deducts it (IST), not the sale's.

@@ -388,6 +388,20 @@ export class PayoutsService {
             { status: COMMISSION_STATUS.SETTLED, updatedBy: actorId },
             { where: { id: locked.map((item) => item.id) }, transaction },
           );
+          // Each sale keeps the 194-O rate this payout deducted at (the rate in force
+          // now), so a later return reverses the TDS at the rate it was taken.
+          const saleIdsByRate = new Map<number, string[]>();
+          locked.forEach((row, index) => {
+            if (row.referenceType) return;
+            const rate = breakdown.rows[index]!.tdsRatePercent;
+            saleIdsByRate.set(rate, [...(saleIdsByRate.get(rate) ?? []), row.id]);
+          });
+          for (const [rate, ids] of saleIdsByRate) {
+            await CommissionLedger.update(
+              { tdsRatePercent: rate },
+              { where: { id: ids }, transaction },
+            );
+          }
           return payoutRow;
         });
 

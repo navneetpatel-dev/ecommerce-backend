@@ -752,6 +752,8 @@ export class CheckoutService {
           shippingDiscountAmountPaise: p.shippingDiscountPaise,
           taxAmountPaise: p.tax.total,
           taxableAmountPaise: p.taxablePaise,
+          supplyTaxablePaise: p.supplyTaxablePaise,
+          supplyTaxPaise: p.supplyTax.total,
           discountAmountPaise: p.merchandiseDiscountPaise,
           commissionAmountPaise: p.commissionPaise,
           tcsAmountPaise: p.tcsPaise,
@@ -797,6 +799,8 @@ export class CheckoutService {
             discountAmountPaise: linePaise.discountPaise,
             taxableAmountPaise: linePaise.taxablePaise,
             taxAmountPaise: linePaise.tax.total,
+            supplyTaxablePaise: linePaise.supplyTaxablePaise,
+            supplyTaxPaise: linePaise.supplyTax.total,
             commissionAmountPaise: linePaise.commissionPaise,
             tcsAmountPaise: linePaise.tcsPaise,
             netPayoutAmountPaise: linePaise.netPayoutPaise,
@@ -810,10 +814,19 @@ export class CheckoutService {
             transaction: t,
           });
         }
+        // The vendor's invoice is for the goods: value of supply + GST (the shipping on
+        // this part is on the platform's shipping invoice). A coupon the platform funds is
+        // paid by the platform — its share and the GST on it — not the customer.
+        const invoiceValuePaise = p.supplyTaxablePaise + p.supplyTax.total;
+        const platformContributionPaise = invoiceValuePaise - (p.taxablePaise + p.tax.total);
         await subOrder.update(
-          // The vendor's invoice is for the goods: taxable value + GST. The shipping on
-          // this part is on the platform's shipping invoice.
-          { taxInvoiceSnapshot: { totalPaise: p.taxablePaise + p.tax.total, lines: invoiceLines } },
+          {
+            taxInvoiceSnapshot: {
+              totalPaise: invoiceValuePaise,
+              lines: invoiceLines,
+              ...(platformContributionPaise > 0 ? { platformContributionPaise } : {}),
+            },
+          },
           { transaction: t },
         );
 
@@ -823,7 +836,8 @@ export class CheckoutService {
           const tdsRatePercent = await tdsRateForSale({
             vendorId,
             entityType: prep.row.vendor?.entityType,
-            saleTaxablePaise: p.taxablePaise,
+            // 194-O on the gross amount of the sale: its value of supply.
+            saleTaxablePaise: p.supplyTaxablePaise,
             settings,
             transaction: t,
           });
@@ -838,6 +852,7 @@ export class CheckoutService {
             saleAmountPaise: p.commissionBasePaise,
             commissionAmountPaise: p.commissionPaise,
             taxableAmountPaise: p.taxablePaise,
+            supplyTaxablePaise: p.supplyTaxablePaise,
             discountAmountPaise: p.merchandiseDiscountPaise,
             taxAmountPaise: p.tax.total,
             tcsAmountPaise: p.tcsPaise,

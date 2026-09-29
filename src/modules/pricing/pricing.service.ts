@@ -4,6 +4,7 @@ import {
   breakdownToRupees,
   computeSubOrderBreakdown,
   reverseFrozenLine,
+  splitTaxAmount,
   toPaise,
   type GstPriceBand,
   type PricingLineBreakdown,
@@ -85,7 +86,9 @@ export class PricingService {
       reasonCode?: import('@core/constants/statuses').ReturnReason;
       shippingChargedPaise?: number;
       returnShippingFeePaise?: number;
-      shippingAlreadyRefunded?: boolean;
+      shippingRefundedPaise?: number;
+      standingTaxablePaise?: number;
+      returnFeeAlreadyCharged?: boolean;
     },
   ) {
     return reverseFrozenLine({
@@ -94,7 +97,9 @@ export class PricingService {
       reasonCode: opts?.reasonCode,
       shippingChargedPaise: opts?.shippingChargedPaise,
       returnShippingFeePaise: opts?.returnShippingFeePaise,
-      shippingAlreadyRefunded: opts?.shippingAlreadyRefunded,
+      shippingRefundedPaise: opts?.shippingRefundedPaise,
+      standingTaxablePaise: opts?.standingTaxablePaise,
+      returnFeeAlreadyCharged: opts?.returnFeeAlreadyCharged,
     });
   }
 
@@ -110,6 +115,9 @@ export class PricingService {
     commissionAmountPaise: number;
     tcsAmountPaise: number;
     netPayoutAmountPaise: number;
+    /** The supply value and its GST; null on rows written before they were kept. */
+    supplyTaxablePaise?: number | null;
+    supplyTaxPaise?: number | null;
   }): PricingLineBreakdown {
     const quantity = Number(row.quantity);
     // The paise columns are the only stored money value; see frozenPaise.
@@ -122,6 +130,13 @@ export class PricingService {
     const commissionPaise = frozenPaise(row.commissionAmountPaise);
     const tcsPaise = frozenPaise(row.tcsAmountPaise);
     const netPayoutPaise = frozenPaise(row.netPayoutAmountPaise);
+    const gstPercentage = Number(tb.gstPercentage ?? 0);
+    // Older rows kept no supply value: it was the taxable value (no platform-funded GST).
+    const supplyTaxablePaise =
+      row.supplyTaxablePaise != null ? Number(row.supplyTaxablePaise) : taxablePaise;
+    const supplyTaxTotalPaise = row.supplyTaxPaise != null ? Number(row.supplyTaxPaise) : taxTotalPaise;
+    const interState = toPaise(tb.igst ?? 0) > 0;
+    const supplySplit = splitTaxAmount(supplyTaxTotalPaise, !interState);
     return {
       key: row.id,
       quantity,
@@ -134,13 +149,15 @@ export class PricingService {
         sgst: toPaise(tb.sgst ?? 0),
         igst: toPaise(tb.igst ?? 0),
         total: taxTotalPaise,
-        gstPercentage: Number(tb.gstPercentage ?? 0),
+        gstPercentage,
       },
       commissionBasePaise: taxablePaise,
       commissionPaise,
       tcsPaise,
       // Not stored per line; reversals scale the stored net, which already includes it.
       platformFundedDiscountPaise: 0,
+      supplyTaxablePaise,
+      supplyTax: { ...supplySplit, total: supplyTaxTotalPaise, gstPercentage },
       netPayoutPaise,
     };
   }

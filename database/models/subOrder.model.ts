@@ -27,6 +27,9 @@ export class SubOrder extends Model<InferAttributes<SubOrder>, InferCreationAttr
   declare shippingCostPaise: CreationOptional<number>;
   declare shippingDiscountAmountPaise: CreationOptional<number>;
   declare taxAmountPaise: CreationOptional<number>;
+  /** The vendor's GST value of supply (before the platform's coupon share); null on older rows. */
+  declare supplyTaxablePaise: CreationOptional<number | null>;
+  declare supplyTaxPaise: CreationOptional<number | null>;
   declare taxableAmountPaise: CreationOptional<number>;
   declare discountAmountPaise: CreationOptional<number>;
   declare commissionAmountPaise: CreationOptional<number>;
@@ -92,6 +95,8 @@ export const initSubOrderModel = (sequelize: Sequelize) => {
       shippingCostPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       shippingDiscountAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       taxAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      supplyTaxablePaise: { type: DataTypes.BIGINT, allowNull: true },
+      supplyTaxPaise: { type: DataTypes.BIGINT, allowNull: true },
       taxableAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       discountAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       commissionAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },

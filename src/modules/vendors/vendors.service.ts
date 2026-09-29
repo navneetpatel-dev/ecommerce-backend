@@ -862,6 +862,7 @@ export class VendorsService {
           'netPayoutAmountPaise',
           'commissionAmountPaise',
           'taxableAmountPaise',
+          'supplyTaxablePaise',
           'tdsRatePercent',
           'referenceType',
         ],
