@@ -190,3 +190,26 @@ describe('PricingEngine', () => {
     assert.equal(half.refundCommissionPaise, Math.round(line.commissionPaise / 2));
   });
 });
+
+describe('TCS on taxable supplies only', () => {
+  it('leaves a nil-rated line out of the TCS base', () => {
+    const b = computeSubOrderBreakdown({
+      lines: [
+        { key: 'taxed', unitPricePaise: 100000, quantity: 1, gstPercentage: 18 },
+        { key: 'nil', unitPricePaise: 50000, quantity: 1, gstPercentage: 0 },
+      ],
+      merchandiseDiscountPaise: 0,
+      shippingDiscountPaise: 0,
+      shippingCostPaise: 0,
+      gstPercentage: 18,
+      intraState: true,
+      commissionRatePercent: 0,
+      discountBearer: null,
+      tcsRatePercent: 1,
+    });
+    // 1% of ₹1,000 (the taxed line) only: ₹10, none on the ₹500 nil-rated line.
+    assert.equal(b.tcsPaise, 1000);
+    assert.equal(b.lines.find((l) => l.key === 'nil')?.tcsPaise, 0);
+    assert.equal(b.lines.find((l) => l.key === 'taxed')?.tcsPaise, 1000);
+  });
+});

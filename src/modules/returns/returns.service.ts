@@ -158,13 +158,19 @@ export async function persistTcsReturnAdjustmentLedger(
     vendor: { gstNumber?: string | null; state?: string | null } | null;
     fallbackRatePercent: number;
     returnRequestId: string;
-    actorId: string;
+    actorId: string | null;
     issuedAt: Date;
+    /**
+     * The supply was inter-state (vendor and place of supply in different states), as
+     * the collection being reversed was split. When omitted, read from the line's GST.
+     */
+    interState?: boolean;
   },
   transaction: Transaction,
 ) {
   const useIgst =
-    Number(params.itemIgst ?? 0) > 0 || Number(params.subOrderIgst ?? 0) > 0;
+    params.interState ??
+    (Number(params.itemIgst ?? 0) > 0 || Number(params.subOrderIgst ?? 0) > 0);
   const { cgst: tcsCgstPaise, sgst: tcsSgstPaise, igst: tcsIgstPaise } = splitTaxAmount(
     params.refundTcsPaise,
     !useIgst,
@@ -193,6 +199,79 @@ export async function persistTcsReturnAdjustmentLedger(
       deletedBy: null,
     },
     { transaction },
+  );
+}
+
+/**
+ * Reverse the TCS on a returned line (GSTR-8 return adjustment) when its vendor credit
+ * note is issued, dated like the note: the reversal belongs to the period the supply
+ * was reduced in, not the day the return was approved. The amount is the TCS frozen on
+ * the return's debit note at approval; the split follows the collection it reverses
+ * (IGST when the supply was inter-state). Idempotent per return.
+ */
+export async function recordTcsReturnAdjustmentForCreditNote(
+  input: {
+    returnRequestId: string;
+    orderId: string;
+    subOrderId: string;
+    vendorId: string;
+    refundMerchandisePaise: number;
+    actorId: string | null;
+    issuedAt: Date;
+  },
+  t: Transaction,
+): Promise<void> {
+  const debit = await DebitNote.findOne({
+    where: { returnRequestId: input.returnRequestId },
+    transaction: t,
+  });
+  const refundTcsPaise = Number(debit?.tcsPaise ?? 0);
+  if (refundTcsPaise <= 0) return;
+  const existing = await TcsLedger.findOne({
+    where: { returnRequestId: input.returnRequestId, entryType: 'RETURN_ADJUSTMENT' },
+    transaction: t,
+  });
+  if (existing) return;
+  const [vendor, originalTcs, settings] = await Promise.all([
+    Vendor.findByPk(input.vendorId, { attributes: ['gstNumber', 'state'], transaction: t }),
+    TcsLedger.findOne({
+      where: { subOrderId: input.subOrderId, vendorId: input.vendorId, entryType: 'COLLECTION' },
+      transaction: t,
+      order: [['createdAt', 'ASC']],
+    }),
+    settingsService.getPlatformSettings(),
+  ]);
+  let interState: boolean;
+  if (originalTcs) {
+    interState = Number(originalTcs.tcsIgstPaise ?? 0) !== 0;
+  } else {
+    const order = await Order.findByPk(input.orderId, {
+      attributes: ['shippingAddressId'],
+      transaction: t,
+    });
+    const address = order?.shippingAddressId
+      ? await Address.findByPk(order.shippingAddressId, { attributes: ['state'], transaction: t })
+      : null;
+    interState = !isIntraStateSupply(vendor?.state ?? null, address?.state ?? vendor?.state ?? null);
+  }
+  await persistTcsReturnAdjustmentLedger(
+    {
+      refundTcsPaise,
+      refundMerchandisePaise: input.refundMerchandisePaise,
+      itemIgst: 0,
+      subOrderIgst: 0,
+      interState,
+      orderId: input.orderId,
+      subOrderId: input.subOrderId,
+      vendorId: input.vendorId,
+      originalTcs,
+      vendor,
+      fallbackRatePercent: Number(settings.tcsRatePercent ?? 0),
+      returnRequestId: input.returnRequestId,
+      actorId: input.actorId,
+      issuedAt: input.issuedAt,
+    },
+    t,
   );
 }
 
@@ -738,41 +817,8 @@ export class ReturnsService {
           { transaction: t },
         );
 
-        // GSTR-8 return adjustment (negative TCS) against original collection.
-        if (reversal.refundTcsPaise > 0) {
-          const vendor = await Vendor.findByPk(vendorId, {
-            attributes: ['gstNumber', 'state'],
-            transaction: t,
-          });
-          const originalTcs = await TcsLedger.findOne({
-            where: {
-              subOrderId: orderItem.subOrderId,
-              vendorId,
-              entryType: 'COLLECTION',
-            },
-            transaction: t,
-            order: [['createdAt', 'ASC']],
-          });
-          const settings = await settingsService.getPlatformSettings();
-          await persistTcsReturnAdjustmentLedger(
-            {
-              refundTcsPaise: reversal.refundTcsPaise,
-              refundMerchandisePaise: reversal.refundMerchandisePaise,
-              itemIgst: Number((orderItem.taxBreakdown as any)?.igst ?? 0),
-              subOrderIgst: Number((orderItem.subOrder.taxBreakdown as any)?.igst ?? 0),
-              orderId: orderItem.subOrder.orderId,
-              subOrderId: orderItem.subOrderId,
-              vendorId,
-              originalTcs,
-              vendor,
-              fallbackRatePercent: Number(settings.tcsRatePercent ?? 0),
-              returnRequestId: row.id,
-              actorId,
-              issuedAt,
-            },
-            t,
-          );
-        }
+        // The GSTR-8 return adjustment is recorded with the vendor credit note (at
+        // refund), so the TCS reversal and the credit note fall in the same period.
       }
     }
 
@@ -1193,6 +1239,18 @@ export class ReturnsService {
             deletedBy: null,
           },
           { transaction: t },
+        );
+        await recordTcsReturnAdjustmentForCreditNote(
+          {
+            returnRequestId: row.id,
+            orderId: order.id,
+            subOrderId: orderItem.subOrderId,
+            vendorId,
+            refundMerchandisePaise: merchandisePaise,
+            actorId: auditActorId,
+            issuedAt,
+          },
+          t,
         );
         await issuePlatformReturnDocuments(
           {

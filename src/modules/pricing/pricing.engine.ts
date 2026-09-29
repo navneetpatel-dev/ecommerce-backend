@@ -278,12 +278,12 @@ export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderP
     };
   });
 
-  // TCS under section 52 is collected as CGST + SGST (or IGST) like GST: equal halves.
-  const tcsPaise = gstOnTaxablePaise(taxablePaise, Number(input.tcsRatePercent || 0), input.intraState).total;
-  const lineTcs = allocateProportionally(
-    tcsPaise,
-    pricedLines.map((line) => line.taxablePaise),
-  );
+  // TCS under section 52 is collected as CGST + SGST (or IGST) like GST: equal halves,
+  // on the net value of taxable supplies — a nil-rated (0% GST) line carries none.
+  const tcsBases = pricedLines.map((line) => (line.tax.gstPercentage > 0 ? line.taxablePaise : 0));
+  const tcsBasePaise = tcsBases.reduce((sum, base) => sum + base, 0);
+  const tcsPaise = gstOnTaxablePaise(tcsBasePaise, Number(input.tcsRatePercent || 0), input.intraState).total;
+  const lineTcs = allocateProportionally(tcsPaise, tcsBases);
   for (let i = 0; i < pricedLines.length; i += 1) {
     const line = pricedLines[i]!;
     line.tcsPaise = lineTcs[i] ?? 0;

@@ -3,14 +3,12 @@ import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { ORDER_STATUS } from '@core/constants/statuses';
 import { sequelize } from '@database/models';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
-import { TcsLedger } from '@database/models/tcsLedger.model';
 import { TdsLedger } from '@database/models/tdsLedger.model';
 import { Payout } from '@database/models/payout.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { OrderItem } from '@database/models/orderItem.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { Product } from '@database/models/product.model';
-import { TaxRule } from '@database/models/taxRule.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
 import { createOffsetExportQuery } from '../engine/export/createOffsetExportQuery';
@@ -27,14 +25,16 @@ import {
   fromPaise,
   dateBetween,
   paidOrderInclude,
-  reportableOrderJoin,
   REPORTABLE_ORDER_SQL,
+  TCS_LEDGER_ORDER_SQL,
   pagedFindAndCount,
+  pagedSqlQuery,
   DISCOUNT_BEARER,
   COMMISSION_STATUS,
 } from '../engine/queryHelpers';
 import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
 import { gstPeriodOf } from '@modules/pricing/gstPeriod';
+import { gstDocumentReplacements, scopedGstDocumentLinesSql } from '../engine/gstDocumentsSql';
 
 function vendorScopeWhere(filters: ReportFilters): Record<string, unknown> {
   const vendorId = filters.scopedVendorId ?? filters.vendorId ?? null;
@@ -207,114 +207,101 @@ export async function getGstBreakdownForSubOrders(
   return map;
 }
 
-async function vendorGstSales(filters: ReportFilters) {
-  assertReportRange(filters);
-
-  const { rows, total } = await pagedFindAndCount(
-    OrderItem,
-    {
-      include: [
-        {
-          model: SubOrder,
-          as: 'subOrder',
-          required: true,
-          where: vendorScopeWhere(filters),
-          include: [paidOrderInclude(filters.from, filters.to)],
-        },
-        {
-          model: ProductVariant,
-          as: 'variant',
-          required: true,
-          include: [
-            {
-              model: Product,
-              as: 'product',
-              required: true,
-              where: filters.categoryId ? { categoryId: filters.categoryId } : undefined,
-              attributes: ['id', 'name', 'categoryId'],
-            },
-          ],
-        },
-      ],
-      order: [['createdAt', 'DESC']],
-    },
-    filters,
-  );
-
-  const categoryIds = [
-    ...new Set(
-      rows
-        .map((item) => {
-          const product = (
-            item as OrderItem & { variant?: ProductVariant & { product?: Product } }
-          ).variant?.product;
-          return product?.categoryId ?? null;
-        })
-        .filter((id): id is string => Boolean(id)),
-    ),
-  ];
-  const taxRules = categoryIds.length
-    ? await TaxRule.findAll({
-        where: { categoryId: { [Op.in]: categoryIds } },
-        attributes: ['categoryId', 'hsnCode'],
-      })
-    : [];
-
-  const hsnByCategory = new Map<string, string>();
-  for (const rule of taxRules) {
-    if (rule.categoryId && rule.hsnCode && !hsnByCategory.has(rule.categoryId)) {
-      hsnByCategory.set(rule.categoryId, rule.hsnCode);
-    }
-  }
-
-  return {
-    rows: rows.map((item) => {
-      const sub = (item as OrderItem & { subOrder?: SubOrder }).subOrder;
-      const product = (
-        item as OrderItem & { variant?: ProductVariant & { product?: Product } }
-      ).variant?.product;
-      const categoryId = product?.categoryId ?? '';
-      const gst = computeOrderItemGst(item);
-      return {
-        orderId: sub?.orderId ?? null,
-        subOrderId: item.subOrderId,
-        invoiceId: (sub as { taxInvoiceNumber?: string | null } | undefined)
-          ?.taxInvoiceNumber ?? null,
-        productName: item.productName,
-        hsnCode: hsnByCategory.get(categoryId) ?? 'UNKNOWN',
-        qty: Number(item.quantity ?? 0),
-        taxable: gst.taxable,
-        cgst: gst.cgst,
-        sgst: gst.sgst,
-        igst: gst.igst,
-        tax: gst.tax,
-      };
-    }),
-    total,
-  };
+/**
+ * The vendor's GST sales, line by line, as filed: each tax invoice line as issued (HSN,
+ * rate, CGST / SGST / IGST frozen with it) and each credit note line (returns, RTOs)
+ * as a negative row, dated by the document. Cancelled and never-dispatched parts have
+ * no invoice, so they are not here.
+ */
+function vendorGstSalesSelectSql(): string {
+  return `
+    SELECT
+      d."docType",
+      d."documentNumber" AS "invoiceId",
+      d."documentDate",
+      d."orderId",
+      d."subOrderId",
+      d."orderItemId",
+      COALESCE(oi."productName", '') AS "productName",
+      COALESCE(NULLIF(d."hsnCode", ''), 'UNKNOWN') AS "hsnCode",
+      COALESCE(d."gstRate", 0) AS "gstRate",
+      d.qty,
+      d."taxablePaise",
+      d."cgstPaise",
+      d."sgstPaise",
+      d."igstPaise"
+    FROM (${scopedGstDocumentLinesSql()}) d
+    LEFT JOIN order_items oi ON oi.id = d."orderItemId"
+    WHERE d.source = 'GOODS'
+      AND (:categoryId::uuid IS NULL OR d."categoryId" = :categoryId)
+  `;
 }
 
-async function vendorTcsCredit(filters: ReportFilters) {
+async function vendorGstSales(filters: ReportFilters) {
   assertReportRange(filters);
-
-  const { rows, total } = await pagedFindAndCount(
-    TcsLedger,
-    {
-      where: {
-        ...vendorScopeWhere(filters),
-        createdAt: dateBetween(filters.from, filters.to),
-      },
-      include: [reportableOrderJoin()],
-      order: [['createdAt', 'DESC']],
+  return pagedSqlQuery({
+    selectSql: vendorGstSalesSelectSql(),
+    orderBySql: `"documentDate" DESC, "invoiceId" ASC, "orderItemId" ASC`,
+    replacements: {
+      from: filters.from,
+      to: filters.to,
+      vendorId: filters.scopedVendorId ?? filters.vendorId ?? null,
+      categoryId: filters.categoryId ?? null,
+      ...(await gstDocumentReplacements()),
     },
     filters,
-  );
+    mapRow: (row) => {
+      const cgst = Number(row.cgstPaise ?? 0);
+      const sgst = Number(row.sgstPaise ?? 0);
+      const igst = Number(row.igstPaise ?? 0);
+      return {
+        docType: String(row.docType ?? ''),
+        orderId: row.orderId ?? null,
+        subOrderId: row.subOrderId ?? null,
+        invoiceId: row.invoiceId ?? null,
+        documentDate: row.documentDate,
+        productName: String(row.productName ?? ''),
+        hsnCode: String(row.hsnCode ?? 'UNKNOWN'),
+        gstRate: Number(row.gstRate ?? 0),
+        qty: Number(row.qty ?? 0),
+        taxable: fromPaise(Number(row.taxablePaise ?? 0)),
+        cgst: fromPaise(cgst),
+        sgst: fromPaise(sgst),
+        igst: fromPaise(igst),
+        tax: fromPaise(cgst + sgst + igst),
+      };
+    },
+  });
+}
 
-  return {
-    rows: rows.map((row) => ({
+/**
+ * TCS the platform collected on the vendor's sales (GSTR-8), which the vendor claims as
+ * a credit: the same rows as the platform's GSTR-8 — a collection and its reversal both
+ * stay when a part later came back (RTO), each in its own period.
+ */
+async function vendorTcsCredit(filters: ReportFilters) {
+  assertReportRange(filters);
+  return pagedSqlQuery({
+    selectSql: `
+      SELECT t.*
+      FROM tcs_ledgers t
+      INNER JOIN orders o ON o.id = t."orderId" AND o."deletedAt" IS NULL
+      WHERE t."deletedAt" IS NULL
+        AND t."createdAt" BETWEEN :from AND :to
+        AND ${TCS_LEDGER_ORDER_SQL}
+        AND (:vendorId::uuid IS NULL OR t."vendorId" = :vendorId)
+    `,
+    orderBySql: `"createdAt" DESC, id DESC`,
+    replacements: {
+      from: filters.from,
+      to: filters.to,
+      vendorId: filters.scopedVendorId ?? filters.vendorId ?? null,
+    },
+    filters,
+    mapRow: (row) => ({
       orderId: row.orderId,
       subOrderId: row.subOrderId,
-      period: periodKey(row.period, row.createdAt as Date),
+      period: periodKey(row.period as string | null, row.createdAt as Date),
       section: String(row.section ?? '52'),
       entryType: String(row.entryType ?? 'COLLECTION'),
       vendorGstin: row.vendorGstin ?? null,
@@ -325,9 +312,8 @@ async function vendorTcsCredit(filters: ReportFilters) {
       tcsIgst: fromPaise(Number(row.tcsIgstPaise ?? 0)),
       tcsTotal: fromPaise(Number(row.tcsAmountPaise ?? 0)),
       createdAt: row.createdAt,
-    })),
-    total,
-  };
+    }),
+  });
 }
 
 async function vendorTdsCertificate(filters: ReportFilters) {
@@ -892,9 +878,12 @@ export const vendorOwnerReports: ReportDefinition[] = [
     vendorScoped: true,
     financial: true,
     columns: [
+      { key: 'docType', labelKey: 'docType' },
       { key: 'invoiceId', labelKey: 'invoiceId' },
+      { key: 'documentDate', labelKey: 'documentDate', format: 'date' },
       { key: 'productName', labelKey: 'productName' },
       { key: 'hsnCode', labelKey: 'hsnCode' },
+      { key: 'gstRate', labelKey: 'gstRate', format: 'number' },
       { key: 'qty', labelKey: 'qty', format: 'number' },
       { key: 'taxable', labelKey: 'taxable', format: 'currency' },
       { key: 'cgst', labelKey: 'cgst', format: 'currency' },

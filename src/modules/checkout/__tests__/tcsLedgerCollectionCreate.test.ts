@@ -109,3 +109,30 @@ describe('persistTcsCollectionLedger TcsLedger.create path', () => {
     );
   });
 });
+
+describe('persistTcsCollectionLedger split by place of supply', () => {
+  afterEach(() => mock.restoreAll());
+
+  it('files inter-state TCS as IGST even when no GST was charged (nil-rated)', async () => {
+    mock.method(TcsLedger, 'create', async (data: unknown) => data as TcsLedger);
+    const row = await persistTcsCollectionLedger(
+      {
+        tcsTotal: 100,
+        taxIgst: 0,
+        interState: true,
+        orderId: '11111111-1111-1111-1111-111111111111',
+        subOrderId: '22222222-2222-2222-2222-222222222222',
+        vendorId: '33333333-3333-3333-3333-333333333333',
+        taxableAmountPaise: 10000,
+        ratePercent: 1,
+        vendorGstin: '29ABCDE1234F1Z5',
+        placeOfSupplyState: 'MAHARASHTRA',
+        actorId: null,
+      },
+      transaction,
+    );
+    assert.equal(row.tcsIgstPaise, 100);
+    assert.equal(row.tcsCgstPaise, 0);
+    assert.equal(row.tcsSgstPaise, 0);
+  });
+});

@@ -22,7 +22,6 @@ import {
   pagedSqlQuery,
   emptyPage,
   dateBetween,
-  sqlFrozenPaise,
   REPORTABLE_ORDER_SQL,
   TCS_LEDGER_ORDER_SQL,
 } from '../engine/queryHelpers';
@@ -30,7 +29,11 @@ import { inventoryValuation } from '@modules/pricing/displayMoney';
 import { sqlOrderKeptPaymentPaise } from '@modules/pricing/frozenMoneySql';
 import { sqlCodCashDuePaise } from '@modules/shipping/codCollection';
 import { gstPeriodOf } from '@modules/pricing/gstPeriod';
-import { platformInvoiceDocumentsSql, platformSupplyLinesSql } from '../engine/platformSupplySql';
+import {
+  gstDocumentLinesSql,
+  gstDocumentReplacements,
+  scopedGstDocumentLinesSql,
+} from '../engine/gstDocumentsSql';
 import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
 
 function resolveVendorId(filters: ReportFilters): string | null {
@@ -49,44 +52,37 @@ function hoursBetween(from: Date, to: Date): number {
   return Math.round(((to.getTime() - from.getTime()) / 3_600_000) * 100) / 100;
 }
 
-async function taxInvoiceRegister(filters: ReportFilters) {
-  assertReportRange(filters);
-  const vendorFilter = `AND (:vendorId::uuid IS NULL OR so."vendorId" = :vendorId)`;
-  const selectSql = `
+/**
+ * The goods tax invoices issued in the range, one row per invoice, as issued (from the
+ * frozen snapshot): a return since then does not change the invoice — its credit note
+ * carries it (see the credit / debit note register and GSTR-1).
+ */
+function goodsInvoiceRegisterSql(extraWhere = ''): string {
+  return `
     SELECT
-      so.id AS "subOrderId",
-      so."orderId" AS "orderId",
-      so."vendorId" AS "vendorId",
-      v."businessName" AS "vendorName",
-      COALESCE(v."gstNumber", '') AS "vendorGstin",
-      so."taxInvoiceNumber" AS "taxInvoiceNumber",
-      so."taxInvoiceIssuedAt" AS "taxInvoiceIssuedAt",
-      (so."taxableAmountPaise" / 100.0)::float AS taxable,
-      (so."taxAmountPaise" / 100.0)::float AS tax,
-      (COALESCE(
-        (so."taxInvoiceSnapshot"->>'totalPaise')::bigint,
-        so."taxableAmountPaise" + so."taxAmountPaise"
-      ) / 100.0)::float AS total,
-      o."paymentMethod"::text AS "paymentMethod",
-      o."paymentStatus"::text AS "paymentStatus",
-      COALESCE(NULLIF(TRIM(a.gstin), ''), '') AS "buyerGstin",
-      COALESCE(a.state, '') AS "placeOfSupplyState"
-    FROM sub_orders so
-    INNER JOIN orders o ON o.id = so."orderId" AND o."deletedAt" IS NULL
-    INNER JOIN vendors v ON v.id = so."vendorId" AND v."deletedAt" IS NULL
-    LEFT JOIN addresses a ON a.id = o."shippingAddressId"
-    WHERE so."deletedAt" IS NULL
-      AND so."taxInvoiceNumber" IS NOT NULL
-      AND so."taxInvoiceIssuedAt" BETWEEN :from AND :to
-      ${vendorFilter}
+      d."subOrderId" AS "subOrderId",
+      d."orderId" AS "orderId",
+      d."supplierVendorId" AS "vendorId",
+      MAX(d."supplierName") AS "vendorName",
+      MAX(d."supplierGstin") AS "vendorGstin",
+      d."documentNumber" AS "taxInvoiceNumber",
+      d."documentDate" AS "taxInvoiceIssuedAt",
+      SUM(d."taxablePaise")::bigint AS "taxablePaise",
+      SUM(d."cgstPaise")::bigint AS "cgstPaise",
+      SUM(d."sgstPaise")::bigint AS "sgstPaise",
+      SUM(d."igstPaise")::bigint AS "igstPaise",
+      MAX(o."paymentMethod"::text) AS "paymentMethod",
+      MAX(o."paymentStatus"::text) AS "paymentStatus",
+      COALESCE(MAX(d."recipientGstin"), '') AS "buyerGstin",
+      MAX(u.name) AS "buyerName",
+      MAX(d.state) AS "placeOfSupplyState"
+    FROM (${scopedGstDocumentLinesSql()}) d
+    INNER JOIN orders o ON o.id = d."orderId"
+    LEFT JOIN users u ON u.id = o."userId"
+    WHERE d.source = 'GOODS' AND d."docType" = 'INVOICE'
+      ${extraWhere}
+    GROUP BY d."subOrderId", d."orderId", d."supplierVendorId", d."documentNumber", d."documentDate"
   `;
-  return pagedSqlQuery({
-    selectSql,
-    orderBySql: `"taxInvoiceIssuedAt" DESC, "taxInvoiceNumber" ASC`,
-    replacements: sqlReplacements(filters),
-    filters,
-    mapRow: mapTaxInvoiceRow,
-  });
 }
 
 const TAX_INVOICE_KEYSET: KeysetOrderCol[] = [
@@ -95,6 +91,10 @@ const TAX_INVOICE_KEYSET: KeysetOrderCol[] = [
 ];
 
 function mapTaxInvoiceRow(row: Record<string, unknown>) {
+  const taxable = Number(row.taxablePaise ?? 0);
+  const cgst = Number(row.cgstPaise ?? 0);
+  const sgst = Number(row.sgstPaise ?? 0);
+  const igst = Number(row.igstPaise ?? 0);
   return {
     subOrderId: row.subOrderId,
     orderId: row.orderId,
@@ -103,14 +103,33 @@ function mapTaxInvoiceRow(row: Record<string, unknown>) {
     vendorGstin: row.vendorGstin,
     taxInvoiceNumber: row.taxInvoiceNumber,
     taxInvoiceIssuedAt: row.taxInvoiceIssuedAt,
-    taxable: Number(row.taxable ?? 0),
-    tax: Number(row.tax ?? 0),
-    total: Number(row.total ?? 0),
+    taxable: fromPaise(taxable),
+    cgst: fromPaise(cgst),
+    sgst: fromPaise(sgst),
+    igst: fromPaise(igst),
+    tax: fromPaise(cgst + sgst + igst),
+    total: fromPaise(taxable + cgst + sgst + igst),
     paymentMethod: row.paymentMethod,
     paymentStatus: row.paymentStatus,
     buyerGstin: row.buyerGstin,
+    buyerName: row.buyerName ?? '',
     placeOfSupplyState: row.placeOfSupplyState,
   };
+}
+
+async function gstReplacements(filters: ReportFilters): Promise<Record<string, unknown>> {
+  return { ...sqlReplacements(filters), ...(await gstDocumentReplacements()) };
+}
+
+async function taxInvoiceRegister(filters: ReportFilters) {
+  assertReportRange(filters);
+  return pagedSqlQuery({
+    selectSql: goodsInvoiceRegisterSql(),
+    orderBySql: `"taxInvoiceIssuedAt" DESC, "taxInvoiceNumber" ASC`,
+    replacements: await gstReplacements(filters),
+    filters,
+    mapRow: mapTaxInvoiceRow,
+  });
 }
 
 async function taxInvoiceRegisterExport(
@@ -119,39 +138,10 @@ async function taxInvoiceRegisterExport(
   limit: number,
 ) {
   assertReportRange(filters);
-  const vendorFilter = `AND (:vendorId::uuid IS NULL OR so."vendorId" = :vendorId)`;
-  const selectSql = `
-    SELECT
-      so.id AS "subOrderId",
-      so."orderId" AS "orderId",
-      so."vendorId" AS "vendorId",
-      v."businessName" AS "vendorName",
-      COALESCE(v."gstNumber", '') AS "vendorGstin",
-      so."taxInvoiceNumber" AS "taxInvoiceNumber",
-      so."taxInvoiceIssuedAt" AS "taxInvoiceIssuedAt",
-      (so."taxableAmountPaise" / 100.0)::float AS taxable,
-      (so."taxAmountPaise" / 100.0)::float AS tax,
-      (COALESCE(
-        (so."taxInvoiceSnapshot"->>'totalPaise')::bigint,
-        so."taxableAmountPaise" + so."taxAmountPaise"
-      ) / 100.0)::float AS total,
-      o."paymentMethod"::text AS "paymentMethod",
-      o."paymentStatus"::text AS "paymentStatus",
-      COALESCE(NULLIF(TRIM(a.gstin), ''), '') AS "buyerGstin",
-      COALESCE(a.state, '') AS "placeOfSupplyState"
-    FROM sub_orders so
-    INNER JOIN orders o ON o.id = so."orderId" AND o."deletedAt" IS NULL
-    INNER JOIN vendors v ON v.id = so."vendorId" AND v."deletedAt" IS NULL
-    LEFT JOIN addresses a ON a.id = o."shippingAddressId"
-    WHERE so."deletedAt" IS NULL
-      AND so."taxInvoiceNumber" IS NOT NULL
-      AND so."taxInvoiceIssuedAt" BETWEEN :from AND :to
-      ${vendorFilter}
-  `;
   const page = await keysetSqlQuery({
-    selectSql,
+    selectSql: goodsInvoiceRegisterSql(),
     order: TAX_INVOICE_KEYSET,
-    replacements: sqlReplacements(filters),
+    replacements: await gstReplacements(filters),
     limit,
     cursor,
     mapRow: mapTaxInvoiceRow,
@@ -159,69 +149,17 @@ async function taxInvoiceRegisterExport(
   return { rows: page.rows, nextCursor: page.nextCursor };
 }
 
-const B2B_GSTIN_KEYSET: KeysetOrderCol[] = [
-  { column: 'taxInvoiceIssuedAt', direction: 'DESC' },
-  { column: 'subOrderId', direction: 'DESC' },
-];
-
-function b2bGstinSalesRegisterSelectSql(vendorFilter: string): string {
-  return `
-    SELECT
-      so.id AS "subOrderId",
-      so."taxInvoiceNumber" AS "taxInvoiceNumber",
-      so."taxInvoiceIssuedAt" AS "taxInvoiceIssuedAt",
-      so."orderId" AS "orderId",
-      so."vendorId" AS "vendorId",
-      v."businessName" AS "vendorName",
-      COALESCE(v."gstNumber", '') AS "vendorGstin",
-      COALESCE(NULLIF(TRIM(a.gstin), ''), '') AS "buyerGstin",
-      u.name AS "buyerName",
-      COALESCE(a.state, '') AS "placeOfSupplyState",
-      (so."taxableAmountPaise" / 100.0)::float AS taxable,
-      (so."taxAmountPaise" / 100.0)::float AS tax,
-      (COALESCE(
-        (so."taxInvoiceSnapshot"->>'totalPaise')::bigint,
-        so."taxableAmountPaise" + so."taxAmountPaise"
-      ) / 100.0)::float AS total
-    FROM sub_orders so
-    INNER JOIN orders o ON o.id = so."orderId" AND o."deletedAt" IS NULL
-    INNER JOIN vendors v ON v.id = so."vendorId" AND v."deletedAt" IS NULL
-    INNER JOIN addresses a ON a.id = o."shippingAddressId"
-      AND NULLIF(TRIM(a.gstin), '') IS NOT NULL
-    LEFT JOIN users u ON u.id = o."userId"
-    WHERE so."deletedAt" IS NULL
-      AND so."taxInvoiceNumber" IS NOT NULL
-      AND so."taxInvoiceIssuedAt" BETWEEN :from AND :to
-      ${vendorFilter}
-  `;
-}
-
-function mapB2bGstinRow(row: Record<string, unknown>) {
-  return {
-    taxInvoiceNumber: row.taxInvoiceNumber,
-    taxInvoiceIssuedAt: row.taxInvoiceIssuedAt,
-    orderId: row.orderId,
-    vendorId: row.vendorId,
-    vendorName: row.vendorName,
-    vendorGstin: row.vendorGstin,
-    buyerGstin: row.buyerGstin,
-    buyerName: row.buyerName ?? '',
-    placeOfSupplyState: row.placeOfSupplyState,
-    taxable: Number(row.taxable ?? 0),
-    tax: Number(row.tax ?? 0),
-    total: Number(row.total ?? 0),
-  };
-}
+/** Goods invoices to buyers who gave a GSTIN (B2B). */
+const B2B_ONLY = `AND d."recipientGstin" IS NOT NULL`;
 
 async function b2bGstinSalesRegister(filters: ReportFilters) {
   assertReportRange(filters);
-  const vendorFilter = `AND (:vendorId::uuid IS NULL OR so."vendorId" = :vendorId)`;
   return pagedSqlQuery({
-    selectSql: b2bGstinSalesRegisterSelectSql(vendorFilter),
+    selectSql: goodsInvoiceRegisterSql(B2B_ONLY),
     orderBySql: `"taxInvoiceIssuedAt" DESC, "subOrderId" DESC`,
-    replacements: sqlReplacements(filters),
+    replacements: await gstReplacements(filters),
     filters,
-    mapRow: mapB2bGstinRow,
+    mapRow: mapTaxInvoiceRow,
   });
 }
 
@@ -231,171 +169,165 @@ async function b2bGstinSalesRegisterExport(
   limit: number,
 ) {
   assertReportRange(filters);
-  const vendorFilter = `AND (:vendorId::uuid IS NULL OR so."vendorId" = :vendorId)`;
   const page = await keysetSqlQuery({
-    selectSql: b2bGstinSalesRegisterSelectSql(vendorFilter),
-    order: B2B_GSTIN_KEYSET,
-    replacements: sqlReplacements(filters),
+    selectSql: goodsInvoiceRegisterSql(B2B_ONLY),
+    order: TAX_INVOICE_KEYSET,
+    replacements: await gstReplacements(filters),
     limit,
     cursor,
-    mapRow: mapB2bGstinRow,
+    mapRow: mapTaxInvoiceRow,
   });
   return { rows: page.rows, nextCursor: page.nextCursor };
 }
 
+/**
+ * An inter-state invoice to an unregistered buyer above this value (₹1,00,000, GST
+ * included) is reported invoice by invoice in GSTR-1 (B2CL), not in the state totals.
+ */
+export const B2CL_INVOICE_LIMIT_PAISE = 1_00_000_00;
+
+/**
+ * GSTR-1 rows for the documents issued in the range, per supplier GSTIN and GST rate:
+ * - B2B: invoices to a buyer with a GSTIN, per invoice and rate;
+ * - B2CL: inter-state invoices to unregistered buyers above ₹1 lakh, per invoice;
+ * - B2CS: other invoices to unregistered buyers, per state and rate, net of their
+ *   credit notes;
+ * - CDNR / CDNUR: credit notes to registered buyers / against a B2CL invoice.
+ * Each row carries CGST, SGST and IGST. Credit-note amounts are negative. Goods come
+ * from the invoices as issued, so a return is counted once — on its credit note.
+ */
+function gstr1SelectSql(): string {
+  const docsAll = `(${gstDocumentLinesSql()})`;
+  return `
+    WITH docs AS (${scopedGstDocumentLinesSql()}),
+    invoice_totals AS (
+      SELECT "supplierGstin", "documentNumber",
+             SUM("taxablePaise" + "cgstPaise" + "sgstPaise" + "igstPaise") AS "valuePaise",
+             BOOL_OR("igstPaise" <> 0) AS "interState"
+      FROM ${docsAll} all_docs
+      WHERE "docType" = 'INVOICE'
+      GROUP BY "supplierGstin", "documentNumber"
+    ),
+    classified AS (
+      SELECT d.*,
+        CASE
+          WHEN d."docType" = 'INVOICE' AND d."recipientGstin" IS NOT NULL THEN 'B2B'
+          WHEN d."docType" = 'INVOICE' AND it."interState" AND it."valuePaise" > :b2clLimit THEN 'B2CL'
+          WHEN d."docType" = 'INVOICE' THEN 'B2CS'
+          WHEN d."recipientGstin" IS NOT NULL THEN 'CDNR'
+          WHEN ai."interState" AND ai."valuePaise" > :b2clLimit THEN 'CDNUR'
+          ELSE 'B2CS'
+        END AS section
+      FROM docs d
+      LEFT JOIN invoice_totals it
+        ON it."supplierGstin" = d."supplierGstin" AND it."documentNumber" = d."documentNumber"
+      LEFT JOIN invoice_totals ai
+        ON ai."supplierGstin" = d."supplierGstin" AND ai."documentNumber" = d."againstInvoiceNumber"
+    )
+    SELECT
+      section,
+      "supplierName",
+      "supplierGstin",
+      "documentNumber",
+      MAX("documentDate") AS "documentDate",
+      COALESCE(MAX("againstInvoiceNumber"), '') AS "againstInvoiceNumber",
+      COALESCE("recipientGstin", '') AS "recipientGstin",
+      state,
+      COALESCE("gstRate", 0) AS "gstRate",
+      SUM("taxablePaise")::bigint AS "taxablePaise",
+      SUM("cgstPaise")::bigint AS "cgstPaise",
+      SUM("sgstPaise")::bigint AS "sgstPaise",
+      SUM("igstPaise")::bigint AS "igstPaise"
+    FROM classified
+    WHERE section <> 'B2CS'
+    GROUP BY section, "supplierName", "supplierGstin", "documentNumber", "recipientGstin", state, "gstRate"
+
+    UNION ALL
+
+    SELECT
+      'B2CS',
+      "supplierName",
+      "supplierGstin",
+      'AGGREGATE',
+      MAX("documentDate"),
+      '',
+      '',
+      state,
+      COALESCE("gstRate", 0),
+      SUM("taxablePaise")::bigint,
+      SUM("cgstPaise")::bigint,
+      SUM("sgstPaise")::bigint,
+      SUM("igstPaise")::bigint
+    FROM classified
+    WHERE section = 'B2CS'
+    GROUP BY "supplierName", "supplierGstin", state, "gstRate"
+  `;
+}
+
+function mapGstr1Row(row: Record<string, unknown>) {
+  const cgst = Number(row.cgstPaise ?? 0);
+  const sgst = Number(row.sgstPaise ?? 0);
+  const igst = Number(row.igstPaise ?? 0);
+  return {
+    section: row.section,
+    supplierName: row.supplierName,
+    supplierGstin: row.supplierGstin,
+    documentNumber: row.documentNumber,
+    documentDate: row.documentDate,
+    againstInvoiceNumber: row.againstInvoiceNumber,
+    recipientGstin: row.recipientGstin,
+    state: row.state,
+    gstRate: Number(row.gstRate ?? 0),
+    taxable: fromPaise(Number(row.taxablePaise ?? 0)),
+    cgst: fromPaise(cgst),
+    sgst: fromPaise(sgst),
+    igst: fromPaise(igst),
+    tax: fromPaise(cgst + sgst + igst),
+  };
+}
+
 async function gstr1Filing(filters: ReportFilters) {
   assertReportRange(filters);
-  const taxExpr = sqlFrozenPaise('so', 'taxAmountPaise');
-  const taxableExpr = sqlFrozenPaise('so', 'taxableAmountPaise');
-  const vendorFilter = `AND (:vendorId::uuid IS NULL OR so."vendorId" = :vendorId)`;
-
-  const selectSql = `
-    SELECT * FROM (
-      SELECT
-        'B2B'::text AS section,
-        so."taxInvoiceNumber" AS "documentNumber",
-        so."taxInvoiceIssuedAt" AS "documentDate",
-        COALESCE(NULLIF(TRIM(a.gstin), ''), '') AS "recipientGstin",
-        COALESCE(a.state, '') AS state,
-        ''::text AS "hsnCode",
-        0::int AS qty,
-        SUM(${taxableExpr})::bigint AS "taxablePaise",
-        SUM(${taxExpr})::bigint AS "taxPaise",
-        0::bigint AS "igstPaise",
-        0::bigint AS "cgstPaise",
-        0::bigint AS "sgstPaise"
-      FROM sub_orders so
-      INNER JOIN orders o ON o.id = so."orderId" AND o."deletedAt" IS NULL
-      INNER JOIN addresses a ON a.id = o."shippingAddressId"
-        AND NULLIF(TRIM(a.gstin), '') IS NOT NULL
-      WHERE so."deletedAt" IS NULL
-        AND so."taxInvoiceNumber" IS NOT NULL
-        AND so."taxInvoiceIssuedAt" BETWEEN :from AND :to
-        -- An RTO'd part's invoice was issued at dispatch: it stays here, reversed by
-        -- its credit note in the CDN section.
-        AND (${REPORTABLE_ORDER_SQL} OR so."status" = '${ORDER_STATUS.RETURNED}')
-        ${vendorFilter}
-      GROUP BY so."taxInvoiceNumber", so."taxInvoiceIssuedAt", a.gstin, a.state
-
-      UNION ALL
-
-      SELECT
-        'B2C'::text AS section,
-        'AGGREGATE'::text AS "documentNumber",
-        MAX(so."taxInvoiceIssuedAt") AS "documentDate",
-        ''::text AS "recipientGstin",
-        COALESCE(a.state, '') AS state,
-        ''::text AS "hsnCode",
-        0::int AS qty,
-        SUM(${taxableExpr})::bigint AS "taxablePaise",
-        SUM(${taxExpr})::bigint AS "taxPaise",
-        0::bigint AS "igstPaise",
-        0::bigint AS "cgstPaise",
-        0::bigint AS "sgstPaise"
-      FROM sub_orders so
-      INNER JOIN orders o ON o.id = so."orderId" AND o."deletedAt" IS NULL
-      INNER JOIN addresses a ON a.id = o."shippingAddressId"
-        AND NULLIF(TRIM(a.gstin), '') IS NULL
-      WHERE so."deletedAt" IS NULL
-        AND so."taxInvoiceNumber" IS NOT NULL
-        AND so."taxInvoiceIssuedAt" BETWEEN :from AND :to
-        -- An RTO'd part's invoice was issued at dispatch: it stays here, reversed by
-        -- its credit note in the CDN section.
-        AND (${REPORTABLE_ORDER_SQL} OR so."status" = '${ORDER_STATUS.RETURNED}')
-        ${vendorFilter}
-      GROUP BY a.state
-
-      UNION ALL
-
-      -- The platform's own invoices (gift wrap, shipping, kept return fees).
-      SELECT
-        'PLATFORM'::text AS section,
-        pd."documentNumber",
-        pd."documentDate",
-        pd."recipientGstin",
-        pd.state,
-        ''::text AS "hsnCode",
-        0::int AS qty,
-        pd."taxablePaise",
-        pd."taxPaise",
-        0::bigint AS "igstPaise",
-        0::bigint AS "cgstPaise",
-        0::bigint AS "sgstPaise"
-      FROM (${platformInvoiceDocumentsSql()}) pd
-
-      UNION ALL
-
-      SELECT
-        'CDN'::text AS section,
-        cn.number AS "documentNumber",
-        cn."issuedAt" AS "documentDate",
-        ''::text AS "recipientGstin",
-        ''::text AS state,
-        ''::text AS "hsnCode",
-        0::int AS qty,
-        cn."merchandisePaise"::bigint AS "taxablePaise",
-        cn."taxPaise"::bigint AS "taxPaise",
-        0::bigint AS "igstPaise",
-        0::bigint AS "cgstPaise",
-        0::bigint AS "sgstPaise"
-      FROM credit_notes cn
-      WHERE cn."deletedAt" IS NULL
-        AND cn."issuedAt" BETWEEN :from AND :to
-        AND (:vendorId::uuid IS NULL OR cn."vendorId" = :vendorId)
-    ) AS gstr1_rows
-  `;
-
   return pagedSqlQuery({
-    selectSql,
-    orderBySql: `section ASC, "documentDate" DESC`,
-    replacements: sqlReplacements(filters),
+    selectSql: gstr1SelectSql(),
+    orderBySql: `section ASC, "supplierGstin" ASC, "documentDate" DESC, "documentNumber" ASC, state ASC, "gstRate" ASC`,
+    replacements: { ...(await gstReplacements(filters)), b2clLimit: B2CL_INVOICE_LIMIT_PAISE },
     filters,
-    mapRow: (row) => ({
-      section: row.section,
-      documentNumber: row.documentNumber,
-      documentDate: row.documentDate,
-      recipientGstin: row.recipientGstin,
-      state: row.state,
-      hsnCode: row.hsnCode,
-      qty: Number(row.qty ?? 0),
-      taxable: fromPaise(Number(row.taxablePaise ?? 0)),
-      tax: fromPaise(Number(row.taxPaise ?? 0)),
-    }),
+    mapRow: mapGstr1Row,
   });
 }
 
+/**
+ * GSTR-3B for the documents issued in the range, net of the credit notes issued in it.
+ * With a vendor: that vendor's outward supplies, and the TCS the platform collected on
+ * them (the vendor's credit). Without: the platform's own supplies (goods it sells, its
+ * fees and its commission invoices), the TCS it collected (its GSTR-8 liability, a
+ * separate line, never added to output tax), and the sellers' supplies for reference.
+ */
 async function gstr3bSummary(filters: ReportFilters) {
   assertReportRange(filters);
-  const taxableExpr = sqlFrozenPaise('so', 'taxableAmountPaise');
-  const taxExpr = sqlFrozenPaise('so', 'taxAmountPaise');
-  const vendorFilter = `AND (:vendorId::uuid IS NULL OR so."vendorId" = :vendorId)`;
-
+  const vendorId = resolveVendorId(filters);
   const [rows] = await sequelize.query(
     `
-    WITH scoped AS (
-      SELECT so.*
-      FROM sub_orders so
-      INNER JOIN orders o ON o.id = so."orderId" AND o."deletedAt" IS NULL
-      WHERE so."deletedAt" IS NULL
-        AND so."createdAt" BETWEEN :from AND :to
-        AND ${REPORTABLE_ORDER_SQL}
-        ${vendorFilter}
-    ),
-    tax_parts AS (
+    WITH docs AS (${scopedGstDocumentLinesSql()}),
+    own AS (
       SELECT
-        COALESCE(SUM(${taxableExpr.replace(/\bso\./g, 'scoped.')}), 0)::bigint AS "taxablePaise",
-        COALESCE(SUM(${taxExpr.replace(/\bso\./g, 'scoped.')}), 0)::bigint AS "taxPaise"
-      FROM scoped
+        COALESCE(SUM("taxablePaise"), 0)::bigint AS taxable,
+        COALESCE(SUM("igstPaise"), 0)::bigint AS igst,
+        COALESCE(SUM("cgstPaise"), 0)::bigint AS cgst,
+        COALESCE(SUM("sgstPaise"), 0)::bigint AS sgst
+      FROM docs
+      WHERE (:vendorId::uuid IS NOT NULL OR "supplierVendorId" IS NULL)
     ),
-    platform_parts AS (
-      -- The platform's own supplies (gift wrap, shipping, kept return fees).
+    sellers AS (
       SELECT
-        COALESCE(SUM(taxable), 0)::bigint AS "taxablePaise",
-        COALESCE(SUM(cgst + sgst + igst), 0)::bigint AS "taxPaise"
-      FROM (${platformSupplyLinesSql()}) platform_lines
+        COALESCE(SUM("taxablePaise"), 0)::bigint AS taxable,
+        COALESCE(SUM("igstPaise" + "cgstPaise" + "sgstPaise"), 0)::bigint AS tax
+      FROM docs
+      WHERE "supplierVendorId" IS NOT NULL
     ),
-    tcs_parts AS (
-      SELECT COALESCE(SUM(t."tcsAmountPaise"), 0)::bigint AS "tcsPaise"
+    tcs AS (
+      SELECT COALESCE(SUM(t."tcsAmountPaise"), 0)::bigint AS tcs
       FROM tcs_ledgers t
       INNER JOIN orders o ON o.id = t."orderId" AND o."deletedAt" IS NULL
       WHERE t."deletedAt" IS NULL
@@ -403,15 +335,17 @@ async function gstr3bSummary(filters: ReportFilters) {
         AND ${TCS_LEDGER_ORDER_SQL}
         AND (:vendorId::uuid IS NULL OR t."vendorId" = :vendorId)
     )
-    SELECT 'OUTWARD_TAXABLE'::text AS line, (tp."taxablePaise" + pp."taxablePaise")::bigint AS "amountPaise"
-    FROM tax_parts tp CROSS JOIN platform_parts pp
-    UNION ALL SELECT 'OUTWARD_TAX'::text, (tp."taxPaise" + pp."taxPaise")::bigint
-    FROM tax_parts tp CROSS JOIN platform_parts pp
-    UNION ALL SELECT 'TCS_COLLECTED'::text, tc."tcsPaise" FROM tcs_parts tc
-    UNION ALL SELECT 'NET_TAX_LIABILITY'::text, (tp."taxPaise" + pp."taxPaise" + tc."tcsPaise")::bigint
-    FROM tax_parts tp CROSS JOIN platform_parts pp CROSS JOIN tcs_parts tc
+    SELECT 'OUTWARD_TAXABLE'::text AS line, own.taxable AS "amountPaise" FROM own
+    UNION ALL SELECT 'OUTWARD_IGST', own.igst FROM own
+    UNION ALL SELECT 'OUTWARD_CGST', own.cgst FROM own
+    UNION ALL SELECT 'OUTWARD_SGST', own.sgst FROM own
+    UNION ALL SELECT 'OUTWARD_TAX', own.igst + own.cgst + own.sgst FROM own
+    UNION ALL SELECT
+      CASE WHEN :vendorId::uuid IS NULL THEN 'TCS_COLLECTED' ELSE 'TCS_CREDIT' END, tcs.tcs FROM tcs
+    UNION ALL SELECT 'SELLERS_OUTWARD_TAXABLE', sellers.taxable FROM sellers WHERE :vendorId::uuid IS NULL
+    UNION ALL SELECT 'SELLERS_OUTWARD_TAX', sellers.tax FROM sellers WHERE :vendorId::uuid IS NULL
     `,
-    { replacements: sqlReplacements(filters) },
+    { replacements: await gstReplacements({ ...filters, vendorId }) },
   );
 
   const mapped = (rows as Array<Record<string, unknown>>).map((row) => ({
@@ -1062,6 +996,9 @@ const taxInvoiceRegisterColumns = [
   { key: 'taxInvoiceNumber', labelKey: 'taxInvoiceNumber' },
   { key: 'taxInvoiceIssuedAt', labelKey: 'taxInvoiceIssuedAt', format: 'date' as const },
   { key: 'taxable', labelKey: 'taxable', format: 'currency' as const },
+  { key: 'cgst', labelKey: 'cgst', format: 'currency' as const },
+  { key: 'sgst', labelKey: 'sgst', format: 'currency' as const },
+  { key: 'igst', labelKey: 'igst', format: 'currency' as const },
   { key: 'tax', labelKey: 'taxAmount', format: 'currency' as const },
   { key: 'total', labelKey: 'totalAmount', format: 'currency' as const },
   { key: 'paymentMethod', labelKey: 'paymentMethod' },
@@ -1099,6 +1036,9 @@ export const adminFinanceGapReports: ReportDefinition[] = [
       { key: 'buyerName', labelKey: 'buyerName' },
       { key: 'placeOfSupplyState', labelKey: 'placeOfSupplyState' },
       { key: 'taxable', labelKey: 'taxable', format: 'currency' },
+      { key: 'cgst', labelKey: 'cgst', format: 'currency' },
+      { key: 'sgst', labelKey: 'sgst', format: 'currency' },
+      { key: 'igst', labelKey: 'igst', format: 'currency' },
       { key: 'tax', labelKey: 'taxAmount', format: 'currency' },
       { key: 'total', labelKey: 'totalAmount', format: 'currency' },
     ],
@@ -1114,13 +1054,18 @@ export const adminFinanceGapReports: ReportDefinition[] = [
     financial: true,
     columns: [
       { key: 'section', labelKey: 'section' },
+      { key: 'supplierName', labelKey: 'supplierName' },
+      { key: 'supplierGstin', labelKey: 'supplierGstin' },
       { key: 'documentNumber', labelKey: 'documentNumber' },
       { key: 'documentDate', labelKey: 'documentDate', format: 'date' },
+      { key: 'againstInvoiceNumber', labelKey: 'againstInvoiceNumber' },
       { key: 'recipientGstin', labelKey: 'recipientGstin' },
       { key: 'state', labelKey: 'state' },
-      { key: 'hsnCode', labelKey: 'hsnCode' },
-      { key: 'qty', labelKey: 'qty', format: 'number' },
+      { key: 'gstRate', labelKey: 'gstRate', format: 'number' },
       { key: 'taxable', labelKey: 'taxable', format: 'currency' },
+      { key: 'cgst', labelKey: 'cgst', format: 'currency' },
+      { key: 'sgst', labelKey: 'sgst', format: 'currency' },
+      { key: 'igst', labelKey: 'igst', format: 'currency' },
       { key: 'tax', labelKey: 'taxAmount', format: 'currency' },
     ],
     query: gstr1Filing,

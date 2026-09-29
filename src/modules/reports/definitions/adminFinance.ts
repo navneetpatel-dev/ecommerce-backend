@@ -17,7 +17,7 @@ import {
   sqlLineSubtotalPaise,
 } from '@modules/pricing/frozenMoneySql';
 import { PART_RETURN_DESCRIPTION_PREFIX } from '@modules/wallet/walletOrderRollback';
-import { platformSupplyLinesSql } from '../engine/platformSupplySql';
+import { gstDocumentReplacements, scopedGstDocumentLinesSql } from '../engine/gstDocumentsSql';
 import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { AuditLog } from '@database/models/auditLog.model';
@@ -187,12 +187,16 @@ async function tds194oSummary(filters: ReportFilters) {
   });
 }
 
+async function gstReplacements(filters: ReportFilters): Promise<Record<string, unknown>> {
+  return { ...sqlReplacements(filters), ...(await gstDocumentReplacements()) };
+}
+
 async function hsnSalesSummary(filters: ReportFilters) {
   assertReportRange(filters);
   return pagedSqlQuery({
     selectSql: hsnSalesSelectSql(),
-    orderBySql: `"hsnCode" ASC`,
-    replacements: sqlReplacements(filters),
+    orderBySql: `"supplierGstin" ASC, "hsnCode" ASC, "gstRate" ASC`,
+    replacements: await gstReplacements(filters),
     filters,
     mapRow: mapHsnSalesRow,
   });
@@ -203,7 +207,7 @@ async function stateTaxCollection(filters: ReportFilters) {
   return pagedSqlQuery({
     selectSql: stateTaxSelectSql(),
     orderBySql: `state ASC`,
-    replacements: sqlReplacements(filters),
+    replacements: await gstReplacements(filters),
     filters,
     mapRow: mapStateTaxRow,
   });
@@ -262,61 +266,52 @@ async function tds194oExport(
   return { rows: page.rows, nextCursor: page.nextCursor };
 }
 
+/**
+ * HSN / SAC summary (GSTR-1 table 12) of the documents issued in the range: per
+ * supplier, HSN and GST rate, invoices less credit notes, with the tax split. Read from
+ * the invoices as issued, so a return counts once — in its credit note's month.
+ */
 function hsnSalesSelectSql(): string {
-  const taxableExpr = sqlFrozenPaise('oi', 'taxableAmountPaise');
-  const taxExpr = sqlFrozenPaise('oi', 'taxAmountPaise');
   return `
     SELECT
-      "hsnCode",
+      "supplierName",
+      "supplierGstin",
+      COALESCE(NULLIF("hsnCode", ''), 'UNKNOWN') AS "hsnCode",
+      COALESCE("gstRate", 0) AS "gstRate",
       SUM(qty)::int AS qty,
       SUM("taxablePaise")::bigint AS "taxablePaise",
-      SUM("taxPaise")::bigint AS "taxPaise"
-    FROM (
-      SELECT
-        COALESCE(hsn."hsnCode", 'UNKNOWN') AS "hsnCode",
-        oi.quantity AS qty,
-        ${taxableExpr} AS "taxablePaise",
-        ${taxExpr} AS "taxPaise"
-      FROM order_items oi
-      INNER JOIN sub_orders s ON s.id = oi."subOrderId" AND s."deletedAt" IS NULL
-      INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
-      INNER JOIN product_variants pv ON pv.id = oi."variantId" AND pv."deletedAt" IS NULL
-      INNER JOIN products p ON p.id = pv."productId" AND p."deletedAt" IS NULL
-      LEFT JOIN (
-        SELECT DISTINCT ON (tr."categoryId")
-          tr."categoryId",
-          tr."hsnCode"
-        FROM tax_rules tr
-        WHERE tr."deletedAt" IS NULL
-          AND tr."hsnCode" IS NOT NULL
-        ORDER BY tr."categoryId", tr."updatedAt" DESC NULLS LAST
-      ) hsn ON hsn."categoryId" = p."categoryId"
-      WHERE oi."deletedAt" IS NULL
-        AND o."createdAt" BETWEEN :from AND :to
-        -- A cancelled sub-order's items were refunded: not sales, same rule as GMV.
-        AND ${GMV_SUB_ORDER_SQL}
-        AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
-        AND (:categoryId::uuid IS NULL OR p."categoryId" = :categoryId)
-      UNION ALL
-      -- The platform's own supplies (gift wrap, shipping, return fees), under their SAC.
-      SELECT sac, qty, taxable, cgst + sgst + igst
-      FROM (${platformSupplyLinesSql()}) platform_lines
-      WHERE :categoryId::uuid IS NULL
-    ) supplies
-    GROUP BY "hsnCode"
+      SUM("cgstPaise")::bigint AS "cgstPaise",
+      SUM("sgstPaise")::bigint AS "sgstPaise",
+      SUM("igstPaise")::bigint AS "igstPaise"
+    FROM (${scopedGstDocumentLinesSql()}) d
+    WHERE (:categoryId::uuid IS NULL OR d."categoryId" = :categoryId)
+    GROUP BY "supplierName", "supplierGstin", COALESCE(NULLIF("hsnCode", ''), 'UNKNOWN'), COALESCE("gstRate", 0)
   `;
 }
 
 function mapHsnSalesRow(row: Record<string, unknown>) {
+  const cgst = Number(row.cgstPaise ?? 0);
+  const sgst = Number(row.sgstPaise ?? 0);
+  const igst = Number(row.igstPaise ?? 0);
   return {
+    supplierName: String(row.supplierName ?? ''),
+    supplierGstin: String(row.supplierGstin ?? ''),
     hsnCode: String(row.hsnCode ?? 'UNKNOWN'),
+    gstRate: Number(row.gstRate ?? 0),
     qty: Number(row.qty ?? 0),
     taxable: fromPaise(Number(row.taxablePaise ?? 0)),
-    tax: fromPaise(Number(row.taxPaise ?? 0)),
+    cgst: fromPaise(cgst),
+    sgst: fromPaise(sgst),
+    igst: fromPaise(igst),
+    tax: fromPaise(cgst + sgst + igst),
   };
 }
 
-const HSN_SALES_KEYSET: KeysetOrderCol[] = [{ column: 'hsnCode', direction: 'ASC' }];
+const HSN_SALES_KEYSET: KeysetOrderCol[] = [
+  { column: 'supplierGstin', direction: 'ASC' },
+  { column: 'hsnCode', direction: 'ASC' },
+  { column: 'gstRate', direction: 'ASC' },
+];
 
 async function hsnSalesExport(
   filters: ReportFilters,
@@ -326,7 +321,7 @@ async function hsnSalesExport(
   const page = await keysetSqlQuery({
     selectSql: hsnSalesSelectSql(),
     order: HSN_SALES_KEYSET,
-    replacements: sqlReplacements(filters),
+    replacements: await gstReplacements(filters),
     limit,
     cursor,
     mapRow: mapHsnSalesRow,
@@ -335,68 +330,18 @@ async function hsnSalesExport(
 }
 
 /**
- * GST by customer state. The stored per-sub-order breakdown (rupees, from checkout)
- * is used while it still adds up to the sub-order's tax; once a return has reduced
- * the tax it no longer does, and the paise tax is split the way splitTaxAmount
- * splits it (IGST when the breakdown had IGST, else CGST = floor(half), SGST = rest).
- * Either way CGST + SGST + IGST equals the tax total in the same row.
+ * GST by place of supply (customer state) on the documents issued in the range:
+ * invoices less credit notes, every supplier (a vendor filter keeps that vendor's).
  */
 function stateTaxSelectSql(): string {
-  const taxExpr = sqlFrozenPaise('s', 'taxAmountPaise');
-  const stored = (key: string) =>
-    `ROUND(COALESCE((s."taxBreakdown"->>'${key}')::numeric, 0) * 100)::bigint`;
   return `
-    WITH sub_tax AS (
-      SELECT
-        COALESCE(NULLIF(a.state, ''), 'UNKNOWN') AS state,
-        ${taxExpr} AS tax,
-        ${stored('cgst')} AS "cgst0",
-        ${stored('sgst')} AS "sgst0",
-        ${stored('igst')} AS "igst0"
-      FROM sub_orders s
-      INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
-      LEFT JOIN addresses a ON a.id = o."shippingAddressId" AND a."deletedAt" IS NULL
-      WHERE s."deletedAt" IS NULL
-        AND o."createdAt" BETWEEN :from AND :to
-        -- A cancelled sub-order's tax was refunded, same rule as GMV and settlement.
-        AND ${GMV_SUB_ORDER_SQL}
-        AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
-    ),
-    platform_tax AS (
-      -- The platform's own supplies (gift wrap, shipping, return fees): GST split in paise.
-      SELECT state, cgst + sgst + igst AS tax, cgst, sgst, igst
-      FROM (${platformSupplyLinesSql()}) platform_lines
-    ),
-    split AS (
-      SELECT state, tax, cgst, sgst, igst FROM platform_tax
-      UNION ALL
-      SELECT
-        state,
-        tax,
-        CASE
-          WHEN "cgst0" + "sgst0" + "igst0" = tax THEN "cgst0"
-          WHEN "igst0" > 0 THEN 0
-          ELSE tax / 2
-        END AS cgst,
-        CASE
-          WHEN "cgst0" + "sgst0" + "igst0" = tax THEN "sgst0"
-          WHEN "igst0" > 0 THEN 0
-          ELSE tax - tax / 2
-        END AS sgst,
-        CASE
-          WHEN "cgst0" + "sgst0" + "igst0" = tax THEN "igst0"
-          WHEN "igst0" > 0 THEN tax
-          ELSE 0
-        END AS igst
-      FROM sub_tax
-    )
     SELECT
       state,
-      SUM(cgst)::bigint AS "cgstPaise",
-      SUM(sgst)::bigint AS "sgstPaise",
-      SUM(igst)::bigint AS "igstPaise",
-      SUM(tax)::bigint AS "taxTotalPaise"
-    FROM split
+      SUM("cgstPaise")::bigint AS "cgstPaise",
+      SUM("sgstPaise")::bigint AS "sgstPaise",
+      SUM("igstPaise")::bigint AS "igstPaise",
+      SUM("cgstPaise" + "sgstPaise" + "igstPaise")::bigint AS "taxTotalPaise"
+    FROM (${scopedGstDocumentLinesSql()}) d
     GROUP BY state
   `;
 }
@@ -421,7 +366,7 @@ async function stateTaxExport(
   const page = await keysetSqlQuery({
     selectSql: stateTaxSelectSql(),
     order: STATE_TAX_KEYSET,
-    replacements: sqlReplacements(filters),
+    replacements: await gstReplacements(filters),
     limit,
     cursor,
     mapRow: mapStateTaxRow,
@@ -539,7 +484,7 @@ async function creditDebitNoteRegister(filters: ReportFilters) {
   return pagedSqlQuery({
     selectSql: creditDebitNoteSelectSql(),
     orderBySql: `"issuedAt" DESC, "noteNumber" DESC`,
-    replacements: sqlReplacements(filters),
+    replacements: await gstReplacements(filters),
     filters,
     mapRow: mapCreditDebitNoteRow,
   });
@@ -550,58 +495,82 @@ const CREDIT_DEBIT_KEYSET: KeysetOrderCol[] = [
   { column: 'noteNumber', direction: 'DESC' },
 ];
 
+/**
+ * Every credit note issued in the range (returns, RTOs, the platform's shipping and
+ * gift-wrap refunds, commission credit notes), with its taxable value, tax split, place
+ * of supply and recipient GSTIN — plus the vendor debit notes (recoveries, not GST
+ * documents: no tax). Amounts are shown positive.
+ */
 function creditDebitNoteSelectSql(): string {
-  const noteInRange = (alias: string) => `(
-    (${alias}."issuedAt" IS NOT NULL AND ${alias}."issuedAt" BETWEEN :from AND :to)
-    OR (${alias}."issuedAt" IS NULL AND ${alias}."createdAt" BETWEEN :from AND :to)
-  )`;
   return `
     SELECT
       'CREDIT'::text AS type,
-      cn.number AS "noteNumber",
-      cn."orderId"::text AS "orderId",
-      COALESCE(cn."subOrderId"::text, '') AS "subOrderId",
-      COALESCE(cn."vendorId"::text, '') AS "vendorId",
-      COALESCE(cn."againstInvoiceNumber", '') AS "againstInvoiceNumber",
-      (cn."totalPaise" / 100.0) AS amount,
-      (cn."taxPaise" / 100.0) AS "taxAmount",
-      COALESCE(cn.reason, '') AS reason,
-      COALESCE(cn."issuedAt", cn."createdAt") AS "issuedAt"
-    FROM credit_notes cn
-    WHERE cn."deletedAt" IS NULL
-      AND ${noteInRange('cn')}
-      AND (:vendorId::uuid IS NULL OR cn."vendorId" = :vendorId)
+      d."documentNumber" AS "noteNumber",
+      COALESCE(d."orderId"::text, '') AS "orderId",
+      COALESCE(d."subOrderId"::text, '') AS "subOrderId",
+      COALESCE(d."supplierVendorId", d."recipientVendorId")::text AS "vendorId",
+      MAX(d."supplierName") AS "supplierName",
+      COALESCE(MAX(d."againstInvoiceNumber"), '') AS "againstInvoiceNumber",
+      COALESCE(MAX(d."recipientGstin"), '') AS "recipientGstin",
+      MAX(d.state) AS "placeOfSupplyState",
+      -SUM(d."taxablePaise")::bigint AS "taxablePaise",
+      -SUM(d."cgstPaise")::bigint AS "cgstPaise",
+      -SUM(d."sgstPaise")::bigint AS "sgstPaise",
+      -SUM(d."igstPaise")::bigint AS "igstPaise",
+      COALESCE(MAX(d.reason), '') AS reason,
+      d."documentDate" AS "issuedAt"
+    FROM (${scopedGstDocumentLinesSql()}) d
+    WHERE d."docType" = 'CREDIT_NOTE'
+    GROUP BY d."documentNumber", d."documentDate", d."orderId", d."subOrderId",
+             d."supplierVendorId", d."recipientVendorId"
 
     UNION ALL
 
     SELECT
-      'DEBIT'::text AS type,
-      dn.number AS "noteNumber",
-      dn."orderId"::text AS "orderId",
-      COALESCE(dn."subOrderId"::text, '') AS "subOrderId",
-      COALESCE(dn."vendorId"::text, '') AS "vendorId",
-      COALESCE(dn."againstInvoiceNumber", '') AS "againstInvoiceNumber",
-      (dn."netClawbackPaise" / 100.0) AS amount,
-      0::numeric AS "taxAmount",
-      COALESCE(dn.reason, '') AS reason,
-      COALESCE(dn."issuedAt", dn."createdAt") AS "issuedAt"
+      'DEBIT'::text,
+      dn.number,
+      dn."orderId"::text,
+      COALESCE(dn."subOrderId"::text, ''),
+      COALESCE(dn."vendorId"::text, ''),
+      COALESCE(v."businessName", ''),
+      COALESCE(dn."againstInvoiceNumber", ''),
+      COALESCE(NULLIF(v."gstNumber", ''), ''),
+      COALESCE(v.state, ''),
+      dn."netClawbackPaise"::bigint,
+      0::bigint,
+      0::bigint,
+      0::bigint,
+      COALESCE(dn.reason, ''),
+      COALESCE(dn."issuedAt", dn."createdAt")
     FROM debit_notes dn
+    LEFT JOIN vendors v ON v.id = dn."vendorId"
     WHERE dn."deletedAt" IS NULL
-      AND ${noteInRange('dn')}
+      AND COALESCE(dn."issuedAt", dn."createdAt") BETWEEN :from AND :to
       AND (:vendorId::uuid IS NULL OR dn."vendorId" = :vendorId)
   `;
 }
 
 function mapCreditDebitNoteRow(row: Record<string, unknown>) {
+  const taxable = Number(row.taxablePaise ?? 0);
+  const cgst = Number(row.cgstPaise ?? 0);
+  const sgst = Number(row.sgstPaise ?? 0);
+  const igst = Number(row.igstPaise ?? 0);
   return {
     type: String(row.type ?? ''),
     noteNumber: String(row.noteNumber ?? ''),
     orderId: String(row.orderId ?? ''),
     subOrderId: String(row.subOrderId ?? ''),
     vendorId: String(row.vendorId ?? ''),
+    supplierName: String(row.supplierName ?? ''),
     againstInvoiceNumber: String(row.againstInvoiceNumber ?? ''),
-    amount: Math.round(Number(row.amount ?? 0) * 100) / 100,
-    taxAmount: Math.round(Number(row.taxAmount ?? 0) * 100) / 100,
+    recipientGstin: String(row.recipientGstin ?? ''),
+    placeOfSupplyState: String(row.placeOfSupplyState ?? ''),
+    taxable: fromPaise(taxable),
+    cgst: fromPaise(cgst),
+    sgst: fromPaise(sgst),
+    igst: fromPaise(igst),
+    taxAmount: fromPaise(cgst + sgst + igst),
+    amount: fromPaise(taxable + cgst + sgst + igst),
     reason: String(row.reason ?? ''),
     issuedAt: row.issuedAt,
   };
@@ -616,7 +585,7 @@ async function creditDebitNoteRegisterExport(
   const page = await keysetSqlQuery({
     selectSql: creditDebitNoteSelectSql(),
     order: CREDIT_DEBIT_KEYSET,
-    replacements: sqlReplacements(filters),
+    replacements: await gstReplacements(filters),
     limit,
     cursor,
     mapRow: mapCreditDebitNoteRow,
@@ -1157,9 +1126,15 @@ export const adminFinanceReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: true,
     columns: [
+      { key: 'supplierName', labelKey: 'supplierName' },
+      { key: 'supplierGstin', labelKey: 'supplierGstin' },
       { key: 'hsnCode', labelKey: 'hsnCode' },
+      { key: 'gstRate', labelKey: 'gstRate', format: 'number' },
       { key: 'qty', labelKey: 'qty', format: 'number' },
       { key: 'taxable', labelKey: 'taxable', format: 'currency' },
+      { key: 'cgst', labelKey: 'cgst', format: 'currency' },
+      { key: 'sgst', labelKey: 'sgst', format: 'currency' },
+      { key: 'igst', labelKey: 'igst', format: 'currency' },
       { key: 'tax', labelKey: 'tax', format: 'currency' },
     ],
     query: hsnSalesSummary,
@@ -1220,9 +1195,16 @@ export const adminFinanceReports: ReportDefinition[] = [
       { key: 'orderId', labelKey: 'orderId' },
       { key: 'subOrderId', labelKey: 'subOrderId' },
       { key: 'vendorId', labelKey: 'vendorId' },
+      { key: 'supplierName', labelKey: 'supplierName' },
       { key: 'againstInvoiceNumber', labelKey: 'againstInvoiceNumber' },
-      { key: 'amount', labelKey: 'amount', format: 'currency' },
+      { key: 'recipientGstin', labelKey: 'recipientGstin' },
+      { key: 'placeOfSupplyState', labelKey: 'placeOfSupplyState' },
+      { key: 'taxable', labelKey: 'taxable', format: 'currency' },
+      { key: 'cgst', labelKey: 'cgst', format: 'currency' },
+      { key: 'sgst', labelKey: 'sgst', format: 'currency' },
+      { key: 'igst', labelKey: 'igst', format: 'currency' },
       { key: 'taxAmount', labelKey: 'taxAmount', format: 'currency' },
+      { key: 'amount', labelKey: 'amount', format: 'currency' },
       { key: 'reason', labelKey: 'reason' },
       { key: 'issuedAt', labelKey: 'issuedAt', format: 'date' },
     ],

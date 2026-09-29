@@ -36,6 +36,7 @@ import {
 } from '@core/constants/statuses';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { CreditNote } from '@database/models/creditNote.model';
+import { CommissionInvoice } from '@database/models/commissionInvoice.model';
 import { couponsService } from '@modules/coupons/coupons.service';
 import { computeReconciliationSummary } from '@modules/reports/engine/queryHelpers';
 import { getReportDefinition } from '@modules/reports/engine/reportRegistry';
@@ -58,6 +59,8 @@ type SubSpec = {
   shipping: number;
   /** The coupon discount on this part (checkout splits the order's across its parts). */
   discount?: number;
+  /** Dispatched: its tax invoice was issued (GST reports read issued invoices). */
+  invoiced?: boolean;
 };
 
 async function dbAvailable(): Promise<boolean> {
@@ -122,7 +125,7 @@ async function seedOrder(params: {
       updatedBy: customerId,
       deletedBy: null,
     } as never);
-    await OrderItem.create({
+    const item = await OrderItem.create({
       subOrderId: sub.id,
       variantId: params.variantId,
       productName: 'Report scope item',
@@ -137,6 +140,29 @@ async function seedOrder(params: {
       updatedBy: customerId,
       deletedBy: null,
     } as never);
+    if (spec.invoiced) {
+      const halfPaise = toPaise(spec.tax) / 2;
+      await sub.update({
+        taxInvoiceNumber: `SCOPE/${randomUUID().slice(0, 8)}`,
+        taxInvoiceIssuedAt: new Date(),
+        taxInvoiceSnapshot: {
+          totalPaise: toPaise(spec.subtotal + spec.tax),
+          lines: [
+            {
+              orderItemId: item.id,
+              quantity: 1,
+              unitPricePaise: toPaise(spec.subtotal),
+              taxablePaise: toPaise(spec.subtotal),
+              cgstPaise: halfPaise,
+              sgstPaise: halfPaise,
+              igstPaise: 0,
+              hsnCode: 'SCOPE-HSN',
+              gstPercentage: 18,
+            },
+          ],
+        },
+      } as never);
+    }
   }
 
   await CouponUsage.create({
@@ -243,7 +269,7 @@ describe('report money scope', () => {
       couponDiscount: 50,
       subOrders: [
         // The ₹50 coupon discount split ₹30 / ₹12 / ₹8 across the three parts.
-        { status: ORDER_STATUS.DELIVERED, subtotal: 1000, tax: 180, shipping: 50, discount: 30 },
+        { status: ORDER_STATUS.DELIVERED, subtotal: 1000, tax: 180, shipping: 50, discount: 30, invoiced: true },
         { status: ORDER_STATUS.CANCELLED, subtotal: 300, tax: 54, shipping: 40, discount: 12 },
         // Came back undelivered (RTO) and refunded: out of every total like the cancelled one.
         { status: ORDER_STATUS.RETURNED, subtotal: 200, tax: 36, shipping: 20, discount: 8 },
@@ -419,8 +445,8 @@ describe('report money scope', () => {
 
     const state = await getReportDefinition('state-tax-collection')!.query(scoped);
     const ka = state.rows.find((row) => row.state === 'KA');
-    // Live sub-order only (₹180), not the cancelled one's ₹54. No stored breakdown on
-    // these rows, so the paise tax is split: ₹90 + ₹90.
+    // The dispatched part's invoice only (₹180): the cancelled part was never invoiced.
+    // CGST ₹90 + SGST ₹90 as issued.
     assert.equal(ka?.taxTotal, 180);
     assert.equal(ka?.cgst, 90);
     assert.equal(ka?.sgst, 90);
@@ -468,6 +494,9 @@ describe('report money scope', () => {
       ],
     };
     for (const status of [ORDER_STATUS.DELIVERED, ORDER_STATUS.CANCELLED]) {
+      // Cancelled before dispatch: its gift-wrap invoice was never issued.
+      const platformInvoiceSnapshot =
+        status === ORDER_STATUS.DELIVERED ? snapshot : { ...snapshot, invoiceNumber: null, issuedAt: null };
       const order = await Order.create({
         userId: customerId,
         couponId: null,
@@ -483,7 +512,7 @@ describe('report money scope', () => {
         shippingAddressId: address.id,
         giftWrap: true,
         giftWrapFeeAmount: 49,
-        platformInvoiceSnapshot: snapshot,
+        platformInvoiceSnapshot,
         createdBy: customerId,
         updatedBy: customerId,
         deletedBy: null,
@@ -582,15 +611,211 @@ describe('report money scope', () => {
     const sac = hsn.rows.find((r) => r.hsnCode === '9968');
     assert.ok(sac && Number(sac.tax) >= 7.48);
 
-    // GSTR-1 lists the platform's own shipping invoice.
+    // GSTR-1 lists the platform's own shipping invoice (to an unregistered buyer: B2CS).
     const gstr1 = await getReportDefinition('gstr-1-filing')!.query(all);
-    const doc = gstr1.rows.find((r) => r.documentNumber === invoiceNumber);
-    assert.equal(doc?.section, 'PLATFORM');
+    const doc = gstr1.rows.find((r) => r.section === 'B2CS' && r.state === shipState);
     assert.equal(doc?.taxable, 41.52);
     assert.equal(doc?.tax, 7.48);
+    assert.equal(doc?.cgst, 3.74);
+    assert.equal(doc?.sgst, 3.74);
+    assert.equal(doc?.gstRate, 18);
 
     // Not a vendor's supply: the vendor's report has its part (no goods tax here) only.
     const vendorState = await getReportDefinition('state-tax-collection')!.query({ ...all, vendorId });
     assert.equal(vendorState.rows.find((r) => r.state === shipState)?.taxTotal ?? 0, 0);
+  });
+
+  it('a return counts once, in its credit note month; commission invoices are the platform supply', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    // Far-off months so nothing else in the database falls in the ranges.
+    const jan = { from: new Date('2031-01-01T00:00:00+05:30'), to: new Date('2031-01-31T23:59:59.999+05:30') };
+    const feb = { from: new Date('2031-02-01T00:00:00+05:30'), to: new Date('2031-02-28T23:59:59.999+05:30') };
+    const address = await Address.create({
+      userId: customerId,
+      line1: 'Return once',
+      line2: null,
+      city: 'Mysuru',
+      state: 'KA',
+      country: 'IN',
+      pincode: '570001',
+      isDefault: false,
+      createdBy: customerId,
+      updatedBy: customerId,
+      deletedBy: null,
+    });
+    const [variant] = await sequelize.query<{ id: string }>('SELECT id FROM product_variants LIMIT 1', {
+      type: QueryTypes.SELECT,
+    });
+    const order = await Order.create({
+      userId: customerId,
+      couponId: null,
+      appliedCouponIds: [],
+      totalAmount: 1180,
+      originalTotalAmount: 1180,
+      discountTotal: 0,
+      status: ORDER_STATUS.DELIVERED,
+      paymentStatus: PAYMENT_STATUS.PAID,
+      paymentMethod: PAYMENT_METHOD.RAZORPAY,
+      walletAmountUsed: 0,
+      razorpayAmountPaid: 1180,
+      shippingAddressId: address.id,
+      createdBy: customerId,
+      updatedBy: customerId,
+      deletedBy: null,
+    } as never);
+    created.orders.push(order.id);
+    const invoiceNumber = `RET/${randomUUID().slice(0, 8)}`;
+    // After one of two units came back, the part's own amounts were rewritten to half.
+    const sub = await SubOrder.create({
+      orderId: order.id,
+      vendorId,
+      status: ORDER_STATUS.DELIVERED,
+      subtotalPaise: 50000,
+      taxAmountPaise: 9000,
+      taxableAmountPaise: 50000,
+      shippingCostPaise: 0,
+      taxInvoiceNumber: invoiceNumber,
+      taxInvoiceIssuedAt: new Date('2031-01-10T10:00:00+05:30'),
+      createdBy: customerId,
+      updatedBy: customerId,
+      deletedBy: null,
+    } as never);
+    const item = await OrderItem.create({
+      subOrderId: sub.id,
+      variantId: variant!.id,
+      productName: 'Returned once',
+      quantity: 1,
+      unitPrice: 500,
+      unitPricePaise: 50000,
+      lineSubtotal: 500,
+      discountAmount: 0,
+      taxableAmount: 500,
+      taxAmount: 90,
+      createdBy: customerId,
+      updatedBy: customerId,
+      deletedBy: null,
+    } as never);
+    // The invoice as issued: two units, ₹1,000 + ₹180.
+    await sub.update({
+      taxInvoiceSnapshot: {
+        totalPaise: 118000,
+        lines: [
+          {
+            orderItemId: item.id,
+            quantity: 2,
+            unitPricePaise: 50000,
+            taxablePaise: 100000,
+            cgstPaise: 9000,
+            sgstPaise: 9000,
+            igstPaise: 0,
+            hsnCode: '6109',
+            gstPercentage: 18,
+          },
+        ],
+      },
+    } as never);
+    const note = await CreditNote.create({
+      number: `RETCN/${randomUUID().slice(0, 8)}`,
+      returnRequestId: null,
+      orderId: order.id,
+      orderItemId: item.id,
+      subOrderId: sub.id,
+      vendorId,
+      againstInvoiceNumber: invoiceNumber,
+      userId: customerId,
+      merchandisePaise: 50000,
+      taxPaise: 9000,
+      totalPaise: 59000,
+      taxBreakdown: { refundTaxPaise: 9000, cgst: 4500, sgst: 4500, igst: 0 },
+      reason: 'Return',
+      issuedAt: new Date('2031-02-05T10:00:00+05:30'),
+      createdBy: customerId,
+      updatedBy: customerId,
+      deletedBy: null,
+    } as never);
+
+    try {
+      const scoped = (range: { from: Date; to: Date }) => ({ ...range, vendorId, page: 1, limit: 100 });
+
+      // January: the invoice as issued, whole — not the half the return left.
+      const janGstr1 = await getReportDefinition('gstr-1-filing')!.query(scoped(jan));
+      const janRow = janGstr1.rows.find((r) => r.section === 'B2CS' && r.state === 'KA');
+      assert.equal(janRow?.taxable, 1000);
+      assert.equal(janRow?.cgst, 90);
+      assert.equal(janRow?.sgst, 90);
+      const janRegister = await getReportDefinition('tax-invoice-register')!.query(scoped(jan));
+      const invoice = janRegister.rows.find((r) => r.taxInvoiceNumber === invoiceNumber);
+      assert.equal(invoice?.taxable, 1000);
+      assert.equal(invoice?.tax, 180);
+      assert.equal(invoice?.total, 1180);
+      const janHsn = await getReportDefinition('hsn-sales-summary')!.query(scoped(jan));
+      assert.equal(janHsn.rows.find((r) => r.hsnCode === '6109')?.qty, 2);
+
+      // February: only the credit note, negative, once.
+      const febGstr1 = await getReportDefinition('gstr-1-filing')!.query(scoped(feb));
+      const febRow = febGstr1.rows.find((r) => r.section === 'B2CS' && r.state === 'KA');
+      assert.equal(febRow?.taxable, -500);
+      assert.equal(febRow?.tax, -90);
+      const febHsn = await getReportDefinition('hsn-sales-summary')!.query(scoped(feb));
+      const febLine = febHsn.rows.find((r) => r.hsnCode === '6109');
+      assert.equal(febLine?.qty, -1);
+      assert.equal(febLine?.taxable, -500);
+      const feb3b = await getReportDefinition('gstr-3b-summary')!.query(scoped(feb));
+      assert.equal(feb3b.rows.find((r) => r.line === 'OUTWARD_TAX')?.amount, -90);
+      assert.equal(feb3b.rows.find((r) => r.line === 'NET_TAX_LIABILITY'), undefined);
+      const notes = await getReportDefinition('credit-debit-note-register')!.query(scoped(feb));
+      const noteRow = notes.rows.find((r) => r.noteNumber === note.number);
+      assert.equal(noteRow?.taxable, 500);
+      assert.equal(noteRow?.cgst, 45);
+      assert.equal(noteRow?.sgst, 45);
+      assert.equal(noteRow?.placeOfSupplyState, 'KA');
+    } finally {
+      await note.destroy({ force: true });
+    }
+  });
+
+  it("commission invoices are the platform's B2B supply in GSTR-1 and GSTR-3B", async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const mar = { from: new Date('2031-03-01T00:00:00+05:30'), to: new Date('2031-03-31T23:59:59.999+05:30') };
+    const vendor = await Vendor.findByPk(vendorId);
+    await vendor!.update({ gstNumber: '29ABCDE1234F1Z5' } as never);
+    const number = `COMM/${randomUUID().slice(0, 8)}`;
+    const invoice = await CommissionInvoice.create({
+      number,
+      vendorId,
+      payoutId: null,
+      periodStart: new Date('2031-03-01'),
+      periodEnd: new Date('2031-03-20'),
+      taxablePaise: 10000,
+      gstPaise: 1800,
+      cgstPaise: 900,
+      sgstPaise: 900,
+      igstPaise: 0,
+      totalPaise: 11800,
+      gstRatePercent: 18,
+      sacCode: '9985',
+      placeOfSupplyState: 'KA',
+      issuedAt: new Date('2031-03-25T10:00:00+05:30'),
+      createdBy: null,
+      updatedBy: null,
+      deletedBy: null,
+    } as never);
+    try {
+      const all = { ...mar, page: 1, limit: 100_000 };
+      const gstr1 = await getReportDefinition('gstr-1-filing')!.query(all);
+      const row = gstr1.rows.find((r) => r.documentNumber === number);
+      assert.equal(row?.section, 'B2B');
+      assert.equal(row?.recipientGstin, '29ABCDE1234F1Z5');
+      assert.equal(row?.taxable, 100);
+      assert.equal(row?.cgst, 9);
+      const gstr3b = await getReportDefinition('gstr-3b-summary')!.query(all);
+      assert.ok(Number(gstr3b.rows.find((r) => r.line === 'OUTWARD_TAXABLE')?.amount) >= 100);
+      // Not the vendor's own supply: its GSTR-1 leaves it out.
+      const vendorGstr1 = await getReportDefinition('gstr-1-filing')!.query({ ...all, vendorId });
+      assert.equal(vendorGstr1.rows.find((r) => r.documentNumber === number), undefined);
+    } finally {
+      await invoice.destroy({ force: true });
+      await vendor!.update({ gstNumber: null } as never);
+    }
   });
 });

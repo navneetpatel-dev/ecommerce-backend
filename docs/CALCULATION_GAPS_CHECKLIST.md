@@ -19,7 +19,7 @@ where the screen changes).
 
 ## Phase 1 — Foundations
 
-Status: done (migration `20260929000001` backfills HSN and rate on existing invoices).
+Status: done — PR navneetpatel-dev/ecommerce-backend#33, navneetpatel-dev/ecommerce-web#20 (migration `20260929000001` backfills HSN and rate on existing invoices).
 
 - [x] **#6** Report ranges are IST days (backend parses `YYYY-MM-DD` as IST; web
       default range uses IST dates).
@@ -28,22 +28,25 @@ Status: done (migration `20260929000001` backfills HSN and rate on existing invo
 
 ## Phase 2 — GST filing reports
 
-- [ ] **#1** GSTR-1, tax invoice registers (admin + vendor) and B2B register read the
+Status: done. Every GST report reads one source (`reports/engine/gstDocumentsSql.ts`):
+invoices as issued plus credit notes, dated by the document.
+
+- [x] **#1** GSTR-1, tax invoice registers (admin + vendor) and B2B register read the
       invoice as issued (snapshot); returns only through credit notes.
-- [ ] **#2** CGST / SGST / IGST filled in every GSTR-1 section.
-- [ ] **#10** GSTR-1 rows per rate; B2CL split; CDN rows carry recipient GSTIN, state
+- [x] **#2** CGST / SGST / IGST filled in every GSTR-1 section.
+- [x] **#10** GSTR-1 rows per rate; B2CL split; CDN rows carry recipient GSTIN, state
       and tax split.
-- [ ] **#3** GSTR-3B from invoices issued in the period less credit notes issued in
+- [x] **#3** GSTR-3B from invoices issued in the period less credit notes issued in
       the period; TCS on its own line, not added to output tax.
-- [ ] **#4** Commission invoices / credit notes (SAC 9985) in GSTR-1, HSN summary and
+- [x] **#4** Commission invoices / credit notes (SAC 9985) in GSTR-1, HSN summary and
       GSTR-3B.
-- [ ] **#7** HSN summary and state-wise tax by invoice date and credit-note date.
-- [ ] **#32** Credit/debit note register: taxable value, tax split, place of supply,
+- [x] **#7** HSN summary and state-wise tax by invoice date and credit-note date.
+- [x] **#32** Credit/debit note register: taxable value, tax split, place of supply,
       recipient GSTIN.
 - [x] **#9** Tax invoice PDF shows GST rate and discount per line.
-- [ ] **#13** Vendor TCS credit report uses the GSTR-8 rule (keeps RTO'd orders).
-- [ ] **#26** TCS return adjustment dated with the vendor credit note.
-- [ ] **#37** TCS split by place of supply (not by whether GST was charged); no TCS on
+- [x] **#13** Vendor TCS credit report uses the GSTR-8 rule (keeps RTO'd orders).
+- [x] **#26** TCS return adjustment dated with the vendor credit note.
+- [x] **#37** TCS split by place of supply (not by whether GST was charged); no TCS on
       nil-rated lines.
 
 ## Phase 3 — Reconciliation, settlement, payouts, TDS
@@ -88,7 +91,8 @@ Status: done (migration `20260929000001` backfills HSN and rate on existing invo
 - [ ] **#33** Fulfilment SLA from the shipment's delivered time.
 - [ ] **#34** Customer segment by lifetime orders.
 - [ ] **#35** Customer order history: GST-inclusive coupon savings.
-- [ ] **#36** Vendor GST sales tax split equals the tax.
+- [x] **#36** Vendor GST sales tax split equals the tax (phase 2: read from the invoice
+      and credit-note lines as issued).
 - [ ] **#40** Abandoned cart value GST-inclusive.
 - [ ] **#41** Gift cards sold by paid date.
 - [ ] **#43** Top-vendor share denominator; top categories by frozen category.

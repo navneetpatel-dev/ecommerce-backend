@@ -7,6 +7,7 @@ import { Vendor } from '@database/models/vendor.model';
 import { frozenPaise } from './frozenMoneySql';
 import { gstPeriodOf } from './gstPeriod';
 import { splitTaxAmount } from './pricing.engine';
+import { isIntraStateSupply } from './gstPlaceOfSupply';
 
 /**
  * Record a section 52 TCS collection (GSTR-8). `issuedAt` is when the supply was
@@ -25,10 +26,16 @@ export async function persistTcsCollectionLedger(
     placeOfSupplyState: string | null;
     actorId: string | null;
     issuedAt?: Date;
+    /**
+     * The supply is inter-state: the vendor's state differs from the place of supply.
+     * Section 52 TCS follows the supply, not whether GST happened to be charged (a
+     * nil-rated line has no IGST to go by). When omitted, read from `taxIgst`.
+     */
+    interState?: boolean;
   },
   transaction: Transaction,
 ) {
-  const useIgst = Number(params.taxIgst ?? 0) > 0;
+  const useIgst = params.interState ?? Number(params.taxIgst ?? 0) > 0;
   const { cgst: tcsCgstPaise, sgst: tcsSgstPaise, igst: tcsIgstPaise } = splitTaxAmount(
     params.tcsTotal,
     !useIgst,
@@ -77,7 +84,18 @@ export async function recordTcsCollectionOnDispatch(
   });
   if (existing) return;
 
-  const taxablePaise = frozenPaise(subOrder.taxableAmountPaise);
+  // TCS is collected on taxable (not nil-rated) supplies: the invoice lines charged GST.
+  const snapshotLines = subOrder.taxInvoiceSnapshot?.lines ?? null;
+  const taxablePaise = snapshotLines
+    ? snapshotLines.reduce(
+        (sum, line) =>
+          sum +
+          (line.gstPercentage === 0 || line.cgstPaise + line.sgstPaise + line.igstPaise === 0
+            ? 0
+            : line.taxablePaise),
+        0,
+      )
+    : frozenPaise(subOrder.taxableAmountPaise);
   const [vendor, order] = await Promise.all([
     Vendor.findByPk(subOrder.vendorId, { attributes: ['gstNumber', 'state'], transaction }),
     Order.findByPk(subOrder.orderId, {
@@ -93,17 +111,19 @@ export async function recordTcsCollectionOnDispatch(
         ? Math.round((tcsPaise / taxablePaise) * 100_000) / 1000
         : 0;
   const taxIgst = Number((subOrder.taxBreakdown as { igst?: unknown } | null)?.igst ?? 0);
+  const placeOfSupplyState = order?.shippingAddress?.state ?? vendor?.state ?? null;
   await persistTcsCollectionLedger(
     {
       tcsTotal: tcsPaise,
       taxIgst,
+      interState: !isIntraStateSupply(vendor?.state ?? null, placeOfSupplyState),
       orderId: subOrder.orderId,
       subOrderId: subOrder.id,
       vendorId: subOrder.vendorId,
       taxableAmountPaise: taxablePaise,
       ratePercent,
       vendorGstin: vendor?.gstNumber ?? null,
-      placeOfSupplyState: order?.shippingAddress?.state ?? vendor?.state ?? null,
+      placeOfSupplyState,
       actorId: null,
       issuedAt,
     },
