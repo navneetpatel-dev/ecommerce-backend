@@ -8,9 +8,9 @@ import {
   REPORTABLE_ORDER_SQL,
   sqlFrozenPaise,
   sqlOrderPaymentPaise,
-  sqlVendorNetPayoutPaise,
 } from '@modules/pricing/frozenMoneySql';
 import {
+  COMMISSION_REFERENCE_TYPE,
   COMMISSION_STATUS,
   PAYMENT_STATUS,
   PAYMENT_METHOD,
@@ -126,8 +126,27 @@ export {
 } from '@modules/pricing/frozenMoneySql';
 
 /**
- * Single-row settlement identity computed entirely in SQL (no Node-side load-all).
- * TCS comes from tcs_ledgers (PricingEngine frozen rows), not recomputed from commission.
+ * The settlement identity for orders placed in the range that count (REPORTABLE), in
+ * paise, computed in SQL. Every rupee a customer paid (and kept or got back) is
+ * accounted for exactly once:
+ *
+ *   customerPayments = vendorNetPayouts − platformFundedDiscount + platformCommission
+ *                      + tcsCollected + platformGoodsSales + shippingCollected
+ *                      − shippingRefunded + returnFeesKept + giftWrapCollected + refunds
+ *
+ * - vendorNetPayouts: the sale (and return-after-payout) ledgers' net — taxable value
+ *   plus GST plus the platform-funded coupon share, less commission and TCS. GST is
+ *   inside it (the vendor remits it), so `taxCollected` is shown but not added again.
+ * - platformFundedDiscount: the coupon share the platform pays the vendor on top of what
+ *   the customer paid (derived exactly from each ledger's frozen amounts).
+ * - tcsCollected: the section 52 TCS withheld from those ledgers.
+ * - platformGoodsSales: goods the platform sells itself (no vendor ledger).
+ * - shipping and gift wrap: the platform's own fees; shipping refunded with returns and
+ *   the return fees kept from refunds adjust it.
+ * - refunds: what approved returns give back (their accounting is frozen at approval,
+ *   when the parts' amounts are reduced).
+ * Cancelled and RTO'd parts leave both sides (their payment was refunded, their
+ * ledgers deleted). With a vendor, only that vendor's parts count (no platform fees).
  */
 export async function computeReconciliationSummary(filters: {
   from: Date;
@@ -136,11 +155,17 @@ export async function computeReconciliationSummary(filters: {
 }): Promise<{
   customerPaymentsPaise: number;
   vendorNetPayoutsPaise: number;
+  platformFundedDiscountPaise: number;
   platformCommissionPaise: number;
   taxCollectedPaise: number;
   tcsCollectedPaise: number;
+  platformGoodsPaise: number;
   shippingCollectedPaise: number;
+  shippingRefundedPaise: number;
+  returnFeesKeptPaise: number;
+  giftWrapPaise: number;
   refundsPaise: number;
+  accountedPaise: number;
   gmvPaise: number;
   merchandiseDiscountPaise: number;
   platformDiscountPaise: number;
@@ -152,16 +177,18 @@ export async function computeReconciliationSummary(filters: {
   const shipDisc = sqlFrozenPaise('s', 'shippingDiscountAmountPaise');
   const subtotalExpr = sqlFrozenPaise('s', 'subtotalPaise');
   const merchDiscExpr = sqlFrozenPaise('s', 'discountAmountPaise');
-  const commissionExpr = sqlFrozenPaise('cl', 'commissionAmountPaise');
-  const netExpr = sqlVendorNetPayoutPaise('cl');
   const ledgerDisc = sqlFrozenPaise('cl', 'discountAmountPaise');
+  // What a ledger's net holds beyond taxable + GST − commission − TCS: the platform's coupon share.
+  const platformFundedExpr = `(cl."netPayoutAmountPaise" - cl."taxableAmountPaise" - cl."taxAmountPaise"
+    + cl."commissionAmountPaise" + cl."tcsAmountPaise")`;
 
   const [rows] = await sequelize.query(
     `
     WITH reportable_orders AS (
       SELECT
         o.id,
-        ${sqlOrderPaymentPaise('o')} AS "paymentPaise"
+        ${sqlOrderPaymentPaise('o')} AS "paymentPaise",
+        ROUND(COALESCE(o."giftWrapFeeAmount", 0)::numeric * 100)::bigint AS "giftWrapPaise"
       FROM orders o
       WHERE o."deletedAt" IS NULL
         AND o."createdAt" BETWEEN :from AND :to
@@ -173,23 +200,30 @@ export async function computeReconciliationSummary(filters: {
       INNER JOIN reportable_orders ro ON ro.id = s."orderId"
       WHERE s."deletedAt" IS NULL
         AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
+        -- A cancelled or RTO'd (RETURNED) part was refunded and its ledgers deleted:
+        -- it leaves GMV, tax, shipping and the payments alike (GMV_SUB_ORDER_SQL).
+        AND s."status" NOT IN ('${ORDER_STATUS.CANCELLED}', '${ORDER_STATUS.RETURNED}')
     ),
     sub_totals AS (
       SELECT
         COALESCE(SUM(${taxExpr}), 0)::bigint AS "taxPaise",
         COALESCE(SUM(GREATEST(0, (${shipCost}) - (${shipDisc}))), 0)::bigint AS "shippingPaise",
         COALESCE(SUM(${subtotalExpr}), 0)::bigint AS "gmvPaise",
-        COALESCE(SUM(${merchDiscExpr}), 0)::bigint AS "merchandiseDiscountPaise"
+        COALESCE(SUM(${merchDiscExpr}), 0)::bigint AS "merchandiseDiscountPaise",
+        COALESCE(SUM(CASE WHEN s."vendorId" IS NULL
+          THEN s."taxableAmountPaise" + s."taxAmountPaise" ELSE 0 END), 0)::bigint AS "platformGoodsPaise",
+        COALESCE(SUM(s."taxableAmountPaise" + s."taxAmountPaise"
+          + GREATEST(0, (${shipCost}) - (${shipDisc}))), 0)::bigint AS "standingPaise"
       FROM scoped_subs s
-      -- A cancelled or RTO'd (RETURNED) sub-order was refunded and its commission/TCS
-      -- ledgers deleted, so it leaves GMV, tax, shipping and discounts too (same rule
-      -- as GMV_SUB_ORDER_SQL).
-      WHERE s."status" NOT IN ('${ORDER_STATUS.CANCELLED}', '${ORDER_STATUS.RETURNED}')
     ),
     ledger_totals AS (
+      -- Sale ledgers and returns after payout; not a vendor-borne cashback cost, which
+      -- is paid to the customer's wallet, not out of what the customer paid.
       SELECT
-        COALESCE(SUM(${commissionExpr}), 0)::bigint AS "commissionPaise",
-        COALESCE(SUM(${netExpr}), 0)::bigint AS "netPaise",
+        COALESCE(SUM(cl."commissionAmountPaise"), 0)::bigint AS "commissionPaise",
+        COALESCE(SUM(cl."netPayoutAmountPaise"), 0)::bigint AS "netPaise",
+        COALESCE(SUM(cl."tcsAmountPaise"), 0)::bigint AS "tcsPaise",
+        COALESCE(SUM(${platformFundedExpr}), 0)::bigint AS "platformFundedPaise",
         COALESCE(SUM(CASE
           WHEN cl."discountBearer" = '${DISCOUNT_BEARER.VENDOR}' THEN ${ledgerDisc}
           ELSE 0
@@ -201,51 +235,46 @@ export async function computeReconciliationSummary(filters: {
       FROM commission_ledgers cl
       INNER JOIN scoped_subs s ON s.id = cl."subOrderId"
       WHERE cl."deletedAt" IS NULL
-        AND cl.status <> '${COMMISSION_STATUS.CLAWED_BACK}'
+        AND (cl."referenceType" IS NULL OR cl."referenceType" = '${COMMISSION_REFERENCE_TYPE.RETURN_CLAWBACK}')
     ),
-    tcs_totals AS (
-      SELECT COALESCE(SUM(t."tcsAmountPaise"), 0)::bigint AS "tcsPaise"
-      FROM tcs_ledgers t
-      INNER JOIN reportable_orders ro ON ro.id = t."orderId"
-      WHERE t."deletedAt" IS NULL
-        AND (:vendorId::uuid IS NULL OR t."vendorId" = :vendorId)
+    return_totals AS (
+      -- Approved returns on these parts: what goes back to the customer, the goods and
+      -- tax reversed, the shipping refunded, and the fee kept (the difference).
+      SELECT
+        COALESCE(SUM(ROUND(rr."refundAmount"::numeric * 100)), 0)::bigint AS "refundsPaise",
+        COALESCE(SUM(COALESCE(rr."refundMerchandiseAmountPaise", 0)
+          + ROUND(COALESCE(rr."refundTaxAmount", 0)::numeric * 100)), 0)::bigint AS "returnedGoodsPaise",
+        COALESCE(SUM(ROUND(COALESCE(rr."shippingRefundAmount", 0)::numeric * 100)), 0)::bigint AS "shippingRefundedPaise"
+      FROM return_requests rr
+      INNER JOIN scoped_subs s ON s.id = rr."subOrderId"
+      WHERE rr."deletedAt" IS NULL
+        AND rr."refundAmount" IS NOT NULL
     ),
     payment_totals AS (
-      SELECT COALESCE(SUM(ro."paymentPaise"), 0)::bigint AS "customerPaymentsPaise"
-      FROM reportable_orders ro
-      WHERE :vendorId::uuid IS NULL
-         OR EXISTS (
-           SELECT 1 FROM scoped_subs s WHERE s."orderId" = ro.id
-         )
-    ),
-    refund_totals AS (
-      -- What customers got back on returns (goods, any refunded shipping, less a kept
-      -- return fee): the refund of each return whose vendor credit note is issued. Not
-      -- the credit notes' totals — the vendor's note is for the goods alone and the
-      -- platform issues its own for shipping. RTO parts are not here: they already left
-      -- customer payments (sqlOrderPaymentPaise), like a cancelled part.
-      SELECT COALESCE(SUM(ROUND(rr."refundAmount"::numeric * 100)), 0)::bigint AS "refundsPaise"
-      FROM return_requests rr
-      INNER JOIN credit_notes cn
-        ON cn."returnRequestId" = rr.id
-        AND cn."vendorId" IS NOT NULL
-        AND cn."deletedAt" IS NULL
-      INNER JOIN reportable_orders ro ON ro.id = cn."orderId"
-      WHERE rr."deletedAt" IS NULL
-        AND (
-          :vendorId::uuid IS NULL
-          OR EXISTS (
-            SELECT 1 FROM scoped_subs s WHERE s."orderId" = cn."orderId"
-          )
-        )
+      SELECT
+        CASE WHEN :vendorId::uuid IS NULL
+          THEN (SELECT COALESCE(SUM("paymentPaise"), 0) FROM reportable_orders)
+          -- One vendor: what the customer paid for its parts (as they stand, plus what
+          -- its returns gave back).
+          ELSE (SELECT "standingPaise" FROM sub_totals) + (SELECT "returnedGoodsPaise" FROM return_totals)
+        END::bigint AS "customerPaymentsPaise",
+        CASE WHEN :vendorId::uuid IS NULL
+          THEN (SELECT COALESCE(SUM("giftWrapPaise"), 0) FROM reportable_orders)
+          ELSE 0
+        END::bigint AS "giftWrapPaise"
     )
     SELECT
       p."customerPaymentsPaise",
+      p."giftWrapPaise",
       l."netPaise" AS "vendorNetPayoutsPaise",
+      l."platformFundedPaise" AS "platformFundedDiscountPaise",
       l."commissionPaise" AS "platformCommissionPaise",
+      l."tcsPaise" AS "tcsCollectedPaise",
       s."taxPaise" AS "taxCollectedPaise",
-      t."tcsPaise" AS "tcsCollectedPaise",
+      s."platformGoodsPaise",
       s."shippingPaise" AS "shippingCollectedPaise",
+      r."shippingRefundedPaise",
+      (r."returnedGoodsPaise" + r."shippingRefundedPaise" - r."refundsPaise")::bigint AS "returnFeesKeptPaise",
       r."refundsPaise",
       s."gmvPaise",
       s."merchandiseDiscountPaise",
@@ -254,25 +283,44 @@ export async function computeReconciliationSummary(filters: {
     FROM payment_totals p
     CROSS JOIN sub_totals s
     CROSS JOIN ledger_totals l
-    CROSS JOIN tcs_totals t
-    CROSS JOIN refund_totals r
+    CROSS JOIN return_totals r
     `,
     { replacements: { from: filters.from, to: filters.to, vendorId } },
   );
 
   const row = (rows as Array<Record<string, unknown>>)[0] ?? {};
+  const n = (key: string) => Number(row[key] ?? 0);
+  const summary = {
+    customerPaymentsPaise: n('customerPaymentsPaise'),
+    vendorNetPayoutsPaise: n('vendorNetPayoutsPaise'),
+    platformFundedDiscountPaise: n('platformFundedDiscountPaise'),
+    platformCommissionPaise: n('platformCommissionPaise'),
+    taxCollectedPaise: n('taxCollectedPaise'),
+    tcsCollectedPaise: n('tcsCollectedPaise'),
+    platformGoodsPaise: n('platformGoodsPaise'),
+    shippingCollectedPaise: n('shippingCollectedPaise'),
+    shippingRefundedPaise: n('shippingRefundedPaise'),
+    returnFeesKeptPaise: n('returnFeesKeptPaise'),
+    giftWrapPaise: n('giftWrapPaise'),
+    refundsPaise: n('refundsPaise'),
+    gmvPaise: n('gmvPaise'),
+    merchandiseDiscountPaise: n('merchandiseDiscountPaise'),
+    platformDiscountPaise: n('platformDiscountPaise'),
+    vendorDiscountPaise: n('vendorDiscountPaise'),
+  };
   return {
-    customerPaymentsPaise: Number(row.customerPaymentsPaise ?? 0),
-    vendorNetPayoutsPaise: Number(row.vendorNetPayoutsPaise ?? 0),
-    platformCommissionPaise: Number(row.platformCommissionPaise ?? 0),
-    taxCollectedPaise: Number(row.taxCollectedPaise ?? 0),
-    tcsCollectedPaise: Number(row.tcsCollectedPaise ?? 0),
-    shippingCollectedPaise: Number(row.shippingCollectedPaise ?? 0),
-    refundsPaise: Number(row.refundsPaise ?? 0),
-    gmvPaise: Number(row.gmvPaise ?? 0),
-    merchandiseDiscountPaise: Number(row.merchandiseDiscountPaise ?? 0),
-    platformDiscountPaise: Number(row.platformDiscountPaise ?? 0),
-    vendorDiscountPaise: Number(row.vendorDiscountPaise ?? 0),
+    ...summary,
+    accountedPaise:
+      summary.vendorNetPayoutsPaise -
+      summary.platformFundedDiscountPaise +
+      summary.platformCommissionPaise +
+      summary.tcsCollectedPaise +
+      summary.platformGoodsPaise +
+      summary.shippingCollectedPaise -
+      summary.shippingRefundedPaise +
+      summary.returnFeesKeptPaise +
+      summary.giftWrapPaise +
+      summary.refundsPaise,
   };
 }
 

@@ -215,3 +215,34 @@ describe('createCommissionInvoiceForPayout GST split', () => {
     assert.equal(none, null);
   });
 });
+
+describe('createCommissionInvoiceForPayout: one invoice and one credit note per payout', () => {
+  afterEach(() => mock.restoreAll());
+
+  it('looks for an existing document of the same kind only, so a payout gets both', async () => {
+    mockInvoiceDeps({ platformState: 'KARNATAKA', vendorState: 'MAHARASHTRA' });
+    const lookups: Array<Record<string, unknown>> = [];
+    mock.method(CommissionInvoice, 'findOne', async (options: { where: Record<string, unknown> }) => {
+      lookups.push(options.where);
+      return null;
+    });
+    const input = {
+      vendorId: 'vendor-1',
+      payoutId: 'payout-9',
+      periodStart: new Date('2026-02-01'),
+      periodEnd: new Date('2026-02-28'),
+      actorId: 'actor-1',
+    };
+    const invoice = await createCommissionInvoiceForPayout({ ...input, commissionTaxablePaise: 10000 }, transaction);
+    const note = await createCommissionInvoiceForPayout({ ...input, commissionTaxablePaise: -4000 }, transaction);
+    assert.equal(invoice?.taxablePaise, 10000);
+    assert.equal(note?.taxablePaise, -4000);
+    // Inter-state: the credit note's GST is IGST, negative.
+    assert.equal(note?.igstPaise, -720);
+    const [invoiceLookup, noteLookup] = lookups;
+    assert.equal(invoiceLookup!.payoutId, 'payout-9');
+    assert.ok(invoiceLookup!.taxablePaise, 'the invoice lookup filters by kind');
+    assert.ok(noteLookup!.taxablePaise, 'the credit note lookup filters by kind');
+    assert.notDeepEqual(invoiceLookup!.taxablePaise, noteLookup!.taxablePaise);
+  });
+});

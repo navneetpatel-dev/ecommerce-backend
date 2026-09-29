@@ -45,8 +45,23 @@ export type VendorPayoutBreakdown = {
    * GST), the rate applied and the TDS withheld on it.
    */
   rows: Array<{ netPaise: Paise; tdsBasePaise: Paise; tdsRatePercent: number; tdsPaise: Paise }>;
+  /** Commission on the sales (the commission invoice's taxable value). */
+  salesCommissionTaxablePaise: Paise;
+  /** Commission handed back by returns after payout (the credit note's, negative). */
+  returnsCommissionTaxablePaise: Paise;
+  /** Sales plus returns: the net commission. */
   commissionTaxablePaise: Paise;
+  /**
+   * GST on the commission as its documents charge it: the invoice's GST on the sales
+   * commission plus the credit note's (negative) on the returns', each rounded alone.
+   */
   commissionGstPaise: Paise;
+  /** The sale ledgers' net before TDS and commission GST. */
+  salesNetPaise: Paise;
+  /** 194-O TDS: withheld on the sales less the TDS given back on returns after payout. */
+  tdsPaise: Paise;
+  /** Adjustment rows' net: vendor-borne cashback (negative), its reversal, returns after payout. */
+  adjustmentPaise: Paise;
   /**
    * Signed balance: sales after TDS and commission GST (at least zero), plus adjustment
    * rows. Negative when the vendor's cashback cost exceeds what their sales earned —
@@ -75,7 +90,11 @@ export function vendorPayoutBreakdown(
 ): VendorPayoutBreakdown {
   let afterTdsPaise = 0;
   let adjustmentPaise = 0;
-  let commissionTaxablePaise = 0;
+  let adjustmentNetPaise = 0;
+  let salesNetPaise = 0;
+  let tdsTotalPaise = 0;
+  let salesCommissionPaise = 0;
+  let returnsCommissionPaise = 0;
   const rows = ledgers.map((ledger) => {
     const netPaise = vendorNetPayoutPaise(ledger);
     const tdsRatePercent =
@@ -87,33 +106,43 @@ export function vendorPayoutBreakdown(
       const tdsBasePaise = Math.min(0, frozenPaise(ledger.taxableAmountPaise));
       const tdsPaise = -tdsOnPaise(-tdsBasePaise, tdsRatePercent);
       adjustmentPaise += netPaise - tdsPaise;
-      commissionTaxablePaise += frozenPaise(ledger.commissionAmountPaise);
+      adjustmentNetPaise += netPaise;
+      tdsTotalPaise += tdsPaise;
+      returnsCommissionPaise += frozenPaise(ledger.commissionAmountPaise);
       return { netPaise, tdsBasePaise, tdsRatePercent, tdsPaise };
     }
     if (ledger.referenceType) {
       // Cashback cost or its reversal: not a sale and not commission.
       adjustmentPaise += netPaise;
+      adjustmentNetPaise += netPaise;
       return { netPaise, tdsBasePaise: 0, tdsRatePercent: 0, tdsPaise: 0 };
     }
     const tdsBasePaise = Math.max(0, frozenPaise(ledger.taxableAmountPaise));
     const tdsPaise = tdsOnPaise(tdsBasePaise, tdsRatePercent);
     afterTdsPaise += Math.max(0, netPaise - tdsPaise);
-    commissionTaxablePaise += frozenPaise(ledger.commissionAmountPaise);
+    salesNetPaise += netPaise;
+    tdsTotalPaise += tdsPaise;
+    salesCommissionPaise += frozenPaise(ledger.commissionAmountPaise);
     return { netPaise, tdsBasePaise, tdsRatePercent, tdsPaise };
   });
-  const gstPaise = commissionGstPaise(
-    commissionTaxablePaise,
-    rates.commissionGstRatePercent,
-    rates.commissionIntraState ?? false,
-  );
+  const intraState = rates.commissionIntraState ?? false;
+  // Two documents, two roundings: the invoice's GST and the credit note's.
+  const gstPaise =
+    commissionGstPaise(salesCommissionPaise, rates.commissionGstRatePercent, intraState) +
+    commissionGstPaise(returnsCommissionPaise, rates.commissionGstRatePercent, intraState);
   // Sales never go below zero on their own (as before adjustments existed); only
   // deductions (cashback cost, returns after payout) larger than the sales can make
   // the balance negative.
   const balancePaise = Math.max(0, afterTdsPaise - gstPaise) + adjustmentPaise;
   return {
     rows,
-    commissionTaxablePaise,
+    salesCommissionTaxablePaise: salesCommissionPaise,
+    returnsCommissionTaxablePaise: returnsCommissionPaise,
+    commissionTaxablePaise: salesCommissionPaise + returnsCommissionPaise,
     commissionGstPaise: gstPaise,
+    salesNetPaise,
+    tdsPaise: tdsTotalPaise,
+    adjustmentPaise: adjustmentNetPaise,
     balancePaise,
     payoutPaise: Math.max(0, balancePaise),
   };

@@ -20,9 +20,10 @@ import {
 } from '../engine/queryHelpers';
 import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
 import { roundMoney } from '@modules/pricing/money';
-import { GMV_SUB_ORDER_SQL, sqlGmvPaise } from '@modules/pricing/frozenMoneySql';
+import { GMV_SUB_ORDER_SQL, sqlGmvPaise, sqlLedgerOnPaidOrder } from '@modules/pricing/frozenMoneySql';
+import { vendorPayablePaise } from '../engine/vendorPayable';
 import { sqlIstDay } from '@modules/pricing/istCalendar';
-import { PAYMENT_STATUS } from '@core/constants/statuses';
+import { COMMISSION_REFERENCE_TYPE, PAYMENT_STATUS } from '@core/constants/statuses';
 
 const WALLET_LIABILITY_KEYSET: KeysetOrderCol[] = [
   { column: 'balance', direction: 'DESC' },
@@ -532,6 +533,13 @@ async function adminDashboardSummaryQuery(filters: ReportFilters) {
   return { rows: [row], total: 1 };
 }
 
+/**
+ * A vendor's settlement summary for ledgers created in the range, on sales that count
+ * (COD or paid online). Upcoming payout is what the pending ledgers will pay — the
+ * payout run's breakdown, after 194-O TDS and GST on commission — and historical payout
+ * the payouts actually paid in the range; net payout stays the ledgers' net (after
+ * commission and TCS, before TDS), as a figure to reconcile against.
+ */
 async function vendorSummaryQuery(filters: ReportFilters) {
   assertReportRange(filters);
   const vendorId = filters.scopedVendorId ?? filters.vendorId;
@@ -543,25 +551,47 @@ async function vendorSummaryQuery(filters: ReportFilters) {
   const tcsExpr = sqlFrozenPaise('cl', 'tcsAmountPaise');
   const discountExpr = sqlFrozenPaise('cl', 'discountAmountPaise');
 
-  const [rows] = await sequelize.query(
-    `
-    SELECT
-      COALESCE(SUM(${taxableExpr}), 0)::bigint AS "salesPaise",
-      COALESCE(SUM(${commissionExpr}), 0)::bigint AS "commissionPaise",
-      COALESCE(SUM(${tcsExpr}), 0)::bigint AS "tcsPaise",
-      COALESCE(SUM(${netExpr}), 0)::bigint AS "netPaise",
-      COALESCE(SUM(CASE WHEN cl.status = '${COMMISSION_STATUS.PENDING}' THEN ${netExpr} ELSE 0 END), 0)::bigint AS "pendingPaise",
-      COALESCE(SUM(CASE WHEN cl.status = '${COMMISSION_STATUS.SETTLED}' THEN ${netExpr} ELSE 0 END), 0)::bigint AS "settledPaise",
-      COALESCE(SUM(CASE WHEN cl."discountBearer" = '${DISCOUNT_BEARER.VENDOR}' THEN ${discountExpr} ELSE 0 END), 0)::bigint AS "vendorDiscountPaise",
-      COALESCE(SUM(CASE WHEN cl."discountBearer" IS DISTINCT FROM '${DISCOUNT_BEARER.VENDOR}' THEN ${discountExpr} ELSE 0 END), 0)::bigint AS "platformDiscountPaise"
-    FROM commission_ledgers cl
-    WHERE cl."deletedAt" IS NULL
-      AND cl."vendorId" = :vendorId
-      AND cl."createdAt" BETWEEN :from AND :to
-      AND cl.status <> '${COMMISSION_STATUS.CLAWED_BACK}'
-    `,
-    { replacements: { vendorId, from: filters.from, to: filters.to } },
-  );
+  const [[rows], upcoming] = await Promise.all([
+    sequelize.query(
+      `
+      SELECT
+        COALESCE(SUM(CASE WHEN cl."referenceType" IS NULL OR cl."referenceType" = :clawback
+          THEN ${taxableExpr} ELSE 0 END), 0)::bigint AS "salesPaise",
+        COALESCE(SUM(${commissionExpr}), 0)::bigint AS "commissionPaise",
+        COALESCE(SUM(${tcsExpr}), 0)::bigint AS "tcsPaise",
+        COALESCE(SUM(${netExpr}), 0)::bigint AS "netPaise",
+        COALESCE(SUM(CASE WHEN cl."discountBearer" = '${DISCOUNT_BEARER.VENDOR}' THEN ${discountExpr} ELSE 0 END), 0)::bigint AS "vendorDiscountPaise",
+        COALESCE(SUM(CASE WHEN cl."discountBearer" IS DISTINCT FROM '${DISCOUNT_BEARER.VENDOR}' THEN ${discountExpr} ELSE 0 END), 0)::bigint AS "platformDiscountPaise",
+        (
+          SELECT COALESCE(SUM(ROUND(p.amount::numeric * 100)), 0)::bigint
+          FROM payouts p
+          WHERE p."vendorId" = :vendorId
+            AND p."deletedAt" IS NULL
+            AND p.status = 'PAID'
+            AND p."createdAt" BETWEEN :from AND :to
+        ) AS "paidPaise"
+      FROM commission_ledgers cl
+      WHERE cl."deletedAt" IS NULL
+        AND cl."vendorId" = :vendorId
+        AND cl."createdAt" BETWEEN :from AND :to
+        AND cl.status <> '${COMMISSION_STATUS.CLAWED_BACK}'
+        AND ${sqlLedgerOnPaidOrder('cl')}
+      `,
+      {
+        replacements: {
+          vendorId,
+          from: filters.from,
+          to: filters.to,
+          clawback: COMMISSION_REFERENCE_TYPE.RETURN_CLAWBACK,
+        },
+      },
+    ),
+    vendorPayablePaise([vendorId], {
+      status: COMMISSION_STATUS.PENDING,
+      from: filters.from,
+      to: filters.to,
+    }),
+  ]);
   const row = (rows as Array<Record<string, unknown>>)[0] ?? {};
   return {
     rows: [
@@ -573,8 +603,8 @@ async function vendorSummaryQuery(filters: ReportFilters) {
         discountOwnCoupons: fromPaise(Number(row.vendorDiscountPaise ?? 0)),
         discountPlatformCoupons: fromPaise(Number(row.platformDiscountPaise ?? 0)),
         netPayout: fromPaise(Number(row.netPaise ?? 0)),
-        upcomingPayout: fromPaise(Number(row.pendingPaise ?? 0)),
-        historicalPayout: fromPaise(Number(row.settledPaise ?? 0)),
+        upcomingPayout: fromPaise(upcoming.get(vendorId) ?? 0),
+        historicalPayout: fromPaise(Number(row.paidPaise ?? 0)),
       },
     ],
     total: 1,

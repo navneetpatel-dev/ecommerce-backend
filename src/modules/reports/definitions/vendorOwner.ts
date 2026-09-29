@@ -1,4 +1,4 @@
-import { Op } from 'sequelize';
+import { Op, literal } from 'sequelize';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { ORDER_STATUS } from '@core/constants/statuses';
 import { sequelize } from '@database/models';
@@ -14,6 +14,7 @@ import type { ReportDefinition, ReportFilters } from '../engine/types';
 import { createOffsetExportQuery } from '../engine/export/createOffsetExportQuery';
 import {
   sqlFrozenPaise,
+  sqlLedgerOnPaidOrder,
   sqlVendorNetPayoutPaise,
   vendorNetPayoutPaise,
 } from '@modules/pricing/frozenMoneySql';
@@ -367,6 +368,10 @@ async function vendorPayoutStatement(filters: ReportFilters) {
   return {
     rows: rows.map((p) => ({
       payoutId: p.id,
+      grossAmount: fromPaise(Number(p.grossPaise ?? 0)),
+      tdsAmount: fromPaise(Number(p.tdsPaise ?? 0)),
+      commissionGstAmount: fromPaise(Number(p.commissionGstPaise ?? 0)),
+      adjustmentAmount: fromPaise(Number(p.adjustmentPaise ?? 0)),
       amount: Number(p.amount ?? 0),
       status: p.status,
       periodStart: p.periodStart,
@@ -387,6 +392,10 @@ const VENDOR_PAYOUT_KEYSET: KeysetOrderCol[] = [
 function mapVendorPayoutRow(row: Record<string, unknown>) {
   return {
     payoutId: String(row.payoutId ?? ''),
+    grossAmount: fromPaise(Number(row.grossPaise ?? 0)),
+    tdsAmount: fromPaise(Number(row.tdsPaise ?? 0)),
+    commissionGstAmount: fromPaise(Number(row.commissionGstPaise ?? 0)),
+    adjustmentAmount: fromPaise(Number(row.adjustmentPaise ?? 0)),
     amount: Number(row.amount ?? 0),
     status: String(row.status ?? ''),
     periodStart: row.periodStart,
@@ -400,6 +409,10 @@ function vendorPayoutSelectSql(): string {
   return `
     SELECT
       p.id AS "payoutId",
+      p."grossPaise" AS "grossPaise",
+      p."tdsPaise" AS "tdsPaise",
+      p."commissionGstPaise" AS "commissionGstPaise",
+      p."adjustmentPaise" AS "adjustmentPaise",
       p.amount AS amount,
       p.status AS status,
       p."periodStart" AS "periodStart",
@@ -471,6 +484,7 @@ function commissionLedgerSelectSql(): string {
     WHERE cl."deletedAt" IS NULL
       AND cl."createdAt" BETWEEN :from AND :to
       AND cl.status <> :clawedBack
+      AND ${sqlLedgerOnPaidOrder('cl')}
       AND (:vendorId::uuid IS NULL OR cl."vendorId" = :vendorId)
   `;
 }
@@ -617,6 +631,8 @@ async function vendorCommissionDeducted(filters: ReportFilters) {
         ...vendorScopeWhere(filters),
         createdAt: dateBetween(filters.from, filters.to),
         status: { [Op.ne]: COMMISSION_STATUS.CLAWED_BACK },
+        // Only sales that are real money: not an online checkout still awaiting payment.
+        [Op.and]: [literal(sqlLedgerOnPaidOrder('"CommissionLedger"'))],
       },
       order: [['createdAt', 'DESC']],
     },
@@ -651,6 +667,7 @@ async function vendorDiscountCost(filters: ReportFilters) {
     createdAt: dateBetween(filters.from, filters.to),
     status: { [Op.ne]: COMMISSION_STATUS.CLAWED_BACK },
     discountAmountPaise: { [Op.gt]: 0 },
+    [Op.and]: [literal(sqlLedgerOnPaidOrder('"CommissionLedger"'))],
   };
 
   const vendorClause = vendorId ? 'AND cl."vendorId" = :vendorId' : '';
@@ -687,6 +704,7 @@ async function vendorDiscountCost(filters: ReportFilters) {
         AND cl."createdAt" BETWEEN :from AND :to
         AND cl.status <> :clawedBack
         AND (${DISCOUNT_PAISE_SQL}) > 0
+        AND ${sqlLedgerOnPaidOrder('cl')}
         ${vendorClause}
       `,
       { replacements },
@@ -946,6 +964,10 @@ export const vendorOwnerReports: ReportDefinition[] = [
     financial: true,
     columns: [
       { key: 'payoutId', labelKey: 'payoutId' },
+      { key: 'grossAmount', labelKey: 'payoutGross', format: 'currency' },
+      { key: 'tdsAmount', labelKey: 'tdsAmount', format: 'currency' },
+      { key: 'commissionGstAmount', labelKey: 'commissionGst', format: 'currency' },
+      { key: 'adjustmentAmount', labelKey: 'payoutAdjustments', format: 'currency' },
       { key: 'amount', labelKey: 'amount', format: 'currency' },
       { key: 'status', labelKey: 'status' },
       { key: 'periodStart', labelKey: 'periodStart', format: 'date' },

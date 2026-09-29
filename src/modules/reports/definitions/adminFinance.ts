@@ -7,15 +7,18 @@ import {
   pagedSqlQuery,
   computeReconciliationSummary,
   sqlFrozenPaise,
-  sqlVendorNetPayoutPaise,
   DISCOUNT_BEARER,
   COMMISSION_STATUS,
 } from '../engine/queryHelpers';
 import {
   GMV_SUB_ORDER_SQL,
   PAID_OR_COD_ORDER_SQL,
+  sqlLedgerOnPaidOrder,
   sqlLineSubtotalPaise,
 } from '@modules/pricing/frozenMoneySql';
+import { IST_TIME_ZONE } from '@modules/pricing/istCalendar';
+import { roundMoney } from '@modules/pricing/money';
+import { vendorPayablePaise } from '../engine/vendorPayable';
 import { PART_RETURN_DESCRIPTION_PREFIX } from '@modules/wallet/walletOrderRollback';
 import { gstDocumentReplacements, scopedGstDocumentLinesSql } from '../engine/gstDocumentsSql';
 import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
@@ -435,34 +438,25 @@ async function reconciliation(filters: ReportFilters) {
   const giftCardRedemptionInflow = Number(walletMeta.giftCardRedemptionInflow ?? 0);
   const walletPointsRedeemedAtCheckout = Number(walletMeta.walletPointsRedeemedAtCheckout ?? 0);
 
-  const customerPayments = fromPaise(summary.customerPaymentsPaise);
-  const vendorNetPayouts = fromPaise(summary.vendorNetPayoutsPaise);
-  const platformCommission = fromPaise(summary.platformCommissionPaise);
-  const taxCollected = fromPaise(summary.taxCollectedPaise);
-  const tcsCollected = fromPaise(summary.tcsCollectedPaise);
-  const shippingCollected = fromPaise(summary.shippingCollectedPaise);
-  const refundsToCustomer = fromPaise(summary.refundsPaise);
-  const accountedPaise =
-    summary.vendorNetPayoutsPaise +
-    summary.platformCommissionPaise +
-    summary.taxCollectedPaise +
-    summary.tcsCollectedPaise +
-    summary.shippingCollectedPaise +
-    summary.refundsPaise;
-  const differencePaise = summary.customerPaymentsPaise - accountedPaise;
+  const differencePaise = summary.customerPaymentsPaise - summary.accountedPaise;
   const balanced = differencePaise === 0;
   const row = {
-    customerPayments,
-    vendorNetPayouts,
-    platformCommission,
-    taxCollected,
-    tcsCollected,
-    shippingCollected,
-    refundsToCustomer,
+    customerPayments: fromPaise(summary.customerPaymentsPaise),
+    vendorNetPayouts: fromPaise(summary.vendorNetPayoutsPaise),
+    platformFundedDiscount: fromPaise(summary.platformFundedDiscountPaise),
+    platformCommission: fromPaise(summary.platformCommissionPaise),
+    taxCollected: fromPaise(summary.taxCollectedPaise),
+    tcsCollected: fromPaise(summary.tcsCollectedPaise),
+    platformGoodsSales: fromPaise(summary.platformGoodsPaise),
+    shippingCollected: fromPaise(summary.shippingCollectedPaise),
+    shippingRefunded: fromPaise(summary.shippingRefundedPaise),
+    returnFeesKept: fromPaise(summary.returnFeesKeptPaise),
+    giftWrapCollected: fromPaise(summary.giftWrapPaise),
+    refundsToCustomer: fromPaise(summary.refundsPaise),
     walletRechargeInflow,
     giftCardRedemptionInflow,
     walletPointsRedeemedAtCheckout,
-    accountedTotal: fromPaise(accountedPaise),
+    accountedTotal: fromPaise(summary.accountedPaise),
     difference: fromPaise(differencePaise),
     status: balanced ? 'BALANCED' : 'MISMATCH',
   };
@@ -474,7 +468,7 @@ async function reconciliation(filters: ReportFilters) {
     to: filters.to,
     /** Order consideration GMV; PG cash ≈ razorpayAmountPaid; wallet redeem is separate. */
     note:
-      'customerPayments is order consideration (not PG cash). walletPointsRedeemedAtCheckout is funding, not part of the cash balance equation.',
+      'customerPayments = vendorNetPayouts − platformFundedDiscount + platformCommission + tcsCollected + platformGoodsSales + shippingCollected − shippingRefunded + returnFeesKept + giftWrapCollected + refundsToCustomer. GST is inside vendor net payouts (taxCollected is shown, not added). customerPayments is order consideration (not PG cash); walletPointsRedeemedAtCheckout is funding, not part of the equation.',
   };
   return { rows: [row], total: 1, meta };
 }
@@ -603,21 +597,24 @@ const AUDIT_LOG_KEYSET: KeysetOrderCol[] = [
   { column: 'id', direction: 'DESC' },
 ];
 
+/**
+ * Vendor settlement for ledgers created (and payouts run) in the range. The ledger side
+ * lists the vendors; their pending and settled payables are the payout run's own
+ * breakdown (after 194-O TDS and GST on commission), filled in by
+ * `withVendorPayables`. Payouts: every run that did not fail, what is still to be
+ * paid, what was paid, and failed runs on their own (a failed run is retried by a
+ * later one, so counting both would pay the vendor twice on paper).
+ */
 function vendorSettlementSelectSql(): string {
-  const netPaiseExpr = sqlVendorNetPayoutPaise('cl');
-
   return `
     WITH ledger_agg AS (
-      SELECT
-        cl."vendorId" AS "vendorId",
-        MAX(v."businessName") AS "vendorName",
-        SUM(CASE WHEN cl.status = '${COMMISSION_STATUS.PENDING}' THEN ${netPaiseExpr} ELSE 0 END)::bigint AS "pendingNetPaise",
-        SUM(CASE WHEN cl.status = '${COMMISSION_STATUS.SETTLED}' THEN ${netPaiseExpr} ELSE 0 END)::bigint AS "settledNetPaise"
+      SELECT cl."vendorId" AS "vendorId", MAX(v."businessName") AS "vendorName"
       FROM commission_ledgers cl
       INNER JOIN vendors v ON v.id = cl."vendorId" AND v."deletedAt" IS NULL
       WHERE cl."deletedAt" IS NULL
         AND cl."createdAt" BETWEEN :from AND :to
         AND cl.status <> '${COMMISSION_STATUS.CLAWED_BACK}'
+        AND ${sqlLedgerOnPaidOrder('cl')}
         AND (:vendorId::uuid IS NULL OR cl."vendorId" = :vendorId)
       GROUP BY cl."vendorId"
     ),
@@ -625,9 +622,10 @@ function vendorSettlementSelectSql(): string {
       SELECT
         p."vendorId" AS "vendorId",
         MAX(v."businessName") AS "vendorName",
-        SUM(p.amount::numeric) AS "payoutAmount",
+        SUM(CASE WHEN p.status <> 'FAILED' THEN p.amount::numeric ELSE 0 END) AS "payoutAmount",
         SUM(CASE WHEN p.status IN ('PENDING', 'PROCESSING') THEN p.amount::numeric ELSE 0 END) AS "payoutPending",
         SUM(CASE WHEN p.status = 'PAID' THEN p.amount::numeric ELSE 0 END) AS "payoutPaid",
+        SUM(CASE WHEN p.status = 'FAILED' THEN p.amount::numeric ELSE 0 END) AS "payoutFailed",
         string_agg(DISTINCT p.status::text, ',') AS "payoutStatus"
       FROM payouts p
       INNER JOIN vendors v ON v.id = p."vendorId" AND v."deletedAt" IS NULL
@@ -640,11 +638,10 @@ function vendorSettlementSelectSql(): string {
     SELECT
       COALESCE(l."vendorId", p."vendorId")::text AS "vendorId",
       COALESCE(l."vendorName", p."vendorName") AS "vendorName",
-      COALESCE(l."pendingNetPaise", 0)::bigint AS "pendingNetPaise",
-      COALESCE(l."settledNetPaise", 0)::bigint AS "settledNetPaise",
       COALESCE(p."payoutAmount", 0) AS "payoutAmount",
       COALESCE(p."payoutPending", 0) AS "payoutPending",
       COALESCE(p."payoutPaid", 0) AS "payoutPaid",
+      COALESCE(p."payoutFailed", 0) AS "payoutFailed",
       COALESCE(p."payoutStatus", 'NONE') AS "payoutStatus"
     FROM ledger_agg l
     FULL OUTER JOIN payout_agg p ON l."vendorId" = p."vendorId"
@@ -655,24 +652,44 @@ function mapVendorSettlementRow(row: Record<string, unknown>) {
   return {
     vendorId: String(row.vendorId ?? ''),
     vendorName: String(row.vendorName ?? ''),
-    pendingNet: fromPaise(Number(row.pendingNetPaise ?? 0)),
-    settledNet: fromPaise(Number(row.settledNetPaise ?? 0)),
-    payoutAmount: Math.round(Number(row.payoutAmount ?? 0) * 100) / 100,
-    payoutPending: Math.round(Number(row.payoutPending ?? 0) * 100) / 100,
-    payoutPaid: Math.round(Number(row.payoutPaid ?? 0) * 100) / 100,
+    pendingNet: 0,
+    settledNet: 0,
+    payoutAmount: roundMoney(row.payoutAmount),
+    payoutPending: roundMoney(row.payoutPending),
+    payoutPaid: roundMoney(row.payoutPaid),
+    payoutFailed: roundMoney(row.payoutFailed),
     payoutStatus: String(row.payoutStatus || 'NONE'),
   };
 }
 
+/** Fill each row's pending and settled payables from the payout breakdown. */
+async function withVendorPayables(
+  rows: Array<Record<string, unknown>>,
+  filters: ReportFilters,
+): Promise<Array<Record<string, unknown>>> {
+  const vendorIds = rows.map((row) => String(row.vendorId)).filter(Boolean);
+  const range = { from: filters.from, to: filters.to };
+  const [pending, settled] = await Promise.all([
+    vendorPayablePaise(vendorIds, { ...range, status: COMMISSION_STATUS.PENDING }),
+    vendorPayablePaise(vendorIds, { ...range, status: COMMISSION_STATUS.SETTLED }),
+  ]);
+  return rows.map((row) => ({
+    ...row,
+    pendingNet: fromPaise(pending.get(String(row.vendorId)) ?? 0),
+    settledNet: fromPaise(settled.get(String(row.vendorId)) ?? 0),
+  }));
+}
+
 async function vendorSettlement(filters: ReportFilters) {
   assertReportRange(filters);
-  return pagedSqlQuery({
+  const result = await pagedSqlQuery({
     selectSql: vendorSettlementSelectSql(),
     orderBySql: `"vendorName" ASC, "vendorId" ASC`,
     replacements: sqlReplacements(filters),
     filters,
     mapRow: mapVendorSettlementRow,
   });
+  return { ...result, rows: await withVendorPayables(result.rows, filters) };
 }
 
 async function vendorSettlementExport(
@@ -689,7 +706,7 @@ async function vendorSettlementExport(
     cursor,
     mapRow: mapVendorSettlementRow,
   });
-  return { rows: page.rows, nextCursor: page.nextCursor };
+  return { rows: await withVendorPayables(page.rows, filters), nextCursor: page.nextCursor };
 }
 
 async function commissionRevenue(filters: ReportFilters) {
@@ -710,35 +727,35 @@ const COMMISSION_REVENUE_KEYSET: KeysetOrderCol[] = [
   { column: 'vendorId', direction: 'ASC' },
 ];
 
+/**
+ * Commission earned per vendor, category and month (IST): each order line's commission
+ * under its own product's category — a part with items from several categories is
+ * split between them, not all given to one. Net of returns (the lines carry the
+ * commission still earned), only on sales that count (paid or COD, not cancelled or
+ * RTO'd), by the month the order was placed.
+ */
 function commissionRevenueSelectSql(): string {
-  const commissionExpr = sqlFrozenPaise('cl', 'commissionAmountPaise');
-  const periodExpr = `to_char(cl."createdAt" AT TIME ZONE 'UTC', 'YYYY-MM')`;
+  const periodExpr = `to_char(o."createdAt" AT TIME ZONE '${IST_TIME_ZONE}', 'YYYY-MM')`;
   return `
     SELECT
-      cl."vendorId"::text AS "vendorId",
+      s."vendorId"::text AS "vendorId",
       MAX(v."businessName") AS "vendorName",
-      cat."categoryId"::text AS "categoryId",
-      COALESCE(cat."categoryId"::text, '') AS "categorySort",
+      p."categoryId"::text AS "categoryId",
+      COALESCE(p."categoryId"::text, '') AS "categorySort",
       ${periodExpr} AS period,
-      SUM(${commissionExpr})::bigint AS "commissionPaise"
-    FROM commission_ledgers cl
-    INNER JOIN vendors v ON v.id = cl."vendorId" AND v."deletedAt" IS NULL
-    LEFT JOIN LATERAL (
-      SELECT p."categoryId"
-      FROM order_items oi
-      INNER JOIN product_variants pv ON pv.id = oi."variantId" AND pv."deletedAt" IS NULL
-      INNER JOIN products p ON p.id = pv."productId" AND p."deletedAt" IS NULL
-      WHERE oi."subOrderId" = cl."subOrderId"
-        AND oi."deletedAt" IS NULL
-      ORDER BY oi.quantity DESC, oi."createdAt" ASC
-      LIMIT 1
-    ) cat ON true
-    WHERE cl."deletedAt" IS NULL
-      AND cl."createdAt" BETWEEN :from AND :to
-      AND cl.status <> '${COMMISSION_STATUS.CLAWED_BACK}'
-      AND (:vendorId::uuid IS NULL OR cl."vendorId" = :vendorId)
-      AND (:categoryId::uuid IS NULL OR cat."categoryId" = :categoryId)
-    GROUP BY cl."vendorId", cat."categoryId", ${periodExpr}
+      SUM(oi."commissionAmountPaise")::bigint AS "commissionPaise"
+    FROM order_items oi
+    INNER JOIN sub_orders s ON s.id = oi."subOrderId"
+    INNER JOIN orders o ON o.id = s."orderId"
+    INNER JOIN vendors v ON v.id = s."vendorId" AND v."deletedAt" IS NULL
+    LEFT JOIN product_variants pv ON pv.id = oi."variantId"
+    LEFT JOIN products p ON p.id = pv."productId"
+    WHERE oi."deletedAt" IS NULL
+      AND o."createdAt" BETWEEN :from AND :to
+      AND ${GMV_SUB_ORDER_SQL}
+      AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
+      AND (:categoryId::uuid IS NULL OR p."categoryId" = :categoryId)
+    GROUP BY s."vendorId", p."categoryId", ${periodExpr}
   `;
 }
 
@@ -765,6 +782,91 @@ async function commissionRevenueExport(
     limit,
     cursor,
     mapRow: mapCommissionRevenueRow,
+  });
+  return { rows: page.rows, nextCursor: page.nextCursor };
+}
+
+/**
+ * Section 194C TDS on delivery-agent payouts (agents are contractors): per payout, the
+ * agent's PAN, gross earnings, rate, TDS withheld and net paid, with the IST month and
+ * financial-year quarter the TDS is deposited and returned (Form 26Q) under. Failed
+ * payouts are left out — nothing was paid or withheld.
+ */
+function deliveryAgentTdsSelectSql(): string {
+  const ist = `p."createdAt" AT TIME ZONE '${IST_TIME_ZONE}'`;
+  return `
+    SELECT
+      p.id::text AS "payoutId",
+      a.id::text AS "agentId",
+      a."fullName" AS "agentName",
+      COALESCE(NULLIF(a."bankDetails"->>'pan', ''), '') AS pan,
+      to_char(${ist}, 'YYYY-MM') AS period,
+      CONCAT(
+        'Q', ((EXTRACT(MONTH FROM ${ist})::int + 8) % 12) / 3 + 1,
+        ' FY', CASE WHEN EXTRACT(MONTH FROM ${ist}) >= 4
+          THEN EXTRACT(YEAR FROM ${ist})::int ELSE EXTRACT(YEAR FROM ${ist})::int - 1 END
+      ) AS quarter,
+      ROUND(p.amount::numeric * 100)::bigint AS "grossPaise",
+      p."tdsRatePercent" AS "tdsRatePercent",
+      ROUND(COALESCE(p."tdsAmount", 0)::numeric * 100)::bigint AS "tdsPaise",
+      ROUND(p."netAmount"::numeric * 100)::bigint AS "netPaise",
+      p.status::text AS status,
+      p."paidAt" AS "paidAt",
+      p."createdAt" AS "createdAt"
+    FROM delivery_agent_payouts p
+    INNER JOIN delivery_agents a ON a.id = p."deliveryAgentId"
+    WHERE p."deletedAt" IS NULL
+      AND p.status::text <> 'FAILED'
+      AND p."createdAt" BETWEEN :from AND :to
+  `;
+}
+
+function mapDeliveryAgentTdsRow(row: Record<string, unknown>) {
+  return {
+    payoutId: String(row.payoutId ?? ''),
+    agentId: String(row.agentId ?? ''),
+    agentName: String(row.agentName ?? ''),
+    pan: String(row.pan ?? ''),
+    period: String(row.period ?? ''),
+    quarter: String(row.quarter ?? ''),
+    grossAmount: fromPaise(Number(row.grossPaise ?? 0)),
+    tdsRatePercent: row.tdsRatePercent == null ? null : Number(row.tdsRatePercent),
+    tdsAmount: fromPaise(Number(row.tdsPaise ?? 0)),
+    netAmount: fromPaise(Number(row.netPaise ?? 0)),
+    status: String(row.status ?? ''),
+    paidAt: row.paidAt,
+  };
+}
+
+const DELIVERY_AGENT_TDS_KEYSET: KeysetOrderCol[] = [
+  { column: 'createdAt', direction: 'DESC' },
+  { column: 'payoutId', direction: 'DESC' },
+];
+
+async function deliveryAgentTds(filters: ReportFilters) {
+  assertReportRange(filters);
+  return pagedSqlQuery({
+    selectSql: deliveryAgentTdsSelectSql(),
+    orderBySql: `"createdAt" DESC, "payoutId" DESC`,
+    replacements: sqlReplacements(filters),
+    filters,
+    mapRow: mapDeliveryAgentTdsRow,
+  });
+}
+
+async function deliveryAgentTdsExport(
+  filters: ReportFilters,
+  cursor: { values: unknown[] } | null,
+  limit: number,
+) {
+  assertReportRange(filters);
+  const page = await keysetSqlQuery({
+    selectSql: deliveryAgentTdsSelectSql(),
+    order: DELIVERY_AGENT_TDS_KEYSET,
+    replacements: sqlReplacements(filters),
+    limit,
+    cursor,
+    mapRow: mapDeliveryAgentTdsRow,
   });
   return { rows: page.rows, nextCursor: page.nextCursor };
 }
@@ -797,6 +899,7 @@ function couponDiscountSelectSql(): string {
     WHERE cl."deletedAt" IS NULL
       AND cl."createdAt" BETWEEN :from AND :to
       AND cl.status <> '${COMMISSION_STATUS.CLAWED_BACK}'
+      AND ${sqlLedgerOnPaidOrder('cl')}
       AND (:vendorId::uuid IS NULL OR cl."vendorId" = :vendorId)
       AND (${discountExpr}) > 0
     GROUP BY cl."vendorId", ${bearerExpr}
@@ -1167,10 +1270,15 @@ export const adminFinanceReports: ReportDefinition[] = [
     columns: [
       { key: 'customerPayments', labelKey: 'customerPayments', format: 'currency' },
       { key: 'vendorNetPayouts', labelKey: 'vendorNetPayouts', format: 'currency' },
+      { key: 'platformFundedDiscount', labelKey: 'platformFundedDiscount', format: 'currency' },
       { key: 'platformCommission', labelKey: 'platformCommission', format: 'currency' },
       { key: 'taxCollected', labelKey: 'taxCollected', format: 'currency' },
       { key: 'tcsCollected', labelKey: 'tcsCollected', format: 'currency' },
+      { key: 'platformGoodsSales', labelKey: 'platformGoodsSales', format: 'currency' },
       { key: 'shippingCollected', labelKey: 'shippingCollected', format: 'currency' },
+      { key: 'shippingRefunded', labelKey: 'shippingRefunded', format: 'currency' },
+      { key: 'returnFeesKept', labelKey: 'returnFeesKept', format: 'currency' },
+      { key: 'giftWrapCollected', labelKey: 'giftWrapCollected', format: 'currency' },
       { key: 'refundsToCustomer', labelKey: 'refundsToCustomer', format: 'currency' },
       { key: 'walletRechargeInflow', labelKey: 'walletRechargeInflow', format: 'currency' },
       { key: 'giftCardRedemptionInflow', labelKey: 'giftCardRedemptionInflow', format: 'currency' },
@@ -1226,6 +1334,7 @@ export const adminFinanceReports: ReportDefinition[] = [
       { key: 'payoutAmount', labelKey: 'payoutAmount', format: 'currency' },
       { key: 'payoutPending', labelKey: 'payoutPending', format: 'currency' },
       { key: 'payoutPaid', labelKey: 'payoutPaid', format: 'currency' },
+      { key: 'payoutFailed', labelKey: 'payoutFailed', format: 'currency' },
       { key: 'payoutStatus', labelKey: 'payoutStatus' },
     ],
     query: vendorSettlement,
@@ -1247,6 +1356,28 @@ export const adminFinanceReports: ReportDefinition[] = [
     ],
     query: commissionRevenue,
     exportQuery: commissionRevenueExport,
+  },
+  {
+    type: 'delivery-agent-tds-194c',
+    labelKey: 'reportDeliveryAgentTds194c',
+    audience: 'admin_finance',
+    permissions: [PERMISSIONS.PAYOUT_VIEW],
+    vendorScoped: false,
+    financial: true,
+    columns: [
+      { key: 'agentName', labelKey: 'agentName' },
+      { key: 'pan', labelKey: 'pan' },
+      { key: 'period', labelKey: 'period' },
+      { key: 'quarter', labelKey: 'quarter' },
+      { key: 'grossAmount', labelKey: 'agentPayoutGross', format: 'currency' },
+      { key: 'tdsRatePercent', labelKey: 'tdsRatePercent', format: 'number' },
+      { key: 'tdsAmount', labelKey: 'tdsAmount', format: 'currency' },
+      { key: 'netAmount', labelKey: 'agentPayoutNet', format: 'currency' },
+      { key: 'status', labelKey: 'status' },
+      { key: 'paidAt', labelKey: 'paidAt', format: 'date' },
+    ],
+    query: deliveryAgentTds,
+    exportQuery: deliveryAgentTdsExport,
   },
   {
     type: 'coupon-discount-cost',

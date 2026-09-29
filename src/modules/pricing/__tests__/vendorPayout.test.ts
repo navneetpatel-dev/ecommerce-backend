@@ -199,3 +199,31 @@ describe('payoutRatesFromSettings', () => {
     assert.equal(inter.commissionGstPaise, 101);
   });
 });
+
+describe('vendorPayoutBreakdown: invoice and credit note', () => {
+  const rates = { tdsRatePercent: 1, commissionGstRatePercent: 18 };
+
+  it('works GST out on the sales commission and the returns commission separately', () => {
+    const result = vendorPayoutBreakdown(
+      [
+        { netPayoutAmountPaise: 107500, commissionAmountPaise: 10003, taxableAmountPaise: 100000 },
+        {
+          netPayoutAmountPaise: -40000,
+          commissionAmountPaise: -4003,
+          taxableAmountPaise: -35000,
+          tdsRatePercent: '1',
+          referenceType: 'ReturnClawback',
+        },
+      ],
+      rates,
+    );
+    assert.equal(result.salesCommissionTaxablePaise, 10003);
+    assert.equal(result.returnsCommissionTaxablePaise, -4003);
+    // The invoice's GST (₹18.01 on ₹100.03) plus the credit note's (−₹7.21 on ₹40.03),
+    // each rounded alone — the two documents' amounts, not GST on the ₹60 net.
+    assert.equal(result.commissionGstPaise, 1801 - 721);
+    assert.equal(result.salesNetPaise, 107500);
+    assert.equal(result.tdsPaise, 1000 - 350);
+    assert.equal(result.adjustmentPaise, -40000);
+  });
+});

@@ -71,6 +71,20 @@ export const PAID_OR_COD_ORDER_SQL = `NOT (
   AND o."paymentStatus" IN ('${PAYMENT_STATUS.PENDING}', '${PAYMENT_STATUS.FAILED}')
 )`;
 
+/**
+ * A commission ledger whose sale is real money (alias of the ledger row): its order is
+ * COD or was paid online. An online checkout still awaiting (or that failed) payment
+ * has ledgers written at checkout, but no sale yet — its commission, discounts and net
+ * are not earned. The one filter every ledger-based report applies.
+ */
+export function sqlLedgerOnPaidOrder(alias = 'cl'): string {
+  return `EXISTS (
+    SELECT 1 FROM sub_orders paid_s
+    INNER JOIN orders o ON o.id = paid_s."orderId"
+    WHERE paid_s.id = ${alias}."subOrderId" AND ${PAID_OR_COD_ORDER_SQL}
+  )`;
+}
+
 /** The commission_ledgers column `vendorNetPayoutPaise` reads. */
 export interface VendorNetPayoutSource {
   netPayoutAmountPaise?: unknown;

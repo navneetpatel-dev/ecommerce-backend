@@ -51,20 +51,23 @@ invoices as issued plus credit notes, dated by the document.
 
 ## Phase 3 — Reconciliation, settlement, payouts, TDS
 
-- [ ] **#5** Reconciliation identity balances (no double GST, platform coupon and gift
+Status: done (migration `20260929000002` adds the payout breakdown columns and allows
+order-less 194-O catch-up rows).
+
+- [x] **#5** Reconciliation identity balances (no double GST, platform coupon and gift
       wrap accounted, vendor filter scoped to the vendor's parts).
-- [ ] **#11** Vendor summary / settlement "upcoming" = the payout breakdown (after TDS
+- [x] **#11** Vendor summary / settlement "upcoming" = the payout breakdown (after TDS
       and commission GST).
-- [ ] **#12** Settlement payout totals exclude FAILED payouts.
-- [ ] **#21** Ledger-based reports exclude unpaid online checkouts.
-- [ ] **#14** Commission revenue: IST months, per-line category, paid/COD only.
-- [ ] **#15** 194-O TDS period = payout (deduction) date.
-- [ ] **#16** 194-O catch-up after the exemption limit is crossed.
-- [ ] **#17** Payout stores gross, commission, commission GST, TDS, adjustments.
-- [ ] **#24** Returns after payout get a commission credit note, not netted into the
+- [x] **#12** Settlement payout totals exclude FAILED payouts.
+- [x] **#21** Ledger-based reports exclude unpaid online checkouts.
+- [x] **#14** Commission revenue: IST months, per-line category, paid/COD only.
+- [x] **#15** 194-O TDS period = payout (deduction) date.
+- [x] **#16** 194-O catch-up after the exemption limit is crossed.
+- [x] **#17** Payout stores gross, commission, commission GST, TDS, adjustments.
+- [x] **#24** Returns after payout get a commission credit note, not netted into the
       next invoice.
-- [ ] **#25** Commission credit-note PDF shows negative IGST.
-- [ ] **#27** Delivery-agent 194C TDS report.
+- [x] **#25** Commission credit-note PDF shows negative IGST.
+- [x] **#27** Delivery-agent 194C TDS report.
 
 ## Phase 4 — Pricing and refund policy
 

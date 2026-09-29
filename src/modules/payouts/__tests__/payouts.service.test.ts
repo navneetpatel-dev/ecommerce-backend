@@ -264,6 +264,14 @@ describe('PayoutsService.process return-window and dispute hold', () => {
     assert.equal(tdsRow.tdsAmountPaise, 1000);
     // ₹1,075 net less ₹10 TDS.
     assert.equal(payouts.mock.calls[0]!.arguments[0].amount, 1065);
+    // The payout records what the amount is made of.
+    const payoutFields = payouts.mock.calls[0]!.arguments[0] as Record<string, unknown>;
+    assert.equal(payoutFields.grossPaise, 107500);
+    assert.equal(payoutFields.tdsPaise, 1000);
+    assert.equal(payoutFields.commissionGstPaise, 0);
+    assert.equal(payoutFields.adjustmentPaise, 0);
+    // Filed in the month the payout deducts it (IST), not the sale's.
+    assert.equal(tdsRow.period, new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 7));
   });
 
   it('records a negative TDS row when a return after payout gives the TDS back', async () => {
