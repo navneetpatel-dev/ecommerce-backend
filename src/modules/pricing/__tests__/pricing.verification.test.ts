@@ -7,7 +7,8 @@ import { computeSubOrderBreakdown, reverseFrozenLine } from '../pricing.engine';
  * Prompt verification scenario (paise-exact, no DB):
  * - Vendor A: category tax override 5%, platform coupon (PLATFORM bearer)
  * - Vendor B: category commission override 12%, vendor coupon (VENDOR bearer)
- * - Customer total + platform-funded coupon = net payouts + commission + TCS + shipping
+ * - Customer total + platform-funded coupon + the GST on it = net payouts + commission
+ *   + TCS + shipping
  * - Partial return of Vendor A line still reconciles
  */
 describe('PricingEngine verification scenario', () => {
@@ -41,12 +42,16 @@ describe('PricingEngine verification scenario', () => {
     assert.equal(vendorA.commissionBasePaise, vendorA.subtotalPaise);
     assert.equal(vendorB.commissionBasePaise, vendorB.taxablePaise);
 
-    // Every rupee the customer paid, plus what the platform put into its own coupon,
-    // goes to a vendor (net, which includes the GST the vendor remits), the platform
+    // Every rupee the customer paid, plus what the platform put into its own coupon and
+    // the GST on that share (the vendor's value of supply is before it), goes to a vendor (net, which includes the GST the vendor remits), the platform
     // (commission, shipping) or the government (TCS).
     assert.equal(vendorA.platformFundedDiscountPaise, 2284);
     assert.equal(vendorB.platformFundedDiscountPaise, 0);
-    const platformFunded = vendorA.platformFundedDiscountPaise;
+    assert.equal(vendorA.supplyTaxablePaise, vendorA.taxablePaise + 2284);
+    assert.equal(vendorA.platformGstSubsidyPaise, vendorA.supplyTax.total - vendorA.tax.total);
+    assert.ok(vendorA.platformGstSubsidyPaise > 0);
+    assert.equal(vendorB.platformGstSubsidyPaise, 0);
+    const platformFunded = vendorA.platformFundedDiscountPaise + vendorA.platformGstSubsidyPaise;
     const customerTotal = vendorA.customerTotalPaise + vendorB.customerTotalPaise;
     const accounted = -platformFunded +
       vendorA.netPayoutPaise +
@@ -70,7 +75,9 @@ describe('PricingEngine verification scenario', () => {
 
     // The whole line came back, so the platform's coupon money on it came back too.
     const postCustomer = customerTotal - reversal.customerRefundPaise;
-    const postAccounted = -(platformFunded - vendorA.lines[0]!.platformFundedDiscountPaise) +
+    const lineA = vendorA.lines[0]!;
+    const lineSubsidy = lineA.supplyTax.total - lineA.tax.total;
+    const postAccounted = -(platformFunded - lineA.platformFundedDiscountPaise - lineSubsidy) +
       vendorA.netPayoutPaise -
       reversal.refundNetClawbackPaise +
       vendorB.netPayoutPaise +
@@ -86,9 +93,12 @@ describe('PricingEngine verification scenario', () => {
       reversal.refundMerchandisePaise + reversal.refundTaxPaise,
     );
     // The vendor gives back its net (which includes the GST and the platform's coupon
-    // money), the platform its commission; the platform keeps its coupon money back.
+    // money and the GST on it), the platform its commission; the platform keeps its coupon
+    // money and that GST back. The vendor's credit note reverses the supply value.
+    assert.equal(reversal.refundSupplyTaxablePaise, lineA.supplyTaxablePaise);
+    assert.equal(reversal.refundSupplyTaxPaise - reversal.refundTaxPaise, lineSubsidy);
     assert.equal(
-      reversal.refundMerchandisePaise + reversal.refundTaxPaise + vendorA.lines[0]!.platformFundedDiscountPaise,
+      reversal.refundMerchandisePaise + reversal.refundTaxPaise + lineA.platformFundedDiscountPaise + lineSubsidy,
       reversal.refundNetClawbackPaise + reversal.refundCommissionPaise + reversal.refundTcsPaise,
     );
   });

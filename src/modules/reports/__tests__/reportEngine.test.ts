@@ -290,11 +290,21 @@ describe('report engine', () => {
     assert.ok(Array.isArray(result.rows));
   });
 
-  it('inclusive to-date covers the selected calendar day', async () => {
-    const { inclusiveReportTo } = await import('../engine/queryHelpers');
-    const end = inclusiveReportTo(new Date('2026-08-08T00:00:00.000Z'));
-    assert.equal(end.getUTCHours(), 23);
-    assert.equal(end.getUTCMinutes(), 59);
+  it('date-only ranges are Indian calendar days (midnight to midnight IST)', async () => {
+    const { inclusiveReportFrom, inclusiveReportTo, normalizeReportFilters: normalize } =
+      await import('../engine/queryHelpers');
+    // 1 Sep IST starts at 31 Aug 18:30 UTC; 30 Sep IST ends at 30 Sep 18:29:59.999 UTC.
+    assert.equal(inclusiveReportFrom(new Date('2026-09-01')).toISOString(), '2026-08-31T18:30:00.000Z');
+    assert.equal(inclusiveReportTo(new Date('2026-09-30')).toISOString(), '2026-09-30T18:29:59.999Z');
+    // A full timestamp is kept, and normalising twice changes nothing.
+    const once = normalize({ from: new Date('2026-09-01'), to: new Date('2026-09-30') });
+    const twice = normalize(once);
+    assert.equal(twice.from.toISOString(), once.from.toISOString());
+    assert.equal(twice.to.toISOString(), once.to.toISOString());
+    assert.equal(
+      inclusiveReportTo(new Date('2026-09-30T10:15:00.000Z')).toISOString(),
+      '2026-09-30T10:15:00.000Z',
+    );
   });
 
   it('every registered report defines exportQuery for streaming exports', async () => {

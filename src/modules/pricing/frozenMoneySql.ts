@@ -71,6 +71,84 @@ export const PAID_OR_COD_ORDER_SQL = `NOT (
   AND o."paymentStatus" IN ('${PAYMENT_STATUS.PENDING}', '${PAYMENT_STATUS.FAILED}')
 )`;
 
+/**
+ * A commission ledger whose sale is real money (alias of the ledger row): its order is
+ * COD or was paid online. An online checkout still awaiting (or that failed) payment
+ * has ledgers written at checkout, but no sale yet — its commission, discounts and net
+ * are not earned. The one filter every ledger-based report applies.
+ */
+export function sqlLedgerOnPaidOrder(alias = 'cl'): string {
+  return `EXISTS (
+    SELECT 1 FROM sub_orders paid_s
+    INNER JOIN orders o ON o.id = paid_s."orderId"
+    WHERE paid_s.id = ${alias}."subOrderId" AND ${PAID_OR_COD_ORDER_SQL}
+  )`;
+}
+
+/**
+ * How a sale ledger's merchandise discount splits between the platform and the vendor,
+ * in paise (alias of a commission_ledgers row), per ledger — a stacked order can carry
+ * both a platform and a vendor coupon, whatever the ledger's single `discountBearer`:
+ * - platform: the share the platform funds — the supply value over the customer's
+ *   taxable value; on rows written before the supply value was kept, what the net holds
+ *   beyond taxable + GST − commission − TCS (then exactly that share);
+ * - platform GST: the GST on that share the platform pays the vendor (none on older rows);
+ * - vendor: the rest of the discount.
+ * All excluding GST. A return after payout carries the returned share, negative.
+ * TS twin: `ledgerCouponSplitPaise`.
+ */
+export function sqlLedgerPlatformDiscountPaise(alias = 'cl'): string {
+  const raw = `(CASE WHEN ${alias}."supplyTaxablePaise" IS NOT NULL
+    THEN ${alias}."supplyTaxablePaise" - ${alias}."taxableAmountPaise"
+    ELSE ${alias}."netPayoutAmountPaise" - ${alias}."taxableAmountPaise" - ${alias}."taxAmountPaise"
+      + ${alias}."commissionAmountPaise" + ${alias}."tcsAmountPaise"
+  END)`;
+  // Never outside the ledger's discount (0..discount, or discount..0 on a return), so a
+  // row whose amounts were not written by the engine cannot show a negative vendor share.
+  return `GREATEST(LEAST(${raw}, GREATEST(${alias}."discountAmountPaise", 0)), LEAST(${alias}."discountAmountPaise", 0))`;
+}
+
+export function sqlLedgerPlatformGstPaise(alias = 'cl'): string {
+  return `(CASE WHEN ${alias}."supplyTaxablePaise" IS NOT NULL
+    THEN ${alias}."netPayoutAmountPaise" - ${alias}."supplyTaxablePaise" - ${alias}."taxAmountPaise"
+      + ${alias}."commissionAmountPaise" + ${alias}."tcsAmountPaise"
+    ELSE 0
+  END)`;
+}
+
+export function sqlLedgerVendorDiscountPaise(alias = 'cl'): string {
+  return `(${alias}."discountAmountPaise" - ${sqlLedgerPlatformDiscountPaise(alias)})`;
+}
+
+/** TS twin of the `sqlLedger*DiscountPaise` / `sqlLedgerPlatformGstPaise` split. */
+export function ledgerCouponSplitPaise(row: {
+  discountAmountPaise?: unknown;
+  taxableAmountPaise?: unknown;
+  supplyTaxablePaise?: unknown;
+  taxAmountPaise?: unknown;
+  commissionAmountPaise?: unknown;
+  tcsAmountPaise?: unknown;
+  netPayoutAmountPaise?: unknown;
+}): { vendorPaise: number; platformPaise: number; platformGstPaise: number } {
+  const discount = frozenPaise(row.discountAmountPaise);
+  const taxable = frozenPaise(row.taxableAmountPaise);
+  const beyondTaxable =
+    frozenPaise(row.netPayoutAmountPaise) -
+    taxable -
+    frozenPaise(row.taxAmountPaise) +
+    frozenPaise(row.commissionAmountPaise) +
+    frozenPaise(row.tcsAmountPaise);
+  const withinDiscount = (value: number) =>
+    Math.max(Math.min(value, Math.max(discount, 0)), Math.min(discount, 0));
+  if (row.supplyTaxablePaise != null) {
+    const supplyShare = Number(row.supplyTaxablePaise) - taxable;
+    const platformPaise = withinDiscount(supplyShare);
+    return { vendorPaise: discount - platformPaise, platformPaise, platformGstPaise: beyondTaxable - supplyShare };
+  }
+  const platformPaise = withinDiscount(beyondTaxable);
+  return { vendorPaise: discount - platformPaise, platformPaise, platformGstPaise: 0 };
+}
+
 /** The commission_ledgers column `vendorNetPayoutPaise` reads. */
 export interface VendorNetPayoutSource {
   netPayoutAmountPaise?: unknown;

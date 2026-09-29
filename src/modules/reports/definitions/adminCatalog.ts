@@ -13,7 +13,8 @@ import {
   dateBetween,
   REPORTABLE_ORDER_SQL,
 } from '../engine/queryHelpers';
-import { sqlFrozenPaise } from '@modules/pricing/frozenMoneySql';
+import { sqlFrozenPaise, sqlLineSubtotalPaise } from '@modules/pricing/frozenMoneySql';
+import { ORDER_STATUS } from '@core/constants/statuses';
 
 function resolveVendorId(filters: ReportFilters): string | null {
   return filters.scopedVendorId ?? filters.vendorId ?? null;
@@ -23,7 +24,13 @@ function hoursBetween(from: Date, to: Date): number {
   return Math.round(((to.getTime() - from.getTime()) / 3_600_000) * 100) / 100;
 }
 
+// Category performance goes by the category each line was sold under (frozen on the
+// line; older lines: the product's current one).
+// Net sales: after discounts, excluding GST. GMV: before discounts (the dashboards' figure).
 const TAXABLE_PAISE_SQL = sqlFrozenPaise('oi', 'taxableAmountPaise');
+const GMV_PAISE_SQL = sqlLineSubtotalPaise('oi');
+// A cancelled or RTO'd (RETURNED) part was refunded: not a sale.
+const STANDING_PART_SQL = `so.status NOT IN ('${ORDER_STATUS.CANCELLED}', '${ORDER_STATUS.RETURNED}')`;
 
 async function productPerformance(filters: ReportFilters) {
   assertReportRange(filters);
@@ -41,7 +48,8 @@ async function productPerformance(filters: ReportFilters) {
       p.name AS "productName",
       p."categoryId" AS "categoryId",
       SUM(oi.quantity)::int AS qty,
-      SUM(${TAXABLE_PAISE_SQL})::bigint AS "revenuePaise"
+      SUM(${GMV_PAISE_SQL})::bigint AS "gmvPaise",
+      SUM(${TAXABLE_PAISE_SQL})::bigint AS "netSalesPaise"
     FROM order_items oi
     INNER JOIN sub_orders so
       ON so.id = oi."subOrderId"
@@ -58,6 +66,7 @@ async function productPerformance(filters: ReportFilters) {
     WHERE oi."deletedAt" IS NULL
       AND o."createdAt" BETWEEN :from AND :to
       AND ${REPORTABLE_ORDER_SQL}
+      AND ${STANDING_PART_SQL}
       ${vendorId ? 'AND so."vendorId" = :vendorId' : ''}
       ${filters.categoryId ? 'AND p."categoryId" = :categoryId' : ''}
     GROUP BY p.id, p.name, p."categoryId"
@@ -65,7 +74,7 @@ async function productPerformance(filters: ReportFilters) {
 
   return pagedSqlQuery({
     selectSql,
-    orderBySql: `"revenuePaise" DESC`,
+    orderBySql: `"gmvPaise" DESC`,
     replacements,
     filters,
     mapRow: (row) => ({
@@ -73,7 +82,8 @@ async function productPerformance(filters: ReportFilters) {
       productName: row.productName,
       categoryId: row.categoryId,
       qty: Number(row.qty ?? 0),
-      revenue: fromPaise(Number(row.revenuePaise ?? 0)),
+      gmv: fromPaise(Number(row.gmvPaise ?? 0)),
+      netSales: fromPaise(Number(row.netSalesPaise ?? 0)),
     }),
   });
 }
@@ -90,10 +100,11 @@ async function categoryPerformance(filters: ReportFilters) {
 
   const selectSql = `
     SELECT
-      p."categoryId" AS "categoryId",
-      COALESCE(MAX(c.name), p."categoryId"::text) AS "categoryName",
+      COALESCE(oi."categoryId", p."categoryId") AS "categoryId",
+      COALESCE(MAX(c.name), (COALESCE(oi."categoryId", p."categoryId"))::text) AS "categoryName",
       SUM(oi.quantity)::int AS qty,
-      SUM(${TAXABLE_PAISE_SQL})::bigint AS "revenuePaise"
+      SUM(${GMV_PAISE_SQL})::bigint AS "gmvPaise",
+      SUM(${TAXABLE_PAISE_SQL})::bigint AS "netSalesPaise"
     FROM order_items oi
     INNER JOIN sub_orders so
       ON so.id = oi."subOrderId"
@@ -108,26 +119,28 @@ async function categoryPerformance(filters: ReportFilters) {
       ON p.id = pv."productId"
       AND p."deletedAt" IS NULL
     LEFT JOIN categories c
-      ON c.id = p."categoryId"
+      ON c.id = COALESCE(oi."categoryId", p."categoryId")
       AND c."deletedAt" IS NULL
     WHERE oi."deletedAt" IS NULL
       AND o."createdAt" BETWEEN :from AND :to
       AND ${REPORTABLE_ORDER_SQL}
+      AND ${STANDING_PART_SQL}
       ${vendorId ? 'AND so."vendorId" = :vendorId' : ''}
-      ${filters.categoryId ? 'AND p."categoryId" = :categoryId' : ''}
-    GROUP BY p."categoryId"
+      ${filters.categoryId ? 'AND COALESCE(oi."categoryId", p."categoryId") = :categoryId' : ''}
+    GROUP BY COALESCE(oi."categoryId", p."categoryId")
   `;
 
   return pagedSqlQuery({
     selectSql,
-    orderBySql: `"revenuePaise" DESC`,
+    orderBySql: `"gmvPaise" DESC`,
     replacements,
     filters,
     mapRow: (row) => ({
       categoryId: row.categoryId,
       categoryName: row.categoryName,
       qty: Number(row.qty ?? 0),
-      revenue: fromPaise(Number(row.revenuePaise ?? 0)),
+      gmv: fromPaise(Number(row.gmvPaise ?? 0)),
+      netSales: fromPaise(Number(row.netSalesPaise ?? 0)),
     }),
   });
 }
@@ -242,7 +255,8 @@ export const adminCatalogReports: ReportDefinition[] = [
       { key: 'productName', labelKey: 'productName' },
       { key: 'categoryId', labelKey: 'categoryId' },
       { key: 'qty', labelKey: 'qty', format: 'number' },
-      { key: 'revenue', labelKey: 'revenue', format: 'currency' },
+      { key: 'gmv', labelKey: 'gmv', format: 'currency' },
+      { key: 'netSales', labelKey: 'netSales', format: 'currency' },
     ],
     query: productPerformance,
     exportQuery: createOffsetExportQuery(productPerformance),
@@ -258,7 +272,8 @@ export const adminCatalogReports: ReportDefinition[] = [
       { key: 'categoryId', labelKey: 'categoryId' },
       { key: 'categoryName', labelKey: 'categoryName' },
       { key: 'qty', labelKey: 'qty', format: 'number' },
-      { key: 'revenue', labelKey: 'revenue', format: 'currency' },
+      { key: 'gmv', labelKey: 'gmv', format: 'currency' },
+      { key: 'netSales', labelKey: 'netSales', format: 'currency' },
     ],
     query: categoryPerformance,
     exportQuery: createOffsetExportQuery(categoryPerformance),

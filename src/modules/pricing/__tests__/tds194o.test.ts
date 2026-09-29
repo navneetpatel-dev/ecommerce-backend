@@ -3,7 +3,7 @@ import { afterEach, describe, it, mock } from 'node:test';
 import { VENDOR_ENTITY_TYPE } from '@core/constants/statuses';
 import { sequelize } from '@database/models';
 import { istFinancialYearStart } from '@modules/pricing/istCalendar';
-import { qualifiesFor194oExemption, tdsRateForSale } from '@modules/pricing/tds194o';
+import { qualifiesFor194oExemption, tds194oCatchUp, tdsRateForSale } from '@modules/pricing/tds194o';
 
 describe('istFinancialYearStart', () => {
   it('starts the financial year at 1 April, midnight IST', () => {
@@ -48,5 +48,45 @@ describe('194-O(4) exemption', () => {
       await tdsRateForSale({ vendorId: 'v1', entityType: VENDOR_ENTITY_TYPE.LLP, saleTaxablePaise: 100, settings }),
       0.1,
     );
+  });
+});
+
+describe('194-O(4) catch-up', () => {
+  afterEach(() => mock.restoreAll());
+  const sole = VENDOR_ENTITY_TYPE.SOLE_PROPRIETORSHIP;
+  const settings = { tdsRatePercent: 1, tds194oExemptionThreshold: 5_000 };
+
+  function mockYear(grossPaise: number, basePaise: number, takenPaise: number) {
+    mock.method(sequelize, 'query', async (sql: string) =>
+      (String(sql).includes('"takenPaise"') ? [{ basePaise, takenPaise }] : [{ grossPaise }]) as never,
+    );
+  }
+
+  it('takes nothing while the year is within the limit', async () => {
+    mockYear(400_000, 400_000, 0);
+    const result = await tds194oCatchUp({ vendorId: 'v1', entityType: sole, settings, batchLedgerIds: ['cl-1'] });
+    assert.equal(result.tdsPaise, 0);
+  });
+
+  it('once over the limit, taxes the earlier exempt sales too, less catch-up already taken', async () => {
+    // ₹6,000 of sales this year against a ₹5,000 limit, all frozen as exempt.
+    mockYear(600_000, 600_000, 0);
+    const first = await tds194oCatchUp({ vendorId: 'v1', entityType: sole, settings, batchLedgerIds: ['cl-1'] });
+    assert.equal(first.tdsPaise, 6_000);
+    // A later payout: ₹60 already taken, ₹1,000 more exempt sales since → ₹10 more.
+    mockYear(700_000, 700_000, 6_000);
+    const second = await tds194oCatchUp({ vendorId: 'v1', entityType: sole, settings, batchLedgerIds: ['cl-2'] });
+    assert.equal(second.tdsPaise, 1_000);
+  });
+
+  it('never applies to a company', async () => {
+    mockYear(600_000, 600_000, 0);
+    const result = await tds194oCatchUp({
+      vendorId: 'v1',
+      entityType: VENDOR_ENTITY_TYPE.PRIVATE_LIMITED,
+      settings,
+      batchLedgerIds: [],
+    });
+    assert.equal(result.tdsPaise, 0);
   });
 });

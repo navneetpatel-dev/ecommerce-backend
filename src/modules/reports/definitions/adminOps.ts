@@ -2,8 +2,6 @@ import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { ORDER_STATUS } from '@core/constants/statuses';
 import { sequelize } from '@database/models';
 import { SubOrder } from '@database/models/subOrder.model';
-import { Order } from '@database/models/order.model';
-import { Vendor } from '@database/models/vendor.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
 import { createOffsetExportQuery } from '../engine/export/createOffsetExportQuery';
@@ -13,6 +11,7 @@ import {
   pagedSqlQuery,
   dateBetween,
 } from '../engine/queryHelpers';
+import { PAID_OR_COD_ORDER_SQL } from '@modules/pricing/frozenMoneySql';
 
 function resolveVendorId(filters: ReportFilters): string | null {
   return filters.scopedVendorId ?? filters.vendorId ?? null;
@@ -22,75 +21,76 @@ function hoursBetween(from: Date, to: Date): number {
   return Math.round(((to.getTime() - from.getTime()) / 3_600_000) * 100) / 100;
 }
 
+// When a part was delivered: its shipment's delivered time (older parts without one:
+// their last update). A part's own `updatedAt` moves on later returns and edits.
+const DELIVERED_AT_SQL = `COALESCE(sh."deliveredAt", so."updatedAt")`;
+
 async function orderSla(filters: ReportFilters) {
   assertReportRange(filters);
-  const where: Record<string, unknown> = {
-    status: ORDER_STATUS.DELIVERED,
-    updatedAt: dateBetween(filters.from, filters.to),
-  };
   const vendorId = resolveVendorId(filters);
-  if (vendorId) where.vendorId = vendorId;
-
-  const { rows, total } = await pagedFindAndCount(
-    SubOrder,
-    {
-      where,
-      include: [
-        { model: Vendor, as: 'vendor', attributes: ['id', 'businessName'], required: false },
-        { model: Order, as: 'order', attributes: ['id'], required: false },
-      ],
-      order: [['updatedAt', 'DESC']],
-    },
-    filters,
-  );
-
-  const detail = rows.map((sub) => {
-    const vendor = (sub as SubOrder & { vendor?: Vendor }).vendor;
-    const vid = sub.vendorId ?? 'UNKNOWN';
-    return {
-      vendorId: vid,
-      vendorName: vendor?.businessName ?? vid,
-      subOrderId: sub.id,
-      orderId: sub.orderId,
-      createdAt: sub.createdAt,
-      deliveredAt: sub.updatedAt,
-      hoursToDeliver: hoursBetween(sub.createdAt as Date, sub.updatedAt as Date),
-    };
-  });
-
   const replacements: Record<string, unknown> = {
     from: filters.from,
     to: filters.to,
   };
   const vendorClause = vendorId ? 'AND so."vendorId" = :vendorId' : '';
   if (vendorId) replacements.vendorId = vendorId;
-
-  const [metaRows] = await sequelize.query(
-    `
-    SELECT
-      COALESCE(so."vendorId"::text, 'UNKNOWN') AS "vendorId",
-      COALESCE(MAX(v."businessName"), COALESCE(so."vendorId"::text, 'UNKNOWN')) AS "vendorName",
-      COUNT(*)::int AS "deliveredCount",
-      ROUND(
-        (AVG(EXTRACT(EPOCH FROM (so."updatedAt" - so."createdAt")) / 3600.0))::numeric,
-        2
-      ) AS "avgHoursToDeliver"
+  const deliveredFrom = `
     FROM sub_orders so
+    LEFT JOIN shipments sh ON sh."subOrderId" = so.id AND sh."deletedAt" IS NULL
     LEFT JOIN vendors v
       ON v.id = so."vendorId"
       AND v."deletedAt" IS NULL
     WHERE so.status = '${ORDER_STATUS.DELIVERED}'
-      AND so."updatedAt" BETWEEN :from AND :to
+      AND ${DELIVERED_AT_SQL} BETWEEN :from AND :to
       AND so."deletedAt" IS NULL
       ${vendorClause}
-    GROUP BY so."vendorId"
-    `,
-    { replacements },
-  );
+  `;
+
+  const [detail, [metaRows]] = await Promise.all([
+    pagedSqlQuery({
+      selectSql: `
+        SELECT
+          COALESCE(so."vendorId"::text, 'UNKNOWN') AS "vendorId",
+          COALESCE(v."businessName", so."vendorId"::text, 'UNKNOWN') AS "vendorName",
+          so.id AS "subOrderId",
+          so."orderId" AS "orderId",
+          so."createdAt" AS "createdAt",
+          ${DELIVERED_AT_SQL} AS "deliveredAt"
+        ${deliveredFrom}
+      `,
+      orderBySql: `"deliveredAt" DESC, "subOrderId" DESC`,
+      replacements,
+      filters,
+      mapRow: (row) => ({
+        vendorId: row.vendorId,
+        vendorName: row.vendorName,
+        subOrderId: row.subOrderId,
+        orderId: row.orderId,
+        createdAt: row.createdAt,
+        deliveredAt: row.deliveredAt,
+        hoursToDeliver: hoursBetween(new Date(row.createdAt as Date), new Date(row.deliveredAt as Date)),
+      }),
+    }),
+    sequelize.query(
+      `
+      SELECT
+        COALESCE(so."vendorId"::text, 'UNKNOWN') AS "vendorId",
+        COALESCE(MAX(v."businessName"), COALESCE(so."vendorId"::text, 'UNKNOWN')) AS "vendorName",
+        COUNT(*)::int AS "deliveredCount",
+        ROUND(
+          (AVG(EXTRACT(EPOCH FROM (${DELIVERED_AT_SQL} - so."createdAt")) / 3600.0))::numeric,
+          2
+        ) AS "avgHoursToDeliver"
+      ${deliveredFrom}
+      GROUP BY so."vendorId"
+      `,
+      { replacements },
+    ),
+  ]);
 
   return {
-    rows: detail,
-    total,
+    rows: detail.rows,
+    total: detail.total,
     meta: {
       byVendor: (metaRows as Array<Record<string, unknown>>).map((r) => ({
         vendorId: r.vendorId,
@@ -112,49 +112,38 @@ async function cancellations(filters: ReportFilters) {
   };
   if (vendorId) replacements.vendorId = vendorId;
 
-  const orderSelect = `
+  // One row per cancelled part (an order cancelled whole has a row for each of its
+  // parts, so nothing is counted twice), on orders actually placed (not a checkout
+  // abandoned or whose payment failed). The amount is what the customer was charged for
+  // the part, GST and shipping included — what the cancellation refunds. Dated by when
+  // it was cancelled (`cancelledAt`; older rows: their last update).
+  const selectSql = `
     SELECT
-      'ORDER'::text AS level,
-      o.id AS "orderId",
-      NULL::uuid AS "subOrderId",
-      NULL::uuid AS "vendorId",
-      NULL::text AS "vendorName",
-      o."userId" AS "userId",
-      o.status::text AS status,
-      COALESCE(o."totalAmount", 0)::float AS amount,
-      COALESCE(o."updatedAt", o."createdAt") AS "cancelledAt"
-    FROM orders o
-    WHERE o.status = '${ORDER_STATUS.CANCELLED}'
-      AND COALESCE(o."updatedAt", o."createdAt") BETWEEN :from AND :to
-      AND o."deletedAt" IS NULL
-  `;
-
-  const subSelect = `
-    SELECT
-      'SUB_ORDER'::text AS level,
       so."orderId" AS "orderId",
       so.id AS "subOrderId",
       so."vendorId" AS "vendorId",
       v."businessName" AS "vendorName",
       o."userId" AS "userId",
       so.status::text AS status,
-      (so."subtotalPaise" / 100.0)::float AS amount,
-      COALESCE(so."updatedAt", so."createdAt") AS "cancelledAt"
+      (COALESCE(
+        ROUND(so."customerTotal"::numeric * 100),
+        so."taxableAmountPaise" + so."taxAmountPaise"
+          + GREATEST(0, so."shippingCostPaise" - so."shippingDiscountAmountPaise")
+      ) / 100.0)::float AS amount,
+      COALESCE(so."cancelledAt", so."updatedAt") AS "cancelledAt"
     FROM sub_orders so
+    INNER JOIN orders o
+      ON o.id = so."orderId"
+      AND o."deletedAt" IS NULL
     LEFT JOIN vendors v
       ON v.id = so."vendorId"
       AND v."deletedAt" IS NULL
-    LEFT JOIN orders o
-      ON o.id = so."orderId"
-      AND o."deletedAt" IS NULL
     WHERE so.status = '${ORDER_STATUS.CANCELLED}'
-      AND COALESCE(so."updatedAt", so."createdAt") BETWEEN :from AND :to
+      AND COALESCE(so."cancelledAt", so."updatedAt") BETWEEN :from AND :to
       AND so."deletedAt" IS NULL
+      AND ${PAID_OR_COD_ORDER_SQL}
       ${vendorId ? 'AND so."vendorId" = :vendorId' : ''}
   `;
-
-  // When vendor-scoped, only cancelled sub-orders apply (order-level has no vendor).
-  const selectSql = vendorId ? subSelect : `${orderSelect} UNION ALL ${subSelect}`;
 
   return pagedSqlQuery({
     selectSql,
@@ -162,7 +151,6 @@ async function cancellations(filters: ReportFilters) {
     replacements,
     filters,
     mapRow: (row) => ({
-      level: row.level,
       orderId: row.orderId,
       subOrderId: row.subOrderId,
       vendorId: row.vendorId,
@@ -381,13 +369,12 @@ export const adminOpsReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: false,
     columns: [
-      { key: 'level', labelKey: 'level' },
       { key: 'orderId', labelKey: 'orderId' },
       { key: 'subOrderId', labelKey: 'subOrderId' },
       { key: 'vendorId', labelKey: 'vendorId' },
       { key: 'vendorName', labelKey: 'vendorName' },
       { key: 'status', labelKey: 'status' },
-      { key: 'amount', labelKey: 'amount', format: 'currency' },
+      { key: 'amount', labelKey: 'cancelledAmount', format: 'currency' },
       { key: 'cancelledAt', labelKey: 'cancelledAt', format: 'date' },
     ],
     query: cancellations,

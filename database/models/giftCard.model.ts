@@ -19,6 +19,8 @@ export class GiftCard extends Model<InferAttributes<GiftCard>, InferCreationAttr
   declare message: string | null;
   declare redeemedByUserId: string | null;
   declare redeemedAt: Date | null;
+  /** When the card's payment went through; null while unpaid. */
+  declare paidAt: CreationOptional<Date | null>;
   declare expiresAt: Date;
   declare status: GiftCardStatusValue;
   declare razorpayOrderId: string | null;
@@ -48,6 +50,7 @@ export const initGiftCardModel = (sequelize: Sequelize) => {
       message: { type: DataTypes.TEXT, allowNull: true },
       redeemedByUserId: { type: DataTypes.UUID, allowNull: true },
       redeemedAt: { type: DataTypes.DATE, allowNull: true },
+      paidAt: { type: DataTypes.DATE, allowNull: true },
       expiresAt: { type: DataTypes.DATE, allowNull: false },
       status: {
         type: DataTypes.ENUM('PENDING', 'ACTIVE', 'REDEEMED', 'EXPIRED', 'CANCELLED', 'FAILED'),

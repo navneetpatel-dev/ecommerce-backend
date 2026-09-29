@@ -862,6 +862,7 @@ export class VendorsService {
           'netPayoutAmountPaise',
           'commissionAmountPaise',
           'taxableAmountPaise',
+          'supplyTaxablePaise',
           'tdsRatePercent',
           'referenceType',
         ],
@@ -954,16 +955,19 @@ export class VendorsService {
     );
 
     const [sla] = await sequelize.query<{ delivered: string; onTime: string }>(
+      // Delivered time from the shipment (older parts without one: their last update);
+      // the part's own updatedAt moves on a later return or edit.
       `SELECT
-         COUNT(*) FILTER (WHERE status = :delivered) AS delivered,
+         COUNT(*) FILTER (WHERE s.status = :delivered) AS delivered,
          COUNT(*) FILTER (
-           WHERE status = :delivered
-             AND EXTRACT(EPOCH FROM ("updatedAt" - "createdAt")) / 3600 <= :slaHours
+           WHERE s.status = :delivered
+             AND EXTRACT(EPOCH FROM (COALESCE(sh."deliveredAt", s."updatedAt") - s."createdAt")) / 3600 <= :slaHours
          ) AS "onTime"
-       FROM sub_orders
-       WHERE "vendorId" = :vendorId
-         AND "deletedAt" IS NULL
-         AND "createdAt" BETWEEN :from AND :to`,
+       FROM sub_orders s
+       LEFT JOIN shipments sh ON sh."subOrderId" = s.id AND sh."deletedAt" IS NULL
+       WHERE s."vendorId" = :vendorId
+         AND s."deletedAt" IS NULL
+         AND s."createdAt" BETWEEN :from AND :to`,
       {
         replacements: {
           vendorId,

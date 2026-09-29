@@ -7,17 +7,23 @@ import {
   pagedSqlQuery,
   computeReconciliationSummary,
   sqlFrozenPaise,
-  sqlVendorNetPayoutPaise,
-  DISCOUNT_BEARER,
   COMMISSION_STATUS,
 } from '../engine/queryHelpers';
 import {
   GMV_SUB_ORDER_SQL,
   PAID_OR_COD_ORDER_SQL,
+  sqlLedgerOnPaidOrder,
+  sqlLedgerPlatformDiscountPaise,
+  sqlLedgerPlatformGstPaise,
+  sqlLedgerVendorDiscountPaise,
   sqlLineSubtotalPaise,
 } from '@modules/pricing/frozenMoneySql';
+import { COMMISSION_REFERENCE_TYPE } from '@core/constants/statuses';
+import { IST_TIME_ZONE } from '@modules/pricing/istCalendar';
+import { roundMoney } from '@modules/pricing/money';
+import { vendorPayablePaise } from '../engine/vendorPayable';
 import { PART_RETURN_DESCRIPTION_PREFIX } from '@modules/wallet/walletOrderRollback';
-import { platformSupplyLinesSql } from '../engine/platformSupplySql';
+import { gstDocumentReplacements, scopedGstDocumentLinesSql } from '../engine/gstDocumentsSql';
 import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { AuditLog } from '@database/models/auditLog.model';
@@ -187,12 +193,16 @@ async function tds194oSummary(filters: ReportFilters) {
   });
 }
 
+async function gstReplacements(filters: ReportFilters): Promise<Record<string, unknown>> {
+  return { ...sqlReplacements(filters), ...(await gstDocumentReplacements()) };
+}
+
 async function hsnSalesSummary(filters: ReportFilters) {
   assertReportRange(filters);
   return pagedSqlQuery({
     selectSql: hsnSalesSelectSql(),
-    orderBySql: `"hsnCode" ASC`,
-    replacements: sqlReplacements(filters),
+    orderBySql: `"supplierGstin" ASC, "hsnCode" ASC, "gstRate" ASC`,
+    replacements: await gstReplacements(filters),
     filters,
     mapRow: mapHsnSalesRow,
   });
@@ -203,7 +213,7 @@ async function stateTaxCollection(filters: ReportFilters) {
   return pagedSqlQuery({
     selectSql: stateTaxSelectSql(),
     orderBySql: `state ASC`,
-    replacements: sqlReplacements(filters),
+    replacements: await gstReplacements(filters),
     filters,
     mapRow: mapStateTaxRow,
   });
@@ -262,61 +272,52 @@ async function tds194oExport(
   return { rows: page.rows, nextCursor: page.nextCursor };
 }
 
+/**
+ * HSN / SAC summary (GSTR-1 table 12) of the documents issued in the range: per
+ * supplier, HSN and GST rate, invoices less credit notes, with the tax split. Read from
+ * the invoices as issued, so a return counts once — in its credit note's month.
+ */
 function hsnSalesSelectSql(): string {
-  const taxableExpr = sqlFrozenPaise('oi', 'taxableAmountPaise');
-  const taxExpr = sqlFrozenPaise('oi', 'taxAmountPaise');
   return `
     SELECT
-      "hsnCode",
+      "supplierName",
+      "supplierGstin",
+      COALESCE(NULLIF("hsnCode", ''), 'UNKNOWN') AS "hsnCode",
+      COALESCE("gstRate", 0) AS "gstRate",
       SUM(qty)::int AS qty,
       SUM("taxablePaise")::bigint AS "taxablePaise",
-      SUM("taxPaise")::bigint AS "taxPaise"
-    FROM (
-      SELECT
-        COALESCE(hsn."hsnCode", 'UNKNOWN') AS "hsnCode",
-        oi.quantity AS qty,
-        ${taxableExpr} AS "taxablePaise",
-        ${taxExpr} AS "taxPaise"
-      FROM order_items oi
-      INNER JOIN sub_orders s ON s.id = oi."subOrderId" AND s."deletedAt" IS NULL
-      INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
-      INNER JOIN product_variants pv ON pv.id = oi."variantId" AND pv."deletedAt" IS NULL
-      INNER JOIN products p ON p.id = pv."productId" AND p."deletedAt" IS NULL
-      LEFT JOIN (
-        SELECT DISTINCT ON (tr."categoryId")
-          tr."categoryId",
-          tr."hsnCode"
-        FROM tax_rules tr
-        WHERE tr."deletedAt" IS NULL
-          AND tr."hsnCode" IS NOT NULL
-        ORDER BY tr."categoryId", tr."updatedAt" DESC NULLS LAST
-      ) hsn ON hsn."categoryId" = p."categoryId"
-      WHERE oi."deletedAt" IS NULL
-        AND o."createdAt" BETWEEN :from AND :to
-        -- A cancelled sub-order's items were refunded: not sales, same rule as GMV.
-        AND ${GMV_SUB_ORDER_SQL}
-        AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
-        AND (:categoryId::uuid IS NULL OR p."categoryId" = :categoryId)
-      UNION ALL
-      -- The platform's own supplies (gift wrap, shipping, return fees), under their SAC.
-      SELECT sac, qty, taxable, cgst + sgst + igst
-      FROM (${platformSupplyLinesSql()}) platform_lines
-      WHERE :categoryId::uuid IS NULL
-    ) supplies
-    GROUP BY "hsnCode"
+      SUM("cgstPaise")::bigint AS "cgstPaise",
+      SUM("sgstPaise")::bigint AS "sgstPaise",
+      SUM("igstPaise")::bigint AS "igstPaise"
+    FROM (${scopedGstDocumentLinesSql()}) d
+    WHERE (:categoryId::uuid IS NULL OR d."categoryId" = :categoryId)
+    GROUP BY "supplierName", "supplierGstin", COALESCE(NULLIF("hsnCode", ''), 'UNKNOWN'), COALESCE("gstRate", 0)
   `;
 }
 
 function mapHsnSalesRow(row: Record<string, unknown>) {
+  const cgst = Number(row.cgstPaise ?? 0);
+  const sgst = Number(row.sgstPaise ?? 0);
+  const igst = Number(row.igstPaise ?? 0);
   return {
+    supplierName: String(row.supplierName ?? ''),
+    supplierGstin: String(row.supplierGstin ?? ''),
     hsnCode: String(row.hsnCode ?? 'UNKNOWN'),
+    gstRate: Number(row.gstRate ?? 0),
     qty: Number(row.qty ?? 0),
     taxable: fromPaise(Number(row.taxablePaise ?? 0)),
-    tax: fromPaise(Number(row.taxPaise ?? 0)),
+    cgst: fromPaise(cgst),
+    sgst: fromPaise(sgst),
+    igst: fromPaise(igst),
+    tax: fromPaise(cgst + sgst + igst),
   };
 }
 
-const HSN_SALES_KEYSET: KeysetOrderCol[] = [{ column: 'hsnCode', direction: 'ASC' }];
+const HSN_SALES_KEYSET: KeysetOrderCol[] = [
+  { column: 'supplierGstin', direction: 'ASC' },
+  { column: 'hsnCode', direction: 'ASC' },
+  { column: 'gstRate', direction: 'ASC' },
+];
 
 async function hsnSalesExport(
   filters: ReportFilters,
@@ -326,7 +327,7 @@ async function hsnSalesExport(
   const page = await keysetSqlQuery({
     selectSql: hsnSalesSelectSql(),
     order: HSN_SALES_KEYSET,
-    replacements: sqlReplacements(filters),
+    replacements: await gstReplacements(filters),
     limit,
     cursor,
     mapRow: mapHsnSalesRow,
@@ -335,68 +336,18 @@ async function hsnSalesExport(
 }
 
 /**
- * GST by customer state. The stored per-sub-order breakdown (rupees, from checkout)
- * is used while it still adds up to the sub-order's tax; once a return has reduced
- * the tax it no longer does, and the paise tax is split the way splitTaxAmount
- * splits it (IGST when the breakdown had IGST, else CGST = floor(half), SGST = rest).
- * Either way CGST + SGST + IGST equals the tax total in the same row.
+ * GST by place of supply (customer state) on the documents issued in the range:
+ * invoices less credit notes, every supplier (a vendor filter keeps that vendor's).
  */
 function stateTaxSelectSql(): string {
-  const taxExpr = sqlFrozenPaise('s', 'taxAmountPaise');
-  const stored = (key: string) =>
-    `ROUND(COALESCE((s."taxBreakdown"->>'${key}')::numeric, 0) * 100)::bigint`;
   return `
-    WITH sub_tax AS (
-      SELECT
-        COALESCE(NULLIF(a.state, ''), 'UNKNOWN') AS state,
-        ${taxExpr} AS tax,
-        ${stored('cgst')} AS "cgst0",
-        ${stored('sgst')} AS "sgst0",
-        ${stored('igst')} AS "igst0"
-      FROM sub_orders s
-      INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
-      LEFT JOIN addresses a ON a.id = o."shippingAddressId" AND a."deletedAt" IS NULL
-      WHERE s."deletedAt" IS NULL
-        AND o."createdAt" BETWEEN :from AND :to
-        -- A cancelled sub-order's tax was refunded, same rule as GMV and settlement.
-        AND ${GMV_SUB_ORDER_SQL}
-        AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
-    ),
-    platform_tax AS (
-      -- The platform's own supplies (gift wrap, shipping, return fees): GST split in paise.
-      SELECT state, cgst + sgst + igst AS tax, cgst, sgst, igst
-      FROM (${platformSupplyLinesSql()}) platform_lines
-    ),
-    split AS (
-      SELECT state, tax, cgst, sgst, igst FROM platform_tax
-      UNION ALL
-      SELECT
-        state,
-        tax,
-        CASE
-          WHEN "cgst0" + "sgst0" + "igst0" = tax THEN "cgst0"
-          WHEN "igst0" > 0 THEN 0
-          ELSE tax / 2
-        END AS cgst,
-        CASE
-          WHEN "cgst0" + "sgst0" + "igst0" = tax THEN "sgst0"
-          WHEN "igst0" > 0 THEN 0
-          ELSE tax - tax / 2
-        END AS sgst,
-        CASE
-          WHEN "cgst0" + "sgst0" + "igst0" = tax THEN "igst0"
-          WHEN "igst0" > 0 THEN tax
-          ELSE 0
-        END AS igst
-      FROM sub_tax
-    )
     SELECT
       state,
-      SUM(cgst)::bigint AS "cgstPaise",
-      SUM(sgst)::bigint AS "sgstPaise",
-      SUM(igst)::bigint AS "igstPaise",
-      SUM(tax)::bigint AS "taxTotalPaise"
-    FROM split
+      SUM("cgstPaise")::bigint AS "cgstPaise",
+      SUM("sgstPaise")::bigint AS "sgstPaise",
+      SUM("igstPaise")::bigint AS "igstPaise",
+      SUM("cgstPaise" + "sgstPaise" + "igstPaise")::bigint AS "taxTotalPaise"
+    FROM (${scopedGstDocumentLinesSql()}) d
     GROUP BY state
   `;
 }
@@ -421,7 +372,7 @@ async function stateTaxExport(
   const page = await keysetSqlQuery({
     selectSql: stateTaxSelectSql(),
     order: STATE_TAX_KEYSET,
-    replacements: sqlReplacements(filters),
+    replacements: await gstReplacements(filters),
     limit,
     cursor,
     mapRow: mapStateTaxRow,
@@ -490,34 +441,25 @@ async function reconciliation(filters: ReportFilters) {
   const giftCardRedemptionInflow = Number(walletMeta.giftCardRedemptionInflow ?? 0);
   const walletPointsRedeemedAtCheckout = Number(walletMeta.walletPointsRedeemedAtCheckout ?? 0);
 
-  const customerPayments = fromPaise(summary.customerPaymentsPaise);
-  const vendorNetPayouts = fromPaise(summary.vendorNetPayoutsPaise);
-  const platformCommission = fromPaise(summary.platformCommissionPaise);
-  const taxCollected = fromPaise(summary.taxCollectedPaise);
-  const tcsCollected = fromPaise(summary.tcsCollectedPaise);
-  const shippingCollected = fromPaise(summary.shippingCollectedPaise);
-  const refundsToCustomer = fromPaise(summary.refundsPaise);
-  const accountedPaise =
-    summary.vendorNetPayoutsPaise +
-    summary.platformCommissionPaise +
-    summary.taxCollectedPaise +
-    summary.tcsCollectedPaise +
-    summary.shippingCollectedPaise +
-    summary.refundsPaise;
-  const differencePaise = summary.customerPaymentsPaise - accountedPaise;
+  const differencePaise = summary.customerPaymentsPaise - summary.accountedPaise;
   const balanced = differencePaise === 0;
   const row = {
-    customerPayments,
-    vendorNetPayouts,
-    platformCommission,
-    taxCollected,
-    tcsCollected,
-    shippingCollected,
-    refundsToCustomer,
+    customerPayments: fromPaise(summary.customerPaymentsPaise),
+    vendorNetPayouts: fromPaise(summary.vendorNetPayoutsPaise),
+    platformFundedDiscount: fromPaise(summary.platformFundedDiscountPaise),
+    platformCommission: fromPaise(summary.platformCommissionPaise),
+    taxCollected: fromPaise(summary.taxCollectedPaise),
+    tcsCollected: fromPaise(summary.tcsCollectedPaise),
+    platformGoodsSales: fromPaise(summary.platformGoodsPaise),
+    shippingCollected: fromPaise(summary.shippingCollectedPaise),
+    shippingRefunded: fromPaise(summary.shippingRefundedPaise),
+    returnFeesKept: fromPaise(summary.returnFeesKeptPaise),
+    giftWrapCollected: fromPaise(summary.giftWrapPaise),
+    refundsToCustomer: fromPaise(summary.refundsPaise),
     walletRechargeInflow,
     giftCardRedemptionInflow,
     walletPointsRedeemedAtCheckout,
-    accountedTotal: fromPaise(accountedPaise),
+    accountedTotal: fromPaise(summary.accountedPaise),
     difference: fromPaise(differencePaise),
     status: balanced ? 'BALANCED' : 'MISMATCH',
   };
@@ -529,7 +471,7 @@ async function reconciliation(filters: ReportFilters) {
     to: filters.to,
     /** Order consideration GMV; PG cash ≈ razorpayAmountPaid; wallet redeem is separate. */
     note:
-      'customerPayments is order consideration (not PG cash). walletPointsRedeemedAtCheckout is funding, not part of the cash balance equation.',
+      'customerPayments = vendorNetPayouts − platformFundedDiscount + platformCommission + tcsCollected + platformGoodsSales + shippingCollected − shippingRefunded + returnFeesKept + giftWrapCollected + refundsToCustomer. GST is inside vendor net payouts (taxCollected is shown, not added). customerPayments is order consideration (not PG cash); walletPointsRedeemedAtCheckout is funding, not part of the equation.',
   };
   return { rows: [row], total: 1, meta };
 }
@@ -539,7 +481,7 @@ async function creditDebitNoteRegister(filters: ReportFilters) {
   return pagedSqlQuery({
     selectSql: creditDebitNoteSelectSql(),
     orderBySql: `"issuedAt" DESC, "noteNumber" DESC`,
-    replacements: sqlReplacements(filters),
+    replacements: await gstReplacements(filters),
     filters,
     mapRow: mapCreditDebitNoteRow,
   });
@@ -550,58 +492,82 @@ const CREDIT_DEBIT_KEYSET: KeysetOrderCol[] = [
   { column: 'noteNumber', direction: 'DESC' },
 ];
 
+/**
+ * Every credit note issued in the range (returns, RTOs, the platform's shipping and
+ * gift-wrap refunds, commission credit notes), with its taxable value, tax split, place
+ * of supply and recipient GSTIN — plus the vendor debit notes (recoveries, not GST
+ * documents: no tax). Amounts are shown positive.
+ */
 function creditDebitNoteSelectSql(): string {
-  const noteInRange = (alias: string) => `(
-    (${alias}."issuedAt" IS NOT NULL AND ${alias}."issuedAt" BETWEEN :from AND :to)
-    OR (${alias}."issuedAt" IS NULL AND ${alias}."createdAt" BETWEEN :from AND :to)
-  )`;
   return `
     SELECT
       'CREDIT'::text AS type,
-      cn.number AS "noteNumber",
-      cn."orderId"::text AS "orderId",
-      COALESCE(cn."subOrderId"::text, '') AS "subOrderId",
-      COALESCE(cn."vendorId"::text, '') AS "vendorId",
-      COALESCE(cn."againstInvoiceNumber", '') AS "againstInvoiceNumber",
-      (cn."totalPaise" / 100.0) AS amount,
-      (cn."taxPaise" / 100.0) AS "taxAmount",
-      COALESCE(cn.reason, '') AS reason,
-      COALESCE(cn."issuedAt", cn."createdAt") AS "issuedAt"
-    FROM credit_notes cn
-    WHERE cn."deletedAt" IS NULL
-      AND ${noteInRange('cn')}
-      AND (:vendorId::uuid IS NULL OR cn."vendorId" = :vendorId)
+      d."documentNumber" AS "noteNumber",
+      COALESCE(d."orderId"::text, '') AS "orderId",
+      COALESCE(d."subOrderId"::text, '') AS "subOrderId",
+      COALESCE(d."supplierVendorId", d."recipientVendorId")::text AS "vendorId",
+      MAX(d."supplierName") AS "supplierName",
+      COALESCE(MAX(d."againstInvoiceNumber"), '') AS "againstInvoiceNumber",
+      COALESCE(MAX(d."recipientGstin"), '') AS "recipientGstin",
+      MAX(d.state) AS "placeOfSupplyState",
+      -SUM(d."taxablePaise")::bigint AS "taxablePaise",
+      -SUM(d."cgstPaise")::bigint AS "cgstPaise",
+      -SUM(d."sgstPaise")::bigint AS "sgstPaise",
+      -SUM(d."igstPaise")::bigint AS "igstPaise",
+      COALESCE(MAX(d.reason), '') AS reason,
+      d."documentDate" AS "issuedAt"
+    FROM (${scopedGstDocumentLinesSql()}) d
+    WHERE d."docType" = 'CREDIT_NOTE'
+    GROUP BY d."documentNumber", d."documentDate", d."orderId", d."subOrderId",
+             d."supplierVendorId", d."recipientVendorId"
 
     UNION ALL
 
     SELECT
-      'DEBIT'::text AS type,
-      dn.number AS "noteNumber",
-      dn."orderId"::text AS "orderId",
-      COALESCE(dn."subOrderId"::text, '') AS "subOrderId",
-      COALESCE(dn."vendorId"::text, '') AS "vendorId",
-      COALESCE(dn."againstInvoiceNumber", '') AS "againstInvoiceNumber",
-      (dn."netClawbackPaise" / 100.0) AS amount,
-      0::numeric AS "taxAmount",
-      COALESCE(dn.reason, '') AS reason,
-      COALESCE(dn."issuedAt", dn."createdAt") AS "issuedAt"
+      'DEBIT'::text,
+      dn.number,
+      dn."orderId"::text,
+      COALESCE(dn."subOrderId"::text, ''),
+      COALESCE(dn."vendorId"::text, ''),
+      COALESCE(v."businessName", ''),
+      COALESCE(dn."againstInvoiceNumber", ''),
+      COALESCE(NULLIF(v."gstNumber", ''), ''),
+      COALESCE(v.state, ''),
+      dn."netClawbackPaise"::bigint,
+      0::bigint,
+      0::bigint,
+      0::bigint,
+      COALESCE(dn.reason, ''),
+      COALESCE(dn."issuedAt", dn."createdAt")
     FROM debit_notes dn
+    LEFT JOIN vendors v ON v.id = dn."vendorId"
     WHERE dn."deletedAt" IS NULL
-      AND ${noteInRange('dn')}
+      AND COALESCE(dn."issuedAt", dn."createdAt") BETWEEN :from AND :to
       AND (:vendorId::uuid IS NULL OR dn."vendorId" = :vendorId)
   `;
 }
 
 function mapCreditDebitNoteRow(row: Record<string, unknown>) {
+  const taxable = Number(row.taxablePaise ?? 0);
+  const cgst = Number(row.cgstPaise ?? 0);
+  const sgst = Number(row.sgstPaise ?? 0);
+  const igst = Number(row.igstPaise ?? 0);
   return {
     type: String(row.type ?? ''),
     noteNumber: String(row.noteNumber ?? ''),
     orderId: String(row.orderId ?? ''),
     subOrderId: String(row.subOrderId ?? ''),
     vendorId: String(row.vendorId ?? ''),
+    supplierName: String(row.supplierName ?? ''),
     againstInvoiceNumber: String(row.againstInvoiceNumber ?? ''),
-    amount: Math.round(Number(row.amount ?? 0) * 100) / 100,
-    taxAmount: Math.round(Number(row.taxAmount ?? 0) * 100) / 100,
+    recipientGstin: String(row.recipientGstin ?? ''),
+    placeOfSupplyState: String(row.placeOfSupplyState ?? ''),
+    taxable: fromPaise(taxable),
+    cgst: fromPaise(cgst),
+    sgst: fromPaise(sgst),
+    igst: fromPaise(igst),
+    taxAmount: fromPaise(cgst + sgst + igst),
+    amount: fromPaise(taxable + cgst + sgst + igst),
     reason: String(row.reason ?? ''),
     issuedAt: row.issuedAt,
   };
@@ -616,7 +582,7 @@ async function creditDebitNoteRegisterExport(
   const page = await keysetSqlQuery({
     selectSql: creditDebitNoteSelectSql(),
     order: CREDIT_DEBIT_KEYSET,
-    replacements: sqlReplacements(filters),
+    replacements: await gstReplacements(filters),
     limit,
     cursor,
     mapRow: mapCreditDebitNoteRow,
@@ -634,21 +600,24 @@ const AUDIT_LOG_KEYSET: KeysetOrderCol[] = [
   { column: 'id', direction: 'DESC' },
 ];
 
+/**
+ * Vendor settlement for ledgers created (and payouts run) in the range. The ledger side
+ * lists the vendors; their pending and settled payables are the payout run's own
+ * breakdown (after 194-O TDS and GST on commission), filled in by
+ * `withVendorPayables`. Payouts: every run that did not fail, what is still to be
+ * paid, what was paid, and failed runs on their own (a failed run is retried by a
+ * later one, so counting both would pay the vendor twice on paper).
+ */
 function vendorSettlementSelectSql(): string {
-  const netPaiseExpr = sqlVendorNetPayoutPaise('cl');
-
   return `
     WITH ledger_agg AS (
-      SELECT
-        cl."vendorId" AS "vendorId",
-        MAX(v."businessName") AS "vendorName",
-        SUM(CASE WHEN cl.status = '${COMMISSION_STATUS.PENDING}' THEN ${netPaiseExpr} ELSE 0 END)::bigint AS "pendingNetPaise",
-        SUM(CASE WHEN cl.status = '${COMMISSION_STATUS.SETTLED}' THEN ${netPaiseExpr} ELSE 0 END)::bigint AS "settledNetPaise"
+      SELECT cl."vendorId" AS "vendorId", MAX(v."businessName") AS "vendorName"
       FROM commission_ledgers cl
       INNER JOIN vendors v ON v.id = cl."vendorId" AND v."deletedAt" IS NULL
       WHERE cl."deletedAt" IS NULL
         AND cl."createdAt" BETWEEN :from AND :to
         AND cl.status <> '${COMMISSION_STATUS.CLAWED_BACK}'
+        AND ${sqlLedgerOnPaidOrder('cl')}
         AND (:vendorId::uuid IS NULL OR cl."vendorId" = :vendorId)
       GROUP BY cl."vendorId"
     ),
@@ -656,9 +625,10 @@ function vendorSettlementSelectSql(): string {
       SELECT
         p."vendorId" AS "vendorId",
         MAX(v."businessName") AS "vendorName",
-        SUM(p.amount::numeric) AS "payoutAmount",
+        SUM(CASE WHEN p.status <> 'FAILED' THEN p.amount::numeric ELSE 0 END) AS "payoutAmount",
         SUM(CASE WHEN p.status IN ('PENDING', 'PROCESSING') THEN p.amount::numeric ELSE 0 END) AS "payoutPending",
         SUM(CASE WHEN p.status = 'PAID' THEN p.amount::numeric ELSE 0 END) AS "payoutPaid",
+        SUM(CASE WHEN p.status = 'FAILED' THEN p.amount::numeric ELSE 0 END) AS "payoutFailed",
         string_agg(DISTINCT p.status::text, ',') AS "payoutStatus"
       FROM payouts p
       INNER JOIN vendors v ON v.id = p."vendorId" AND v."deletedAt" IS NULL
@@ -671,11 +641,10 @@ function vendorSettlementSelectSql(): string {
     SELECT
       COALESCE(l."vendorId", p."vendorId")::text AS "vendorId",
       COALESCE(l."vendorName", p."vendorName") AS "vendorName",
-      COALESCE(l."pendingNetPaise", 0)::bigint AS "pendingNetPaise",
-      COALESCE(l."settledNetPaise", 0)::bigint AS "settledNetPaise",
       COALESCE(p."payoutAmount", 0) AS "payoutAmount",
       COALESCE(p."payoutPending", 0) AS "payoutPending",
       COALESCE(p."payoutPaid", 0) AS "payoutPaid",
+      COALESCE(p."payoutFailed", 0) AS "payoutFailed",
       COALESCE(p."payoutStatus", 'NONE') AS "payoutStatus"
     FROM ledger_agg l
     FULL OUTER JOIN payout_agg p ON l."vendorId" = p."vendorId"
@@ -686,24 +655,44 @@ function mapVendorSettlementRow(row: Record<string, unknown>) {
   return {
     vendorId: String(row.vendorId ?? ''),
     vendorName: String(row.vendorName ?? ''),
-    pendingNet: fromPaise(Number(row.pendingNetPaise ?? 0)),
-    settledNet: fromPaise(Number(row.settledNetPaise ?? 0)),
-    payoutAmount: Math.round(Number(row.payoutAmount ?? 0) * 100) / 100,
-    payoutPending: Math.round(Number(row.payoutPending ?? 0) * 100) / 100,
-    payoutPaid: Math.round(Number(row.payoutPaid ?? 0) * 100) / 100,
+    pendingNet: 0,
+    settledNet: 0,
+    payoutAmount: roundMoney(row.payoutAmount),
+    payoutPending: roundMoney(row.payoutPending),
+    payoutPaid: roundMoney(row.payoutPaid),
+    payoutFailed: roundMoney(row.payoutFailed),
     payoutStatus: String(row.payoutStatus || 'NONE'),
   };
 }
 
+/** Fill each row's pending and settled payables from the payout breakdown. */
+async function withVendorPayables(
+  rows: Array<Record<string, unknown>>,
+  filters: ReportFilters,
+): Promise<Array<Record<string, unknown>>> {
+  const vendorIds = rows.map((row) => String(row.vendorId)).filter(Boolean);
+  const range = { from: filters.from, to: filters.to };
+  const [pending, settled] = await Promise.all([
+    vendorPayablePaise(vendorIds, { ...range, status: COMMISSION_STATUS.PENDING }),
+    vendorPayablePaise(vendorIds, { ...range, status: COMMISSION_STATUS.SETTLED }),
+  ]);
+  return rows.map((row) => ({
+    ...row,
+    pendingNet: fromPaise(pending.get(String(row.vendorId)) ?? 0),
+    settledNet: fromPaise(settled.get(String(row.vendorId)) ?? 0),
+  }));
+}
+
 async function vendorSettlement(filters: ReportFilters) {
   assertReportRange(filters);
-  return pagedSqlQuery({
+  const result = await pagedSqlQuery({
     selectSql: vendorSettlementSelectSql(),
     orderBySql: `"vendorName" ASC, "vendorId" ASC`,
     replacements: sqlReplacements(filters),
     filters,
     mapRow: mapVendorSettlementRow,
   });
+  return { ...result, rows: await withVendorPayables(result.rows, filters) };
 }
 
 async function vendorSettlementExport(
@@ -720,7 +709,7 @@ async function vendorSettlementExport(
     cursor,
     mapRow: mapVendorSettlementRow,
   });
-  return { rows: page.rows, nextCursor: page.nextCursor };
+  return { rows: await withVendorPayables(page.rows, filters), nextCursor: page.nextCursor };
 }
 
 async function commissionRevenue(filters: ReportFilters) {
@@ -741,35 +730,35 @@ const COMMISSION_REVENUE_KEYSET: KeysetOrderCol[] = [
   { column: 'vendorId', direction: 'ASC' },
 ];
 
+/**
+ * Commission earned per vendor, category and month (IST): each order line's commission
+ * under its own product's category — a part with items from several categories is
+ * split between them, not all given to one. Net of returns (the lines carry the
+ * commission still earned), only on sales that count (paid or COD, not cancelled or
+ * RTO'd), by the month the order was placed.
+ */
 function commissionRevenueSelectSql(): string {
-  const commissionExpr = sqlFrozenPaise('cl', 'commissionAmountPaise');
-  const periodExpr = `to_char(cl."createdAt" AT TIME ZONE 'UTC', 'YYYY-MM')`;
+  const periodExpr = `to_char(o."createdAt" AT TIME ZONE '${IST_TIME_ZONE}', 'YYYY-MM')`;
   return `
     SELECT
-      cl."vendorId"::text AS "vendorId",
+      s."vendorId"::text AS "vendorId",
       MAX(v."businessName") AS "vendorName",
-      cat."categoryId"::text AS "categoryId",
-      COALESCE(cat."categoryId"::text, '') AS "categorySort",
+      (COALESCE(oi."categoryId", p."categoryId"))::text AS "categoryId",
+      COALESCE((COALESCE(oi."categoryId", p."categoryId"))::text, '') AS "categorySort",
       ${periodExpr} AS period,
-      SUM(${commissionExpr})::bigint AS "commissionPaise"
-    FROM commission_ledgers cl
-    INNER JOIN vendors v ON v.id = cl."vendorId" AND v."deletedAt" IS NULL
-    LEFT JOIN LATERAL (
-      SELECT p."categoryId"
-      FROM order_items oi
-      INNER JOIN product_variants pv ON pv.id = oi."variantId" AND pv."deletedAt" IS NULL
-      INNER JOIN products p ON p.id = pv."productId" AND p."deletedAt" IS NULL
-      WHERE oi."subOrderId" = cl."subOrderId"
-        AND oi."deletedAt" IS NULL
-      ORDER BY oi.quantity DESC, oi."createdAt" ASC
-      LIMIT 1
-    ) cat ON true
-    WHERE cl."deletedAt" IS NULL
-      AND cl."createdAt" BETWEEN :from AND :to
-      AND cl.status <> '${COMMISSION_STATUS.CLAWED_BACK}'
-      AND (:vendorId::uuid IS NULL OR cl."vendorId" = :vendorId)
-      AND (:categoryId::uuid IS NULL OR cat."categoryId" = :categoryId)
-    GROUP BY cl."vendorId", cat."categoryId", ${periodExpr}
+      SUM(oi."commissionAmountPaise")::bigint AS "commissionPaise"
+    FROM order_items oi
+    INNER JOIN sub_orders s ON s.id = oi."subOrderId"
+    INNER JOIN orders o ON o.id = s."orderId"
+    INNER JOIN vendors v ON v.id = s."vendorId" AND v."deletedAt" IS NULL
+    LEFT JOIN product_variants pv ON pv.id = oi."variantId"
+    LEFT JOIN products p ON p.id = pv."productId"
+    WHERE oi."deletedAt" IS NULL
+      AND o."createdAt" BETWEEN :from AND :to
+      AND ${GMV_SUB_ORDER_SQL}
+      AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
+      AND (:categoryId::uuid IS NULL OR COALESCE(oi."categoryId", p."categoryId") = :categoryId)
+    GROUP BY s."vendorId", COALESCE(oi."categoryId", p."categoryId"), ${periodExpr}
   `;
 }
 
@@ -800,52 +789,153 @@ async function commissionRevenueExport(
   return { rows: page.rows, nextCursor: page.nextCursor };
 }
 
+/**
+ * Section 194C TDS on delivery-agent payouts (agents are contractors): per payout, the
+ * agent's PAN, gross earnings, rate, TDS withheld and net paid, with the IST month and
+ * financial-year quarter the TDS is deposited and returned (Form 26Q) under. Failed
+ * payouts are left out — nothing was paid or withheld.
+ */
+function deliveryAgentTdsSelectSql(): string {
+  const ist = `p."createdAt" AT TIME ZONE '${IST_TIME_ZONE}'`;
+  return `
+    SELECT
+      p.id::text AS "payoutId",
+      a.id::text AS "agentId",
+      a."fullName" AS "agentName",
+      COALESCE(NULLIF(a."bankDetails"->>'pan', ''), '') AS pan,
+      to_char(${ist}, 'YYYY-MM') AS period,
+      CONCAT(
+        'Q', ((EXTRACT(MONTH FROM ${ist})::int + 8) % 12) / 3 + 1,
+        ' FY', CASE WHEN EXTRACT(MONTH FROM ${ist}) >= 4
+          THEN EXTRACT(YEAR FROM ${ist})::int ELSE EXTRACT(YEAR FROM ${ist})::int - 1 END
+      ) AS quarter,
+      ROUND(p.amount::numeric * 100)::bigint AS "grossPaise",
+      p."tdsRatePercent" AS "tdsRatePercent",
+      ROUND(COALESCE(p."tdsAmount", 0)::numeric * 100)::bigint AS "tdsPaise",
+      ROUND(p."netAmount"::numeric * 100)::bigint AS "netPaise",
+      p.status::text AS status,
+      p."paidAt" AS "paidAt",
+      p."createdAt" AS "createdAt"
+    FROM delivery_agent_payouts p
+    INNER JOIN delivery_agents a ON a.id = p."deliveryAgentId"
+    WHERE p."deletedAt" IS NULL
+      AND p.status::text <> 'FAILED'
+      AND p."createdAt" BETWEEN :from AND :to
+  `;
+}
+
+function mapDeliveryAgentTdsRow(row: Record<string, unknown>) {
+  return {
+    payoutId: String(row.payoutId ?? ''),
+    agentId: String(row.agentId ?? ''),
+    agentName: String(row.agentName ?? ''),
+    pan: String(row.pan ?? ''),
+    period: String(row.period ?? ''),
+    quarter: String(row.quarter ?? ''),
+    grossAmount: fromPaise(Number(row.grossPaise ?? 0)),
+    tdsRatePercent: row.tdsRatePercent == null ? null : Number(row.tdsRatePercent),
+    tdsAmount: fromPaise(Number(row.tdsPaise ?? 0)),
+    netAmount: fromPaise(Number(row.netPaise ?? 0)),
+    status: String(row.status ?? ''),
+    paidAt: row.paidAt,
+  };
+}
+
+const DELIVERY_AGENT_TDS_KEYSET: KeysetOrderCol[] = [
+  { column: 'createdAt', direction: 'DESC' },
+  { column: 'payoutId', direction: 'DESC' },
+];
+
+async function deliveryAgentTds(filters: ReportFilters) {
+  assertReportRange(filters);
+  return pagedSqlQuery({
+    selectSql: deliveryAgentTdsSelectSql(),
+    orderBySql: `"createdAt" DESC, "payoutId" DESC`,
+    replacements: sqlReplacements(filters),
+    filters,
+    mapRow: mapDeliveryAgentTdsRow,
+  });
+}
+
+async function deliveryAgentTdsExport(
+  filters: ReportFilters,
+  cursor: { values: unknown[] } | null,
+  limit: number,
+) {
+  assertReportRange(filters);
+  const page = await keysetSqlQuery({
+    selectSql: deliveryAgentTdsSelectSql(),
+    order: DELIVERY_AGENT_TDS_KEYSET,
+    replacements: sqlReplacements(filters),
+    limit,
+    cursor,
+    mapRow: mapDeliveryAgentTdsRow,
+  });
+  return { rows: page.rows, nextCursor: page.nextCursor };
+}
+
 async function couponDiscountCost(filters: ReportFilters) {
   assertReportRange(filters);
   return pagedSqlQuery({
     selectSql: couponDiscountSelectSql(),
-    orderBySql: `"vendorName" ASC, "discountBearer" ASC`,
+    orderBySql: `"vendorName" ASC, "vendorId" ASC`,
     replacements: sqlReplacements(filters),
     filters,
     mapRow: mapCouponDiscountRow,
   });
 }
 
+/**
+ * What coupons cost, per vendor, for ledgers created in the range on sales that count:
+ * each ledger's discount split between the vendor and the platform (a stacked order
+ * carries both, whatever the ledger's single bearer), the GST the platform pays on its
+ * share, and the shipping the coupons waived (the platform's cost). Discounts exclude
+ * GST; shipping is as charged. Returns after payout take their share back.
+ */
 function couponDiscountSelectSql(): string {
-  const discountExpr = sqlFrozenPaise('cl', 'discountAmountPaise');
-  const bearerExpr = `CASE
-    WHEN cl."discountBearer" = '${DISCOUNT_BEARER.VENDOR}' THEN '${DISCOUNT_BEARER.VENDOR}'
-    ELSE '${DISCOUNT_BEARER.PLATFORM}'
-  END`;
+  const saleOrReturn = `(cl."referenceType" IS NULL OR cl."referenceType" = '${COMMISSION_REFERENCE_TYPE.RETURN_CLAWBACK}')`;
   return `
     SELECT
       cl."vendorId"::text AS "vendorId",
       MAX(v."businessName") AS "vendorName",
-      ${bearerExpr} AS "discountBearer",
-      SUM(${discountExpr})::bigint AS "discountPaise"
+      SUM(${sqlLedgerVendorDiscountPaise('cl')})::bigint AS "vendorDiscountPaise",
+      SUM(${sqlLedgerPlatformDiscountPaise('cl')})::bigint AS "platformDiscountPaise",
+      SUM(${sqlLedgerPlatformGstPaise('cl')})::bigint AS "platformGstPaise",
+      SUM(CASE WHEN cl."referenceType" IS NULL
+        THEN COALESCE(s."shippingDiscountAmountPaise", 0) ELSE 0 END)::bigint AS "freeShippingPaise"
     FROM commission_ledgers cl
     INNER JOIN vendors v ON v.id = cl."vendorId" AND v."deletedAt" IS NULL
+    LEFT JOIN sub_orders s ON s.id = cl."subOrderId"
     WHERE cl."deletedAt" IS NULL
       AND cl."createdAt" BETWEEN :from AND :to
       AND cl.status <> '${COMMISSION_STATUS.CLAWED_BACK}'
+      AND ${saleOrReturn}
+      AND ${sqlLedgerOnPaidOrder('cl')}
       AND (:vendorId::uuid IS NULL OR cl."vendorId" = :vendorId)
-      AND (${discountExpr}) > 0
-    GROUP BY cl."vendorId", ${bearerExpr}
+    GROUP BY cl."vendorId"
+    HAVING SUM(cl."discountAmountPaise") <> 0
+      OR SUM(CASE WHEN cl."referenceType" IS NULL
+        THEN COALESCE(s."shippingDiscountAmountPaise", 0) ELSE 0 END) <> 0
   `;
 }
 
 function mapCouponDiscountRow(row: Record<string, unknown>) {
+  const platformPaise = Number(row.platformDiscountPaise ?? 0);
+  const platformGstPaise = Number(row.platformGstPaise ?? 0);
+  const freeShippingPaise = Number(row.freeShippingPaise ?? 0);
   return {
     vendorId: String(row.vendorId ?? ''),
     vendorName: String(row.vendorName ?? ''),
-    discountBearer: String(row.discountBearer ?? DISCOUNT_BEARER.PLATFORM),
-    discountAmount: fromPaise(Number(row.discountPaise ?? 0)),
+    vendorDiscount: fromPaise(Number(row.vendorDiscountPaise ?? 0)),
+    platformDiscount: fromPaise(platformPaise),
+    platformDiscountGst: fromPaise(platformGstPaise),
+    freeShippingCost: fromPaise(freeShippingPaise),
+    platformCouponCost: fromPaise(platformPaise + platformGstPaise + freeShippingPaise),
   };
 }
 
 const COUPON_DISCOUNT_KEYSET: KeysetOrderCol[] = [
   { column: 'vendorName', direction: 'ASC' },
-  { column: 'discountBearer', direction: 'ASC' },
   { column: 'vendorId', direction: 'ASC' },
 ];
 
@@ -875,7 +965,7 @@ async function gmvSales(filters: ReportFilters) {
       SELECT
         s."vendorId"::text AS "vendorId",
         MAX(v."businessName") AS "vendorName",
-        p."categoryId"::text AS "categoryId",
+        (COALESCE(oi."categoryId", p."categoryId"))::text AS "categoryId",
         SUM(${sqlLineSubtotalPaise('oi')})::bigint AS "gmvPaise"
       FROM order_items oi
       INNER JOIN sub_orders s ON s.id = oi."subOrderId" AND s."deletedAt" IS NULL
@@ -886,9 +976,9 @@ async function gmvSales(filters: ReportFilters) {
       WHERE oi."deletedAt" IS NULL
         AND o."createdAt" BETWEEN :from AND :to
         AND ${GMV_SUB_ORDER_SQL}
-        AND p."categoryId" = :categoryId
+        AND COALESCE(oi."categoryId", p."categoryId") = :categoryId
         AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
-      GROUP BY s."vendorId", p."categoryId"
+      GROUP BY s."vendorId", COALESCE(oi."categoryId", p."categoryId")
     `;
 
     return pagedSqlQuery({
@@ -958,7 +1048,7 @@ async function gmvSalesExport(
       SELECT
         s."vendorId"::text AS "vendorId",
         MAX(v."businessName") AS "vendorName",
-        p."categoryId"::text AS "categoryId",
+        (COALESCE(oi."categoryId", p."categoryId"))::text AS "categoryId",
         SUM(${sqlLineSubtotalPaise('oi')})::bigint AS "gmvPaise"
       FROM order_items oi
       INNER JOIN sub_orders s ON s.id = oi."subOrderId" AND s."deletedAt" IS NULL
@@ -969,9 +1059,9 @@ async function gmvSalesExport(
       WHERE oi."deletedAt" IS NULL
         AND o."createdAt" BETWEEN :from AND :to
         AND ${GMV_SUB_ORDER_SQL}
-        AND p."categoryId" = :categoryId
+        AND COALESCE(oi."categoryId", p."categoryId") = :categoryId
         AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
-      GROUP BY s."vendorId", p."categoryId"
+      GROUP BY s."vendorId", COALESCE(oi."categoryId", p."categoryId")
     `;
     const page = await keysetSqlQuery({
       selectSql,
@@ -1157,9 +1247,15 @@ export const adminFinanceReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: true,
     columns: [
+      { key: 'supplierName', labelKey: 'supplierName' },
+      { key: 'supplierGstin', labelKey: 'supplierGstin' },
       { key: 'hsnCode', labelKey: 'hsnCode' },
+      { key: 'gstRate', labelKey: 'gstRate', format: 'number' },
       { key: 'qty', labelKey: 'qty', format: 'number' },
       { key: 'taxable', labelKey: 'taxable', format: 'currency' },
+      { key: 'cgst', labelKey: 'cgst', format: 'currency' },
+      { key: 'sgst', labelKey: 'sgst', format: 'currency' },
+      { key: 'igst', labelKey: 'igst', format: 'currency' },
       { key: 'tax', labelKey: 'tax', format: 'currency' },
     ],
     query: hsnSalesSummary,
@@ -1192,10 +1288,15 @@ export const adminFinanceReports: ReportDefinition[] = [
     columns: [
       { key: 'customerPayments', labelKey: 'customerPayments', format: 'currency' },
       { key: 'vendorNetPayouts', labelKey: 'vendorNetPayouts', format: 'currency' },
+      { key: 'platformFundedDiscount', labelKey: 'platformFundedDiscount', format: 'currency' },
       { key: 'platformCommission', labelKey: 'platformCommission', format: 'currency' },
       { key: 'taxCollected', labelKey: 'taxCollected', format: 'currency' },
       { key: 'tcsCollected', labelKey: 'tcsCollected', format: 'currency' },
+      { key: 'platformGoodsSales', labelKey: 'platformGoodsSales', format: 'currency' },
       { key: 'shippingCollected', labelKey: 'shippingCollected', format: 'currency' },
+      { key: 'shippingRefunded', labelKey: 'shippingRefunded', format: 'currency' },
+      { key: 'returnFeesKept', labelKey: 'returnFeesKept', format: 'currency' },
+      { key: 'giftWrapCollected', labelKey: 'giftWrapCollected', format: 'currency' },
       { key: 'refundsToCustomer', labelKey: 'refundsToCustomer', format: 'currency' },
       { key: 'walletRechargeInflow', labelKey: 'walletRechargeInflow', format: 'currency' },
       { key: 'giftCardRedemptionInflow', labelKey: 'giftCardRedemptionInflow', format: 'currency' },
@@ -1220,9 +1321,16 @@ export const adminFinanceReports: ReportDefinition[] = [
       { key: 'orderId', labelKey: 'orderId' },
       { key: 'subOrderId', labelKey: 'subOrderId' },
       { key: 'vendorId', labelKey: 'vendorId' },
+      { key: 'supplierName', labelKey: 'supplierName' },
       { key: 'againstInvoiceNumber', labelKey: 'againstInvoiceNumber' },
-      { key: 'amount', labelKey: 'amount', format: 'currency' },
+      { key: 'recipientGstin', labelKey: 'recipientGstin' },
+      { key: 'placeOfSupplyState', labelKey: 'placeOfSupplyState' },
+      { key: 'taxable', labelKey: 'taxable', format: 'currency' },
+      { key: 'cgst', labelKey: 'cgst', format: 'currency' },
+      { key: 'sgst', labelKey: 'sgst', format: 'currency' },
+      { key: 'igst', labelKey: 'igst', format: 'currency' },
       { key: 'taxAmount', labelKey: 'taxAmount', format: 'currency' },
+      { key: 'amount', labelKey: 'amount', format: 'currency' },
       { key: 'reason', labelKey: 'reason' },
       { key: 'issuedAt', labelKey: 'issuedAt', format: 'date' },
     ],
@@ -1244,6 +1352,7 @@ export const adminFinanceReports: ReportDefinition[] = [
       { key: 'payoutAmount', labelKey: 'payoutAmount', format: 'currency' },
       { key: 'payoutPending', labelKey: 'payoutPending', format: 'currency' },
       { key: 'payoutPaid', labelKey: 'payoutPaid', format: 'currency' },
+      { key: 'payoutFailed', labelKey: 'payoutFailed', format: 'currency' },
       { key: 'payoutStatus', labelKey: 'payoutStatus' },
     ],
     query: vendorSettlement,
@@ -1267,6 +1376,28 @@ export const adminFinanceReports: ReportDefinition[] = [
     exportQuery: commissionRevenueExport,
   },
   {
+    type: 'delivery-agent-tds-194c',
+    labelKey: 'reportDeliveryAgentTds194c',
+    audience: 'admin_finance',
+    permissions: [PERMISSIONS.PAYOUT_VIEW],
+    vendorScoped: false,
+    financial: true,
+    columns: [
+      { key: 'agentName', labelKey: 'agentName' },
+      { key: 'pan', labelKey: 'pan' },
+      { key: 'period', labelKey: 'period' },
+      { key: 'quarter', labelKey: 'quarter' },
+      { key: 'grossAmount', labelKey: 'agentPayoutGross', format: 'currency' },
+      { key: 'tdsRatePercent', labelKey: 'tdsRatePercent', format: 'number' },
+      { key: 'tdsAmount', labelKey: 'tdsAmount', format: 'currency' },
+      { key: 'netAmount', labelKey: 'agentPayoutNet', format: 'currency' },
+      { key: 'status', labelKey: 'status' },
+      { key: 'paidAt', labelKey: 'paidAt', format: 'date' },
+    ],
+    query: deliveryAgentTds,
+    exportQuery: deliveryAgentTdsExport,
+  },
+  {
     type: 'coupon-discount-cost',
     labelKey: 'reportCouponDiscountCost',
     audience: 'admin_finance',
@@ -1276,8 +1407,11 @@ export const adminFinanceReports: ReportDefinition[] = [
     columns: [
       { key: 'vendorId', labelKey: 'vendorId' },
       { key: 'vendorName', labelKey: 'vendorName' },
-      { key: 'discountBearer', labelKey: 'discountBearer' },
-      { key: 'discountAmount', labelKey: 'discountAmount', format: 'currency' },
+      { key: 'vendorDiscount', labelKey: 'vendorDiscount', format: 'currency' },
+      { key: 'platformDiscount', labelKey: 'platformDiscount', format: 'currency' },
+      { key: 'platformDiscountGst', labelKey: 'platformDiscountGst', format: 'currency' },
+      { key: 'freeShippingCost', labelKey: 'freeShippingCost', format: 'currency' },
+      { key: 'platformCouponCost', labelKey: 'platformCouponCost', format: 'currency' },
     ],
     query: couponDiscountCost,
     exportQuery: couponDiscountCostExport,

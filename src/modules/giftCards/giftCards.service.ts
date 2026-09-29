@@ -178,6 +178,7 @@ export class GiftCardsService {
         {
           status: GIFT_CARD_STATUS.ACTIVE,
           razorpayPaymentId: input.razorpayPaymentId,
+          paidAt: new Date(),
           updatedBy: row.purchaserId,
         },
         { transaction: t },

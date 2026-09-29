@@ -26,27 +26,31 @@ describe('vendorPayoutBreakdown', () => {
     assert.equal(result.payoutPaise, 125221);
   });
 
-  it('withholds TDS at the rate frozen on each sale, not the current rate', () => {
+  it('withholds TDS at the rate in force at the payout; exempt sales stay exempt', () => {
+    const sale = { netPayoutAmountPaise: 107500, commissionAmountPaise: 0, taxableAmountPaise: 100000 };
     const result = vendorPayoutBreakdown(
       [
-        // Sold while the rate was 1% (DECIMAL arrives as a string).
-        { netPayoutAmountPaise: 107500, commissionAmountPaise: 0, taxableAmountPaise: 100000, tdsRatePercent: '1.000' },
-        // Sold after it moved to 0.1%.
-        { netPayoutAmountPaise: 107500, commissionAmountPaise: 0, taxableAmountPaise: 100000, tdsRatePercent: 0.1 },
-        // No frozen rate: the current platform rate applies.
-        { netPayoutAmountPaise: 107500, commissionAmountPaise: 0, taxableAmountPaise: 100000, tdsRatePercent: null },
+        // Sold while the rate was 1% (DECIMAL arrives as a string), paid now at 0.5%.
+        { ...sale, tdsRatePercent: '1.000', status: 'PENDING' },
+        // No rate on the ledger: the current rate.
+        { ...sale, tdsRatePercent: null },
+        // Exempt at checkout (194-O(4)): no TDS here; the catch-up handles a crossed limit.
+        { ...sale, tdsRatePercent: 0 },
+        // Already paid out at 1%: it keeps the rate its payout used.
+        { ...sale, tdsRatePercent: '1.000', status: 'SETTLED' },
       ],
       { tdsRatePercent: 0.5, commissionGstRatePercent: 0 },
     );
     assert.deepEqual(
       result.rows.map((row) => [row.tdsRatePercent, row.tdsPaise]),
       [
-        [1, 1000],
-        [0.1, 100],
         [0.5, 500],
+        [0.5, 500],
+        [0, 0],
+        [1, 1000],
       ],
     );
-    assert.equal(result.payoutPaise, 107500 * 3 - 1000 - 100 - 500);
+    assert.equal(result.payoutPaise, 107500 * 4 - 500 - 500 - 1000);
   });
 
   it('is the plain net when there is no TDS or GST', () => {
@@ -197,5 +201,33 @@ describe('payoutRatesFromSettings', () => {
     assert.equal(intra.commissionGstPaise, 100);
     const inter = vendorPayoutBreakdown([ledger], payoutRatesFromSettings(settings, 'Goa'));
     assert.equal(inter.commissionGstPaise, 101);
+  });
+});
+
+describe('vendorPayoutBreakdown: invoice and credit note', () => {
+  const rates = { tdsRatePercent: 1, commissionGstRatePercent: 18 };
+
+  it('works GST out on the sales commission and the returns commission separately', () => {
+    const result = vendorPayoutBreakdown(
+      [
+        { netPayoutAmountPaise: 107500, commissionAmountPaise: 10003, taxableAmountPaise: 100000 },
+        {
+          netPayoutAmountPaise: -40000,
+          commissionAmountPaise: -4003,
+          taxableAmountPaise: -35000,
+          tdsRatePercent: '1',
+          referenceType: 'ReturnClawback',
+        },
+      ],
+      rates,
+    );
+    assert.equal(result.salesCommissionTaxablePaise, 10003);
+    assert.equal(result.returnsCommissionTaxablePaise, -4003);
+    // The invoice's GST (₹18.01 on ₹100.03) plus the credit note's (−₹7.21 on ₹40.03),
+    // each rounded alone — the two documents' amounts, not GST on the ₹60 net.
+    assert.equal(result.commissionGstPaise, 1801 - 721);
+    assert.equal(result.salesNetPaise, 107500);
+    assert.equal(result.tdsPaise, 1000 - 350);
+    assert.equal(result.adjustmentPaise, -40000);
   });
 });

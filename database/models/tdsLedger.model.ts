@@ -2,8 +2,9 @@ import { Model, DataTypes, Op, Sequelize, InferAttributes, InferCreationAttribut
 
 export class TdsLedger extends Model<InferAttributes<TdsLedger>, InferCreationAttributes<TdsLedger>> {
   declare id: CreationOptional<string>;
-  declare orderId: string;
-  declare subOrderId: string;
+  /** Null on a 194-O catch-up row, which belongs to a payout, not one order. */
+  declare orderId: string | null;
+  declare subOrderId: string | null;
   declare vendorId: string;
   declare taxableAmountPaise: number;
   declare ratePercent: number;
@@ -34,8 +35,8 @@ export const initTdsLedgerModel = (sequelize: Sequelize) => {
   TdsLedger.init(
     {
       id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
-      orderId: { type: DataTypes.UUID, allowNull: false },
-      subOrderId: { type: DataTypes.UUID, allowNull: false },
+      orderId: { type: DataTypes.UUID, allowNull: true },
+      subOrderId: { type: DataTypes.UUID, allowNull: true },
       vendorId: { type: DataTypes.UUID, allowNull: false },
       taxableAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       ratePercent: { type: DataTypes.DECIMAL(6, 3), allowNull: false, defaultValue: 0 },

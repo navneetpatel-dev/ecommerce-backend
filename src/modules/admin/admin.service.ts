@@ -1,9 +1,7 @@
-import { Order } from '@database/models/order.model';
 import { Vendor } from '@database/models/vendor.model';
 import { User } from '@database/models/user.model';
 import { Product } from '@database/models/product.model';
 import { Review } from '@database/models/review.model';
-import { ReturnRequest } from '@database/models/returnRequest.model';
 import { Role } from '@database/models/role.model';
 import { sequelize } from '@database/models';
 import { QueryTypes } from 'sequelize';
@@ -14,12 +12,12 @@ import {
   sqlGmvPaise,
   sqlLineSubtotalPaise,
 } from '@modules/pricing/frozenMoneySql';
+import { queryOrderRates } from '@modules/reports/engine/orderRates';
 import {
   PRODUCT_STATUS,
   PAYMENT_STATUS,
   VENDOR_STATUS,
   REVIEW_STATUS,
-  ORDER_STATUS,
   ROLES,
 } from '@core/constants/statuses';
 
@@ -139,11 +137,9 @@ export const adminService = {
   async getPlatformAnalytics(): Promise<PlatformAnalytics> {
     const [
       gmvTotals,
-      allOrders,
+      orderRates,
       totalVendors,
       totalCustomers,
-      cancelledOrders,
-      returnCount,
       pendingProducts,
       pendingVendors,
       pendingReviews,
@@ -156,7 +152,7 @@ export const adminService = {
       growthRows,
     ] = await Promise.all([
       queryGmvTotals(),
-      Order.count(),
+      queryOrderRates(),
       Vendor.count(),
       User.count({
         include: [{
@@ -165,8 +161,6 @@ export const adminService = {
           where: { name: ROLES.CUSTOMER },
         }],
       }),
-      Order.count({ where: { status: ORDER_STATUS.CANCELLED } }),
-      ReturnRequest.count(),
       Product.count({ where: { status: PRODUCT_STATUS.PENDING_APPROVAL } }),
       Vendor.count({ where: { status: VENDOR_STATUS.PENDING } }),
       Review.count({ where: { status: REVIEW_STATUS.PENDING } }),
@@ -193,29 +187,41 @@ export const adminService = {
            WHERE v."deletedAt" IS NULL
            GROUP BY v.id, v."businessName"
          )
+         -- Share of the whole platform's GMV, including sales of vendors since deleted
+         -- and the platform's own goods (the dashboard's GMV), not only listed vendors.
          SELECT id, "businessName", "revenuePaise",
-                COALESCE(SUM("revenuePaise") OVER (), 0)::bigint AS "totalPaise"
+                (SELECT COALESCE(SUM(${sqlGmvPaise('s')}), 0)
+                 FROM sub_orders s
+                 INNER JOIN orders o ON o.id = s."orderId"
+                 WHERE ${GMV_SUB_ORDER_SQL})::bigint AS "totalPaise"
          FROM vendor_revenue
          ORDER BY "revenuePaise" DESC
          LIMIT 8`,
         { type: QueryTypes.SELECT },
       ),
       sequelize.query<{ id: string; name: string; revenuePaise: string; totalPaise: string }>(
-        `WITH category_revenue AS (
-           SELECT c.id, c.name,
-                  COALESCE(SUM(${sqlLineSubtotalPaise('oi')}), 0)::bigint AS "revenuePaise"
-           FROM categories c
-           JOIN products p ON p."categoryId" = c.id
-           JOIN product_variants pv ON pv."productId" = p.id
-           JOIN order_items oi ON oi."variantId" = pv.id AND oi."deletedAt" IS NULL
+        // By the category each line was sold under (frozen on the line; older lines: the
+        // product's current one), as a share of all lines' GMV.
+        `WITH line_gmv AS (
+           SELECT COALESCE(oi."categoryId", p."categoryId") AS "categoryId",
+                  ${sqlLineSubtotalPaise('oi')} AS "gmvPaise"
+           FROM order_items oi
            JOIN sub_orders s ON s.id = oi."subOrderId"
            JOIN orders o ON o.id = s."orderId"
-           WHERE c."deletedAt" IS NULL
+           LEFT JOIN product_variants pv ON pv.id = oi."variantId"
+           LEFT JOIN products p ON p.id = pv."productId"
+           WHERE oi."deletedAt" IS NULL
              AND ${GMV_SUB_ORDER_SQL}
+         ),
+         category_revenue AS (
+           SELECT c.id, c.name, COALESCE(SUM(l."gmvPaise"), 0)::bigint AS "revenuePaise"
+           FROM categories c
+           JOIN line_gmv l ON l."categoryId" = c.id
+           WHERE c."deletedAt" IS NULL
            GROUP BY c.id, c.name
          )
          SELECT id, name, "revenuePaise",
-                COALESCE(SUM("revenuePaise") OVER (), 0)::bigint AS "totalPaise"
+                (SELECT COALESCE(SUM("gmvPaise"), 0) FROM line_gmv)::bigint AS "totalPaise"
          FROM category_revenue
          ORDER BY "revenuePaise" DESC
          LIMIT 8`,
@@ -286,12 +292,6 @@ export const adminService = {
       ),
     ]);
 
-    // Cancellation and return rates keep every placed order row as their base: a
-    // cancelled order is exactly what the rate measures, so it cannot come from
-    // the GMV order set, which excludes cancellations.
-    const orderRows = Number(allOrders ?? 0);
-    const cancelled = Number(cancelledOrders ?? 0);
-    const returns = Number(returnCount ?? 0);
     const growth = growthRows[0];
 
     const ratingMap = new Map(
@@ -305,8 +305,10 @@ export const adminService = {
       totalOrders: gmvTotals.orderCount,
       totalCustomers: Number(totalCustomers ?? 0),
       totalVendors: Number(totalVendors ?? 0),
-      cancellationRate: orderRows > 0 ? Number(((cancelled / orderRows) * 100).toFixed(1)) : 0,
-      returnRate: orderRows > 0 ? Number(((returns / orderRows) * 100).toFixed(1)) : 0,
+      // On orders actually placed (not abandoned checkouts): cancelled parts over placed
+      // parts, delivered parts with an accepted return over delivered parts.
+      cancellationRate: orderRates.cancellationRate,
+      returnRate: orderRates.returnRate,
       pendingProducts: Number(pendingProducts ?? 0),
       pendingVendors: Number(pendingVendors ?? 0),
       pendingReviews: Number(pendingReviews ?? 0),

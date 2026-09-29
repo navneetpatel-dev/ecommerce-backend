@@ -29,6 +29,7 @@ import { Op } from 'sequelize';
 import { settingsService } from '@modules/settings/settings.service';
 import { fromPaise, roundMoney } from '@modules/pricing/money';
 import { payoutRatesFromSettings, vendorPayoutBreakdown } from '@modules/pricing/vendorPayout';
+import { tds194oCatchUp } from '@modules/pricing/tds194o';
 import { createCommissionInvoiceForPayout } from '@modules/commissions/commissionInvoice.service';
 import { logAudit } from '@modules/audit/audit.service';
 import type { MarkPayoutFailedRequest, MarkPayoutPaidRequest } from './payouts.dto';
@@ -65,6 +66,11 @@ function serializePayout(row: Payout) {
   return {
     ...rest,
     amount: roundMoney(plain.amount),
+    // What the amount is made of: sales net − TDS − commission GST + adjustments.
+    grossAmount: fromPaise(Number(plain.grossPaise ?? 0)),
+    tdsAmount: fromPaise(Number(plain.tdsPaise ?? 0)),
+    commissionGstAmount: fromPaise(Number(plain.commissionGstPaise ?? 0)),
+    adjustmentAmount: fromPaise(Number(plain.adjustmentPaise ?? 0)),
     vendorName: vendorAssoc?.businessName ?? null,
   };
 }
@@ -247,18 +253,31 @@ export class PayoutsService {
           // cashback cost — the same breakdown the vendor dashboard shows as pending
           // (pricing/vendorPayout).
           const breakdown = vendorPayoutBreakdown(locked, payoutRates);
-          if (breakdown.balancePaise < 0) {
+          // A sole proprietor whose sales this year crossed the 194-O(4) limit: TDS on
+          // the earlier exempt sales too (catch-up), taken from this payout.
+          const vendorRow = await Vendor.findByPk(vendorId, {
+            attributes: ['entityType'],
+            transaction,
+          });
+          const catchUp = await tds194oCatchUp({
+            vendorId,
+            entityType: vendorRow?.entityType,
+            settings,
+            batchLedgerIds: locked.map((row) => row.id),
+            transaction,
+          });
+          const balancePaise = breakdown.balancePaise - catchUp.tdsPaise;
+          if (balancePaise < 0) {
             // Deductions (cashback cost, returns after payout) exceed what the sales
             // earned: pay nothing and leave every ledger pending, so they net against
             // the vendor's next sales.
             logger.info('Payout carried forward: vendor balance is negative', {
               vendorId,
-              balancePaise: breakdown.balancePaise,
+              balancePaise,
             });
             return null;
           }
-          const amountPaise = breakdown.payoutPaise;
-          const commissionTaxablePaise = breakdown.commissionTaxablePaise;
+          const amountPaise = Math.max(0, balancePaise);
           const tdsRows: Array<{
             orderId: string;
             subOrderId: string;
@@ -288,6 +307,10 @@ export class PayoutsService {
             {
               vendorId,
               amount,
+              grossPaise: breakdown.salesNetPaise,
+              tdsPaise: breakdown.tdsPaise + catchUp.tdsPaise,
+              commissionGstPaise: breakdown.commissionGstPaise,
+              adjustmentPaise: breakdown.adjustmentPaise,
               periodStart: group.start,
               periodEnd: group.end,
               status: PAYOUT_STATUS.PENDING,
@@ -297,20 +320,49 @@ export class PayoutsService {
             { transaction },
           );
 
-          await createCommissionInvoiceForPayout(
-            {
-              vendorId,
-              payoutId: payoutRow.id,
-              periodStart: group.start,
-              periodEnd: group.end,
-              commissionTaxablePaise,
-              actorId,
-            },
-            transaction,
-          );
+          // The commission on the sales is invoiced; the commission handed back by
+          // returns after payout gets its own credit note — never netted into the invoice.
+          for (const commissionTaxablePaise of [
+            breakdown.salesCommissionTaxablePaise,
+            breakdown.returnsCommissionTaxablePaise,
+          ]) {
+            await createCommissionInvoiceForPayout(
+              {
+                vendorId,
+                payoutId: payoutRow.id,
+                periodStart: group.start,
+                periodEnd: group.end,
+                commissionTaxablePaise,
+                actorId,
+              },
+              transaction,
+            );
+          }
 
-          // Filed by Indian calendar month (IST), not the UTC month.
-          const period = gstPeriodOf(new Date(group.end));
+          // TDS is deducted now, when the payout credits the vendor: filed in this
+          // month (IST), not the month of the last sale in the batch.
+          const period = gstPeriodOf(payoutRow.createdAt ?? new Date());
+          if (catchUp.tdsPaise !== 0) {
+            await TdsLedger.create(
+              {
+                orderId: null,
+                subOrderId: null,
+                commissionLedgerId: null,
+                vendorId,
+                payoutId: payoutRow.id,
+                taxableAmountPaise:
+                  catchUp.ratePercent > 0 ? Math.round((catchUp.tdsPaise * 100) / catchUp.ratePercent) : 0,
+                ratePercent: catchUp.ratePercent,
+                tdsAmountPaise: catchUp.tdsPaise,
+                section: '194O',
+                period,
+                createdBy: actorId,
+                updatedBy: actorId,
+                deletedBy: null,
+              },
+              { transaction },
+            );
+          }
           for (const tds of tdsRows) {
             await TdsLedger.create(
               {
@@ -336,6 +388,20 @@ export class PayoutsService {
             { status: COMMISSION_STATUS.SETTLED, updatedBy: actorId },
             { where: { id: locked.map((item) => item.id) }, transaction },
           );
+          // Each sale keeps the 194-O rate this payout deducted at (the rate in force
+          // now), so a later return reverses the TDS at the rate it was taken.
+          const saleIdsByRate = new Map<number, string[]>();
+          locked.forEach((row, index) => {
+            if (row.referenceType) return;
+            const rate = breakdown.rows[index]!.tdsRatePercent;
+            saleIdsByRate.set(rate, [...(saleIdsByRate.get(rate) ?? []), row.id]);
+          });
+          for (const [rate, ids] of saleIdsByRate) {
+            await CommissionLedger.update(
+              { tdsRatePercent: rate },
+              { where: { id: ids }, transaction },
+            );
+          }
           return payoutRow;
         });
 

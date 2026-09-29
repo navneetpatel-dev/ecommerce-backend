@@ -60,6 +60,14 @@ export type PricingLineBreakdown = {
   tcsPaise: Paise;
   /** The platform-funded part of the line's discount, which the platform pays the vendor. */
   platformFundedDiscountPaise: Paise;
+  /**
+   * The value of the vendor's supply for GST: the line before the platform's share of
+   * the coupon (the platform's reimbursement is consideration for the sale), after the
+   * vendor's own. Equal to `taxablePaise` when the platform funds no coupon.
+   */
+  supplyTaxablePaise: Paise;
+  /** GST on the supply value — the vendor's invoice charges this; the platform pays the part the customer does not. */
+  supplyTax: TaxBreakdownPaise;
   netPayoutPaise: Paise;
 };
 
@@ -99,6 +107,12 @@ export type SubOrderPricingBreakdown = {
   tcsPaise: Paise;
   /** The platform-funded part of the merchandise discount, paid to the vendor. */
   platformFundedDiscountPaise: Paise;
+  /** The vendor's GST value of supply (see PricingLineBreakdown.supplyTaxablePaise). */
+  supplyTaxablePaise: Paise;
+  /** GST on the supply value: the vendor's invoice, TCS and 194-O use it. */
+  supplyTax: TaxBreakdownPaise;
+  /** GST on the platform's share of the coupon, which the platform pays (supply GST − customer GST). */
+  platformGstSubsidyPaise: Paise;
   netPayoutPaise: Paise;
   /** Customer pays for this vendor slice (excl. cashback). */
   customerTotalPaise: Paise;
@@ -116,8 +130,16 @@ export type RefundReversalInput = {
   shippingChargedPaise?: Paise;
   /** Configurable return shipping fee (paise). */
   returnShippingFeePaise?: Paise;
-  /** True when outbound shipping was already refunded on a prior return. */
-  shippingAlreadyRefunded?: boolean;
+  /** Outbound shipping already refunded on this sub-order's earlier returns (paise). */
+  shippingRefundedPaise?: Paise;
+  /**
+   * The sub-order's goods value (taxable) still standing before this return. A
+   * seller-fault return refunds the shipping not yet refunded in proportion to the goods
+   * value it returns out of this, so the last return refunds the rest. Omitted: all of it.
+   */
+  standingTaxablePaise?: Paise;
+  /** The return fee is charged once per sub-order (parcel): true when already charged. */
+  returnFeeAlreadyCharged?: boolean;
 };
 
 export type RefundReversalBreakdown = {
@@ -125,6 +147,9 @@ export type RefundReversalBreakdown = {
   refundDiscountPaise: Paise;
   refundMerchandisePaise: Paise;
   refundTaxPaise: Paise;
+  /** The supply value and its GST reversed (the vendor's credit note). */
+  refundSupplyTaxablePaise: Paise;
+  refundSupplyTaxPaise: Paise;
   refundCommissionPaise: Paise;
   refundTcsPaise: Paise;
   refundNetClawbackPaise: Paise;
@@ -174,25 +199,48 @@ function splitTax(taxablePaise: Paise, gstPercentage: number, intraState: boolea
 }
 
 /**
- * A line's vendor net: taxable + the platform-funded part of its discount + GST −
- * commission − TCS, never below zero. A coupon the platform funds is the platform's
- * cost, so the vendor is paid as if it had not been given.
+ * A line's vendor net: its supply value (taxable + the platform-funded part of its
+ * discount) + GST on it − commission − TCS, never below zero. A coupon the platform
+ * funds is the platform's cost, so the vendor is paid as if it had not been given —
+ * the coupon share and the GST on it.
  */
 function lineNetPayoutPaise(line: {
-  taxablePaise: Paise;
-  platformFundedDiscountPaise: Paise;
-  tax: { total: Paise };
+  supplyTaxablePaise: Paise;
+  supplyTax: { total: Paise };
   commissionPaise: Paise;
   tcsPaise: Paise;
 }): Paise {
-  return Math.max(
-    0,
-    line.taxablePaise +
-      line.platformFundedDiscountPaise +
-      line.tax.total -
-      line.commissionPaise -
-      line.tcsPaise,
-  );
+  return Math.max(0, line.supplyTaxablePaise + line.supplyTax.total - line.commissionPaise - line.tcsPaise);
+}
+
+/**
+ * When every line shares one GST rate, move the rounding residual of the per-line tax
+ * onto the largest line so the lines add up to the tax on the whole (`pick` selects
+ * customer or supply tax). Returns the residual applied.
+ */
+function reconcileSameRateTax(
+  lines: PricingLineBreakdown[],
+  pick: (line: PricingLineBreakdown) => TaxBreakdownPaise,
+  baseOf: (line: PricingLineBreakdown) => Paise,
+  intraState: boolean,
+): Paise {
+  const rates = [...new Set(lines.map((line) => pick(line).gstPercentage))];
+  if (rates.length !== 1 || lines.length === 0) return 0;
+  const base = lines.reduce((sum, line) => sum + baseOf(line), 0);
+  const expected = splitTax(base, rates[0]!, intraState).total;
+  const residual = expected - lines.reduce((sum, line) => sum + pick(line).total, 0);
+  if (residual === 0) return 0;
+  const target = lines.reduce((best, line) => (baseOf(line) > baseOf(best) ? line : best));
+  const tax = pick(target);
+  tax.total += residual;
+  if (intraState) {
+    // Both sides are sums of equal halves, so the residual is even: keep CGST = SGST.
+    tax.cgst += residual / 2;
+    tax.sgst += residual / 2;
+  } else {
+    tax.igst += residual;
+  }
+  return residual;
 }
 
 /**
@@ -251,14 +299,19 @@ export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderP
   const pricedLines: PricingLineBreakdown[] = lines.map((line, i) => {
     const discountPaise = lineDiscounts[i] ?? 0;
     const lineTaxable = Math.max(0, line.lineSubtotalPaise - discountPaise);
-    // The rate is decided by each piece's value after the coupon, so a discount can move
-    // a piece into the lower band.
-    const lineGst = gstRateForPieces(line.gstPercentage, line.gstPriceBand, lineTaxable, line.quantity);
-    const lineTax = splitTax(lineTaxable, lineGst, input.intraState);
     const lineVendorBorne =
       merchandiseDiscountPaise > 0
         ? Math.round((discountPaise * vendorBorne) / merchandiseDiscountPaise)
         : 0;
+    const platformFunded = Math.max(0, discountPaise - lineVendorBorne);
+    // The vendor's value of supply: the platform's coupon share is paid to the vendor,
+    // so it stays in the value GST is charged on (s.15 CGST Act).
+    const supplyTaxable = lineTaxable + platformFunded;
+    // The rate is decided by each piece's value of supply, so the vendor's own discount
+    // can move a piece into the lower band (the platform's coupon does not).
+    const lineGst = gstRateForPieces(line.gstPercentage, line.gstPriceBand, supplyTaxable, line.quantity);
+    const lineTax = splitTax(lineTaxable, lineGst, input.intraState);
+    const supplyTax = splitTax(supplyTaxable, lineGst, input.intraState);
     const commissionBase = Math.max(0, line.lineSubtotalPaise - lineVendorBorne);
     const commission = Math.round((commissionBase * line.commissionRatePercent) / 100);
     // TCS allocated later from suborder total so sum matches exactly
@@ -273,56 +326,44 @@ export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderP
       commissionBasePaise: commissionBase,
       commissionPaise: commission,
       tcsPaise: 0,
-      platformFundedDiscountPaise: Math.max(0, discountPaise - lineVendorBorne),
+      platformFundedDiscountPaise: platformFunded,
+      supplyTaxablePaise: supplyTaxable,
+      supplyTax,
       netPayoutPaise: 0,
     };
   });
 
-  // TCS under section 52 is collected as CGST + SGST (or IGST) like GST: equal halves.
-  const tcsPaise = gstOnTaxablePaise(taxablePaise, Number(input.tcsRatePercent || 0), input.intraState).total;
-  const lineTcs = allocateProportionally(
-    tcsPaise,
-    pricedLines.map((line) => line.taxablePaise),
-  );
+  // TCS under section 52 is collected as CGST + SGST (or IGST) like GST: equal halves,
+  // on the net value of taxable supplies — a nil-rated (0% GST) line carries none.
+  const tcsBases = pricedLines.map((line) => (line.tax.gstPercentage > 0 ? line.supplyTaxablePaise : 0));
+  const tcsBasePaise = tcsBases.reduce((sum, base) => sum + base, 0);
+  const tcsPaise = gstOnTaxablePaise(tcsBasePaise, Number(input.tcsRatePercent || 0), input.intraState).total;
+  const lineTcs = allocateProportionally(tcsPaise, tcsBases);
   for (let i = 0; i < pricedLines.length; i += 1) {
     const line = pricedLines[i]!;
     line.tcsPaise = lineTcs[i] ?? 0;
     line.netPayoutPaise = lineNetPayoutPaise(line);
   }
 
-  let taxTotal = pricedLines.reduce((sum, line) => sum + line.tax.total, 0);
-  let taxCgst = pricedLines.reduce((sum, line) => sum + line.tax.cgst, 0);
-  let taxSgst = pricedLines.reduce((sum, line) => sum + line.tax.sgst, 0);
-  let taxIgst = pricedLines.reduce((sum, line) => sum + line.tax.igst, 0);
-
-  // When all lines share one GST rate, reconcile to tax(suborder taxable) and expose residual.
+  // Lines sharing one GST rate add up to the tax on the whole (customer and supply alike).
+  const appliedRoundingAdjustmentPaise = reconcileSameRateTax(
+    pricedLines,
+    (line) => line.tax,
+    (line) => line.taxablePaise,
+    input.intraState,
+  );
+  reconcileSameRateTax(pricedLines, (line) => line.supplyTax, (line) => line.supplyTaxablePaise, input.intraState);
+  for (const line of pricedLines) line.netPayoutPaise = lineNetPayoutPaise(line);
+  const sumTax = (pick: (line: PricingLineBreakdown) => TaxBreakdownPaise) => ({
+    cgst: pricedLines.reduce((sum, line) => sum + pick(line).cgst, 0),
+    sgst: pricedLines.reduce((sum, line) => sum + pick(line).sgst, 0),
+    igst: pricedLines.reduce((sum, line) => sum + pick(line).igst, 0),
+    total: pricedLines.reduce((sum, line) => sum + pick(line).total, 0),
+  });
+  const customerTax = sumTax((line) => line.tax);
+  const supplyTaxTotals = sumTax((line) => line.supplyTax);
   const uniqueGst = [...new Set(pricedLines.map((line) => line.tax.gstPercentage))];
-  let appliedRoundingAdjustmentPaise = 0;
-  if (uniqueGst.length === 1) {
-    const expected = splitTax(taxablePaise, uniqueGst[0]!, input.intraState);
-    appliedRoundingAdjustmentPaise = expected.total - taxTotal;
-    if (appliedRoundingAdjustmentPaise !== 0 && pricedLines.length > 0) {
-      const target = pricedLines.reduce((best, line) =>
-        line.taxablePaise > best.taxablePaise ? line : best,
-      );
-      target.tax.total += appliedRoundingAdjustmentPaise;
-      if (input.intraState) {
-        // Both sides are sums of equal halves, so the adjustment is even: split it
-        // evenly and keep CGST equal to SGST.
-        target.tax.cgst += appliedRoundingAdjustmentPaise / 2;
-        target.tax.sgst += appliedRoundingAdjustmentPaise / 2;
-      } else {
-        target.tax.igst += appliedRoundingAdjustmentPaise;
-      }
-      target.netPayoutPaise = lineNetPayoutPaise(target);
-      taxTotal = expected.total;
-      taxCgst = pricedLines.reduce((sum, line) => sum + line.tax.cgst, 0);
-      taxSgst = pricedLines.reduce((sum, line) => sum + line.tax.sgst, 0);
-      taxIgst = pricedLines.reduce((sum, line) => sum + line.tax.igst, 0);
-    } else {
-      appliedRoundingAdjustmentPaise = 0;
-    }
-  }
+  const taxTotal = customerTax.total;
 
   const commissionBasePaise = pricedLines.reduce((sum, line) => sum + line.commissionBasePaise, 0);
   const commissionPaise = pricedLines.reduce((sum, line) => sum + line.commissionPaise, 0);
@@ -330,9 +371,10 @@ export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderP
     (sum, line) => sum + line.platformFundedDiscountPaise,
     0,
   );
+  const supplyTaxablePaise = pricedLines.reduce((sum, line) => sum + line.supplyTaxablePaise, 0);
   const netPayoutPaise = Math.max(
     0,
-    taxablePaise + platformFundedDiscountPaise + taxTotal - commissionPaise - tcsPaise,
+    supplyTaxablePaise + supplyTaxTotals.total - commissionPaise - tcsPaise,
   );
   const customerTotalPaise = taxablePaise + taxTotal + shippingChargedPaise;
 
@@ -356,9 +398,9 @@ export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderP
     shippingChargedPaise,
     taxablePaise,
     tax: {
-      cgst: taxCgst,
-      sgst: taxSgst,
-      igst: taxIgst,
+      cgst: customerTax.cgst,
+      sgst: customerTax.sgst,
+      igst: customerTax.igst,
       total: taxTotal,
       gstPercentage: displayGst,
     },
@@ -366,10 +408,34 @@ export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderP
     commissionPaise,
     tcsPaise,
     platformFundedDiscountPaise,
+    supplyTaxablePaise,
+    supplyTax: { ...supplyTaxTotals, gstPercentage: displayGst },
+    platformGstSubsidyPaise: supplyTaxTotals.total - taxTotal,
     netPayoutPaise,
     customerTotalPaise,
     roundingAdjustmentPaise: appliedRoundingAdjustmentPaise,
   };
+}
+
+/**
+ * The outbound shipping a seller-fault return refunds: the shipping not yet refunded, in
+ * proportion to the goods value returned out of the goods still standing (all of it when
+ * the return takes the rest, or when the standing value is not given).
+ */
+function proRataShippingRefundPaise(
+  shippingChargedPaise: Paise | undefined,
+  shippingRefundedPaise: Paise | undefined,
+  returnedTaxablePaise: Paise,
+  standingTaxablePaise: Paise | undefined,
+): Paise {
+  const remaining = Math.max(
+    0,
+    Math.round(shippingChargedPaise ?? 0) - Math.max(0, Math.round(shippingRefundedPaise ?? 0)),
+  );
+  if (remaining === 0) return 0;
+  const standing = standingTaxablePaise == null ? null : Math.max(0, Math.round(standingTaxablePaise));
+  if (standing == null || standing <= returnedTaxablePaise) return remaining;
+  return Math.min(remaining, Math.round((remaining * Math.max(0, returnedTaxablePaise)) / standing));
 }
 
 /** Reverse a frozen line breakdown for a partial/full return (proportional by qty). */
@@ -382,6 +448,8 @@ export function reverseFrozenLine(input: RefundReversalInput): RefundReversalBre
       refundDiscountPaise: 0,
       refundMerchandisePaise: 0,
       refundTaxPaise: 0,
+      refundSupplyTaxablePaise: 0,
+      refundSupplyTaxPaise: 0,
       refundCommissionPaise: 0,
       refundTcsPaise: 0,
       refundNetClawbackPaise: 0,
@@ -405,6 +473,14 @@ export function reverseFrozenLine(input: RefundReversalInput): RefundReversalBre
     qty === line.quantity || !intraStateTax
       ? scale(line.tax.total)
       : 2 * Math.round((line.tax.total * ratioNum) / (2 * ratioDen));
+  // The vendor's credit note reverses the supply value and its GST (equal halves too).
+  const supplyTax = line.supplyTax ?? line.tax;
+  const supplyTaxable = line.supplyTaxablePaise ?? line.taxablePaise;
+  const refundSupplyTaxablePaise = scale(supplyTaxable);
+  const refundSupplyTaxPaise =
+    qty === line.quantity || !intraStateTax
+      ? scale(supplyTax.total)
+      : 2 * Math.round((supplyTax.total * ratioNum) / (2 * ratioDen));
   const refundCommissionPaise = scale(line.commissionPaise);
   const refundTcsPaise = scale(line.tcsPaise);
   const refundNetClawbackPaise = scale(line.netPayoutPaise);
@@ -413,10 +489,15 @@ export function reverseFrozenLine(input: RefundReversalInput): RefundReversalBre
   let returnShippingFeePaise = 0;
   if (input.reasonCode) {
     const policy = resolveShippingRefundPolicy(input.reasonCode);
-    if (policy.refundOriginalShipping && !input.shippingAlreadyRefunded) {
-      shippingRefundPaise = Math.max(0, Math.round(input.shippingChargedPaise ?? 0));
+    if (policy.refundOriginalShipping) {
+      shippingRefundPaise = proRataShippingRefundPaise(
+        input.shippingChargedPaise,
+        input.shippingRefundedPaise,
+        refundMerchandisePaise,
+        input.standingTaxablePaise,
+      );
     }
-    if (policy.deductReturnShippingFee) {
+    if (policy.deductReturnShippingFee && !input.returnFeeAlreadyCharged) {
       returnShippingFeePaise = Math.max(0, Math.round(input.returnShippingFeePaise ?? 0));
     }
   }
@@ -431,6 +512,8 @@ export function reverseFrozenLine(input: RefundReversalInput): RefundReversalBre
     refundDiscountPaise,
     refundMerchandisePaise,
     refundTaxPaise,
+    refundSupplyTaxablePaise,
+    refundSupplyTaxPaise,
     refundCommissionPaise,
     refundTcsPaise,
     refundNetClawbackPaise,

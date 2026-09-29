@@ -5,6 +5,8 @@ export class OrderItem extends Model<InferAttributes<OrderItem>, InferCreationAt
   declare id: CreationOptional<string>;
   declare subOrderId: string;
   declare variantId: string;
+  /** The product's category when sold; null on rows written before it was kept. */
+  declare categoryId: CreationOptional<string | null>;
   declare productName: string;
   declare quantity: number;
   declare unitPrice: CreationOptional<number>;
@@ -24,6 +26,9 @@ export class OrderItem extends Model<InferAttributes<OrderItem>, InferCreationAt
   declare discountAmountPaise: CreationOptional<number>;
   declare taxableAmountPaise: CreationOptional<number>;
   declare taxAmountPaise: CreationOptional<number>;
+  /** The vendor's GST value of supply (before the platform's coupon share); null on older rows. */
+  declare supplyTaxablePaise: CreationOptional<number | null>;
+  declare supplyTaxPaise: CreationOptional<number | null>;
   declare commissionAmountPaise: CreationOptional<number>;
   declare tcsAmountPaise: CreationOptional<number>;
   declare netPayoutAmountPaise: CreationOptional<number>;
@@ -46,6 +51,7 @@ export const initOrderItemModel = (sequelize: Sequelize) => {
       id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
       subOrderId: { type: DataTypes.UUID, allowNull: false },
       variantId: { type: DataTypes.UUID, allowNull: false },
+      categoryId: { type: DataTypes.UUID, allowNull: true },
       productName: { type: DataTypes.STRING, allowNull: false },
       quantity: { type: DataTypes.INTEGER, allowNull: false },
       unitPrice: paiseBackedRupees('unitPricePaise'),
@@ -62,6 +68,8 @@ export const initOrderItemModel = (sequelize: Sequelize) => {
       discountAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       taxableAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       taxAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      supplyTaxablePaise: { type: DataTypes.BIGINT, allowNull: true },
+      supplyTaxPaise: { type: DataTypes.BIGINT, allowNull: true },
       commissionAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       tcsAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       netPayoutAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },

@@ -31,6 +31,9 @@ export class ReturnRequest extends Model<InferAttributes<ReturnRequest>, InferCr
   declare refundStatus: CreationOptional<RefundStatus>;
   declare refundAmount: number | null;
   declare refundTaxAmount: CreationOptional<number | null>;
+  /** The supply value and GST the vendor's credit note reverses (null on older rows). */
+  declare refundSupplyTaxablePaise: CreationOptional<number | null>;
+  declare refundSupplyTaxPaise: CreationOptional<number | null>;
   /** Merchandise (pre-tax item) part of the refund, frozen from PricingEngine at approval. NULL until approved. */
   declare refundMerchandiseAmountPaise: CreationOptional<number | null>;
   /** Rupee view of `refundMerchandiseAmountPaise`. */
@@ -107,6 +110,8 @@ export const initReturnRequestModel = (sequelize: Sequelize) => {
       },
       refundAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       refundTaxAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+      refundSupplyTaxablePaise: { type: DataTypes.BIGINT, allowNull: true },
+      refundSupplyTaxPaise: { type: DataTypes.BIGINT, allowNull: true },
       refundCommissionAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       refundTcsAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       refundNetClawback: { type: DataTypes.DECIMAL(10, 2), allowNull: true },

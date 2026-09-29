@@ -6,7 +6,7 @@ import { sendDownload } from '@core/http/sendDownload';
 import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { roleNameOf } from '@utils/userRole';
 import { reportEngine, type ReportActor } from '@modules/reports/engine/reportEngine';
-import { assertReportRange, inclusiveReportTo } from '@modules/reports/engine/queryHelpers';
+import { assertReportRange, inclusiveReportFrom, inclusiveReportTo } from '@modules/reports/engine/queryHelpers';
 import type { PermissionKey } from '@core/permissions/permissionKeys';
 import { adminService } from './admin.service';
 
@@ -21,7 +21,7 @@ export const getPlatformAnalytics = asyncHandler(async (_req: Request, res: Resp
 });
 
 const AnalyticsExportSchema = z.object({
-  from: z.coerce.date().optional(),
+  from: z.coerce.date().optional().transform((value) => (value ? inclusiveReportFrom(value) : undefined)),
   to: z.coerce.date().optional().transform((value) => (value ? inclusiveReportTo(value) : undefined)),
   format: z.enum(['xlsx', 'csv', 'pdf']).default('xlsx'),
 });

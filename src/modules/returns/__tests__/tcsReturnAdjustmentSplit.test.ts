@@ -4,7 +4,12 @@ import type { Transaction } from 'sequelize';
 import { sequelize } from '@database/models';
 import { TcsLedger } from '@database/models/tcsLedger.model';
 import { reverseFrozenLine, splitTaxAmount, type PricingLineBreakdown } from '@modules/pricing/pricing.engine';
-import { persistTcsReturnAdjustmentLedger } from '../returns.service';
+import {
+  persistTcsReturnAdjustmentLedger,
+  recordTcsReturnAdjustmentForCreditNote,
+} from '../returns.service';
+import { DebitNote } from '@database/models/debitNote.model';
+import { Vendor } from '@database/models/vendor.model';
 
 /** Mirrors returns.service.ts TcsLedger RETURN_ADJUSTMENT split. */
 function returnTcsSplit(
@@ -195,5 +200,54 @@ describe('persistTcsReturnAdjustmentLedger TcsLedger.create path', () => {
       { cgst: -row.tcsCgstPaise, sgst: -row.tcsSgstPaise, igst: -row.tcsIgstPaise },
       invertedWrong,
     );
+  });
+});
+
+describe('recordTcsReturnAdjustmentForCreditNote', () => {
+  afterEach(() => mock.restoreAll());
+
+  const input = {
+    returnRequestId: '55555555-5555-5555-5555-555555555555',
+    orderId: '11111111-1111-1111-1111-111111111111',
+    subOrderId: '22222222-2222-2222-2222-222222222222',
+    vendorId: '33333333-3333-3333-3333-333333333333',
+    refundMerchandisePaise: 10100,
+    actorId: null,
+    issuedAt: new Date('2026-10-02T10:00:00.000+05:30'),
+  };
+
+  it('reverses the debit note TCS in the credit note month, split like the collection', async () => {
+    const created: Array<Record<string, unknown>> = [];
+    mock.method(DebitNote, 'findOne', async () => ({ tcsPaise: 101 }) as unknown as DebitNote);
+    mock.method(TcsLedger, 'findOne', async (options: { where: { entryType: string } }) =>
+      options.where.entryType === 'COLLECTION'
+        ? ({ tcsIgstPaise: 202, placeOfSupplyState: 'MAHARASHTRA', ratePercent: 1 } as unknown as TcsLedger)
+        : null,
+    );
+    mock.method(Vendor, 'findByPk', async () => ({ gstNumber: '29ABCDE1234F1Z5', state: 'KARNATAKA' }) as Vendor);
+    mock.method(TcsLedger, 'create', async (data: Record<string, unknown>) => {
+      created.push(data);
+      return data as unknown as TcsLedger;
+    });
+
+    await recordTcsReturnAdjustmentForCreditNote(input, transaction);
+
+    assert.equal(created.length, 1);
+    assert.equal(created[0]!.tcsAmountPaise, -101);
+    assert.equal(created[0]!.tcsIgstPaise, -101);
+    // Filed in October (the credit note's month, IST), not when the return was approved.
+    assert.equal(created[0]!.period, '2026-10');
+  });
+
+  it('records nothing twice for the same return', async () => {
+    const created: unknown[] = [];
+    mock.method(DebitNote, 'findOne', async () => ({ tcsPaise: 101 }) as unknown as DebitNote);
+    mock.method(TcsLedger, 'findOne', async () => ({ id: 'existing' }) as unknown as TcsLedger);
+    mock.method(TcsLedger, 'create', async (data: unknown) => {
+      created.push(data);
+      return data as TcsLedger;
+    });
+    await recordTcsReturnAdjustmentForCreditNote(input, transaction);
+    assert.equal(created.length, 0);
   });
 });

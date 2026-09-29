@@ -3,11 +3,14 @@ import { logAudit } from '@modules/audit/audit.service';
 
 export type PlatformSettingsPayload = {
   defaultCommissionRate: number;
-  /** Marketplace TCS percent on taxable value (0 disables). */
+  /**
+   * Marketplace TCS percent on taxable value (0 disables). Quoted at checkout and taken
+   * at the rate in force when the part is dispatched (invoiced).
+   */
   tcsRatePercent: number;
   /**
-   * TDS u/s 194-O percent on the sale value excluding GST (0 disables). Frozen on each
-   * sale at checkout and withheld at payout, so a change applies to later sales only.
+   * TDS u/s 194-O percent on the sale value excluding GST (0 disables). Withheld at
+   * payout at the rate in force then; a sale exempt at checkout (194-O(4)) stays exempt.
    */
   tdsRatePercent: number;
   /**

@@ -107,6 +107,21 @@ export class TaxService {
   }
 
   /**
+   * The HSN code a product is invoiced under: the product's own code when the vendor
+   * set one, else the nearest category rule's up the tree (then the default rule) —
+   * the same rule the GST rate comes from.
+   */
+  async resolveHsnCode(product: {
+    hsnCode?: string | null;
+    categoryId?: string | null;
+  }): Promise<string | null> {
+    const own = product.hsnCode?.trim();
+    if (own) return own;
+    const { hsnCode } = await this.resolveEffectiveTaxRule(product.categoryId ?? undefined);
+    return hsnCode?.trim() || null;
+  }
+
+  /**
    * Get GST rate for a category, walking parents when the leaf has no override.
    */
   async getGstRate(categoryId?: string): Promise<number> {

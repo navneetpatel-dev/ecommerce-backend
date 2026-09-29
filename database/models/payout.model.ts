@@ -6,6 +6,14 @@ export class Payout extends Model<InferAttributes<Payout>, InferCreationAttribut
   declare id: CreationOptional<string>;
   declare vendorId: string;
   declare amount: number;
+  /** Sale ledgers' net before TDS and commission GST. */
+  declare grossPaise: CreationOptional<number>;
+  /** 194-O TDS withheld (net of reversals, including any catch-up). */
+  declare tdsPaise: CreationOptional<number>;
+  /** GST on the platform's commission. */
+  declare commissionGstPaise: CreationOptional<number>;
+  /** Cashback costs and returns after payout (net). */
+  declare adjustmentPaise: CreationOptional<number>;
   declare periodStart: Date;
   declare periodEnd: Date;
   declare status: 'PENDING' | 'PROCESSING' | 'PAID' | 'FAILED';
@@ -36,6 +44,10 @@ export const initPayoutModel = (sequelize: Sequelize) => {
       id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
       vendorId: { type: DataTypes.UUID, allowNull: false },
       amount: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
+      grossPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      tdsPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      commissionGstPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      adjustmentPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       periodStart: { type: DataTypes.DATE, allowNull: false },
       periodEnd: { type: DataTypes.DATE, allowNull: false },
       status: { type: DataTypes.ENUM('PENDING', 'PROCESSING', 'PAID', 'FAILED'), defaultValue: 'PENDING' },

@@ -1,4 +1,4 @@
-import type { Transaction } from 'sequelize';
+import { Op, type Transaction } from 'sequelize';
 import PDFDocument from 'pdfkit';
 import { CommissionInvoice } from '@database/models/commissionInvoice.model';
 import { Vendor } from '@database/models/vendor.model';
@@ -42,8 +42,13 @@ export async function createCommissionInvoiceForPayout(
   if (input.commissionTaxablePaise === 0) return null;
   const creditNote = input.commissionTaxablePaise < 0;
 
+  // A payout has at most one commission invoice (its sales) and one credit note (its
+  // returns after payout): look for the same kind only.
   const existing = await CommissionInvoice.findOne({
-    where: { payoutId: input.payoutId },
+    where: {
+      payoutId: input.payoutId,
+      taxablePaise: creditNote ? { [Op.lt]: 0 } : { [Op.gt]: 0 },
+    },
     transaction,
   });
   if (existing) return existing;
@@ -140,7 +145,8 @@ export async function renderCommissionInvoicePdf(
   doc.moveDown();
   doc.text(`Taxable commission: Rs ${fromPaise(Number(invoice.taxablePaise)).toFixed(2)}`);
   doc.text(`GST @ ${Number(invoice.gstRatePercent)}%: Rs ${fromPaise(Number(invoice.gstPaise)).toFixed(2)}`);
-  if (Number(invoice.igstPaise) > 0) {
+  // A credit note's IGST is negative: any IGST at all means an inter-state document.
+  if (Number(invoice.igstPaise) !== 0) {
     doc.text(`  IGST: Rs ${fromPaise(Number(invoice.igstPaise)).toFixed(2)}`);
   } else {
     doc.text(`  CGST: Rs ${fromPaise(Number(invoice.cgstPaise)).toFixed(2)}`);

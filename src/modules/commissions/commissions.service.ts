@@ -27,13 +27,12 @@ async function getTdsBySubOrder(subOrderIds: string[]): Promise<Map<string, SubO
   const rows = await TdsLedger.findAll({ where: { subOrderId: { [Op.in]: subOrderIds } } });
   const paiseBySubOrder = new Map<string, number>();
   for (const row of rows) {
-    if (!map.has(row.subOrderId)) {
-      map.set(row.subOrderId, { tdsAmount: 0, tdsRatePercent: Number(row.ratePercent), tdsSection: row.section });
+    const subOrderId = row.subOrderId;
+    if (!subOrderId) continue;
+    if (!map.has(subOrderId)) {
+      map.set(subOrderId, { tdsAmount: 0, tdsRatePercent: Number(row.ratePercent), tdsSection: row.section });
     }
-    paiseBySubOrder.set(
-      row.subOrderId,
-      (paiseBySubOrder.get(row.subOrderId) ?? 0) + Number(row.tdsAmountPaise),
-    );
+    paiseBySubOrder.set(subOrderId, (paiseBySubOrder.get(subOrderId) ?? 0) + Number(row.tdsAmountPaise));
   }
   for (const [subOrderId, paise] of paiseBySubOrder) {
     map.get(subOrderId)!.tdsAmount = fromPaise(paise);

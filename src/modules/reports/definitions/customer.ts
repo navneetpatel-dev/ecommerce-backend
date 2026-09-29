@@ -1,6 +1,8 @@
 import { Op } from 'sequelize';
 import { Order } from '@database/models/order.model';
 import { SubOrder } from '@database/models/subOrder.model';
+import { OrderItem } from '@database/models/orderItem.model';
+import { mapOrderResponse } from '@modules/orders/orderDisplayMappers';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
 import {
   assertReportRange,
@@ -9,6 +11,15 @@ import {
   dateBetween,
 } from '../engine/queryHelpers';
 
+// The parts and their lines, so the savings are worked out as the order page shows them.
+const ORDER_PARTS_INCLUDE = [
+  {
+    model: SubOrder,
+    as: 'subOrders',
+    include: [{ model: OrderItem, as: 'items' }],
+  },
+];
+
 function mapOrderHistoryRow(order: Order) {
   const subs = (order as Order & { subOrders?: SubOrder[] }).subOrders ?? [];
   return {
@@ -16,7 +27,9 @@ function mapOrderHistoryRow(order: Order) {
     status: order.status,
     paymentStatus: order.paymentStatus,
     totalAmount: Number(order.totalAmount ?? 0),
-    discountTotal: Number(order.discountTotal ?? 0),
+    // What coupons saved, GST included — as on the order page (null for orders placed
+    // before lines recorded their GST).
+    couponSavings: mapOrderResponse(order as unknown as Record<string, unknown>).couponSavings,
     subOrderCount: subs.length,
     createdAt: order.createdAt,
   };
@@ -38,13 +51,7 @@ async function customerOrderHistory(filters: ReportFilters) {
     Order,
     {
       where,
-      include: [
-        {
-          model: SubOrder,
-          as: 'subOrders',
-          attributes: ['id'],
-        },
-      ],
+      include: ORDER_PARTS_INCLUDE,
       order: [['createdAt', 'DESC']],
     },
     filters,
@@ -80,13 +87,7 @@ async function customerOrderHistoryExport(
 
   const rows = await Order.findAll({
     where: where as never,
-    include: [
-      {
-        model: SubOrder,
-        as: 'subOrders',
-        attributes: ['id'],
-      },
-    ],
+    include: ORDER_PARTS_INCLUDE,
     order: [
       ['createdAt', 'DESC'],
       ['id', 'DESC'],
@@ -118,7 +119,7 @@ export const customerReports: ReportDefinition[] = [
       { key: 'status', labelKey: 'status' },
       { key: 'paymentStatus', labelKey: 'paymentStatus' },
       { key: 'totalAmount', labelKey: 'totalAmount', format: 'currency' },
-      { key: 'discountTotal', labelKey: 'discountTotal', format: 'currency' },
+      { key: 'couponSavings', labelKey: 'couponSavings', format: 'currency' },
       { key: 'subOrderCount', labelKey: 'subOrderCount', format: 'number' },
       { key: 'createdAt', labelKey: 'createdAt', format: 'date' },
     ],

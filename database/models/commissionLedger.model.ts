@@ -21,6 +21,8 @@ export class CommissionLedger extends Model<InferAttributes<CommissionLedger>, I
   declare taxableAmountPaise: CreationOptional<number>;
   declare discountAmountPaise: CreationOptional<number>;
   declare taxAmountPaise: CreationOptional<number>;
+  /** The sale's GST value of supply: the 194-O TDS base (null on older rows: taxable). */
+  declare supplyTaxablePaise: CreationOptional<number | null>;
   declare tcsAmountPaise: CreationOptional<number>;
   declare netPayoutAmountPaise: CreationOptional<number>;
   declare shippingCollectedPaise: CreationOptional<number>;
@@ -66,6 +68,7 @@ export const initCommissionLedgerModel = (sequelize: Sequelize) => {
       taxableAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       discountAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       taxAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+      supplyTaxablePaise: { type: DataTypes.BIGINT, allowNull: true },
       tcsAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       netPayoutAmountPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
       shippingCollectedPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },

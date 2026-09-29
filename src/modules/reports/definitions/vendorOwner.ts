@@ -1,21 +1,23 @@
-import { Op } from 'sequelize';
+import { Op, literal } from 'sequelize';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
-import { ORDER_STATUS } from '@core/constants/statuses';
+import { COMMISSION_REFERENCE_TYPE, ORDER_STATUS } from '@core/constants/statuses';
 import { sequelize } from '@database/models';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
-import { TcsLedger } from '@database/models/tcsLedger.model';
 import { TdsLedger } from '@database/models/tdsLedger.model';
 import { Payout } from '@database/models/payout.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { OrderItem } from '@database/models/orderItem.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { Product } from '@database/models/product.model';
-import { TaxRule } from '@database/models/taxRule.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
 import { createOffsetExportQuery } from '../engine/export/createOffsetExportQuery';
 import {
+  ledgerCouponSplitPaise,
   sqlFrozenPaise,
+  sqlLedgerOnPaidOrder,
+  sqlLedgerPlatformDiscountPaise,
+  sqlLedgerVendorDiscountPaise,
   sqlVendorNetPayoutPaise,
   vendorNetPayoutPaise,
 } from '@modules/pricing/frozenMoneySql';
@@ -27,14 +29,15 @@ import {
   fromPaise,
   dateBetween,
   paidOrderInclude,
-  reportableOrderJoin,
   REPORTABLE_ORDER_SQL,
+  TCS_LEDGER_ORDER_SQL,
   pagedFindAndCount,
-  DISCOUNT_BEARER,
+  pagedSqlQuery,
   COMMISSION_STATUS,
 } from '../engine/queryHelpers';
 import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
 import { gstPeriodOf } from '@modules/pricing/gstPeriod';
+import { gstDocumentReplacements, scopedGstDocumentLinesSql } from '../engine/gstDocumentsSql';
 
 function vendorScopeWhere(filters: ReportFilters): Record<string, unknown> {
   const vendorId = filters.scopedVendorId ?? filters.vendorId ?? null;
@@ -59,7 +62,11 @@ async function vendorSales(filters: ReportFilters) {
   const { rows, total } = await pagedFindAndCount(
     SubOrder,
     {
-      where: vendorScopeWhere(filters),
+      // A cancelled or RTO'd (RETURNED) part was refunded: not a sale.
+      where: {
+        ...vendorScopeWhere(filters),
+        status: { [Op.notIn]: [ORDER_STATUS.CANCELLED, ORDER_STATUS.RETURNED] },
+      },
       include: [paidOrderInclude(filters.from, filters.to)],
       order: [['createdAt', 'DESC']],
     },
@@ -106,6 +113,7 @@ function vendorSalesSelectSql(): string {
     FROM sub_orders s
     INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
     WHERE s."deletedAt" IS NULL
+      AND s.status NOT IN ('${ORDER_STATUS.CANCELLED}', '${ORDER_STATUS.RETURNED}')
       AND o."createdAt" BETWEEN :from AND :to
       AND ${REPORTABLE_ORDER_SQL}
       AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
@@ -207,114 +215,101 @@ export async function getGstBreakdownForSubOrders(
   return map;
 }
 
-async function vendorGstSales(filters: ReportFilters) {
-  assertReportRange(filters);
-
-  const { rows, total } = await pagedFindAndCount(
-    OrderItem,
-    {
-      include: [
-        {
-          model: SubOrder,
-          as: 'subOrder',
-          required: true,
-          where: vendorScopeWhere(filters),
-          include: [paidOrderInclude(filters.from, filters.to)],
-        },
-        {
-          model: ProductVariant,
-          as: 'variant',
-          required: true,
-          include: [
-            {
-              model: Product,
-              as: 'product',
-              required: true,
-              where: filters.categoryId ? { categoryId: filters.categoryId } : undefined,
-              attributes: ['id', 'name', 'categoryId'],
-            },
-          ],
-        },
-      ],
-      order: [['createdAt', 'DESC']],
-    },
-    filters,
-  );
-
-  const categoryIds = [
-    ...new Set(
-      rows
-        .map((item) => {
-          const product = (
-            item as OrderItem & { variant?: ProductVariant & { product?: Product } }
-          ).variant?.product;
-          return product?.categoryId ?? null;
-        })
-        .filter((id): id is string => Boolean(id)),
-    ),
-  ];
-  const taxRules = categoryIds.length
-    ? await TaxRule.findAll({
-        where: { categoryId: { [Op.in]: categoryIds } },
-        attributes: ['categoryId', 'hsnCode'],
-      })
-    : [];
-
-  const hsnByCategory = new Map<string, string>();
-  for (const rule of taxRules) {
-    if (rule.categoryId && rule.hsnCode && !hsnByCategory.has(rule.categoryId)) {
-      hsnByCategory.set(rule.categoryId, rule.hsnCode);
-    }
-  }
-
-  return {
-    rows: rows.map((item) => {
-      const sub = (item as OrderItem & { subOrder?: SubOrder }).subOrder;
-      const product = (
-        item as OrderItem & { variant?: ProductVariant & { product?: Product } }
-      ).variant?.product;
-      const categoryId = product?.categoryId ?? '';
-      const gst = computeOrderItemGst(item);
-      return {
-        orderId: sub?.orderId ?? null,
-        subOrderId: item.subOrderId,
-        invoiceId: (sub as { taxInvoiceNumber?: string | null } | undefined)
-          ?.taxInvoiceNumber ?? null,
-        productName: item.productName,
-        hsnCode: hsnByCategory.get(categoryId) ?? 'UNKNOWN',
-        qty: Number(item.quantity ?? 0),
-        taxable: gst.taxable,
-        cgst: gst.cgst,
-        sgst: gst.sgst,
-        igst: gst.igst,
-        tax: gst.tax,
-      };
-    }),
-    total,
-  };
+/**
+ * The vendor's GST sales, line by line, as filed: each tax invoice line as issued (HSN,
+ * rate, CGST / SGST / IGST frozen with it) and each credit note line (returns, RTOs)
+ * as a negative row, dated by the document. Cancelled and never-dispatched parts have
+ * no invoice, so they are not here.
+ */
+function vendorGstSalesSelectSql(): string {
+  return `
+    SELECT
+      d."docType",
+      d."documentNumber" AS "invoiceId",
+      d."documentDate",
+      d."orderId",
+      d."subOrderId",
+      d."orderItemId",
+      COALESCE(oi."productName", '') AS "productName",
+      COALESCE(NULLIF(d."hsnCode", ''), 'UNKNOWN') AS "hsnCode",
+      COALESCE(d."gstRate", 0) AS "gstRate",
+      d.qty,
+      d."taxablePaise",
+      d."cgstPaise",
+      d."sgstPaise",
+      d."igstPaise"
+    FROM (${scopedGstDocumentLinesSql()}) d
+    LEFT JOIN order_items oi ON oi.id = d."orderItemId"
+    WHERE d.source = 'GOODS'
+      AND (:categoryId::uuid IS NULL OR d."categoryId" = :categoryId)
+  `;
 }
 
-async function vendorTcsCredit(filters: ReportFilters) {
+async function vendorGstSales(filters: ReportFilters) {
   assertReportRange(filters);
-
-  const { rows, total } = await pagedFindAndCount(
-    TcsLedger,
-    {
-      where: {
-        ...vendorScopeWhere(filters),
-        createdAt: dateBetween(filters.from, filters.to),
-      },
-      include: [reportableOrderJoin()],
-      order: [['createdAt', 'DESC']],
+  return pagedSqlQuery({
+    selectSql: vendorGstSalesSelectSql(),
+    orderBySql: `"documentDate" DESC, "invoiceId" ASC, "orderItemId" ASC`,
+    replacements: {
+      from: filters.from,
+      to: filters.to,
+      vendorId: filters.scopedVendorId ?? filters.vendorId ?? null,
+      categoryId: filters.categoryId ?? null,
+      ...(await gstDocumentReplacements()),
     },
     filters,
-  );
+    mapRow: (row) => {
+      const cgst = Number(row.cgstPaise ?? 0);
+      const sgst = Number(row.sgstPaise ?? 0);
+      const igst = Number(row.igstPaise ?? 0);
+      return {
+        docType: String(row.docType ?? ''),
+        orderId: row.orderId ?? null,
+        subOrderId: row.subOrderId ?? null,
+        invoiceId: row.invoiceId ?? null,
+        documentDate: row.documentDate,
+        productName: String(row.productName ?? ''),
+        hsnCode: String(row.hsnCode ?? 'UNKNOWN'),
+        gstRate: Number(row.gstRate ?? 0),
+        qty: Number(row.qty ?? 0),
+        taxable: fromPaise(Number(row.taxablePaise ?? 0)),
+        cgst: fromPaise(cgst),
+        sgst: fromPaise(sgst),
+        igst: fromPaise(igst),
+        tax: fromPaise(cgst + sgst + igst),
+      };
+    },
+  });
+}
 
-  return {
-    rows: rows.map((row) => ({
+/**
+ * TCS the platform collected on the vendor's sales (GSTR-8), which the vendor claims as
+ * a credit: the same rows as the platform's GSTR-8 — a collection and its reversal both
+ * stay when a part later came back (RTO), each in its own period.
+ */
+async function vendorTcsCredit(filters: ReportFilters) {
+  assertReportRange(filters);
+  return pagedSqlQuery({
+    selectSql: `
+      SELECT t.*
+      FROM tcs_ledgers t
+      INNER JOIN orders o ON o.id = t."orderId" AND o."deletedAt" IS NULL
+      WHERE t."deletedAt" IS NULL
+        AND t."createdAt" BETWEEN :from AND :to
+        AND ${TCS_LEDGER_ORDER_SQL}
+        AND (:vendorId::uuid IS NULL OR t."vendorId" = :vendorId)
+    `,
+    orderBySql: `"createdAt" DESC, id DESC`,
+    replacements: {
+      from: filters.from,
+      to: filters.to,
+      vendorId: filters.scopedVendorId ?? filters.vendorId ?? null,
+    },
+    filters,
+    mapRow: (row) => ({
       orderId: row.orderId,
       subOrderId: row.subOrderId,
-      period: periodKey(row.period, row.createdAt as Date),
+      period: periodKey(row.period as string | null, row.createdAt as Date),
       section: String(row.section ?? '52'),
       entryType: String(row.entryType ?? 'COLLECTION'),
       vendorGstin: row.vendorGstin ?? null,
@@ -325,9 +320,8 @@ async function vendorTcsCredit(filters: ReportFilters) {
       tcsIgst: fromPaise(Number(row.tcsIgstPaise ?? 0)),
       tcsTotal: fromPaise(Number(row.tcsAmountPaise ?? 0)),
       createdAt: row.createdAt,
-    })),
-    total,
-  };
+    }),
+  });
 }
 
 async function vendorTdsCertificate(filters: ReportFilters) {
@@ -381,6 +375,10 @@ async function vendorPayoutStatement(filters: ReportFilters) {
   return {
     rows: rows.map((p) => ({
       payoutId: p.id,
+      grossAmount: fromPaise(Number(p.grossPaise ?? 0)),
+      tdsAmount: fromPaise(Number(p.tdsPaise ?? 0)),
+      commissionGstAmount: fromPaise(Number(p.commissionGstPaise ?? 0)),
+      adjustmentAmount: fromPaise(Number(p.adjustmentPaise ?? 0)),
       amount: Number(p.amount ?? 0),
       status: p.status,
       periodStart: p.periodStart,
@@ -401,6 +399,10 @@ const VENDOR_PAYOUT_KEYSET: KeysetOrderCol[] = [
 function mapVendorPayoutRow(row: Record<string, unknown>) {
   return {
     payoutId: String(row.payoutId ?? ''),
+    grossAmount: fromPaise(Number(row.grossPaise ?? 0)),
+    tdsAmount: fromPaise(Number(row.tdsPaise ?? 0)),
+    commissionGstAmount: fromPaise(Number(row.commissionGstPaise ?? 0)),
+    adjustmentAmount: fromPaise(Number(row.adjustmentPaise ?? 0)),
     amount: Number(row.amount ?? 0),
     status: String(row.status ?? ''),
     periodStart: row.periodStart,
@@ -414,6 +416,10 @@ function vendorPayoutSelectSql(): string {
   return `
     SELECT
       p.id AS "payoutId",
+      p."grossPaise" AS "grossPaise",
+      p."tdsPaise" AS "tdsPaise",
+      p."commissionGstPaise" AS "commissionGstPaise",
+      p."adjustmentPaise" AS "adjustmentPaise",
       p.amount AS amount,
       p.status AS status,
       p."periodStart" AS "periodStart",
@@ -485,6 +491,7 @@ function commissionLedgerSelectSql(): string {
     WHERE cl."deletedAt" IS NULL
       AND cl."createdAt" BETWEEN :from AND :to
       AND cl.status <> :clawedBack
+      AND ${sqlLedgerOnPaidOrder('cl')}
       AND (:vendorId::uuid IS NULL OR cl."vendorId" = :vendorId)
   `;
 }
@@ -517,52 +524,64 @@ const SUB_ORDER_SLA_KEYSET: KeysetOrderCol[] = [
   { column: 'subOrderId', direction: 'DESC' },
 ];
 
+/**
+ * A vendor's parts placed in the range, with when each was delivered: the shipment's
+ * delivered time (older parts without one: their last update), not the part's last
+ * update, which a later return or edit moves.
+ */
+function vendorFulfillmentSlaSelectSql(): string {
+  return `
+    SELECT
+      s.id AS "subOrderId",
+      s."orderId" AS "orderId",
+      s.status AS status,
+      s."createdAt" AS "createdAt",
+      CASE WHEN s.status = '${ORDER_STATUS.DELIVERED}'
+        THEN COALESCE(sh."deliveredAt", s."updatedAt") END AS "deliveredAt"
+    FROM sub_orders s
+    LEFT JOIN shipments sh ON sh."subOrderId" = s.id AND sh."deletedAt" IS NULL
+    WHERE s."deletedAt" IS NULL
+      AND s."createdAt" BETWEEN :from AND :to
+      AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
+      AND (:status::text IS NULL OR s.status::text = :status)
+  `;
+}
+
+function vendorFulfillmentSlaReplacements(filters: ReportFilters): Record<string, unknown> {
+  return {
+    from: filters.from,
+    to: filters.to,
+    vendorId: filters.scopedVendorId ?? filters.vendorId ?? null,
+    status: filters.status ?? null,
+  };
+}
+
+function mapVendorFulfillmentSlaRow(row: Record<string, unknown>) {
+  const created = row.createdAt as Date;
+  const delivered = (row.deliveredAt as Date | null) ?? null;
+  return {
+    subOrderId: String(row.subOrderId ?? ''),
+    orderId: String(row.orderId ?? ''),
+    status: String(row.status ?? ''),
+    createdAt: created,
+    deliveredAt: delivered,
+    hoursToDeliver: delivered ? hoursBetween(new Date(created), new Date(delivered)) : null,
+  };
+}
+
 async function vendorFulfillmentSlaExport(
   filters: ReportFilters,
   cursor: { values: unknown[] } | null,
   limit: number,
 ) {
   assertReportRange(filters);
-  const vendorId = filters.scopedVendorId ?? filters.vendorId ?? null;
   const page = await keysetSqlQuery({
-    selectSql: `
-      SELECT
-        s.id AS "subOrderId",
-        s."orderId" AS "orderId",
-        s.status AS status,
-        s."createdAt" AS "createdAt",
-        s."updatedAt" AS "updatedAt"
-      FROM sub_orders s
-      WHERE s."deletedAt" IS NULL
-        AND s."createdAt" BETWEEN :from AND :to
-        AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
-        AND (:status::text IS NULL OR s.status::text = :status)
-    `,
+    selectSql: vendorFulfillmentSlaSelectSql(),
     order: SUB_ORDER_SLA_KEYSET,
-    replacements: {
-      from: filters.from,
-      to: filters.to,
-      vendorId,
-      status: filters.status ?? null,
-    },
+    replacements: vendorFulfillmentSlaReplacements(filters),
     limit,
     cursor,
-    mapRow: (row) => {
-      const created = row.createdAt as Date;
-      const updated = row.updatedAt as Date;
-      const delivered =
-        row.status === ORDER_STATUS.DELIVERED
-          ? hoursBetween(created, updated)
-          : null;
-      return {
-        subOrderId: String(row.subOrderId ?? ''),
-        orderId: String(row.orderId ?? ''),
-        status: String(row.status ?? ''),
-        createdAt: created,
-        updatedAt: updated,
-        hoursToDeliver: delivered,
-      };
-    },
+    mapRow: mapVendorFulfillmentSlaRow,
   });
   return { rows: page.rows, nextCursor: page.nextCursor };
 }
@@ -631,6 +650,8 @@ async function vendorCommissionDeducted(filters: ReportFilters) {
         ...vendorScopeWhere(filters),
         createdAt: dateBetween(filters.from, filters.to),
         status: { [Op.ne]: COMMISSION_STATUS.CLAWED_BACK },
+        // Only sales that are real money: not an online checkout still awaiting payment.
+        [Op.and]: [literal(sqlLedgerOnPaidOrder('"CommissionLedger"'))],
       },
       order: [['createdAt', 'DESC']],
     },
@@ -654,17 +675,24 @@ async function vendorCommissionDeducted(filters: ReportFilters) {
   };
 }
 
+/**
+ * The discounts on a vendor's sales (and returns after payout), per ledger, split
+ * between the vendor's own coupons and the platform's — a stacked order carries both,
+ * whatever the ledger's single bearer. Excluding GST.
+ */
 async function vendorDiscountCost(filters: ReportFilters) {
   assertReportRange(filters);
 
   const scope = vendorScopeWhere(filters);
   const vendorId = (scope.vendorId as string | undefined) ?? null;
+  const saleOrReturn = `("CommissionLedger"."referenceType" IS NULL OR "CommissionLedger"."referenceType" = '${COMMISSION_REFERENCE_TYPE.RETURN_CLAWBACK}')`;
 
   const where: Record<string, unknown> = {
     ...scope,
     createdAt: dateBetween(filters.from, filters.to),
     status: { [Op.ne]: COMMISSION_STATUS.CLAWED_BACK },
-    discountAmountPaise: { [Op.gt]: 0 },
+    discountAmountPaise: { [Op.ne]: 0 },
+    [Op.and]: [literal(sqlLedgerOnPaidOrder('"CommissionLedger"')), literal(saleOrReturn)],
   };
 
   const vendorClause = vendorId ? 'AND cl."vendorId" = :vendorId' : '';
@@ -672,7 +700,7 @@ async function vendorDiscountCost(filters: ReportFilters) {
     from: filters.from,
     to: filters.to,
     clawedBack: COMMISSION_STATUS.CLAWED_BACK,
-    vendorBearer: DISCOUNT_BEARER.VENDOR,
+    clawback: COMMISSION_REFERENCE_TYPE.RETURN_CLAWBACK,
   };
   if (vendorId) replacements.vendorId = vendorId;
 
@@ -688,19 +716,15 @@ async function vendorDiscountCost(filters: ReportFilters) {
     sequelize.query(
       `
       SELECT
-        COALESCE(SUM(CASE
-          WHEN cl."discountBearer" = :vendorBearer THEN (${DISCOUNT_PAISE_SQL})
-          ELSE 0
-        END), 0)::bigint AS "ownCouponsPaise",
-        COALESCE(SUM(CASE
-          WHEN cl."discountBearer" IS DISTINCT FROM :vendorBearer THEN (${DISCOUNT_PAISE_SQL})
-          ELSE 0
-        END), 0)::bigint AS "platformCouponsPaise"
+        COALESCE(SUM(${sqlLedgerVendorDiscountPaise('cl')}), 0)::bigint AS "ownCouponsPaise",
+        COALESCE(SUM(${sqlLedgerPlatformDiscountPaise('cl')}), 0)::bigint AS "platformCouponsPaise"
       FROM commission_ledgers cl
       WHERE cl."deletedAt" IS NULL
         AND cl."createdAt" BETWEEN :from AND :to
         AND cl.status <> :clawedBack
-        AND (${DISCOUNT_PAISE_SQL}) > 0
+        AND (cl."referenceType" IS NULL OR cl."referenceType" = :clawback)
+        AND (${DISCOUNT_PAISE_SQL}) <> 0
+        AND ${sqlLedgerOnPaidOrder('cl')}
         ${vendorClause}
       `,
       { replacements },
@@ -711,15 +735,12 @@ async function vendorDiscountCost(filters: ReportFilters) {
 
   return {
     rows: rows.map((ledger) => {
-      const disc = frozenPaise(ledger.discountAmountPaise);
-      const bearer =
-        ledger.discountBearer === DISCOUNT_BEARER.VENDOR
-          ? DISCOUNT_BEARER.VENDOR
-          : DISCOUNT_BEARER.PLATFORM;
+      const split = ledgerCouponSplitPaise(ledger);
       return {
         subOrderId: ledger.subOrderId,
-        discountBearer: bearer,
-        discountAmount: fromPaise(disc),
+        vendorDiscount: fromPaise(split.vendorPaise),
+        platformDiscount: fromPaise(split.platformPaise),
+        discountAmount: fromPaise(frozenPaise(ledger.discountAmountPaise)),
         createdAt: ledger.createdAt,
       };
     }),
@@ -828,39 +849,13 @@ async function vendorInventory(filters: ReportFilters) {
 
 async function vendorFulfillmentSla(filters: ReportFilters) {
   assertReportRange(filters);
-
-  const where: Record<string, unknown> = {
-    ...vendorScopeWhere(filters),
-    createdAt: dateBetween(filters.from, filters.to),
-  };
-  if (filters.status) where.status = filters.status;
-
-  const { rows, total } = await pagedFindAndCount(
-    SubOrder,
-    {
-      where,
-      order: [['createdAt', 'DESC']],
-    },
+  return pagedSqlQuery({
+    selectSql: vendorFulfillmentSlaSelectSql(),
+    orderBySql: `"createdAt" DESC, "subOrderId" DESC`,
+    replacements: vendorFulfillmentSlaReplacements(filters),
     filters,
-  );
-
-  return {
-    rows: rows.map((sub) => {
-      const delivered =
-        sub.status === ORDER_STATUS.DELIVERED
-          ? hoursBetween(sub.createdAt as Date, sub.updatedAt as Date)
-          : null;
-      return {
-        subOrderId: sub.id,
-        orderId: sub.orderId,
-        status: sub.status,
-        createdAt: sub.createdAt,
-        updatedAt: sub.updatedAt,
-        hoursToDeliver: delivered,
-      };
-    }),
-    total,
-  };
+    mapRow: mapVendorFulfillmentSlaRow,
+  });
 }
 
 export const vendorOwnerReports: ReportDefinition[] = [
@@ -892,9 +887,12 @@ export const vendorOwnerReports: ReportDefinition[] = [
     vendorScoped: true,
     financial: true,
     columns: [
+      { key: 'docType', labelKey: 'docType' },
       { key: 'invoiceId', labelKey: 'invoiceId' },
+      { key: 'documentDate', labelKey: 'documentDate', format: 'date' },
       { key: 'productName', labelKey: 'productName' },
       { key: 'hsnCode', labelKey: 'hsnCode' },
+      { key: 'gstRate', labelKey: 'gstRate', format: 'number' },
       { key: 'qty', labelKey: 'qty', format: 'number' },
       { key: 'taxable', labelKey: 'taxable', format: 'currency' },
       { key: 'cgst', labelKey: 'cgst', format: 'currency' },
@@ -957,6 +955,10 @@ export const vendorOwnerReports: ReportDefinition[] = [
     financial: true,
     columns: [
       { key: 'payoutId', labelKey: 'payoutId' },
+      { key: 'grossAmount', labelKey: 'payoutGross', format: 'currency' },
+      { key: 'tdsAmount', labelKey: 'tdsAmount', format: 'currency' },
+      { key: 'commissionGstAmount', labelKey: 'commissionGst', format: 'currency' },
+      { key: 'adjustmentAmount', labelKey: 'payoutAdjustments', format: 'currency' },
       { key: 'amount', labelKey: 'amount', format: 'currency' },
       { key: 'status', labelKey: 'status' },
       { key: 'periodStart', labelKey: 'periodStart', format: 'date' },
@@ -995,7 +997,8 @@ export const vendorOwnerReports: ReportDefinition[] = [
     financial: true,
     columns: [
       { key: 'subOrderId', labelKey: 'subOrderId' },
-      { key: 'discountBearer', labelKey: 'discountBearer' },
+      { key: 'vendorDiscount', labelKey: 'vendorDiscount', format: 'currency' },
+      { key: 'platformDiscount', labelKey: 'platformDiscount', format: 'currency' },
       { key: 'discountAmount', labelKey: 'discountAmount', format: 'currency' },
       { key: 'createdAt', labelKey: 'createdAt', format: 'date' },
     ],
@@ -1053,7 +1056,7 @@ export const vendorOwnerReports: ReportDefinition[] = [
       { key: 'orderId', labelKey: 'orderId' },
       { key: 'status', labelKey: 'status' },
       { key: 'createdAt', labelKey: 'createdAt', format: 'date' },
-      { key: 'updatedAt', labelKey: 'updatedAt', format: 'date' },
+      { key: 'deliveredAt', labelKey: 'deliveredAt', format: 'date' },
       { key: 'hoursToDeliver', labelKey: 'hoursToDeliver', format: 'number' },
     ],
     query: vendorFulfillmentSla,
