@@ -11,7 +11,6 @@ import { Vendor } from '@database/models/vendor.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { Product } from '@database/models/product.model';
 import { User } from '@database/models/user.model';
-import { TaxRule } from '@database/models/taxRule.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import type { PlatformInvoiceSnapshot } from '@modules/pricing/platformFeeInvoice';
 import {
@@ -22,6 +21,7 @@ import {
   type TaxInvoiceSource,
 } from './taxInvoicePdf';
 import { settingsService } from '@modules/settings/settings.service';
+import { taxService } from '@modules/tax/tax.service';
 import { zipBuffers } from './invoiceZip.service';
 
 const orderInvoiceInclude = [
@@ -43,7 +43,7 @@ const orderInvoiceInclude = [
               {
                 model: Product,
                 as: 'product',
-                attributes: ['id', 'categoryId', 'name'],
+                attributes: ['id', 'categoryId', 'name', 'hsnCode'],
               },
             ],
           },
@@ -61,22 +61,32 @@ async function loadOrder(orderId: string) {
   return order;
 }
 
+/**
+ * The HSN each order item is invoiced under, keyed by order item id: the product's own
+ * code, else its category rule's (nearest up the tree). Invoices issued with a frozen
+ * HSN on the snapshot line use that instead; this covers lines written before it.
+ */
 async function hsnMapForOrder(order: Order): Promise<Map<string, string>> {
-  const categoryIds = new Set<string>();
+  const map = new Map<string, string>();
+  const byCategory = new Map<string, string | null>();
   for (const sub of (order as any).subOrders ?? []) {
     for (const item of sub.items ?? []) {
-      const catId = item.variant?.product?.categoryId;
-      if (catId) categoryIds.add(catId);
+      const product = item.variant?.product as
+        | { hsnCode?: string | null; categoryId?: string | null }
+        | undefined;
+      if (!product) continue;
+      let hsn = product.hsnCode?.trim() || null;
+      if (!hsn) {
+        const key = product.categoryId ?? '';
+        if (!byCategory.has(key)) {
+          byCategory.set(key, await taxService.resolveHsnCode({ categoryId: product.categoryId }));
+        }
+        hsn = byCategory.get(key) ?? null;
+      }
+      if (hsn) map.set(item.id, hsn);
     }
   }
-  const taxRules = categoryIds.size
-    ? await TaxRule.findAll({ where: { categoryId: [...categoryIds] as any } })
-    : [];
-  return new Map(
-    taxRules
-      .filter((r) => Boolean(r.categoryId))
-      .map((r) => [r.categoryId as string, r.hsnCode ?? '']),
-  );
+  return map;
 }
 
 /** Tax invoices are issued when a shipment is dispatched (pricing/taxInvoiceIssue). */
@@ -91,13 +101,13 @@ function assertInvoiceAllocated(sub: SubOrder) {
 export async function buildSubOrderInvoicePdf(
   order: Order,
   subOrder: SubOrder,
-  hsnByCategory: Map<string, string>,
+  hsnByItem: Map<string, string>,
 ): Promise<{ source: TaxInvoiceSource; pdf: Buffer; filename: string }> {
   assertInvoiceAllocated(subOrder);
   const source = toTaxInvoiceSourceFromSubOrder(
     order as any,
     subOrder as any,
-    hsnByCategory,
+    hsnByItem,
   );
   const pdf = await renderTaxInvoicePdf(source);
   const vendorSlug = (subOrder as any).vendor?.slug ?? null;
@@ -137,8 +147,8 @@ export async function getCustomerSubOrderInvoice(input: {
   const subOrders = ((order as any).subOrders ?? []) as SubOrder[];
   const sub = subOrders.find((row) => row.id === input.subOrderId);
   if (!sub) throw new NotFoundError('SubOrder');
-  const hsnByCategory = await hsnMapForOrder(order);
-  return buildSubOrderInvoicePdf(order, sub, hsnByCategory);
+  const hsnByItem = await hsnMapForOrder(order);
+  return buildSubOrderInvoicePdf(order, sub, hsnByItem);
 }
 
 export async function getCustomerOrderInvoices(input: {
@@ -155,11 +165,11 @@ export async function getCustomerOrderInvoices(input: {
   const subOrders = ((order as any).subOrders ?? []) as SubOrder[];
   if (subOrders.length === 0) throw new NotFoundError('SubOrder');
 
-  const hsnByCategory = await hsnMapForOrder(order);
+  const hsnByItem = await hsnMapForOrder(order);
   const rendered = [];
   // Invoices are issued at dispatch: skip sub-orders not shipped yet (or cancelled).
   for (const sub of subOrders.filter((row) => row.taxInvoiceNumber)) {
-    rendered.push(await buildSubOrderInvoicePdf(order, sub, hsnByCategory));
+    rendered.push(await buildSubOrderInvoicePdf(order, sub, hsnByItem));
   }
   // The platform's own invoices: gift wrap, the shipping on each part, kept return fees.
   const returnFeeInvoices = await ReturnRequest.findAll({
@@ -210,7 +220,7 @@ export async function getVendorSubOrderInvoice(input: {
               {
                 model: Product,
                 as: 'product',
-                attributes: ['id', 'categoryId', 'name'],
+                attributes: ['id', 'categoryId', 'name', 'hsnCode'],
               },
             ],
           },
@@ -235,6 +245,6 @@ export async function getVendorSubOrderInvoice(input: {
 
   // Attach this single sub-order under order for mapper consistency.
   (order as any).subOrders = [sub];
-  const hsnByCategory = await hsnMapForOrder(order);
-  return buildSubOrderInvoicePdf(order, sub, hsnByCategory);
+  const hsnByItem = await hsnMapForOrder(order);
+  return buildSubOrderInvoicePdf(order, sub, hsnByItem);
 }

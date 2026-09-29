@@ -77,6 +77,7 @@ import { isIntraStateSupply } from '@modules/pricing/gstPlaceOfSupply';
 import { tdsRateForSale } from '@modules/pricing/tds194o';
 import { preGstCouponBreakdown } from './couponUsageAmounts';
 import { withGstInclusiveLineValues } from './gstInclusiveLines';
+import { taxService } from '@modules/tax/tax.service';
 
 /** Flat platform fee for checkout-time gift wrapping (v1: hardcoded, not vendor-specific). */
 export const GIFT_WRAP_FEE_RUPEES = 49;
@@ -800,7 +801,9 @@ export class CheckoutService {
             tcsAmountPaise: linePaise.tcsPaise,
             netPayoutAmountPaise: linePaise.netPayoutPaise,
           }, { transaction: t });
-          invoiceLines.push(taxInvoiceSnapshotLine(orderItem.id, linePaise));
+          // HSN frozen with the amounts: the product's own code, else its category rule's.
+          const hsnCode = await taxService.resolveHsnCode(item.variant.product);
+          invoiceLines.push(taxInvoiceSnapshotLine(orderItem.id, linePaise, hsnCode));
 
           await item.variant.decrement('stock', {
             by: item.quantity,

@@ -22,7 +22,10 @@ import {
 import { invoiceLineTaxBreakdown } from '@modules/pricing/displayMoney';
 import { coerceRupees, fromPaise, roundMoney, sumRupees, toPaise } from '@modules/pricing/money';
 import { isWalletFundedOrder, walletShareOfRefundPaise } from '@modules/pricing/refundSplit';
-import type { TaxInvoiceSnapshot } from '@modules/pricing/taxInvoiceSnapshot';
+import {
+  snapshotLineDiscountPaise,
+  type TaxInvoiceSnapshot,
+} from '@modules/pricing/taxInvoiceSnapshot';
 import type { PlatformInvoiceSnapshot } from '@modules/pricing/platformFeeInvoice';
 import { TAX_INVOICE_COPY as COPY } from './reports.constants';
 
@@ -41,6 +44,10 @@ export type TaxInvoiceLine = {
   hsn: string;
   quantity: number;
   unitPrice: number;
+  /** Discount on the line (value before discount less taxable value). */
+  discount: number;
+  /** GST rate charged on the line, e.g. 18; null when not recorded. */
+  gstRate: number | null;
   taxable: number;
   cgst: number;
   sgst: number;
@@ -207,17 +214,30 @@ function mapInvoiceLineTax(item: {
 
 type InvoiceItemInput = NonNullable<TaxInvoiceSubOrderInput['items']>[number];
 
-function itemHsn(item: InvoiceItemInput | undefined, hsnByCategory: Map<string, string>): string {
-  const catId = item?.variant?.product?.categoryId ?? undefined;
-  const hsn = catId ? (hsnByCategory.get(catId) ?? '') : '';
+/**
+ * A line's HSN: frozen on the invoice snapshot when it was issued, else the code
+ * resolved for its order item (`hsnByItem`, keyed by order item id).
+ */
+function itemHsn(
+  item: InvoiceItemInput | undefined,
+  hsnByItem: Map<string, string>,
+  frozen?: string | null,
+): string {
+  const hsn = frozen?.trim() || (item?.id ? hsnByItem.get(item.id) : '') || '';
   return hsn || COPY.emptyValue;
+}
+
+/** The GST rate a line was charged at, from its stored tax breakdown. */
+function breakdownRate(item: InvoiceItemInput | undefined): number | null {
+  const rate = Number(item?.taxBreakdown?.gstPercentage);
+  return Number.isFinite(rate) && item?.taxBreakdown?.gstPercentage != null ? rate : null;
 }
 
 /** Lines as issued at checkout; returns since then are on the credit note, not here. */
 function mapSnapshotItems(
   sub: TaxInvoiceSubOrderInput,
   snapshot: TaxInvoiceSnapshot,
-  hsnByCategory: Map<string, string>,
+  hsnByItem: Map<string, string>,
 ): TaxInvoiceLine[] {
   const itemsById = new Map((sub.items ?? []).map((item) => [item.id, item]));
   return snapshot.lines.map((line) => {
@@ -225,9 +245,11 @@ function mapSnapshotItems(
     return {
       productName: item?.productName ?? COPY.emptyValue,
       sku: item?.variant?.sku ?? null,
-      hsn: itemHsn(item, hsnByCategory),
+      hsn: itemHsn(item, hsnByItem, line.hsnCode),
       quantity: line.quantity,
       unitPrice: fromPaise(line.unitPricePaise),
+      discount: fromPaise(snapshotLineDiscountPaise(line)),
+      gstRate: line.gstPercentage ?? breakdownRate(item),
       taxable: fromPaise(line.taxablePaise),
       cgst: fromPaise(line.cgstPaise),
       sgst: fromPaise(line.sgstPaise),
@@ -238,18 +260,24 @@ function mapSnapshotItems(
 
 function mapSubOrderItems(
   sub: TaxInvoiceSubOrderInput,
-  hsnByCategory: Map<string, string>,
+  hsnByItem: Map<string, string>,
 ): TaxInvoiceLine[] {
-  if (sub.taxInvoiceSnapshot) return mapSnapshotItems(sub, sub.taxInvoiceSnapshot, hsnByCategory);
+  if (sub.taxInvoiceSnapshot) return mapSnapshotItems(sub, sub.taxInvoiceSnapshot, hsnByItem);
   const items: TaxInvoiceLine[] = [];
   for (const item of sub.items ?? []) {
     const tb = mapInvoiceLineTax(item);
+    const quantity = Math.trunc(coerceRupees(item.quantity)) || 0;
+    const taxablePaise = toPaise(roundMoney(item.taxableAmount));
     items.push({
       productName: item.productName,
       sku: item.variant?.sku ?? null,
-      hsn: itemHsn(item, hsnByCategory),
-      quantity: Math.trunc(coerceRupees(item.quantity)) || 0,
+      hsn: itemHsn(item, hsnByItem),
+      quantity,
       unitPrice: roundMoney(item.unitPrice),
+      discount: fromPaise(
+        Math.max(0, toPaise(roundMoney(item.unitPrice)) * quantity - taxablePaise),
+      ),
+      gstRate: breakdownRate(item),
       taxable: roundMoney(item.taxableAmount),
       cgst: tb.cgst,
       sgst: tb.sgst,
@@ -291,6 +319,8 @@ export function toTaxInvoiceSourceFromPlatformInvoice(
         hsn: line.sac,
         quantity: line.quantity,
         unitPrice: fromPaise(line.taxablePaise),
+        discount: 0,
+        gstRate: line.gstRatePercent,
         taxable: fromPaise(line.taxablePaise),
         cgst: fromPaise(line.cgstPaise),
         sgst: fromPaise(line.sgstPaise),
@@ -304,13 +334,13 @@ export function toTaxInvoiceSourceFromPlatformInvoice(
 export function toTaxInvoiceSourceFromSubOrder(
   order: TaxInvoiceOrderInput,
   subOrder: TaxInvoiceSubOrderInput,
-  hsnByCategory: Map<string, string>,
+  hsnByItem: Map<string, string>,
 ): TaxInvoiceSource {
   const invoiceNo = subOrder.taxInvoiceNumber;
   if (!invoiceNo) {
     throw new Error('Sub-order is missing taxInvoiceNumber');
   }
-  const items = mapSubOrderItems(subOrder, hsnByCategory);
+  const items = mapSubOrderItems(subOrder, hsnByItem);
   const vendor = subOrder.vendor;
   const lineTotal = sumRupees(items.map(lineAmount));
   const totalAmount = subOrder.taxInvoiceSnapshot
@@ -345,7 +375,7 @@ export function toTaxInvoiceSource(
     walletAmountUsed?: number | null;
     subOrders?: TaxInvoiceSubOrderInput[];
   },
-  hsnByCategory: Map<string, string>,
+  hsnByItem: Map<string, string>,
 ): TaxInvoiceSource {
   const first = order.subOrders?.[0];
   if (!first) {
@@ -372,7 +402,7 @@ export function toTaxInvoiceSource(
       taxInvoiceIssuedAt: first.taxInvoiceIssuedAt ?? order.createdAt,
       customerTotal: first.customerTotal ?? order.totalAmount,
     },
-    hsnByCategory,
+    hsnByItem,
   );
 }
 
@@ -416,11 +446,27 @@ function buildInvoiceColumns(
       align: 'right',
     },
     {
+      key: 'discount',
+      label: COPY.discount,
+      values: rows.map((r) => formatInrAmount(r.discount)),
+      minWidth: 40,
+      maxWidth: 60,
+      align: 'right',
+    },
+    {
       key: 'taxable',
       label: COPY.taxable,
       values: rows.map((r) => formatInrAmount(r.taxable)),
       minWidth: 52,
       maxWidth: 70,
+      align: 'right',
+    },
+    {
+      key: 'rate',
+      label: COPY.gstRate,
+      values: rows.map((r) => (r.gstRate == null ? COPY.emptyValue : `${r.gstRate}%`)),
+      minWidth: 30,
+      maxWidth: 38,
       align: 'right',
     },
     {

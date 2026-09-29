@@ -1,9 +1,9 @@
 import { z } from 'zod';
 import { pageLimitQuerySchema } from '@core/http/pagination';
-import { inclusiveReportTo } from './engine/queryHelpers';
+import { inclusiveReportFrom, inclusiveReportTo } from './engine/queryHelpers';
 
 export const ReportRangeSchema = z.object({
-  from: z.coerce.date(),
+  from: z.coerce.date().transform(inclusiveReportFrom),
   to: z.coerce.date().transform(inclusiveReportTo),
   format: z.enum(['json', 'xlsx', 'csv', 'pdf']).default('json'),
   page: z.coerce.number().int().positive().optional(),
@@ -15,7 +15,7 @@ export const WriteOffReportSchema = ReportRangeSchema.extend({
 });
 
 export const EngineReportQuerySchema = pageLimitQuerySchema.extend({
-  from: z.coerce.date(),
+  from: z.coerce.date().transform(inclusiveReportFrom),
   to: z.coerce.date().transform(inclusiveReportTo),
   format: z.enum(['json', 'xlsx', 'csv', 'pdf']).default('json'),
   vendorId: z.string().uuid().optional().nullable(),
@@ -25,7 +25,7 @@ export const EngineReportQuerySchema = pageLimitQuerySchema.extend({
 });
 
 export const CustomerOrderHistorySchema = pageLimitQuerySchema.extend({
-  from: z.coerce.date(),
+  from: z.coerce.date().transform(inclusiveReportFrom),
   to: z.coerce.date().transform(inclusiveReportTo),
   format: z.enum(['json', 'xlsx', 'csv', 'pdf']).default('json'),
 });

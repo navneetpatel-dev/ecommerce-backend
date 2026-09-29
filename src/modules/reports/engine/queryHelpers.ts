@@ -21,24 +21,45 @@ import { sequelize } from '@database/models';
 import { Order } from '@database/models/order.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
+import { IST_OFFSET_MS } from '@modules/pricing/istCalendar';
 import type { ReportFilters, ReportQueryResult } from './types';
 
-/** Extend date-only `to` (midnight UTC) so the selected end day is inclusive. */
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function isUtcMidnight(moment: Date): boolean {
+  return moment.getTime() % DAY_MS === 0;
+}
+
+function isIstMidnight(moment: Date): boolean {
+  return (moment.getTime() + IST_OFFSET_MS) % DAY_MS === 0;
+}
+
+/**
+ * Report ranges are Indian calendar days. A date-only `from` (`2026-09-01`, parsed as
+ * midnight UTC) starts at midnight IST on that date, not at 05:30 IST. A full
+ * timestamp is kept as given.
+ */
+export function inclusiveReportFrom(from: Date): Date {
+  return isUtcMidnight(from) ? new Date(from.getTime() - IST_OFFSET_MS) : new Date(from);
+}
+
+/**
+ * A date-only `to` (midnight UTC, or midnight IST once normalised) runs to the end of
+ * that day in IST (23:59:59.999 IST), so the selected end day is inclusive and a
+ * monthly report covers exactly the IST month. A full timestamp is kept as given.
+ */
 export function inclusiveReportTo(to: Date): Date {
-  const end = new Date(to);
-  if (
-    end.getUTCHours() === 0 &&
-    end.getUTCMinutes() === 0 &&
-    end.getUTCSeconds() === 0 &&
-    end.getUTCMilliseconds() === 0
-  ) {
-    end.setUTCHours(23, 59, 59, 999);
-  }
-  return end;
+  if (isUtcMidnight(to)) return new Date(to.getTime() + DAY_MS - IST_OFFSET_MS - 1);
+  if (isIstMidnight(to)) return new Date(to.getTime() + DAY_MS - 1);
+  return new Date(to);
 }
 
 export function normalizeReportFilters(filters: ReportFilters): ReportFilters {
-  return { ...filters, to: inclusiveReportTo(filters.to) };
+  return {
+    ...filters,
+    from: inclusiveReportFrom(filters.from),
+    to: inclusiveReportTo(filters.to),
+  };
 }
 
 export function assertReportRange(filters: ReportFilters) {

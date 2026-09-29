@@ -208,6 +208,7 @@ describe('toTaxInvoiceSourceFromSubOrder', () => {
         },
         items: [
           {
+            id: 'item-a',
             productName: 'Electronics Max 222',
             quantity: 95,
             unitPrice: 2856.54,
@@ -217,7 +218,7 @@ describe('toTaxInvoiceSourceFromSubOrder', () => {
           },
         ],
       },
-      new Map([['cat-a', 'HSN00001234']]),
+      new Map([['item-a', 'HSN00001234']]),
     );
 
     assert.equal(source.invoiceNo, 'TW/2526/00000001');
@@ -258,7 +259,7 @@ describe('toTaxInvoiceSourceFromSubOrder', () => {
           },
         ],
       },
-      new Map([['cat-a', '8517']]),
+      new Map([['item-g', '8517']]),
     );
 
     assert.equal(source.walletAmountUsed, 100);
@@ -377,7 +378,7 @@ describe('toTaxInvoiceSourceFromSubOrder', () => {
           ],
         },
       },
-      new Map([['cat-a', '9405']]),
+      new Map([['item-1', '9405']]),
     );
 
     const line = source.seller.items[0];
@@ -389,6 +390,57 @@ describe('toTaxInvoiceSourceFromSubOrder', () => {
     assert.equal(line?.cgst, 90);
     assert.equal(line?.sgst, 90);
     assert.equal(source.totalAmount, 1180.01);
+  });
+
+  it('uses the HSN, rate and discount frozen on the invoice line', () => {
+    const source = toTaxInvoiceSourceFromSubOrder(
+      {
+        id: 'order-frozen',
+        createdAt: new Date('2026-09-01T00:00:00.000Z'),
+        paymentMethod: 'RAZORPAY',
+        paymentStatus: 'PAID',
+      },
+      {
+        id: 'sub-frozen',
+        taxInvoiceNumber: 'SN/2627/00000002',
+        taxInvoiceIssuedAt: new Date('2026-09-01T00:00:00.000Z'),
+        items: [
+          {
+            id: 'item-9',
+            productName: 'Cotton Tee',
+            quantity: 2,
+            unitPrice: 500,
+            taxableAmount: 900,
+            taxBreakdown: { cgst: 22.5, sgst: 22.5, igst: 0, gstPercentage: 12 },
+          },
+        ],
+        taxInvoiceSnapshot: {
+          totalPaise: 94500,
+          lines: [
+            {
+              orderItemId: 'item-9',
+              quantity: 2,
+              unitPricePaise: 50000,
+              taxablePaise: 90000,
+              cgstPaise: 2250,
+              sgstPaise: 2250,
+              igstPaise: 0,
+              hsnCode: '6109',
+              gstPercentage: 5,
+            },
+          ],
+        },
+      },
+      // Today's rule would say something else: the frozen code wins.
+      new Map([['item-9', '9999']]),
+    );
+
+    const line = source.seller.items[0];
+    assert.equal(line?.hsn, '6109');
+    assert.equal(line?.gstRate, 5);
+    // ₹1,000 before the coupon, ₹900 taxable: ₹100 discount on the invoice.
+    assert.equal(line?.discount, 100);
+    assert.equal(line?.taxable, 900);
   });
 
   it('maps the platform invoice for the gift-wrap fee, seller being the platform', () => {
@@ -428,6 +480,8 @@ describe('toTaxInvoiceSourceFromSubOrder', () => {
       hsn: '9985',
       quantity: 1,
       unitPrice: 41.53,
+      discount: 0,
+      gstRate: 18,
       taxable: 41.53,
       cgst: 3.73,
       sgst: 3.74,

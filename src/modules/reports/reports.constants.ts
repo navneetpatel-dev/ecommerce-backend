@@ -17,6 +17,8 @@ export const TAX_INVOICE_COPY = {
   hsn: 'HSN',
   qty: 'Qty',
   taxable: 'Taxable',
+  discount: 'Disc.',
+  gstRate: 'GST %',
   amount: 'Amount',
   taxableTotal: 'Taxable total',
   taxTotal: 'Tax total',
