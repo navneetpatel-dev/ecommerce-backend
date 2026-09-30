@@ -393,6 +393,13 @@ module.exports = {
     console.log(`✓ Created ${coupons.length} coupons`);
 
     // ─── ORDERS (200) ────────────────────────────────────────
+    // Fixture orders carry the pre-GST list price, quantity and an order total only — no
+    // per-line GST, no snapshot and (a part is invoiced at dispatch, which a seeded
+    // SHIPPED/DELIVERED part never goes through) no tax invoice number. `npm run
+    // seed:orders:money` (scripts/backfill-seeded-order-money.ts — `npm run db:reset` runs it
+    // for you) re-prices them with the same engine checkout uses, freezes the snapshots and
+    // lets the dispatch path allocate the invoice numbers, so their prices add up and their
+    // invoices download.
     console.log('Creating orders...');
     const orders = [];
     const subOrders = [];

@@ -64,6 +64,7 @@ cp .env.example .env
 docker compose up -d
 npm run db:migrate
 npm run db:seed
+npm run seed:orders:money   # GST money + tax invoices for the seeded demo orders
 npm run dev
 ```
 
@@ -104,6 +105,10 @@ npm run db:migrate
 
 # Seed initial data
 npm run db:seed
+
+# Give the seeded demo orders real GST money + tax invoices (their pages and
+# invoice downloads need it; `npm run db:reset` runs this for you)
+npm run seed:orders:money
 ```
 
 4. **Start Redis**:
@@ -139,6 +144,7 @@ npm start              # Run production server
 ```bash
 npm run db:migrate      # Run migrations
 npm run db:seed        # Seed initial data
+npm run seed:orders:money  # Price the seeded demo orders (GST) and issue their invoices
 ```
 
 ### Docker (PostgreSQL + Redis)
