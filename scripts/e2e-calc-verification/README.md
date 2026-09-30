@@ -57,10 +57,13 @@ internally self-consistent.
   (`lib/otpFromQueue.ts`) rather than bypassed — the OTP-issuing code path really runs; only the
   *email send* fails in dev (no real SMTP creds), which doesn't prevent reading the code off the
   job payload.
-- **Shipping data gap (unrelated to calculations):** several vendor/pincode combinations return
-  "No shipping rate is available" (a real seed-data completeness gap in `shipping_rates`, not a
-  calculation bug) — scenario 05 deliberately routes around this using vendor/pincode pairs
-  confirmed to have configured rates (HomeStyle↔Delhi intra-state, TechWorld↔Delhi inter-state).
+- **Shipping data gap (fixed):** the vendor-scoped seed rates only covered a subset of pincode
+  prefixes, so several vendor/pincode combinations returned "No shipping rate is available" —
+  a seed-data completeness gap, not a calculation bug.
+  `20260930000010-seed-platform-shipping-fallback.js` now seeds a pan-India zone with
+  platform-wide rates, so every pincode resolves one; scenario 05 still uses vendor/pincode
+  pairs that have their own vendor rates (HomeStyle↔Delhi intra-state, TechWorld↔Delhi
+  inter-state) so vendor-rate selection stays under test.
 
 ## Bug found and fixed while building this
 

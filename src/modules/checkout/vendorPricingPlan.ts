@@ -1,6 +1,7 @@
 import type { Transaction } from 'sequelize';
+import { AppError } from '@core/errors/AppError';
 import { ValidationError } from '@core/errors/ValidationError';
-import { ERROR_MESSAGES } from '@core/constants/errors';
+import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import type { DiscountBearer } from '@core/constants/statuses';
 import { Vendor } from '@database/models/vendor.model';
 import { resolveVendorShippingQuote } from '@modules/shipping/vendorShippingQuote';
@@ -35,10 +36,7 @@ export type PricedLine = {
   weightGrams: number | null;
 };
 
-export type LineRateMap = Record<
-  string,
-  { gstPercentage: number; gstPriceBand: GstPriceBand | null; commissionRatePercent: number }
->;
+export type LineRateMap = Record<string, { gstPercentage: number; gstPriceBand: GstPriceBand | null; commissionRatePercent: number }>;
 
 export type VendorPricingRow = {
   vendorId: string;
@@ -198,7 +196,10 @@ export async function buildVendorPricingRows(input: {
     });
     if (!shipping.rate) {
       if (input.onMissingRate === 'throw') {
-        throw new ValidationError(ERROR_MESSAGES.SHIPPING_RATE_UNAVAILABLE);
+        // Coded, not a generic VALIDATION_ERROR: the client maps this code to delivery-area
+        // copy and sends the shopper back to the shipping step. A plain ValidationError left
+        // that mapping dead and showed the raw sentence with no way to fix the address.
+        throw new AppError(ERROR_MESSAGES.SHIPPING_RATE_UNAVAILABLE, 422, ERROR_CODES.SHIPPING_RATE_UNAVAILABLE);
       }
       hasEstimatedShipping = true;
     }
@@ -269,8 +270,7 @@ export function priceVendorRows(input: {
         ? Math.min(
             merchandiseDiscountPaise,
             Math.round(
-              (merchandiseDiscountPaise * toPaise(input.shares.vendorBorneDiscountShares[row.vendorId] ?? 0)) /
-                inclusiveDiscountPaise,
+              (merchandiseDiscountPaise * toPaise(input.shares.vendorBorneDiscountShares[row.vendorId] ?? 0)) / inclusiveDiscountPaise,
             ),
           )
         : 0;
