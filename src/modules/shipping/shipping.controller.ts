@@ -5,7 +5,7 @@ import { pageLimitQuerySchema } from '@core/http/pagination';
 import { COOKIES } from '@core/constants/http';
 import { shippingService } from './shipping.service';
 import { deliveryRatingsService } from '@modules/deliveryAgents/deliveryRatings.service';
-import { GetShippingRatesSchema, UpdateRateSchema } from './shipping.dto';
+import { GetShippingRatesSchema, GetServiceabilitySchema, UpdateRateSchema } from './shipping.dto';
 
 export const getRates = asyncHandler(async (req: Request, res: Response) => {
   const query = GetShippingRatesSchema.parse(req.query);
@@ -15,20 +15,18 @@ export const getRates = asyncHandler(async (req: Request, res: Response) => {
   res.json(ok(rates));
 });
 
+export const getServiceability = asyncHandler(async (req: Request, res: Response) => {
+  const query = GetServiceabilitySchema.parse(req.query);
+  res.json(ok(await shippingService.checkServiceability(query)));
+});
+
 export const getShipmentByTracking = asyncHandler(async (req: Request, res: Response) => {
-  const shipment = await shippingService.getShipmentByTracking(
-    req.params.trackingNumber!,
-    req.user ?? null,
-  );
+  const shipment = await shippingService.getShipmentByTracking(req.params.trackingNumber!, req.user ?? null);
   res.json(ok(shipment));
 });
 
 export const rescheduleDelivery = asyncHandler(async (req: Request, res: Response) => {
-  const shipment = await shippingService.rescheduleDelivery(
-    req.params.trackingNumber!,
-    req.user!.id,
-    req.body.slot,
-  );
+  const shipment = await shippingService.rescheduleDelivery(req.params.trackingNumber!, req.user!.id, req.body.slot);
   res.json(ok(shipment));
 });
 
@@ -54,12 +52,7 @@ export const deleteZone = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const submitDeliveryRating = asyncHandler(async (req: Request, res: Response) => {
-  const rating = await deliveryRatingsService.submit(
-    req.params.shipmentId!,
-    req.user!.id,
-    req.body.rating,
-    req.body.comment,
-  );
+  const rating = await deliveryRatingsService.submit(req.params.shipmentId!, req.user!.id, req.body.rating, req.body.comment);
   res.status(201).json(ok(rating));
 });
 

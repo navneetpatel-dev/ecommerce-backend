@@ -5,6 +5,7 @@ import { validate } from '@middleware/validate.middleware';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import {
   GetShippingRatesSchema,
+  GetServiceabilitySchema,
   CreateZoneSchema,
   UpdateZoneSchema,
   CreateRateSchema,
@@ -16,12 +17,9 @@ import * as shippingController from './shipping.controller';
 
 const router = Router();
 
-router.get(
-  '/rates',
-  optionalAuthenticate,
-  validate(GetShippingRatesSchema, 'query'),
-  shippingController.getRates,
-);
+router.get('/rates', optionalAuthenticate, validate(GetShippingRatesSchema, 'query'), shippingController.getRates);
+
+router.get('/serviceability', optionalAuthenticate, validate(GetServiceabilitySchema, 'query'), shippingController.getServiceability);
 
 router.get('/tracking/:trackingNumber', optionalAuthenticate, shippingController.getShipmentByTracking);
 router.post(
@@ -31,12 +29,7 @@ router.post(
   shippingController.rescheduleDelivery,
 );
 router.get('/shipments/:shipmentId/rating', authenticate, shippingController.getDeliveryRating);
-router.post(
-  '/shipments/:shipmentId/rating',
-  authenticate,
-  validate(SubmitDeliveryRatingSchema),
-  shippingController.submitDeliveryRating,
-);
+router.post('/shipments/:shipmentId/rating', authenticate, validate(SubmitDeliveryRatingSchema), shippingController.submitDeliveryRating);
 
 router.get('/zones', authenticate, authorize(PERMISSIONS.SHIPPING_MANAGE), shippingController.listZones);
 router.post('/zones', authenticate, authorize(PERMISSIONS.SHIPPING_MANAGE), validate(CreateZoneSchema), shippingController.createZone);

@@ -7,10 +7,7 @@ export const GetShippingRatesSchema = z
   .object({
     pincode: z.string().trim().regex(PINCODE_PATTERN, ERROR_MESSAGES.PINCODE_INVALID),
     state: z.string().optional(),
-    weight: z.preprocess(
-      (value) => (value === undefined || value === '' ? undefined : value),
-      z.coerce.number().positive().optional(),
-    ),
+    weight: z.preprocess((value) => (value === undefined || value === '' ? undefined : value), z.coerce.number().positive().optional()),
     method: z.enum(SHIPPING_METHOD_VALUES).optional(),
     productId: z.string().uuid().optional(),
     variantId: z.string().uuid().optional(),
@@ -25,6 +22,21 @@ export const GetShippingRatesSchema = z
       });
     }
   });
+
+/** The basket's vendors, so the answer can name the one that does not ship there. */
+function toVendorIdList(value: string | string[]): string[] {
+  return (Array.isArray(value) ? value : value.split(',')).map((part) => part.trim()).filter(Boolean);
+}
+
+export const GetServiceabilitySchema = z.object({
+  pincode: z.string().trim().regex(PINCODE_PATTERN, ERROR_MESSAGES.PINCODE_INVALID),
+  state: z.string().trim().optional(),
+  vendorIds: z
+    .union([z.string(), z.array(z.string())])
+    .optional()
+    .transform((value) => (value === undefined ? undefined : toVendorIdList(value)))
+    .pipe(z.array(z.string().uuid()).max(50).optional()),
+});
 
 export const CreateZoneSchema = z.object({
   name: z.string().min(1),

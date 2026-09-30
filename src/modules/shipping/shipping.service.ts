@@ -27,10 +27,7 @@ import { logAudit } from '@modules/audit/audit.service';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { settingsService } from '@modules/settings/settings.service';
 import { notificationsService } from '@modules/notifications/notifications.service';
-import {
-  DEFAULT_VARIANT_WEIGHT_GRAMS,
-  resolveCartVendorWeightGrams,
-} from './shippingWeight';
+import { DEFAULT_VARIANT_WEIGHT_GRAMS, resolveCartVendorWeightGrams } from './shippingWeight';
 import { resolveShippingDisplayKey } from '@modules/checkout/checkoutOrderTotals';
 import { WebhookPayloadSchema } from './shipping.dto';
 import { deliveryAgentPayoutsService } from '@modules/deliveryAgents/deliveryAgentPayouts.service';
@@ -45,9 +42,7 @@ import { taxService } from '@modules/tax/tax.service';
 /** The platform-wide free-shipping threshold (settings), or null when none is set. */
 function platformFreeShippingThreshold(settings: { freeShippingThreshold?: unknown }): number | null {
   const amount = Number(settings.freeShippingThreshold);
-  return settings.freeShippingThreshold != null && Number.isFinite(amount) && amount >= 0
-    ? amount
-    : null;
+  return settings.freeShippingThreshold != null && Number.isFinite(amount) && amount >= 0 ? amount : null;
 }
 
 /**
@@ -56,22 +51,14 @@ function platformFreeShippingThreshold(settings: { freeShippingThreshold?: unkno
  * used to fall back to the platform threshold while checkout did not, so a customer was
  * shown free shipping and then charged for it.
  */
-function effectiveFreeShippingThreshold(
-  rate: { freeShippingThreshold?: unknown },
-  platformThreshold: number | null,
-): number | null {
+function effectiveFreeShippingThreshold(rate: { freeShippingThreshold?: unknown }, platformThreshold: number | null): number | null {
   if (rate.freeShippingThreshold == null) return platformThreshold;
   const amount = Number(rate.freeShippingThreshold);
   return Number.isFinite(amount) ? amount : platformThreshold;
 }
 
 /** Shipment statuses that mean the goods have been dispatched. */
-const DISPATCHED_SHIPMENT_STATUSES = new Set([
-  'PICKED_UP',
-  'IN_TRANSIT',
-  'OUT_FOR_DELIVERY',
-  'DELIVERED',
-]);
+const DISPATCHED_SHIPMENT_STATUSES = new Set(['PICKED_UP', 'IN_TRANSIT', 'OUT_FOR_DELIVERY', 'DELIVERED']);
 
 export type ShippingQuoteRate = {
   method: 'STANDARD' | 'EXPRESS';
@@ -133,7 +120,10 @@ type TrackingActor = {
 } | null;
 
 function normalizeCarrier(carrier: string): string {
-  return carrier.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  return carrier
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '');
 }
 
 function safeTimingEqual(expected: string, actual: string): boolean {
@@ -159,10 +149,7 @@ async function cascadeOrderDeliveredAndNotify(subOrderId: string, transaction: T
   const allSettled = siblings.every((sibling) => terminal.has(sibling.status));
   const anyDelivered = siblings.some((sibling) => sibling.status === 'DELIVERED');
   if (allSettled && anyDelivered) {
-    await Order.update(
-      { status: ORDER_STATUS.DELIVERED },
-      { where: { id: subOrder.orderId }, transaction },
-    );
+    await Order.update({ status: ORDER_STATUS.DELIVERED }, { where: { id: subOrder.orderId }, transaction });
   }
 
   const order = await Order.findByPk(subOrder.orderId, { transaction, attributes: ['userId'] });
@@ -183,10 +170,7 @@ async function cascadeOrderDeliveredAndNotify(subOrderId: string, transaction: T
  * 5. If prepaid, credits refund to customer's wallet
  * 6. Notifies customer of RTO completion and refund
  */
-async function cascadeRtoDeliveredAndSettle(
-  subOrderId: string,
-  transaction: Transaction,
-): Promise<void> {
+async function cascadeRtoDeliveredAndSettle(subOrderId: string, transaction: Transaction): Promise<void> {
   const subOrder = (await SubOrder.findByPk(subOrderId, {
     include: [
       { model: OrderItem, as: 'items' },
@@ -224,11 +208,7 @@ async function cascadeRtoDeliveredAndSettle(
     if (allSettled) {
       const anyDelivered = siblings.some((s) => s.status === 'DELIVERED');
       const allReturned = siblings.every((s) => s.status === 'RETURNED');
-      const targetStatus = anyDelivered
-        ? ORDER_STATUS.DELIVERED
-        : allReturned
-          ? ORDER_STATUS.RETURNED
-          : ORDER_STATUS.CANCELLED;
+      const targetStatus = anyDelivered ? ORDER_STATUS.DELIVERED : allReturned ? ORDER_STATUS.RETURNED : ORDER_STATUS.CANCELLED;
       await Order.update(
         {
           status: targetStatus,
@@ -251,11 +231,7 @@ async function cascadeRtoDeliveredAndSettle(
 }
 
 /** Prompts the customer to reschedule (or informs them of RTO) after a failed doorstep attempt. */
-async function notifyCustomerOfFailedAttempt(
-  shipment: Shipment,
-  resolvedStatus: string,
-  transaction: Transaction,
-): Promise<void> {
+async function notifyCustomerOfFailedAttempt(shipment: Shipment, resolvedStatus: string, transaction: Transaction): Promise<void> {
   const subOrder = await SubOrder.findByPk(shipment.subOrderId, { transaction });
   if (!subOrder) return;
   const order = await Order.findByPk(subOrder.orderId, { transaction, attributes: ['userId'] });
@@ -288,16 +264,52 @@ async function settleCodPaymentIfComplete(subOrderId: string, transaction: Trans
     transaction,
   })) as (Shipment & { subOrder?: SubOrder })[];
   const codShipments = siblingShipments.filter(
-    (s) =>
-      s.codAmount != null &&
-      s.status !== 'RTO_INITIATED' &&
-      s.status !== 'RTO_DELIVERED' &&
-      !isReversedPart(s.subOrder?.status),
+    (s) => s.codAmount != null && s.status !== 'RTO_INITIATED' && s.status !== 'RTO_DELIVERED' && !isReversedPart(s.subOrder?.status),
   );
   const allCollected = codShipments.length > 0 && codShipments.every((s) => s.codCollected);
   if (allCollected) {
     await order.update({ paymentStatus: PAYMENT_STATUS.PAID }, { transaction });
   }
+}
+
+/** What a zone's rates say about delivering a basket there (see `checkServiceability`). */
+export type ServiceabilityVendor = {
+  vendorId: string;
+  serviceable: boolean;
+  methods: string[];
+  estimatedDays: { min: number; max: number } | null;
+  /** Lowest free-shipping threshold among the vendor's rates, or null when none applies. */
+  freeShippingThreshold: number | null;
+};
+
+export type PincodeServiceability = {
+  pincode: string;
+  /** True when every vendor asked about serves the pincode (any rate, when none was asked). */
+  serviceable: boolean;
+  vendors: ServiceabilityVendor[];
+  methods: string[];
+  estimatedDays: { min: number; max: number } | null;
+  /**
+   * The zone-wide threshold, when the answer isn't scoped to vendors. Per-vendor answers
+   * carry theirs on the vendor, because only a rate its vendor keeps may be promised.
+   */
+  freeShippingThreshold: number | null;
+};
+
+function summarizeServiceability(rates: ShippingRate[], platformThreshold: number | null): Omit<ServiceabilityVendor, 'vendorId'> {
+  if (!rates.length) {
+    return { serviceable: false, methods: [], estimatedDays: null, freeShippingThreshold: null };
+  }
+  const days = rates.map((rate) => Number(rate.estimatedDays));
+  const thresholds = rates
+    .map((rate) => effectiveFreeShippingThreshold(rate, platformThreshold))
+    .filter((value): value is number => value != null);
+  return {
+    serviceable: true,
+    methods: [...new Set(rates.map((rate) => String(rate.method)))].sort(),
+    estimatedDays: { min: Math.min(...days), max: Math.max(...days) },
+    freeShippingThreshold: thresholds.length ? Math.min(...thresholds) : null,
+  };
 }
 
 export const shippingService = {
@@ -313,8 +325,7 @@ export const shippingService = {
       const normalizedState = state?.trim().toLowerCase();
       return (zone.states ?? []).some(
         (candidate) =>
-          String(candidate).toLowerCase() === 'all' ||
-          (normalizedState != null && String(candidate).toLowerCase() === normalizedState),
+          String(candidate).toLowerCase() === 'all' || (normalizedState != null && String(candidate).toLowerCase() === normalizedState),
       );
     });
   },
@@ -326,16 +337,11 @@ export const shippingService = {
     state?: string;
     vendorId?: string | null;
   }): Promise<ShippingQuoteRate[]> {
-    const zones = await shippingService.resolveZonesForPincode(
-      params.pincode,
-      params.state,
-    );
+    const zones = await shippingService.resolveZonesForPincode(params.pincode, params.state);
     if (!zones.length) return [];
 
     const zoneIds = zones.map((zone) => zone.id);
-    const methodFilter = params.method
-      ? { method: params.method.toUpperCase() }
-      : {};
+    const methodFilter = params.method ? { method: params.method.toUpperCase() } : {};
     const weightFloorWhere = {
       zoneId: { [Op.in]: zoneIds },
       minWeightGrams: { [Op.lte]: params.weightGrams },
@@ -348,20 +354,19 @@ export const shippingService = {
     // parcels), never one slab price for any weight.
     const rates = await ShippingRate.findAll({
       where: weightFloorWhere,
-      order: [['maxWeightGrams', 'DESC'], ['price', 'ASC']],
+      order: [
+        ['maxWeightGrams', 'DESC'],
+        ['price', 'ASC'],
+      ],
     });
 
     let scoped = rates;
     if (params.vendorId) {
       const vendorRates = rates.filter((rate) => rate.vendorId === params.vendorId);
-      scoped = vendorRates.length
-        ? vendorRates
-        : rates.filter((rate) => rate.vendorId == null);
+      scoped = vendorRates.length ? vendorRates : rates.filter((rate) => rate.vendorId == null);
     }
 
-    const platformThreshold = platformFreeShippingThreshold(
-      await settingsService.getPlatformSettings(),
-    );
+    const platformThreshold = platformFreeShippingThreshold(await settingsService.getPlatformSettings());
     const byMethod = new Map<string, ShippingRate[]>();
     for (const rate of scoped) {
       byMethod.set(rate.method, [...(byMethod.get(rate.method) ?? []), rate]);
@@ -373,9 +378,7 @@ export const shippingService = {
         .sort((a, b) => Number(a.price) - Number(b.price))[0];
       // `methodRates` is ordered highest slab first, cheapest first within it.
       const rate = covering ?? methodRates[0]!;
-      const cost = covering
-        ? Number(rate.price)
-        : slabParcelsCost(Number(rate.price), Number(rate.maxWeightGrams), params.weightGrams);
+      const cost = covering ? Number(rate.price) : slabParcelsCost(Number(rate.price), Number(rate.maxWeightGrams), params.weightGrams);
       cheapestByMethod.set(method, {
         method: rate.method,
         cost,
@@ -403,9 +406,7 @@ export const shippingService = {
       if (!product) throw new NotFoundError('Product');
       vendorId = vendorId ?? product.vendorId;
       const variants = product.variants ?? [];
-      const variant = query.variantId
-        ? variants.find((row) => row.id === query.variantId) ?? null
-        : variants[0] ?? null;
+      const variant = query.variantId ? (variants.find((row) => row.id === query.variantId) ?? null) : (variants[0] ?? null);
       if (query.variantId && !variant) throw new NotFoundError('ProductVariant');
       weightGrams = Number(variant?.weightGrams ?? DEFAULT_VARIANT_WEIGHT_GRAMS);
       // The free-shipping threshold is on what the customer pays, GST included.
@@ -442,6 +443,63 @@ export const shippingService = {
         shippingDisplayKey: resolveShippingDisplayKey(cost),
       };
     });
+  },
+
+  /**
+   * Whether a pincode can be delivered to at all, and which of the basket's vendors serve it.
+   *
+   * This reports the zone's inventory of rates rather than a quote: weight is deliberately
+   * left out, so a vendor whose slabs start above the basket's weight isn't called
+   * unserviceable — the quote (with the real weight) answers what delivery costs. A vendor is
+   * served by its own rates in the zone, else by the platform-wide ones, the same scoping
+   * `getRatesForQuote` applies; a pincode no zone covers is served by nobody. With no zone,
+   * or with a vendor the zone has no rate for, the answer is a hard "no" — that is what stops
+   * the funnel at the address step instead of failing at payment.
+   */
+  async checkServiceability(params: { pincode: string; state?: string; vendorIds?: string[] }): Promise<PincodeServiceability> {
+    const vendorIds = params.vendorIds ?? [];
+    const zones = await shippingService.resolveZonesForPincode(params.pincode, params.state);
+    if (!zones.length) {
+      return {
+        pincode: params.pincode,
+        serviceable: false,
+        vendors: vendorIds.map((vendorId) => ({
+          vendorId,
+          ...summarizeServiceability([], null),
+        })),
+        methods: [],
+        estimatedDays: null,
+        freeShippingThreshold: null,
+      };
+    }
+
+    const rates = await ShippingRate.findAll({
+      where: { zoneId: { [Op.in]: zones.map((zone) => zone.id) } },
+    });
+    const platformThreshold = platformFreeShippingThreshold(await settingsService.getPlatformSettings());
+
+    if (!vendorIds.length) {
+      // No basket context (a pincode typed before anything is added): answer for the zone.
+      return { pincode: params.pincode, ...summarizeServiceability(rates, platformThreshold), vendors: [] };
+    }
+
+    const vendors = vendorIds.map((vendorId) => {
+      const own = rates.filter((rate) => rate.vendorId === vendorId);
+      const scoped = own.length ? own : rates.filter((rate) => rate.vendorId == null);
+      return { vendorId, ...summarizeServiceability(scoped, platformThreshold) };
+    });
+    const served = vendors.filter((vendor) => vendor.serviceable);
+    const days = served.flatMap((vendor) => (vendor.estimatedDays ? [vendor.estimatedDays.min, vendor.estimatedDays.max] : []));
+    return {
+      pincode: params.pincode,
+      // One unserved vendor means the basket cannot be delivered as it stands.
+      serviceable: vendors.every((vendor) => vendor.serviceable),
+      vendors,
+      methods: [...new Set(served.flatMap((vendor) => vendor.methods))].sort(),
+      estimatedDays: days.length ? { min: Math.min(...days), max: Math.max(...days) } : null,
+      // Scoped to vendors: their own thresholds are on the vendors, not here.
+      freeShippingThreshold: null,
+    };
   },
 
   async listZones(query: { page: number; limit: number }) {
@@ -568,12 +626,14 @@ export const shippingService = {
         {
           model: SubOrder,
           as: 'subOrder',
-          include: [{
-            model: Order,
-            as: 'order',
-            attributes: ['userId'],
-            include: [{ model: Address, as: 'shippingAddress', attributes: ['lat', 'lng'] }],
-          }],
+          include: [
+            {
+              model: Order,
+              as: 'order',
+              attributes: ['userId'],
+              include: [{ model: Address, as: 'shippingAddress', attributes: ['lat', 'lng'] }],
+            },
+          ],
           attributes: ['vendorId'],
         },
         {
@@ -612,9 +672,7 @@ export const shippingService = {
       throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_ORDER);
     }
     const plain = shipment.get({ plain: true }) as Record<string, unknown>;
-    const destinationAddress = subOrder?.order?.shippingAddress as
-      | { lat: number | null; lng: number | null }
-      | undefined;
+    const destinationAddress = subOrder?.order?.shippingAddress as { lat: number | null; lng: number | null } | undefined;
     return {
       ...plain,
       lastUpdate: shipment.updatedAt,
@@ -629,15 +687,16 @@ export const shippingService = {
   async rescheduleDelivery(trackingNumber: string, userId: string, slot: string): Promise<Shipment> {
     const shipment = await Shipment.findOne({
       where: { trackingNumber },
-      include: [{
-        model: SubOrder,
-        as: 'subOrder',
-        include: [{ model: Order, as: 'order', attributes: ['userId'] }],
-      }],
+      include: [
+        {
+          model: SubOrder,
+          as: 'subOrder',
+          include: [{ model: Order, as: 'order', attributes: ['userId'] }],
+        },
+      ],
     });
     if (!shipment) throw new NotFoundError('Shipment');
-    const owner = (shipment as Shipment & { subOrder?: SubOrder & { order?: Order } }).subOrder?.order
-      ?.userId;
+    const owner = (shipment as Shipment & { subOrder?: SubOrder & { order?: Order } }).subOrder?.order?.userId;
     if (owner !== userId) throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_ORDER);
     if (shipment.status === 'RTO_INITIATED' || shipment.status === 'RTO_DELIVERED') {
       throw new ValidationError({
@@ -651,12 +710,7 @@ export const shippingService = {
     return shipment;
   },
 
-  async handleWebhook(
-    carrier: string,
-    rawBody: Buffer | string,
-    signature: string | undefined,
-    suppliedEventId?: string,
-  ) {
+  async handleWebhook(carrier: string, rawBody: Buffer | string, signature: string | undefined, suppliedEventId?: string) {
     const normalizedCarrier = normalizeCarrier(carrier);
     const secret = env.SHIPPING_WEBHOOK_SECRETS[normalizedCarrier];
     if (!secret) {
@@ -696,21 +750,15 @@ export const shippingService = {
       });
       if (!created) return { received: true, duplicate: true };
 
-      const shipment = await shippingService.processWebhook(
-        trackingNumber,
-        status,
-        transaction,
-      );
+      const shipment = await shippingService.processWebhook(trackingNumber, status, transaction);
       return { received: true, duplicate: false, shipment };
     });
   },
 
-  async processWebhook(
-    trackingNumber: string,
-    status: string,
-    transaction?: Transaction,
-  ) {
-    const normalizedStatus = String(status).toUpperCase().replace(/[\s-]+/g, '_');
+  async processWebhook(trackingNumber: string, status: string, transaction?: Transaction) {
+    const normalizedStatus = String(status)
+      .toUpperCase()
+      .replace(/[\s-]+/g, '_');
     const mappedStatus = WEBHOOK_STATUS_MAP[normalizedStatus];
     if (!mappedStatus) throw new ValidationError(ERROR_MESSAGES.SHIPPING_STATUS_UNSUPPORTED);
 
@@ -721,20 +769,10 @@ export const shippingService = {
     });
     if (!shipment) throw new NotFoundError('Shipment');
 
-    return shippingService.applyShipmentStatus(
-      shipment,
-      mappedStatus,
-      { updatedBy: null },
-      transaction,
-    );
+    return shippingService.applyShipmentStatus(shipment, mappedStatus, { updatedBy: null }, transaction);
   },
 
-  async applyShipmentStatus(
-    shipment: Shipment,
-    status: string,
-    extra: Partial<Shipment> = {},
-    existingTransaction?: Transaction,
-  ) {
+  async applyShipmentStatus(shipment: Shipment, status: string, extra: Partial<Shipment> = {}, existingTransaction?: Transaction) {
     const apply = async (transaction: Transaction) => {
       if (shipment.status === status) {
         if (isTerminalShipmentStatus(status) || status === 'FAILED') {
@@ -748,13 +786,8 @@ export const shippingService = {
       }
 
       const isFailedAttempt = status === 'FAILED';
-      const nextFailedCount = isFailedAttempt
-        ? Number(shipment.failedAttemptCount ?? 0) + 1
-        : shipment.failedAttemptCount;
-      const resolvedStatus =
-        isFailedAttempt && nextFailedCount >= MAX_DELIVERY_ATTEMPTS
-          ? 'RTO_INITIATED'
-          : status;
+      const nextFailedCount = isFailedAttempt ? Number(shipment.failedAttemptCount ?? 0) + 1 : shipment.failedAttemptCount;
+      const resolvedStatus = isFailedAttempt && nextFailedCount >= MAX_DELIVERY_ATTEMPTS ? 'RTO_INITIATED' : status;
       const isCodDelivery = status === 'DELIVERED' && shipment.codAmount != null;
 
       await shipment.update(
@@ -779,19 +812,11 @@ export const shippingService = {
         await issueTaxInvoicesOnDispatch(shipment.subOrderId, transaction);
       }
       if (status === 'DELIVERED') {
-        await SubOrder.update(
-          { status: 'DELIVERED' },
-          { where: { id: shipment.subOrderId }, transaction },
-        );
+        await SubOrder.update({ status: 'DELIVERED' }, { where: { id: shipment.subOrderId }, transaction });
         await cascadeOrderDeliveredAndNotify(shipment.subOrderId, transaction);
         await settleCodPaymentIfComplete(shipment.subOrderId, transaction);
         if (shipment.deliveryAgentId) {
-          await deliveryAgentPayoutsService.recordEarning(
-            shipment.deliveryAgentId,
-            'DELIVERY',
-            shipment.id,
-            transaction,
-          );
+          await deliveryAgentPayoutsService.recordEarning(shipment.deliveryAgentId, 'DELIVERY', shipment.id, transaction);
         }
       }
       if (status === 'RTO_DELIVERED') {
@@ -827,9 +852,7 @@ export const shippingService = {
           attributes: ['freeShippingThreshold'],
         });
     if (!rates.length) return null;
-    const platformThreshold = platformFreeShippingThreshold(
-      await settingsService.getPlatformSettings(),
-    );
+    const platformThreshold = platformFreeShippingThreshold(await settingsService.getPlatformSettings());
     const thresholds = rates.map((rate) => effectiveFreeShippingThreshold(rate, platformThreshold));
     if (thresholds.some((threshold) => threshold == null)) return null;
     return Math.max(...(thresholds as number[]));
@@ -837,7 +860,5 @@ export const shippingService = {
 };
 
 /** Bound exports — do not destructure methods from `shippingService` (breaks `this`). */
-export const resolveZonesForPincode = shippingService.resolveZonesForPincode.bind(
-  shippingService,
-);
+export const resolveZonesForPincode = shippingService.resolveZonesForPincode.bind(shippingService);
 export const getRatesForQuote = shippingService.getRatesForQuote.bind(shippingService);
