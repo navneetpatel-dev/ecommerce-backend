@@ -1,7 +1,7 @@
 import { Worker } from 'bullmq';
 import { areQueuesReady, getQueueConnection, queues } from '@config/queue';
 import { logger } from '@core/logger';
-import { runS3OrphanCleanup, S3_ORPHAN_CLEANUP_JOB } from './s3OrphanCleanup';
+import { runS3OrphanCleanup, S3_ORPHAN_CLEANUP_JOB } from './s3OrphanCleanup.job';
 import {
   WALLET_RECHARGE_EXPIRY_JOB,
   runWalletRechargeExpiry,
@@ -9,7 +9,7 @@ import {
 import { REFUND_RETRY_JOB, runRefundRetry } from './refundRetry.processor';
 import { CHECKOUT_EXPIRY_JOB, runCheckoutExpiry } from './checkoutExpiry.processor';
 import { PROMO_POINTS_EXPIRY_JOB, runPromoPointsExpiry } from './promoPointsExpiry.processor';
-import { EXPORT_CLEANUP_JOB, EXPORT_STALE_PROCESSING_SWEEP_JOB, runExportCleanup, runStaleProcessingSweep } from './exportCleanup';
+import { EXPORT_CLEANUP_JOB, EXPORT_STALE_PROCESSING_SWEEP_JOB, runExportCleanup, runStaleProcessingSweep } from './exportCleanup.job';
 
 const REPEAT_JOB_ID = 's3-orphan-cleanup-daily';
 const WALLET_RECHARGE_EXPIRY_JOB_ID = 'wallet-recharge-expiry-hourly';

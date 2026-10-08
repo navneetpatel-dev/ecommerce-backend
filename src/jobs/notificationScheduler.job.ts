@@ -43,11 +43,7 @@ async function processAbandonedCarts(): Promise<number> {
 
 async function processLowStock(): Promise<number> {
   const variants = await ProductVariant.findAll({
-    where: Sequelize.where(
-      Sequelize.col('stock'),
-      Op.lte,
-      Sequelize.col('lowStockAt'),
-    ),
+    where: Sequelize.where(Sequelize.col('stock'), Op.lte, Sequelize.col('lowStockAt')),
     include: [{ model: Product, as: 'product', required: true }],
     limit: 100,
   });
@@ -209,18 +205,18 @@ export async function runNotificationSchedulerTick(): Promise<void> {
       docsExpiring,
       docsExpired,
     ] = await Promise.all([
-        processAbandonedCarts(),
-        processLowStock(),
-        processReviewRequests(),
-        processWishlistPriceDrops(),
-        processPendingCashbackCredits(),
-        supportTicketsService.closeExpiredResolved(),
-        supportTicketsService.escalateOverdueTickets(),
-        bugReportsService.markVerifiedIfDue(),
-        bugReportsService.markClosedIfDue(),
-        processExpiringAgentDocuments(),
-        processExpiredAgentDocuments(),
-      ]);
+      processAbandonedCarts(),
+      processLowStock(),
+      processReviewRequests(),
+      processWishlistPriceDrops(),
+      processPendingCashbackCredits(),
+      supportTicketsService.closeExpiredResolved(),
+      supportTicketsService.escalateOverdueTickets(),
+      bugReportsService.markVerifiedIfDue(),
+      bugReportsService.markClosedIfDue(),
+      processExpiringAgentDocuments(),
+      processExpiredAgentDocuments(),
+    ]);
     const total =
       abandoned +
       lowStock +

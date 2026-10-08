@@ -1,5 +1,7 @@
 'use strict';
 
+const { assertSeedingAllowed } = require('../seedGuard');
+
 const { randomUUID } = require('crypto');
 
 const PENDING_REVIEW_MARKER = '[Seed] Awaiting moderation';
@@ -11,6 +13,7 @@ const AUDIT_SEED_ACTION = 'SEED_AUDIT_FIXTURE';
  */
 module.exports = {
   async up(queryInterface) {
+    assertSeedingAllowed('20240101000006-seed-admin-reviews-audit.js');
     const now = new Date();
     const sequelize = queryInterface.sequelize;
 

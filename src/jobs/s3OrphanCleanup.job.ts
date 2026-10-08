@@ -31,17 +31,7 @@ function collectKeysFromUrls(urls: Array<string | null | undefined>, into: Set<s
 async function loadReferencedKeys(): Promise<Set<string>> {
   const keys = new Set<string>();
 
-  const [
-    images,
-    vendors,
-    documents,
-    categories,
-    users,
-    returns,
-    banners,
-    ticketAttachments,
-    bugAttachments,
-  ] = await Promise.all([
+  const [images, vendors, documents, categories, users, returns, banners, ticketAttachments, bugAttachments] = await Promise.all([
     ProductImage.findAll({
       attributes: ['url'],
       include: [{ model: Product, attributes: [], required: true }],
@@ -106,10 +96,7 @@ async function loadReferencedKeys(): Promise<Set<string>> {
 async function pruneUploadDraftClaims(dryRun: boolean): Promise<number> {
   const cutoff = new Date(Date.now() - UPLOAD_DRAFT_RETENTION_MS);
   if (dryRun) return 0;
-  const [, affected] = await sequelize.query(
-    `DELETE FROM upload_drafts WHERE "createdAt" < :cutoff`,
-    { replacements: { cutoff } },
-  );
+  const [, affected] = await sequelize.query(`DELETE FROM upload_drafts WHERE "createdAt" < :cutoff`, { replacements: { cutoff } });
   return Number((affected as { rowCount?: number } | undefined)?.rowCount ?? 0);
 }
 

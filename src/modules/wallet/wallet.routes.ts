@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { authenticate } from '@middleware/auth.middleware';
 import { validate } from '@middleware/validate.middleware';
-import { validateCreateWalletRecharge } from '@middleware/validateWalletRecharge.middleware';
+import { validateCreateWalletRecharge } from './walletRecharge.middleware';
 import { reportExportGuard } from '@modules/reports/reportExportGuard';
 import * as walletController from './wallet.controller';
 import { VerifyWalletRechargeSchema, WalletRechargePreviewSchema } from './walletRecharge.dto';

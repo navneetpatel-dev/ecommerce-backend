@@ -1,5 +1,7 @@
 'use strict';
 
+const { assertSeedingAllowed } = require('../seedGuard');
+
 /**
  * Report-engine verification fixture:
  * - two vendors in different states
@@ -14,6 +16,7 @@ const SLUG_B = 'report-fixture-vendor-mh';
 
 module.exports = {
   async up(queryInterface) {
+    assertSeedingAllowed('20240101000009-seed-report-engine-fixture.js');
     const [aRows] = await queryInterface.sequelize.query(
       `SELECT id FROM vendors WHERE slug = :slug LIMIT 1`,
       { replacements: { slug: SLUG_A } },

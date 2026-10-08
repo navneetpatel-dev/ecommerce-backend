@@ -1,5 +1,7 @@
 'use strict';
 
+const { assertSeedingAllowed } = require('../seedGuard');
+
 /**
  * Seeds support tickets + bug reports for a specific customer email
  * so that account can be used to verify list/detail/thread UX.
@@ -39,6 +41,7 @@ function pick(arr, index) {
 
 module.exports = {
   async up(queryInterface) {
+    assertSeedingAllowed('20240101000082-seed-amit-support.js');
     const [users] = await queryInterface.sequelize.query(
       `SELECT u.id, u.email, r.name AS role
        FROM users u

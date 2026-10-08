@@ -2,7 +2,7 @@ import type { Worker } from 'bullmq';
 import { areQueuesReady } from '@config/queue';
 import { logger } from '@core/logger';
 import { startEmailWorkers, stopEmailWorkers } from './email.processor';
-import { startNotificationScheduler, stopNotificationScheduler } from './notificationScheduler';
+import { startNotificationScheduler, stopNotificationScheduler } from './notificationScheduler.job';
 import { startProductAffinityScheduler, stopProductAffinityScheduler } from './productAffinity.processor';
 import { startReportExportWorker, stopReportExportWorker } from './reportExport.processor';
 import { startExportWorker, stopExportWorker } from './export.processor';

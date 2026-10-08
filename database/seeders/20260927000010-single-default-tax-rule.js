@@ -1,5 +1,7 @@
 'use strict';
 
+const { assertSeedingAllowed } = require('../seedGuard');
+
 /**
  * One default tax rule (no category), at 18% — India's standard GST rate and what the app
  * charges when no rule applies at all. Earlier seeds created four defaults (5/12/18/28%),
@@ -19,6 +21,7 @@ const DEFAULT_GST_PERCENTAGE = 18;
 
 module.exports = {
   async up(queryInterface) {
+    assertSeedingAllowed('20260927000010-single-default-tax-rule.js');
     const now = new Date();
     await queryInterface.sequelize.transaction(async (transaction) => {
       const [keepers] = await queryInterface.sequelize.query(

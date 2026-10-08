@@ -3,7 +3,6 @@ import helmet from 'helmet';
 import cors from 'cors';
 import compression from 'compression';
 import cookieParser from 'cookie-parser';
-import mongoSanitize from 'express-mongo-sanitize';
 import { env } from '@config/env';
 import { sequelize } from '@config/db';
 import { redisClient } from '@config/redis';
@@ -48,10 +47,12 @@ app.use(
 );
 app.use(
   cors({
+    // Local-dev origins are compiled in only outside production.
     origin: [
       env.CLIENT_URL,
-      'http://localhost:5173',
-      'http://localhost:3000',
+      ...(env.NODE_ENV !== 'production'
+        ? ['http://localhost:5173', 'http://localhost:3000']
+        : []),
     ],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -67,7 +68,6 @@ app.use(SHIPPING_WEBHOOKS_RAW_PATH, express.raw({ type: 'application/json' }));
 
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
-app.use(mongoSanitize());
 
 // Liveness — zero I/O; exempt from rate limiting (registered before limiter).
 app.get(HEALTH_LIVE_PATH, (_req, res) => {

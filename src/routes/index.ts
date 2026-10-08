@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { API_MOUNTS } from '@core/constants/apiPaths';
 import { NotFoundError } from '@core/errors/NotFoundError';
-import { authRoutes } from '@modules/auth/auth.routes';
+import authRoutes from '@modules/auth/auth.routes';
 import usersRoutes from '@modules/users/users.routes';
 import vendorsRoutes from '@modules/vendors/vendors.routes';
 import adminRoutes from '@modules/admin/admin.routes';

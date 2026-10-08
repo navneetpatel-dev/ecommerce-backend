@@ -1,5 +1,7 @@
 'use strict';
 
+const { assertSeedingAllowed } = require('../seedGuard');
+
 const { randomUUID } = require('crypto');
 
 /**
@@ -93,6 +95,7 @@ async function deleteSeedProducts(queryInterface) {
 
 module.exports = {
   async up(queryInterface) {
+    assertSeedingAllowed('20240101000007-seed-category-system.js');
     const stamp = new Date();
 
     const [vendors] = await queryInterface.sequelize.query(

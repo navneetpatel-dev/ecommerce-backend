@@ -1,5 +1,7 @@
 'use strict';
 
+const { assertSeedingAllowed } = require('../seedGuard');
+
 const { v4: uuidv4 } = require('uuid');
 
 const PLATFORM_VALUE = {
@@ -20,6 +22,7 @@ const PLATFORM_VALUE = {
 
 module.exports = {
   async up(queryInterface) {
+    assertSeedingAllowed('20240101000004-seed-platform-settings.js');
     const now = new Date();
     const [existing] = await queryInterface.sequelize.query(
       `SELECT id FROM platform_settings WHERE key = 'platform' AND "deletedAt" IS NULL LIMIT 1`,

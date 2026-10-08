@@ -1,5 +1,7 @@
 'use strict';
 
+const { assertSeedingAllowed } = require('../seedGuard');
+
 const { v4: uuidv4 } = require('uuid');
 
 /**
@@ -44,6 +46,7 @@ const PLATFORM_RATES = [
 
 module.exports = {
   async up(queryInterface) {
+    assertSeedingAllowed('20260930000010-seed-platform-shipping-fallback.js');
     const now = new Date();
 
     await queryInterface.sequelize.transaction(async (transaction) => {

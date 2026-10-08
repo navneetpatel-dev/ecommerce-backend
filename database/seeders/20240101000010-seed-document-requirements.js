@@ -1,5 +1,7 @@
 'use strict';
 
+const { assertSeedingAllowed } = require('../seedGuard');
+
 const { v4: uuidv4 } = require('uuid');
 
 /**
@@ -43,6 +45,7 @@ async function ensureCategoryBySlug(queryInterface, slug, now) {
 
 module.exports = {
   async up(queryInterface) {
+    assertSeedingAllowed('20240101000010-seed-document-requirements.js');
     const now = new Date();
     const rows = [];
 

@@ -121,3 +121,38 @@ Colocated `__tests__/` folders next to the code under test, `.test.ts` suffix, r
 | No stored procedures / SQL-side business logic introduced | All steps | ✅ |
 
 The one item this audit flags rather than claims: `modules/productQna/`'s lack of a `.repository.ts` layer (queries inline in the service) is unusual relative to larger modules like `users`/`products`, but consistent with other small modules (`reviews`) — F-07 preserves this shape rather than introducing a repository layer that doesn't otherwise exist in this module, since doing so would be scope creep beyond the finding.
+
+---
+
+## 11. Maintenance policies (structural-fix round, 2026-10-08)
+
+Codified decisions that previously existed only as unwritten practice:
+
+### 11.1 Repository-layer policy
+`<domain>.repository.ts` is **required** for a module when either holds:
+- its service performs financial or state-machine mutations (orders, payments, wallet, returns, checkout, suborders, payouts), or
+- its service exceeds ~400 lines or ~15 direct model call sites.
+
+Small modules (`reviews`, `wishlist`, `productQna`, `newsletter`, …) may keep queries inline in the service — this is the "where present" allowance from §2, now made explicit. The `webhooks` gateway module is controller-only by design: signature verification and handling live in the owning domains (payments / notifications); its route file stays a thin mount table.
+
+### 11.2 Jobs file convention
+- `<name>.processor.ts` — BullMQ `Worker` wiring only (queue name, connection, dispatch).
+- `<name>.job.ts` — the schedulable job logic (`run*` functions + job-name constants) invoked by a processor or a start/stop scheduler.
+
+`exportCleanup.job.ts`, `notificationScheduler.job.ts`, and `s3OrphanCleanup.job.ts` follow this; processor and logic in one file (e.g. `email.processor.ts`) stay combined.
+
+### 11.3 Line-limit ratchet
+`npm run limits` (`scripts/check-line-limits.mjs`) freezes every source file currently above 300 lines in `scripts/line-limits-baseline.json`. Baseline files may only shrink; new files must stay ≤300 lines. It runs as part of `npm run lint`, so CI enforces it. Re-baseline only through a reviewed `--init`.
+
+### 11.4 Seeders
+Every seeder calls `assertSeedingAllowed('<file>')` from `database/seedGuard.js` before writing. Seeding refuses to run with `NODE_ENV=production` unless `ALLOW_PROD_SEED=true` is set deliberately.
+
+### 11.5 Toolchain note (TypeScript 7 + ESLint 8)
+`tsc` runs on `typescript@7`; `@typescript-eslint` 8 still requires the TS 6 programmatic API, so `scripts/resolve-typescript6.cjs` redirects `require('typescript')` to `@typescript/typescript6` **only while ESLint runs** (`node -r ./scripts/resolve-typescript6.cjs …`). Remove the shim once typescript-eslint ships TS 7 support.
+
+### 11.6 Docs layout
+Repo root holds only `README.md` and this file. Integration/user docs live in `docs/` (DOCKER, POSTMAN, TEST_CREDENTIALS, ROLES_AND_RELATIONSHIPS, razorpay-integration, runbooks); historical plan docs are archived under `docs/archive/`.
+
+### 11.7 Pricing module exception
+`modules/pricing/` is a pure calculation service consumed by other modules (no routes/controller/dto of its own). This is intentional and is the most-tested area of the repo; do not add routes without a product decision.
+

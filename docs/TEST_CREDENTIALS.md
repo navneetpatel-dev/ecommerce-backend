@@ -1,6 +1,7 @@
 # Test Credentials for E-Commerce Application
 
 ## Default Admin Account (Created by existing seeder)
+
 - **Email**: admin@ecommerce.com
 - **Password**: Admin@123 (or from ADMIN_PASSWORD env variable)
 - **Role**: SUPER_ADMIN
@@ -11,6 +12,7 @@
 ## Admin Accounts
 
 ### 1. Order Manager Admin
+
 - **Email**: orderadmin@ecommerce.com
 - **Password**: Test@123
 - **Role**: ADMIN_ORDER_MANAGER
@@ -18,6 +20,7 @@
 - **Description**: Specialized for order management, customer service, and refund processing
 
 ### 2. Catalog Manager Admin
+
 - **Email**: catalogadmin@ecommerce.com
 - **Password**: Test@123
 - **Role**: ADMIN_CATALOG_MANAGER
@@ -156,6 +159,7 @@ Staff emails follow pattern: **staff@{vendorname}.com**
 All passwords: **Test@123**
 
 Examples:
+
 - staff@techworld.com
 - staff@fashionhub.com
 - staff@homestyle.com
@@ -174,8 +178,8 @@ All customer passwords: **Test@123**
 3. **customer3@example.com** - Has active cart and wishlist
 4. **customer4@example.com** - Has order history
 5. **customer5@example.com** - Has wallet transactions
-...
-100. **customer100@example.com**
+   ...
+6. **customer100@example.com**
 
 **Note**: Customers 1-40 have wallet transactions, 1-50 have active carts, 1-60 have wishlists
 
@@ -184,6 +188,7 @@ All customer passwords: **Test@123**
 ## Test Scenarios by Role
 
 ### Super Admin Testing (`admin@ecommerce.com`)
+
 - ✅ View all dashboard analytics
 - ✅ Approve/reject pending vendors (CozyCorner, ActiveLife, PureBeauty)
 - ✅ Approve/reject pending products (20 products with PENDING status)
@@ -195,6 +200,7 @@ All customer passwords: **Test@123**
 - ✅ Configure platform settings
 
 ### Order Manager Admin Testing (`orderadmin@ecommerce.com`)
+
 - ✅ View all orders (200 orders across different statuses)
 - ✅ Process refunds and returns (return requests available)
 - ✅ Update order statuses
@@ -203,6 +209,7 @@ All customer passwords: **Test@123**
 - ❌ Cannot manage products or vendors
 
 ### Catalog Manager Admin Testing (`catalogadmin@ecommerce.com`)
+
 - ✅ Approve/reject vendor products
 - ✅ Manage product categories (50+ categories)
 - ✅ Moderate product reviews (300 reviews available)
@@ -210,6 +217,7 @@ All customer passwords: **Test@123**
 - ❌ Cannot manage orders or process refunds
 
 ### Vendor Owner Testing (e.g., `owner@techworld.com`)
+
 - ✅ View vendor dashboard and analytics
 - ✅ Create, update, delete own products
 - ✅ Manage product inventory and variants
@@ -221,6 +229,7 @@ All customer passwords: **Test@123**
 - ❌ Cannot see other vendors' data
 
 ### Vendor Staff Testing (e.g., `staff@techworld.com`)
+
 - ✅ Update existing products (price, stock, description)
 - ✅ Manage sub-orders (update status, tracking)
 - ✅ View vendor analytics
@@ -228,6 +237,7 @@ All customer passwords: **Test@123**
 - ❌ Cannot request payouts or view commission details
 
 ### Customer Testing (e.g., `customer1@example.com`)
+
 - ✅ Browse products (500 products across 50+ categories)
 - ✅ Search and filter products
 - ✅ Add items to cart
@@ -288,6 +298,7 @@ All customer passwords: **Test@123**
 ## Testing Workflows
 
 ### Complete Purchase Flow
+
 1. Login as customer1@example.com
 2. Browse products by category
 3. Add 3-5 products to cart
@@ -300,6 +311,7 @@ All customer passwords: **Test@123**
 10. Track shipment
 
 ### Vendor Product Management
+
 1. Login as owner@techworld.com
 2. View vendor dashboard and analytics
 3. Create new product with variants
@@ -311,6 +323,7 @@ All customer passwords: **Test@123**
 9. Respond to customer reviews
 
 ### Admin Vendor Approval
+
 1. Login as admin@ecommerce.com
 2. Navigate to vendor approval queue
 3. Review pending vendor: CozyCorner
@@ -319,6 +332,7 @@ All customer passwords: **Test@123**
 6. Notify vendor of decision
 
 ### Admin Product Moderation
+
 1. Login as catalogadmin@ecommerce.com
 2. View pending products queue (20 products)
 3. Review product details
@@ -326,6 +340,7 @@ All customer passwords: **Test@123**
 5. Manage product categories
 
 ### Return/Refund Processing
+
 1. Login as customer with delivered order
 2. Request return for order item
 3. Login as orderadmin@ecommerce.com

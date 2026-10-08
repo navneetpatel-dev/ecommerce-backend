@@ -1,5 +1,7 @@
 'use strict';
 
+const { assertSeedingAllowed } = require('../seedGuard');
+
 const { v4: uuidv4 } = require('uuid');
 const {
   MIN_PRODUCT_GALLERY_IMAGES,
@@ -11,6 +13,7 @@ const {
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface) {
+    assertSeedingAllowed('20240101000095-seed-product-gallery-images.js');
     const now = new Date();
     const sequelize = queryInterface.sequelize;
     const { QueryTypes } = sequelize;

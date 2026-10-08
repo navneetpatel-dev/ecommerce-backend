@@ -1,13 +1,14 @@
 import { Request, Response, NextFunction } from 'express';
 import { ValidationError } from '@core/errors/ValidationError';
-import { buildCreateWalletRechargeSchema } from '@modules/wallet/walletRecharge.dto';
-import { walletRechargeService } from '@modules/wallet/walletRecharge.service';
+import { buildCreateWalletRechargeSchema } from './walletRecharge.dto';
+import { walletRechargeService } from './walletRecharge.service';
 
-export async function validateCreateWalletRecharge(
-  req: Request,
-  _res: Response,
-  next: NextFunction,
-) {
+/**
+ * Wallet-local middleware: validates the recharge payload against the
+ * admin-configured min/max limits (limits come from the DB, so this cannot be
+ * a static Zod schema in the route chain).
+ */
+export async function validateCreateWalletRecharge(req: Request, _res: Response, next: NextFunction) {
   try {
     const limits = await walletRechargeService.getRechargeLimits();
     const schema = buildCreateWalletRechargeSchema({

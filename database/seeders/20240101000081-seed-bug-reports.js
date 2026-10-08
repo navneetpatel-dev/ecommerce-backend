@@ -1,5 +1,7 @@
 'use strict';
 
+const { assertSeedingAllowed } = require('../seedGuard');
+
 const { v4: uuidv4 } = require('uuid');
 
 const STATUSES = [
@@ -33,6 +35,7 @@ function pick(arr, index) {
 
 module.exports = {
   async up(queryInterface) {
+    assertSeedingAllowed('20240101000081-seed-bug-reports.js');
     const [already] = await queryInterface.sequelize.query(
       `SELECT id FROM bug_reports
        WHERE title LIKE 'Seed bug report %' AND "deletedAt" IS NULL

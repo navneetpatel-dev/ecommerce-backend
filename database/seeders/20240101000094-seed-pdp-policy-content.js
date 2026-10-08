@@ -1,5 +1,7 @@
 'use strict';
 
+const { assertSeedingAllowed } = require('../seedGuard');
+
 const { buildProductEnrichment, resolveFamily } = require('./lib/professional-catalog');
 
 /**
@@ -9,6 +11,7 @@ const { buildProductEnrichment, resolveFamily } = require('./lib/professional-ca
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface) {
+    assertSeedingAllowed('20240101000094-seed-pdp-policy-content.js');
     const now = new Date();
     const sequelize = queryInterface.sequelize;
     const { QueryTypes } = sequelize;

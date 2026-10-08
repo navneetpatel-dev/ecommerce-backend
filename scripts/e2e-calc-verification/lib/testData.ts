@@ -1,5 +1,5 @@
 export const CREDENTIALS = {
-  // orderadmin@ecommerce.com / catalogadmin@ecommerce.com from TEST_CREDENTIALS.md do NOT
+  // orderadmin@ecommerce.com / catalogadmin@ecommerce.com from docs/TEST_CREDENTIALS.md do NOT
   // exist in this seeded DB (verified via direct query) — superAdmin has every permission
   // (ROLE_PERMISSIONS[SUPER_ADMIN] = PERMISSION_KEYS, all of them) so it's used for every
   // admin-level action in this script instead of a separate ADMIN_ORDER_MANAGER identity.
@@ -11,7 +11,7 @@ export const CREDENTIALS = {
   ],
 };
 
-// TEST_CREDENTIALS.md's `customerN@example.com` pattern does not exist in this seeded DB
+// docs/TEST_CREDENTIALS.md's `customerN@example.com` pattern does not exist in this seeded DB
 // (verified via direct query) — real seeded customers use `<firstname>.<lastname><n>@example.com`.
 // One dedicated customer per scenario, so report deltas stay easy to attribute.
 export const CUSTOMERS = {

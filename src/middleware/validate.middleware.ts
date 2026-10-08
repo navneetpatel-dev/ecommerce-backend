@@ -8,7 +8,7 @@ export const validate = (schema: ZodSchema, source: 'body' | 'query' | 'params' 
     if (!result.success) {
       return next(new ValidationError(result.error.flatten()));
     }
-    (req as any)[source] = result.data;
+    (req as unknown as Record<string, unknown>)[source] = result.data;
     next();
   };
 };

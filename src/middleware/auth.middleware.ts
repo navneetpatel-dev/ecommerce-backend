@@ -39,7 +39,7 @@ export async function loadUserFromBearer(authHeader: string) {
   }
 
   try {
-    const decoded = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
+    const decoded = jwt.verify(token, env.JWT_SECRET, { algorithms: ['HS256'] }) as JwtPayload;
 
     if (await isUserBlocked(decoded.sub)) {
       return {

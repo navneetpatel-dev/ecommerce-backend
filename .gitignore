@@ -7,3 +7,7 @@ logs/
 .env
 *.log
 .DS_Store
+# AI/tooling artifacts must not enter the repo
+.commandcode/
+*.bak
+*.backup

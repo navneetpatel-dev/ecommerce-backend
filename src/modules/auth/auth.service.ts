@@ -450,7 +450,7 @@ export class AuthService {
   async verifyEmail(token: string): Promise<{ verified: boolean }> {
     let decoded: { sub: string; purpose: string };
     try {
-      decoded = jwt.verify(token, env.JWT_SECRET) as { sub: string; purpose: string };
+      decoded = jwt.verify(token, env.JWT_SECRET, { algorithms: ['HS256'] }) as { sub: string; purpose: string };
     } catch {
       throw new ValidationError({ token: ['Invalid or expired verification token'] });
     }
@@ -508,7 +508,7 @@ export class AuthService {
   async resetPassword(resetToken: string, newPassword: string) {
     let decoded: { sub: string; purpose: string };
     try {
-      decoded = jwt.verify(resetToken, env.JWT_SECRET) as { sub: string; purpose: string };
+      decoded = jwt.verify(resetToken, env.JWT_SECRET, { algorithms: ['HS256'] }) as { sub: string; purpose: string };
     } catch {
       throw new ValidationError({ token: ['Invalid or expired reset token'] });
     }

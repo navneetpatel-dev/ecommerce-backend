@@ -1,5 +1,7 @@
 'use strict';
 
+const { assertSeedingAllowed } = require('../seedGuard');
+
 const { randomUUID } = require('crypto');
 
 function bankDetails(name, suffix) {
@@ -17,11 +19,12 @@ async function hasRow(queryInterface, sql) {
 }
 
 /**
- * Cross-role visibility scenarios (see cross-role-visibility-implementation-doc.md §7 / §15).
+ * Cross-role visibility scenarios (see docs/archive/cross-role-visibility-implementation-doc.md §7 / §15).
  * Idempotent: each piece is inserted only if its marker slug is missing.
  */
 module.exports = {
   async up(queryInterface) {
+    assertSeedingAllowed('20240101000005-seed-visibility-scenarios.js');
     const now = new Date();
 
     let suspendedVendorId;

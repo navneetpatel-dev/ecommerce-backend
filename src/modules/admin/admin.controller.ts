@@ -1,14 +1,14 @@
 import { Request, Response } from 'express';
-import { z } from 'zod';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { sendDownload } from '@core/http/sendDownload';
 import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { roleNameOf } from '@utils/userRole';
 import { reportEngine, type ReportActor } from '@modules/reports/engine/reportEngine';
-import { assertReportRange, inclusiveReportFrom, inclusiveReportTo } from '@modules/reports/engine/queryHelpers';
+import { assertReportRange } from '@modules/reports/engine/queryHelpers';
 import type { PermissionKey } from '@core/permissions/permissionKeys';
 import { adminService } from './admin.service';
+import { AnalyticsExportSchema } from './admin.dto';
 
 export const getDashboard = asyncHandler(async (_req: Request, res: Response) => {
   const metrics = await adminService.getDashboardMetrics();
@@ -18,12 +18,6 @@ export const getDashboard = asyncHandler(async (_req: Request, res: Response) =>
 export const getPlatformAnalytics = asyncHandler(async (_req: Request, res: Response) => {
   const analytics = await adminService.getPlatformAnalytics();
   res.json(ok(analytics));
-});
-
-const AnalyticsExportSchema = z.object({
-  from: z.coerce.date().optional().transform((value) => (value ? inclusiveReportFrom(value) : undefined)),
-  to: z.coerce.date().optional().transform((value) => (value ? inclusiveReportTo(value) : undefined)),
-  format: z.enum(['xlsx', 'csv', 'pdf']).default('xlsx'),
 });
 
 async function analyticsActor(req: Request): Promise<ReportActor> {

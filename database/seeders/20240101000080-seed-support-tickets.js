@@ -1,5 +1,7 @@
 'use strict';
 
+const { assertSeedingAllowed } = require('../seedGuard');
+
 const { v4: uuidv4 } = require('uuid');
 
 const STATUSES = ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED', 'REOPENED'];
@@ -12,6 +14,7 @@ function pick(arr, index) {
 
 module.exports = {
   async up(queryInterface) {
+    assertSeedingAllowed('20240101000080-seed-support-tickets.js');
     const [already] = await queryInterface.sequelize.query(
       `SELECT id FROM support_tickets
        WHERE subject LIKE 'Seed support ticket %' AND "deletedAt" IS NULL

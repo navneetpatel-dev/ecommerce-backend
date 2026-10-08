@@ -1,5 +1,7 @@
 'use strict';
 
+const { assertSeedingAllowed } = require('../seedGuard');
+
 const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcrypt');
 
@@ -11,6 +13,7 @@ const AGENTS = [
 
 module.exports = {
   async up(queryInterface) {
+    assertSeedingAllowed('20260903000006-seed-delivery-agents.js');
     const [roles] = await queryInterface.sequelize.query(
       `SELECT id FROM roles WHERE name = 'DELIVERY_AGENT' LIMIT 1`,
     );

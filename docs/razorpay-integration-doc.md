@@ -8,13 +8,13 @@ This doc reconciles a generic integration checklist against your **already-estab
 
 ## 1. What the Backend Owns (Everything That Matters)
 
-| Concern | Rule |
-|---|---|
-| **Amount** | Computed server-side from the cart/order already in your DB (`Order.totalAmount`, per backend Section 4.4) at the moment of order creation. Never accept an `amount` field from the frontend request body — if one arrives, ignore it. |
-| **Order creation** | `POST /api/checkout` (already speced, backend Section 14.1/14.5) — creates your own `Order` row first, then calls Razorpay's Orders API with the amount pulled from that row, stores `razorpayOrderId` on it (column already exists per backend Section 4.4's `Order` model). |
-| **Signature verification (client callback)** | `POST /api/checkout/verify` (already speced) — HMAC-SHA256 check, UX confirmation only. Marks nothing as paid on its own. |
-| **Authoritative confirmation** | `POST /api/webhooks/razorpay` (already speced, backend Section 14.2–14.3) — signature-verified, idempotent (via the `WebhookEvent` dedup table), and this is the **only** place `Order.paymentStatus` actually flips to `PAID`. |
-| **Vendor payouts** | Razorpay Route, triggered off the same webhook-confirmed state (backend Section 14.4) — not touched by this doc's scope, just noting it depends on the webhook being correct. |
+| Concern                                      | Rule                                                                                                                                                                                                                                                                          |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Amount**                                   | Computed server-side from the cart/order already in your DB (`Order.totalAmount`, per backend Section 4.4) at the moment of order creation. Never accept an `amount` field from the frontend request body — if one arrives, ignore it.                                        |
+| **Order creation**                           | `POST /api/checkout` (already speced, backend Section 14.1/14.5) — creates your own `Order` row first, then calls Razorpay's Orders API with the amount pulled from that row, stores `razorpayOrderId` on it (column already exists per backend Section 4.4's `Order` model). |
+| **Signature verification (client callback)** | `POST /api/checkout/verify` (already speced) — HMAC-SHA256 check, UX confirmation only. Marks nothing as paid on its own.                                                                                                                                                     |
+| **Authoritative confirmation**               | `POST /api/webhooks/razorpay` (already speced, backend Section 14.2–14.3) — signature-verified, idempotent (via the `WebhookEvent` dedup table), and this is the **only** place `Order.paymentStatus` actually flips to `PAID`.                                               |
+| **Vendor payouts**                           | Razorpay Route, triggered off the same webhook-confirmed state (backend Section 14.4) — not touched by this doc's scope, just noting it depends on the webhook being correct.                                                                                                 |
 
 ## 2. Backend Implementation
 
@@ -97,10 +97,7 @@ export const handleRazorpayWebhook = asyncHandler(async (req, res) => {
 
   if (event.event === 'payment.captured') {
     const payment = event.payload.payment.entity;
-    await Order.update(
-      { paymentStatus: 'PAID', razorpayPaymentId: payment.id },
-      { where: { razorpayOrderId: payment.order_id } }
-    );
+    await Order.update({ paymentStatus: 'PAID', razorpayPaymentId: payment.id }, { where: { razorpayOrderId: payment.order_id } });
     // fire ORDER_CONFIRMATION notification (backend Section 8) here
   }
 
@@ -129,9 +126,10 @@ const handlePay = async () => {
   const { razorpayOrderId, amount, currency, keyId } = await checkoutApi.createOrder();
 
   const rzp = new window.Razorpay({
-    key: keyId,               // public key only
+    key: keyId, // public key only
     order_id: razorpayOrderId, // amount is implied by the order Razorpay already knows about — never passed again here
-    amount, currency,
+    amount,
+    currency,
     handler: async (response) => {
       await checkoutApi.verify(response); // UX confirmation — see Section 1
       router.push(`/orders/${orderId}/confirmation`); // final state is confirmed by webhook, not this call
@@ -168,13 +166,13 @@ NEXT_PUBLIC_RAZORPAY_KEY_ID=rzp_test_xxxxxxxxxxxxxxx
 
 ## 5. Where This Doc Deliberately Overrides the Generic Template
 
-| Generic template said | This doc does instead | Why |
-|---|---|---|
-| `POST /api/create-order`, `POST /api/verify-payment` (new, unscoped endpoints) | `POST /api/checkout`, `POST /api/checkout/verify` (your existing checkout flow, backend Section 14.5) | Keeps payment creation attached to your actual order-splitting/tax/coupon logic instead of a bolt-on endpoint that bypasses it |
-| Raw `fetch` to `https://api.razorpay.com/v1/orders` | Official `razorpay` npm SDK | Matches your service-layer conventions, handles retries/signing for you |
-| Client-side signature check treated as the finish line | Client check is UX-only; **webhook is authoritative** | This is the actual answer to "no frontend manipulation" — a client call can be skipped or faked, a signed server-to-server webhook can't |
-| "Do not create database tables unless project already has one" | Uses your existing `Order`/`WebhookEvent` tables | You already have a database and these columns/tables are already speced (backend Sections 4.4, 14.3) |
-| No mention of raw-body webhook mounting | Explicit `express.raw()` note (Section 2) | Silent, hard-to-debug failure mode if skipped |
+| Generic template said                                                          | This doc does instead                                                                                 | Why                                                                                                                                      |
+| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /api/create-order`, `POST /api/verify-payment` (new, unscoped endpoints) | `POST /api/checkout`, `POST /api/checkout/verify` (your existing checkout flow, backend Section 14.5) | Keeps payment creation attached to your actual order-splitting/tax/coupon logic instead of a bolt-on endpoint that bypasses it           |
+| Raw `fetch` to `https://api.razorpay.com/v1/orders`                            | Official `razorpay` npm SDK                                                                           | Matches your service-layer conventions, handles retries/signing for you                                                                  |
+| Client-side signature check treated as the finish line                         | Client check is UX-only; **webhook is authoritative**                                                 | This is the actual answer to "no frontend manipulation" — a client call can be skipped or faked, a signed server-to-server webhook can't |
+| "Do not create database tables unless project already has one"                 | Uses your existing `Order`/`WebhookEvent` tables                                                      | You already have a database and these columns/tables are already speced (backend Sections 4.4, 14.3)                                     |
+| No mention of raw-body webhook mounting                                        | Explicit `express.raw()` note (Section 2)                                                             | Silent, hard-to-debug failure mode if skipped                                                                                            |
 
 ## 6. Manual Steps Required
 

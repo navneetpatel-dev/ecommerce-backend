@@ -1,5 +1,7 @@
 'use strict';
 
+const { assertSeedingAllowed } = require('../seedGuard');
+
 /**
  * Verification scenarios for vendor KYC (reportable fixtures).
  * Safe to re-run: deletes prior rows tagged with slug prefix kyc-scenario-%.
@@ -49,6 +51,7 @@ async function ensureCategoryBySlug(queryInterface, slug, now) {
 
 module.exports = {
   async up(queryInterface) {
+    assertSeedingAllowed('20240101000011-seed-kyc-verification-scenarios.js');
     const now = new Date();
     const [roles] = await queryInterface.sequelize.query(
       `SELECT id, name FROM roles WHERE name IN ('VENDOR_OWNER', 'CUSTOMER')`,

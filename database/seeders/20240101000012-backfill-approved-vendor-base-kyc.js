@@ -1,5 +1,7 @@
 'use strict';
 
+const { assertSeedingAllowed } = require('../seedGuard');
+
 /**
  * Backfill missing/unverified universal KYC documents for APPROVED vendors.
  * Needed after DocumentRequirement expanded the base set beyond GST/PAN/BANK_PROOF
@@ -24,6 +26,7 @@ const BASE_DOC_TYPES = ['GST_CERT', 'PAN', 'AADHAAR', 'BANK_PROOF', 'ADDRESS_PRO
 
 module.exports = {
   async up(queryInterface) {
+    assertSeedingAllowed('20240101000012-backfill-approved-vendor-base-kyc.js');
     const now = new Date();
     const [vendors] = await queryInterface.sequelize.query(
       `SELECT id, slug FROM vendors

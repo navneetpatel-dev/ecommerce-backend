@@ -1,5 +1,7 @@
 'use strict';
 
+const { assertSeedingAllowed } = require('../seedGuard');
+
 /**
  * Must match `src/core/permissions/permissionKeys.ts` PERMISSIONS values
  * (and ROLE_PERMISSIONS assignments). Keys stay as string arrays here since this is JS.
@@ -50,6 +52,7 @@ const ROLE_PERMISSIONS = {
 
 module.exports = {
   async up(queryInterface) {
+    assertSeedingAllowed('20240101000001-seed-roles-permissions.js');
     const now = new Date();
     const roleIds = {};
 

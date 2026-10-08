@@ -12,16 +12,21 @@ const router = Router();
 router.get('/google', controller.googleStart);
 router.get('/google/callback', controller.googleCallback);
 
-router.post('/register', validate(RegisterSchema), authRateLimiter, controller.register);
-router.post('/login', validate(LoginSchema), authRateLimiter, controller.login);
-router.post('/otp/request', validate(RequestOtpSchema), otpRequestRateLimiter, controller.requestOtp);
-router.post('/otp/verify', validate(VerifyOtpSchema), authRateLimiter, controller.verifyOtp);
+router.post('/register', authRateLimiter, validate(RegisterSchema), controller.register);
+router.post('/login', authRateLimiter, validate(LoginSchema), controller.login);
+router.post('/otp/request', otpRequestRateLimiter, validate(RequestOtpSchema), controller.requestOtp);
+router.post('/otp/verify', authRateLimiter, validate(VerifyOtpSchema), controller.verifyOtp);
 router.post('/refresh', controller.refresh);
 router.post('/logout', authenticate, controller.logout);
-router.post('/forgot-password', validate(ForgotPasswordSchema), authRateLimiter, controller.forgotPassword);
-router.post('/reset-password', validate(ResetPasswordSchema), controller.resetPassword);
-router.post('/verify-email', validate(VerifyEmailSchema), authRateLimiter, controller.verifyEmail);
-router.post('/verify-email/resend', validate(ResendVerificationByEmailSchema), otpRequestRateLimiter, controller.resendVerificationByEmail);
+router.post('/forgot-password', authRateLimiter, validate(ForgotPasswordSchema), controller.forgotPassword);
+router.post('/reset-password', authRateLimiter, validate(ResetPasswordSchema), controller.resetPassword);
+router.post('/verify-email', authRateLimiter, validate(VerifyEmailSchema), controller.verifyEmail);
+router.post(
+  '/verify-email/resend',
+  otpRequestRateLimiter,
+  validate(ResendVerificationByEmailSchema),
+  controller.resendVerificationByEmail,
+);
 router.post('/resend-verification', authenticate, authRateLimiter, controller.resendVerification);
 router.post('/change-password', authenticate, validate(ChangePasswordSchema), controller.changePassword);
 router.get('/me', authenticate, controller.me);
@@ -37,4 +42,4 @@ router.get('/sessions', authenticate, controller.listSessions);
 router.delete('/sessions/:family', authenticate, controller.revokeSession);
 router.delete('/sessions', authenticate, controller.revokeOtherSessions);
 
-export { router as authRoutes };
+export default router;

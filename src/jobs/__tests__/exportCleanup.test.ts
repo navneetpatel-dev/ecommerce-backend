@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it, mock, afterEach } from 'node:test';
 import { ExportJob } from '@database/models/exportJob.model';
 import { exportConfig } from '@core/export';
-import { runStaleProcessingSweep } from '../exportCleanup';
+import { runStaleProcessingSweep } from '../exportCleanup.job';
 
 describe('runStaleProcessingSweep', () => {
   afterEach(() => mock.restoreAll());

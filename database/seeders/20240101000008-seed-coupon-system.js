@@ -1,5 +1,7 @@
 'use strict';
 
+const { assertSeedingAllowed } = require('../seedGuard');
+
 const { randomUUID } = require('crypto');
 
 /**
@@ -28,6 +30,7 @@ async function ensureCoupon(queryInterface, row) {
 
 module.exports = {
   async up(queryInterface) {
+    assertSeedingAllowed('20240101000008-seed-coupon-system.js');
     const now = new Date();
     const startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const endDate = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);

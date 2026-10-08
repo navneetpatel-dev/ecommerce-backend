@@ -3,7 +3,7 @@
 /**
  * PostgreSQL full-text + trigram indexes for product search/autocomplete.
  * search_vector is maintained by trigger (to_tsvector is STABLE, not valid for GENERATED).
- * See backend/implementation.md §7.
+ * See docs/archive/implementation.md §7.
  */
 module.exports = {
   async up(queryInterface) {

@@ -17,9 +17,11 @@ postman/
 ### ✅ Fully Implemented & Documented
 
 **🔧 System** (1 endpoint)
+
 - Health Check - Complete with service status monitoring
 
 **🔐 Authentication** (8 endpoints)
+
 - Register - Customer
 - Login - Admin
 - Login - Customer
@@ -32,11 +34,13 @@ postman/
 ### 📋 Features Included
 
 ✅ **Automatic Token Management**
+
 - Tokens auto-stored after login/register
 - Tokens auto-sent with authenticated requests
 - Tokens auto-cleared on logout
 
 ✅ **Comprehensive Test Scripts**
+
 - Status code validation
 - Response time checks
 - Response structure validation
@@ -44,18 +48,21 @@ postman/
 - Environment variable population
 
 ✅ **Pre-request Scripts**
+
 - Dynamic test data generation
 - Random emails, strings, numbers
 - Timestamp generation
 - Token expiry warnings
 
 ✅ **Complete Documentation**
+
 - Every request has detailed description
 - Required/optional fields documented
 - Example responses included
 - Usage notes and tips
 
 ✅ **Environment Variables** (28 variables)
+
 - Authentication: tokens, userId, userRole
 - Resources: productId, orderId, vendorId, etc.
 - Test data: randomEmail, randomString, etc.
@@ -91,13 +98,14 @@ npm run dev
 ```
 
 Expected response:
+
 ```json
 {
   "status": "ok",
   "services": {
-    "database": {"status": "up"},
-    "redis": {"status": "up"},
-    "queues": {"status": "up"}
+    "database": { "status": "up" },
+    "redis": { "status": "up" },
+    "queues": { "status": "up" }
   }
 }
 ```
@@ -109,6 +117,7 @@ Expected response:
 ```
 
 Credentials (after seeding):
+
 ```
 Email: admin@ecommerce.com
 Password: Admin@123
@@ -171,6 +180,7 @@ collection["item"].append(products_folder)
 ```
 
 Then regenerate:
+
 ```bash
 cd postman
 python3 generate-collection.py
@@ -231,6 +241,7 @@ Add the remaining endpoint folders:
 - **Total**: ~94 endpoints
 
 You can:
+
 1. Use the Python script to add endpoints programmatically
 2. Add them manually in Postman
 3. Or use the current collection as-is for auth testing
@@ -238,16 +249,19 @@ You can:
 ## 🧪 Running Tests
 
 ### Manual Testing
+
 ```
 Open request → Click Send → Check Test Results
 ```
 
 ### Collection Runner
+
 ```
 Collection → Run → Select Environment → Run
 ```
 
 ### Newman (CLI)
+
 ```bash
 npm install -g newman
 newman run postman/Ecommerce-Backend-Complete.postman_collection.json \
@@ -273,18 +287,18 @@ newman run postman/Ecommerce-Backend-Complete.postman_collection.json \
 
 ## 📊 Collection Features
 
-| Feature | Status |
-|---------|--------|
-| Automatic token management | ✅ |
-| Pre-request scripts | ✅ |
-| Test scripts | ✅ |
-| Environment variables | ✅ |
-| Request documentation | ✅ |
-| Example responses | ✅ |
-| Error scenarios | ⏳ Can be added |
+| Feature                    | Status            |
+| -------------------------- | ----------------- |
+| Automatic token management | ✅                |
+| Pre-request scripts        | ✅                |
+| Test scripts               | ✅                |
+| Environment variables      | ✅                |
+| Request documentation      | ✅                |
+| Example responses          | ✅                |
+| Error scenarios            | ⏳ Can be added   |
 | Complete endpoint coverage | ⏳ 9/94 endpoints |
-| Newman compatible | ✅ |
-| Collection Runner ready | ✅ |
+| Newman compatible          | ✅                |
+| Collection Runner ready    | ✅                |
 
 ## 🔗 Related Files
 

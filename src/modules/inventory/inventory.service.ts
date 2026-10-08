@@ -3,6 +3,7 @@ import { Product } from '@database/models/product.model';
 import { WishlistItem } from '@database/models/wishlistItem.model';
 import { Wishlist } from '@database/models/wishlist.model';
 import { StockAlert } from '@database/models/stockAlert.model';
+import { sequelize } from '@config/db';
 import { Op, Sequelize } from 'sequelize';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
@@ -32,16 +33,26 @@ export class InventoryService {
   }
 
   async updateStock(variantId: string, stock: number, updatedBy: string) {
-    const variant = await ProductVariant.findByPk(variantId, {
-      include: [{ model: Product, as: 'product' }],
-    });
-    if (!variant) throw new NotFoundError('ProductVariant');
+    // Row-locked so concurrent edits serialise (oversell guard); back-in-stock
+    // notifications run after commit so the lock is not held during fan-out.
+    const { updated, previousStock } = await sequelize.transaction(async (t) => {
+      const variant = await ProductVariant.findByPk(variantId, {
+        include: [{ model: Product, as: 'product' }],
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+      if (!variant) throw new NotFoundError('ProductVariant');
 
-    const previousStock = Number(variant.stock ?? 0);
-    const updated = await variant.update({ stock, updatedBy } as any);
+      const previous = Number(variant.stock ?? 0);
+      const row = await variant.update(
+        { stock, updatedBy },
+        { transaction: t },
+      );
+      return { updated: row, previousStock: previous };
+    });
 
     if (previousStock <= 0 && stock > 0) {
-      const product = (variant as ProductVariant & { product?: Product }).product;
+      const product = (updated as ProductVariant & { product?: Product }).product;
       if (product) {
         const wishlistItems = await WishlistItem.findAll({
           where: { productId: product.id },

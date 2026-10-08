@@ -1,5 +1,7 @@
 'use strict';
 
+const { assertSeedingAllowed } = require('../seedGuard');
+
 const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcrypt');
 const {
@@ -112,6 +114,7 @@ function slugify(str) { return str.toLowerCase().replace(/[^a-z0-9]+/g, '-').rep
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface) {
+    assertSeedingAllowed('20240101000003-comprehensive-seed.js');
     const now = new Date();
     const passwordHash = await bcrypt.hash('Test@123', 12);
 
