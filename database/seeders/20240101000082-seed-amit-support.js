@@ -6,7 +6,7 @@ const { assertSeedingAllowed } = require('../seedGuard');
  * Seeds support tickets + bug reports for a specific customer email
  * so that account can be used to verify list/detail/thread UX.
  */
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID: uuidv4 } = require('node:crypto');
 
 const TARGET_EMAIL = 'amit.gupta54@example.com';
 const TICKET_SUBJECT_PREFIX = 'Amit seed ticket';

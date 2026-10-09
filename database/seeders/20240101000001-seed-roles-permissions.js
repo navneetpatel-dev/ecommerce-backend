@@ -9,7 +9,7 @@ const { assertSeedingAllowed } = require('../seedGuard');
  * Idempotent: safe to re-run on an already-seeded database.
  */
 
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID: uuidv4 } = require('node:crypto');
 
 const ROLE_NAMES = [
   'SUPER_ADMIN',

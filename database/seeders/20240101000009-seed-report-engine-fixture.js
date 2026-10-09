@@ -9,7 +9,7 @@ const { assertSeedingAllowed } = require('../seedGuard');
  * - TDS ledger with section 194O
  * Safe to re-run: deletes prior rows tagged with description marker in businessName slug prefix.
  */
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID: uuidv4 } = require('node:crypto');
 
 const SLUG_A = 'report-fixture-vendor-ka';
 const SLUG_B = 'report-fixture-vendor-mh';

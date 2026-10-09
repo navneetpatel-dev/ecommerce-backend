@@ -2,7 +2,7 @@
 
 const { assertSeedingAllowed } = require('../seedGuard');
 
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID: uuidv4 } = require('node:crypto');
 const bcrypt = require('bcrypt');
 const {
   MIN_PRODUCT_GALLERY_IMAGES,

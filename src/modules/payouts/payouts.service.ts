@@ -36,6 +36,7 @@ import type { MarkPayoutFailedRequest, MarkPayoutPaidRequest } from './payouts.d
 import { vendorNetPayoutPaise } from '@modules/pricing/frozenMoneySql';
 import { gstPeriodOf } from '@modules/pricing/gstPeriod';
 import { subOrdersInReturnWindow, type DeliveredSubOrder } from './returnWindowHold';
+import { vendorStatesFor } from './payoutVendorStates';
 
 async function notifyPayoutFailed(params: {
   vendorId: string;
@@ -204,7 +205,6 @@ export class PayoutsService {
     });
     return rows.map((row) => serializePayout(row));
   }
-
   async process(actorId: string) {
     const settings = await settingsService.getPlatformSettings();
     const windowCutoff = payoutReturnWindowCutoff(Number(settings.defaultReturnWindow ?? 7));
@@ -230,9 +230,10 @@ export class PayoutsService {
     }
 
     const created: Payout[] = [];
+    const vendorStates = await vendorStatesFor([...grouped.keys()]);
     for (const [vendorId, group] of grouped) {
       // Commission GST as the vendor's commission invoice charges it (CGST + SGST or IGST).
-      const vendorState = (await Vendor.findByPk(vendorId, { attributes: ['state'] }))?.state;
+      const vendorState = vendorStates.get(vendorId);
       const payoutRates = payoutRatesFromSettings(settings, vendorState ?? null);
       try {
         const payout = await sequelize.transaction(async (transaction) => {
@@ -246,7 +247,8 @@ export class PayoutsService {
             lock: transaction.LOCK.UPDATE,
           });
           if (!locked.length) {
-            throw new Error('No pending commission ledgers');
+            // Race guard: typed so the per-vendor catch records a FAILED-payout reason.
+            throw new ValidationError('No pending commission ledgers');
           }
 
           // Net less 194-O TDS on each sale's value, less GST on commission, less vendor-borne
@@ -439,7 +441,6 @@ export class PayoutsService {
 
     return created;
   }
-
   async markPaid(payoutId: string, actorId: string, input: MarkPayoutPaidRequest) {
     const updated = await sequelize.transaction(async (transaction) => {
       const payout = await Payout.findByPk(payoutId, {
@@ -528,7 +529,6 @@ export class PayoutsService {
     });
     return serializePayout(updated);
   }
-
   async retry(payoutId: string, actorId: string) {
     return sequelize.transaction(async (transaction) => {
       const payout = await Payout.findByPk(payoutId, {

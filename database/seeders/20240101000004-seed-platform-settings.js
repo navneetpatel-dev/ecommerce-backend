@@ -2,7 +2,7 @@
 
 const { assertSeedingAllowed } = require('../seedGuard');
 
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID: uuidv4 } = require('node:crypto');
 
 const PLATFORM_VALUE = {
   defaultCommissionRate: 10,

@@ -2,7 +2,7 @@
 
 const { assertSeedingAllowed } = require('../seedGuard');
 
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID: uuidv4 } = require('node:crypto');
 
 /**
  * Pan-India shipping zone + platform-wide fallback rates.

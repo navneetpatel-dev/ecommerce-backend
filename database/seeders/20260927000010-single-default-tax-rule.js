@@ -14,7 +14,7 @@ const { assertSeedingAllowed } = require('../seedGuard');
  * Safe to re-run.
  */
 
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID: uuidv4 } = require('node:crypto');
 const { alignMrpWithGstPrices, refreshProductDisplayPrices } = require('./lib/product-display-price');
 
 const DEFAULT_GST_PERCENTAGE = 18;

@@ -20,7 +20,7 @@ const { assertSeedingAllowed } = require('../seedGuard');
  * - recomputes vendors.kycVerified (same rule as resolveRequiredDocuments)
  */
 
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID: uuidv4 } = require('node:crypto');
 
 const BASE_DOC_TYPES = ['GST_CERT', 'PAN', 'AADHAAR', 'BANK_PROOF', 'ADDRESS_PROOF', 'AUTHORIZED_SIGNATORY_ID'];
 

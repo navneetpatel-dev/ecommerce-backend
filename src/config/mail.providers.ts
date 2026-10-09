@@ -11,6 +11,25 @@ export function formatMailFrom(message: MailMessage): string {
   return name ? `${name} <${email}>` : email;
 }
 
+/**
+ * Raw MIME source for the SES raw-send path. nodemailer's `streamTransport`
+ * returns a Buffer on v6 and a Readable stream on v10+, so both are handled.
+ */
+async function readRawMimeMessage(message: unknown): Promise<Buffer> {
+  if (Buffer.isBuffer(message)) return message;
+  if (message && typeof (message as { on?: unknown }).on === 'function') {
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve, reject) => {
+      const stream = message as NodeJS.ReadableStream;
+      stream.on('data', (chunk: Buffer | string) => chunks.push(Buffer.from(chunk)));
+      stream.on('end', () => resolve());
+      stream.on('error', (error) => reject(error));
+    });
+    return Buffer.concat(chunks);
+  }
+  return Buffer.from(String(message));
+}
+
 export function createConsoleMailProvider(): MailProvider {
   return {
     name: 'console',
@@ -69,9 +88,9 @@ export function createSesMailProvider(): MailProvider {
             contentType: a.contentType,
           })),
         });
-        const raw = info.message.toString();
+        const raw = await readRawMimeMessage(info.message);
         const result = await client.send(
-          new SendRawEmailCommand({ RawMessage: { Data: Buffer.from(raw) } }),
+          new SendRawEmailCommand({ RawMessage: { Data: raw } }),
         );
         return {
           messageId: result.MessageId ?? randomUUID(),

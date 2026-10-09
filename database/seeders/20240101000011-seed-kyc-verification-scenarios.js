@@ -12,7 +12,7 @@ const { assertSeedingAllowed } = require('../seedGuard');
  *     linked (FSSAI outstanding) — food products blocked from LIVE; APPROVED status kept
  */
 
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID: uuidv4 } = require('node:crypto');
 
 const SEED_TAG = 'kyc-verification';
 
