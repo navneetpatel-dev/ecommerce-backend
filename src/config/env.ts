@@ -17,6 +17,19 @@ const envSchema = z.object({
   DB_NAME: z.string().default('ecommerce_dev'),
   DB_USER: z.string().default('postgres'),
   DB_PASSWORD: z.string().default('postgres'),
+  /**
+   * TLS to Postgres. Defaults on in production (RDS enforces it), off elsewhere.
+   * Encrypts without verifying the server certificate, matching the
+   * sequelize-cli production config used for migrations.
+   */
+  DB_SSL: z
+    .union([z.boolean(), z.string()])
+    .optional()
+    .transform((v) => {
+      if (v === undefined) return process.env.NODE_ENV === 'production';
+      if (typeof v === 'boolean') return v;
+      return v === 'true' || v === '1';
+    }),
 
   REDIS_URL: z.string().default('redis://localhost:6379'),
 
@@ -27,6 +40,18 @@ const envSchema = z.object({
 
   AWS_ACCESS_KEY_ID: z.string().optional(),
   AWS_SECRET_ACCESS_KEY: z.string().optional(),
+  /**
+   * Use the AWS SDK default credential chain (ECS task role, instance profile, …)
+   * when no static keys are set. Enabled on ECS so S3/SES need no long-lived keys.
+   */
+  AWS_USE_DEFAULT_CREDENTIALS: z
+    .union([z.boolean(), z.string()])
+    .optional()
+    .transform((v) => {
+      if (v === undefined) return false;
+      if (typeof v === 'boolean') return v;
+      return v === 'true' || v === '1';
+    }),
   AWS_REGION: z.string().default('ap-south-1'),
   S3_BUCKET: z.string().default('ecommerce-uploads'),
   /** Optional CDN / public base for object URLs (no trailing slash). */
@@ -154,11 +179,13 @@ const envSchema = z.object({
   }
 
   if (data.MAIL_DRIVER === 'ses') {
-    if (!data.AWS_ACCESS_KEY_ID || !data.AWS_SECRET_ACCESS_KEY) {
+    const hasStaticKeys = Boolean(data.AWS_ACCESS_KEY_ID && data.AWS_SECRET_ACCESS_KEY);
+    if (!hasStaticKeys && !data.AWS_USE_DEFAULT_CREDENTIALS) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['AWS_ACCESS_KEY_ID'],
-        message: 'AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are required when MAIL_DRIVER=ses',
+        message:
+          'MAIL_DRIVER=ses needs AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY, or AWS_USE_DEFAULT_CREDENTIALS=true',
       });
     }
   }

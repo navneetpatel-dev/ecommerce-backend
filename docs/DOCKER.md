@@ -81,7 +81,9 @@ npm run db:seed
 
 ## Production infrastructure
 
-`docker-compose.prod.yml` also runs PostgreSQL and Redis only. Point a separately deployed API at those hosts.
+`docker-compose.prod.yml` also runs PostgreSQL and Redis only, for a single-host deployment. Ports bind to `127.0.0.1` and Redis requires a password: set `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `REDIS_PASSWORD` in `.env`, plus `DB_SSL=false` and `REDIS_URL=redis://:<REDIS_PASSWORD>@localhost:6379` for the API. The AWS deployment uses RDS + ElastiCache instead — see [DEPLOYMENT.md](DEPLOYMENT.md).
+
+The API itself also has a `Dockerfile` (one image for API, worker and migrations).
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d

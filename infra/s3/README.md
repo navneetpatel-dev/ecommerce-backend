@@ -1,5 +1,9 @@
 # S3 bucket setup for media uploads
 
+> **On AWS (ECS)** the backend uses its task IAM role instead of an IAM user's keys, and
+> Terraform manages the bucket CORS — see [`../terraform`](../terraform) and
+> [`docs/DEPLOYMENT.md`](../../docs/DEPLOYMENT.md). The steps below are for local/dev keys.
+
 Three pieces must be configured: **IAM user permissions** (backend uploads), **bucket CORS** (browser → S3 PUT), and **bucket policy** (public read for catalog images).
 
 The app falls back to server-side upload when pre-signed PUT fails, but **both paths need `s3:PutObject` on the IAM user** (`AWS_ACCESS_KEY_ID` in `.env`).

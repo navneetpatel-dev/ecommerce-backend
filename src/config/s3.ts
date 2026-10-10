@@ -12,6 +12,7 @@ import { Upload } from '@aws-sdk/lib-storage';
 import type { Readable } from 'node:stream';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env } from '@config/env';
+import { awsClientConfig } from '@config/awsCredentials';
 import { AppError } from '@core/errors';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { logger } from '@core/logger';
@@ -22,17 +23,9 @@ const SIGNED_PUT_EXPIRES_SECONDS = 15 * 60;
 
 export const S3_BUCKET = env.S3_BUCKET;
 
-const hasAwsCredentials = Boolean(env.AWS_ACCESS_KEY_ID && env.AWS_SECRET_ACCESS_KEY);
+const awsConfig = awsClientConfig();
 
-export const s3Client = hasAwsCredentials
-  ? new S3Client({
-      region: env.AWS_REGION,
-      credentials: {
-        accessKeyId: env.AWS_ACCESS_KEY_ID!,
-        secretAccessKey: env.AWS_SECRET_ACCESS_KEY!,
-      },
-    })
-  : null;
+export const s3Client = awsConfig ? new S3Client(awsConfig) : null;
 
 if (!s3Client) {
   logger.warn('AWS S3 client not configured — media uploads require AWS credentials');

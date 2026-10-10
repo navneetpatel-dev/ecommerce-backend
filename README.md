@@ -292,15 +292,14 @@ npm run db:migrate
 
 ## Production Deployment
 
-1. **Start production Postgres + Redis**:
-```bash
-docker compose -f docker-compose.prod.yml up -d
-npm run db:migrate
-```
+Production runs on AWS ECS Fargate (API, worker, migrations) with RDS and ElastiCache,
+deployed by GitHub Actions on every push to `main`. Setup, rollbacks, logs and
+day-to-day operations: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
 
-2. **Deploy the API** as a Node process (`npm run build && npm start`), with
-   `START_WORKERS_IN_API=false` and a separate `npm run start:worker` for background jobs.
-   Point `DB_HOST` and `REDIS_URL` at the hosts above.
+Running on a single host instead? `docker-compose.prod.yml` starts Postgres + Redis
+bound to localhost; run the API with `npm run build && npm start` and
+`START_WORKERS_IN_API=false`, plus a separate `npm run start:worker`, with
+`DB_SSL=false` and `REDIS_URL=redis://:<REDIS_PASSWORD>@localhost:6379`.
 
 ## Troubleshooting
 

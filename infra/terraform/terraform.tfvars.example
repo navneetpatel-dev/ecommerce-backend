@@ -1,0 +1,29 @@
+# Copy to terraform.tfvars (git-ignored) and fill in.
+
+app_domain = "shop.example.com"
+api_domain = "api.shop.example.com"
+
+# Either: the Route 53 hosted zone for those domains (Terraform issues the TLS
+# certificate and creates the DNS records) …
+route53_zone_id = "Z0123456789ABCDEFGHIJ"
+# … or: an ACM certificate you already have in eu-north-1 covering both names.
+# acm_certificate_arn = "arn:aws:acm:eu-north-1:123456789012:certificate/…"
+
+# The existing uploads bucket (infra/s3/README.md).
+media_bucket_name = "your-media-bucket"
+
+mail_from_email = "noreply@shop.example.com"
+mail_from_name  = "Shop"
+
+# Already have a GitHub OIDC provider in this AWS account? Set false.
+# create_github_oidc_provider = false
+
+# Optional plain env for the backend:
+# backend_extra_env = {
+#   S3_PUBLIC_BASE_URL = "https://cdn.shop.example.com"
+#   SENTRY_DSN         = "https://…"
+# }
+
+# Bigger / highly-available database for real traffic:
+# db_instance_class = "db.t4g.small"
+# db_multi_az       = true

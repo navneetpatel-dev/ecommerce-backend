@@ -9,7 +9,11 @@ const redisUrl = new URL(env.REDIS_URL);
 const redisConnection: ConnectionOptions = {
   host: redisUrl.hostname || '127.0.0.1',
   port: Number(redisUrl.port || 6379),
-  password: redisUrl.password || undefined,
+  username: redisUrl.username ? decodeURIComponent(redisUrl.username) : undefined,
+  password: redisUrl.password ? decodeURIComponent(redisUrl.password) : undefined,
+  // rediss:// (e.g. ElastiCache with in-transit encryption) needs TLS here too —
+  // ioredis only infers it when handed the URL itself.
+  ...(redisUrl.protocol === 'rediss:' ? { tls: {} } : {}),
   maxRetriesPerRequest: null,
   enableReadyCheck: false,
 };

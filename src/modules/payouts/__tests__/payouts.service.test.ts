@@ -15,8 +15,13 @@ import { ORDER_STATUS, RETURN_STATUS } from '@core/constants/statuses';
 
 describe('PayoutsService.process return-window and dispute hold', () => {
   beforeEach(() => {
-    // The run reads each vendor's state for its commission GST (CGST + SGST or IGST);
-    // tests that care mock their own vendor after this.
+    // The run reads every vendor's state in one batched `Vendor.findAll` for its
+    // commission GST (CGST + SGST or IGST); per-vendor lookups still use findByPk.
+    // Tests that care mock their own vendor after this.
+    mock.method(Vendor, 'findAll', async (options: { where?: { id?: Record<symbol, string[]> } }) => {
+      const ids = options.where?.id?.[Op.in] ?? [];
+      return ids.map((id) => ({ id, state: null })) as never;
+    });
     mock.method(Vendor, 'findByPk', async () => ({ state: null, businessName: 'Store' }) as never);
   });
 

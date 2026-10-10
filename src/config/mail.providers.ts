@@ -2,6 +2,7 @@ import { SESClient, SendEmailCommand, SendRawEmailCommand } from '@aws-sdk/clien
 import { randomUUID } from 'crypto';
 import nodemailer from 'nodemailer';
 import { env } from '@config/env';
+import { awsClientConfig } from '@config/awsCredentials';
 import { logger } from '@core/logger';
 import type { MailMessage, MailProvider, MailSendResult } from './mail';
 
@@ -54,23 +55,15 @@ export function createConsoleMailProvider(): MailProvider {
 }
 
 export function createSesMailProvider(): MailProvider {
-  const hasCredentials = Boolean(env.AWS_ACCESS_KEY_ID && env.AWS_SECRET_ACCESS_KEY);
-  const client = hasCredentials
-    ? new SESClient({
-        region: env.AWS_REGION,
-        credentials: {
-          accessKeyId: env.AWS_ACCESS_KEY_ID!,
-          secretAccessKey: env.AWS_SECRET_ACCESS_KEY!,
-        },
-      })
-    : null;
+  const awsConfig = awsClientConfig();
+  const client = awsConfig ? new SESClient(awsConfig) : null;
 
   return {
     name: 'ses',
     isReady: () => Boolean(client),
     async send(message): Promise<MailSendResult> {
       if (!client) {
-        throw new Error('SES mail provider is not configured (missing AWS credentials)');
+        throw new Error('SES mail provider is not configured (set AWS keys or AWS_USE_DEFAULT_CREDENTIALS=true)');
       }
 
       if (message.attachments?.length) {
