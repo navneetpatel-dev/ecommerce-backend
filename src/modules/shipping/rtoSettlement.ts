@@ -91,9 +91,12 @@ export async function refundReturnedUndeliveredPart(
 
   const refundedPaise = cashPaise + walletBackPaise;
   if (refundedPaise > 0) {
-    void notificationsService.sendRefundProcessed(order.userId, subOrder.id, {
-      amount: fromPaise(refundedPaise),
-      orderNumber: order.id.slice(0, 8).toUpperCase(),
+    // Only once the reversal is saved (a rollback must not tell the customer otherwise).
+    transaction.afterCommit(() => {
+      void notificationsService.sendRefundProcessed(order.userId, subOrder.id, {
+        amount: fromPaise(refundedPaise),
+        orderNumber: order.id.slice(0, 8).toUpperCase(),
+      });
     });
   }
 }

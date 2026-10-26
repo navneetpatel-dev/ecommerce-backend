@@ -68,6 +68,16 @@ export const retryRefund = asyncHandler(async (req: Request, res: Response) => {
   res.json(ok(item));
 });
 
+export const restock = asyncHandler(async (req: Request, res: Response) => {
+  const item = await returnsService.restock(req.params.id!, {
+    id: req.user!.id,
+    roleId: req.user!.roleId,
+    role: req.user!.role,
+    vendorId: req.user!.vendorId,
+  });
+  res.json(ok(item));
+});
+
 export const remove = asyncHandler(async (req: Request, res: Response) => {
   await returnsService.delete(req.params.id!, req.user!.id);
   res.status(204).send();

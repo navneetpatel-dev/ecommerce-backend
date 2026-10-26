@@ -24,8 +24,10 @@ module.exports = {
     host: process.env.DB_HOST,
     port: parseInt(process.env.DB_PORT || '5432', 10),
     dialect: 'postgres',
-    dialectOptions: {
-      ssl: { require: true, rejectUnauthorized: false },
-    },
+    // Same switch as DB_SSL in src/config/env.ts: on unless explicitly disabled
+    // (e.g. the self-hosted Postgres in docker-compose.prod.yml).
+    ...(process.env.DB_SSL === 'false' || process.env.DB_SSL === '0'
+      ? {}
+      : { dialectOptions: { ssl: { require: true, rejectUnauthorized: false } } }),
   },
 };

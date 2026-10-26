@@ -149,23 +149,15 @@ export class NotificationsService {
       }
     }
 
-    const alreadySent = await NotificationLog.findOne({
-      where: {
-        userId: params.userId,
-        type: params.type,
-        referenceId: params.referenceId,
-        status: NOTIFICATION_STATUS.SENT,
-      },
-    });
+    // One email per user, type and reference — and reference type, which a sender can use
+    // to tell apart updates on one record (each status of a return gets its own email).
+    const { userId, type, referenceType, referenceId } = params;
+    const dedupe = { userId, type, referenceType, referenceId };
+    const alreadySent = await NotificationLog.findOne({ where: { ...dedupe, status: NOTIFICATION_STATUS.SENT } });
     if (alreadySent) return alreadySent;
 
     let log = await NotificationLog.findOne({
-      where: {
-        userId: params.userId,
-        type: params.type,
-        referenceId: params.referenceId,
-        status: { [Op.in]: [NOTIFICATION_STATUS.PENDING, NOTIFICATION_STATUS.FAILED] },
-      },
+      where: { ...dedupe, status: { [Op.in]: [NOTIFICATION_STATUS.PENDING, NOTIFICATION_STATUS.FAILED] } },
       order: [['createdAt', 'DESC']],
     });
 
@@ -405,11 +397,17 @@ export class NotificationsService {
     });
   }
 
+  /** One vendor's part of an order cancelled, the rest still going. */
+  sendSubOrderCancelled(userId: string, subOrderId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({ userId, type: 'SUBORDER_CANCELLED', referenceType: 'SubOrder', referenceId: subOrderId, templateData });
+  }
+
+  /** A return's status update: one email per status (approved, picked up, rejected…), not per return. */
   sendOrderReturned(userId: string, returnId: string, templateData: EmailTemplateData = {}) {
     return this.enqueue({
       userId,
       type: 'ORDER_RETURNED',
-      referenceType: 'ReturnRequest',
+      referenceType: `ReturnRequest:${String(templateData.status ?? 'UPDATED')}`,
       referenceId: returnId,
       templateData,
     });

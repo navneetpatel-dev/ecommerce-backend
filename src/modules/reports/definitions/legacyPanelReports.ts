@@ -549,7 +549,7 @@ async function vendorSummaryQuery(filters: ReportFilters) {
           WHERE p."vendorId" = :vendorId
             AND p."deletedAt" IS NULL
             AND p.status = 'PAID'
-            AND p."createdAt" BETWEEN :from AND :to
+            AND COALESCE(p."paidAt", p."createdAt") BETWEEN :from AND :to
         ) AS "paidPaise"
       FROM commission_ledgers cl
       WHERE cl."deletedAt" IS NULL
@@ -672,7 +672,7 @@ export const legacyPanelReports: ReportDefinition[] = [
     type: 'wallet-liability',
     labelKey: 'reportWalletLiability',
     audience: 'admin_finance',
-    permissions: [PERMISSIONS.ANALYTICS_VIEW, PERMISSIONS.COMMISSION_VIEW],
+    permissions: [PERMISSIONS.COMMISSION_VIEW],
     vendorScoped: false,
     financial: true,
     columns: [
@@ -689,7 +689,7 @@ export const legacyPanelReports: ReportDefinition[] = [
     type: 'wallet-recharge',
     labelKey: 'reportWalletRecharge',
     audience: 'admin_finance',
-    permissions: [PERMISSIONS.ANALYTICS_VIEW, PERMISSIONS.COMMISSION_VIEW],
+    permissions: [PERMISSIONS.COMMISSION_VIEW],
     vendorScoped: false,
     financial: true,
     columns: [
@@ -708,7 +708,7 @@ export const legacyPanelReports: ReportDefinition[] = [
     type: 'cashback-write-offs',
     labelKey: 'reportCashbackWriteOffs',
     audience: 'admin_finance',
-    permissions: [PERMISSIONS.ANALYTICS_VIEW, PERMISSIONS.COMMISSION_VIEW],
+    permissions: [PERMISSIONS.COMMISSION_VIEW],
     vendorScoped: false,
     financial: true,
     columns: [

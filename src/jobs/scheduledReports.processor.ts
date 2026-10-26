@@ -6,6 +6,7 @@ import { areQueuesReady, queues } from '@config/queue';
 import { sendEmail } from '@config/mail';
 import { reportEngine, type ReportActor } from '@modules/reports/engine/reportEngine';
 import { settingsService } from '@modules/settings/settings.service';
+import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 
 export type ScheduledReportsDeps = {
   sendMail?: typeof sendEmail;
@@ -33,7 +34,11 @@ function cadenceMatches(now: Date, dayOfWeek: number, hourUtc: number): boolean 
 
 async function resolveRecipients(emails: string[]): Promise<User[]> {
   if (emails.length > 0) {
-    return User.findAll({ where: { email: emails }, limit: 50 });
+    return User.findAll({
+      where: { email: emails },
+      include: [{ model: Role, as: 'role', required: true }],
+      limit: 50,
+    });
   }
   // Fallback (v1 default): explicit recipient list is empty — email every SUPER_ADMIN.
   return User.findAll({
@@ -69,11 +74,16 @@ export async function runScheduledWeeklyReports(
 
   for (const recipient of recipients) {
     if (!recipient.email) continue;
+    // Each recipient gets only what their own role may see: an address added to the list
+    // (a vendor's, a customer's) never receives platform-wide finance reports. A report
+    // they can't see is refused by the engine and skipped below.
+    const role = (recipient as User & { role?: Role }).role;
+    if (!role) continue;
     const actor: ReportActor = {
       id: recipient.id,
       vendorId: recipient.vendorId ?? null,
-      roleName: ROLES.SUPER_ADMIN,
-      permissions: [],
+      roleName: role.name,
+      permissions: await resolvePermissionsForUser({ roleId: recipient.roleId, role: { name: role.name } }),
     };
     for (const reportType of reportTypes) {
       try {

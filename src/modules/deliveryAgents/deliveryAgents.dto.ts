@@ -79,7 +79,11 @@ export const ConfirmPickupSchema = z.object({
   itemConditionPhotoUrls: z.array(z.string().url()).max(8).optional(),
   replacementProofUrl: z.string().url().optional(),
 });
-export const ForceConfirmSchema = z.object({ reason: z.string().trim().min(3).max(1000) });
+export const ForceConfirmSchema = z.object({
+  reason: z.string().trim().min(3).max(1000),
+  /** COD only: whether the cash was taken. Never assumed, or the agent owes cash never paid. */
+  codCollected: z.boolean().optional().default(false),
+});
 export const UpdateLocationSchema = z.object({
   lat: z.number().min(-90).max(90),
   lng: z.number().min(-180).max(180),

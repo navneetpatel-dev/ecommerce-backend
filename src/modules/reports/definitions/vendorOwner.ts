@@ -615,9 +615,10 @@ async function vendorReturnRefundExport(
       WHERE r."deletedAt" IS NULL
         AND r."createdAt" BETWEEN :from AND :to
         AND (:vendorId::uuid IS NULL OR so."vendorId" = :vendorId)
+        AND (:status::text IS NULL OR r.status::text = :status)
     `,
     order: RETURN_REFUND_KEYSET,
-    replacements: { from: filters.from, to: filters.to, vendorId },
+    replacements: { from: filters.from, to: filters.to, vendorId, status: filters.status ?? null },
     limit,
     cursor,
     mapRow: (row) => {
@@ -755,9 +756,7 @@ async function vendorDiscountCost(filters: ReportFilters) {
 async function vendorReturnRefund(filters: ReportFilters) {
   assertReportRange(filters);
 
-  const where: Record<string, unknown> = {
-    createdAt: dateBetween(filters.from, filters.to),
-  };
+  const where: Record<string, unknown> = { createdAt: dateBetween(filters.from, filters.to) };
   if (filters.status) where.status = filters.status;
 
   const { rows, total } = await pagedFindAndCount(

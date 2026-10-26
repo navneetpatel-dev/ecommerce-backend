@@ -1,4 +1,3 @@
-import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { buildPaginationMeta } from '@core/http/pagination';
@@ -12,7 +11,8 @@ import type { ReportFilters } from './types';
 import type { ReportExportFormat } from './csvExporter';
 import { generateReportExport, type DirectExportResult } from './generateReportExport';
 import {
-  actorCanAccess,
+  actorCanSeeAudience,
+  assertActorMayRunReport,
   isVendorStaff,
   resolveFiltersForActor,
 } from './reportEngine.helpers';
@@ -32,19 +32,14 @@ export class ReportEngine {
     const staff = isVendorStaff(actor.permissions, actor.roleName);
     return listReportDefinitionsForPermissions(actor.permissions, actor.roleName).filter((d) => {
       if (staff && d.financial) return false;
-      return true;
+      return actorCanSeeAudience(actor, d.audience);
     });
   }
 
   async runJson(actor: ReportActor, reportType: string, rawFilters: ReportFilters) {
     const def = getReportDefinition(reportType);
     if (!def) throw new NotFoundError(ERROR_MESSAGES.REPORT_NOT_FOUND);
-    if (!actorCanAccess(actor.permissions, actor.roleName, def.permissions)) {
-      throw new ForbiddenError(ERROR_MESSAGES.REPORT_FORBIDDEN);
-    }
-    if (isVendorStaff(actor.permissions, actor.roleName) && def.financial) {
-      throw new ForbiddenError(ERROR_MESSAGES.REPORT_FORBIDDEN);
-    }
+    assertActorMayRunReport(actor, def);
     assertReportRange(rawFilters);
     const filters = resolveFiltersForActor(actor, rawFilters, def.vendorScoped);
     if (def.audience === 'customer') {

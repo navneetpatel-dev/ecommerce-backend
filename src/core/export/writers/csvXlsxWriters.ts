@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs';
 import type { ExportColumn, ExportArtifact, ExportWriter } from '../exportTypes';
 import { contentTypeForExportFormat } from '../exportTypes';
+import { escapeCsvField, neutralizeCsvFormula } from '../csvCell';
 
 function formatCsvCell(value: unknown, format?: string): string {
   if (value == null) return '';
@@ -16,7 +17,7 @@ function formatCsvCell(value: unknown, format?: string): string {
     const n = Number(value);
     return Number.isFinite(n) ? `${n} pts` : '0 pts';
   }
-  return typeof value === 'object' ? JSON.stringify(value) : String(value);
+  return neutralizeCsvFormula(typeof value === 'object' ? JSON.stringify(value) : String(value));
 }
 
 class StreamingCsvWriter implements ExportWriter {
@@ -34,14 +35,14 @@ class StreamingCsvWriter implements ExportWriter {
 
   async writeHeader(): Promise<void> {
     if (this.headerWritten) return;
-    const escape = (value: string) => (/[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value);
+    const escape = escapeCsvField;
     await this.write(`${this.columns.map((c) => escape(c.label)).join(',')}\n`);
     this.headerWritten = true;
   }
 
   async writeRows(rows: Record<string, unknown>[]): Promise<void> {
     if (!this.headerWritten) await this.writeHeader();
-    const escape = (value: string) => (/[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value);
+    const escape = escapeCsvField;
     const lines = rows.map((row) =>
       this.columns.map((col) => escape(formatCsvCell(row[col.key], col.format))).join(','),
     );

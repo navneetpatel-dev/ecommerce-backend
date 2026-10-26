@@ -1,11 +1,9 @@
 import type { Server as HttpServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import { env } from '@config/env';
+import { canSeeShipmentDetails } from '@modules/shipping/shipmentAccess';
 import { logger } from '@core/logger';
 import { BEARER_PREFIX } from '@core/constants/http';
-import { ADMIN_ROLES, ROLES } from '@core/constants/statuses';
-import { PERMISSIONS } from '@core/constants/permissions';
-import { userHasPermission } from '@middleware/rbac.middleware';
 import { loadUserFromBearer } from '@middleware/auth.middleware';
 import { Shipment } from '@database/models/shipment.model';
 import { SubOrder } from '@database/models/subOrder.model';
@@ -79,18 +77,11 @@ export function initSocket(server: HttpServer): SocketIOServer {
             return;
           }
 
+          // The room streams the agent's live location: only the shipment's own people,
+          // never an anonymous socket or an agent not carrying it.
           const user = socket.data.user as SocketUser;
-          const subOrder = (shipment as Shipment & { subOrder?: SubOrder & { order?: Order } })
-            .subOrder;
-          const isAdmin =
-            Boolean(user) &&
-            ((ADMIN_ROLES as readonly string[]).includes(user!.role.name) ||
-              (await userHasPermission(user as any, PERMISSIONS.SHIPPING_MANAGE, PERMISSIONS.ORDER_MANAGE)));
-          const isCustomerOwner =
-            Boolean(user) && user!.role.name === ROLES.CUSTOMER && subOrder?.order?.userId === user!.id;
-          const isVendorOwner = Boolean(user) && user!.vendorId != null && subOrder?.vendorId === user!.vendorId;
-          const isDeliveryAgent = Boolean(user) && user!.role.name === ROLES.DELIVERY_AGENT;
-          if (user && !isAdmin && !isCustomerOwner && !isVendorOwner && !isDeliveryAgent) {
+          const facts = shipment as Shipment & { subOrder?: SubOrder & { order?: Order } };
+          if (!(await canSeeShipmentDetails(user, facts))) {
             ack?.({ ok: false, message: 'Not authorized for this shipment' });
             return;
           }

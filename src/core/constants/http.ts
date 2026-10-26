@@ -6,6 +6,8 @@ export const COOKIES = {
 export const HEADERS = {
   REQUEST_ID: 'x-request-id',
   RAZORPAY_SIGNATURE: 'x-razorpay-signature',
+  /** Razorpay's unique id for a webhook event; the same on every retry of it. */
+  RAZORPAY_EVENT_ID: 'x-razorpay-event-id',
   AUTHORIZATION: 'authorization',
 } as const;
 

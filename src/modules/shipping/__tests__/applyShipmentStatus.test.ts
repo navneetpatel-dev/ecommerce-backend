@@ -5,6 +5,7 @@ import { Shipment } from '@database/models/shipment.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { Order } from '@database/models/order.model';
 import { shippingService } from '../shipping.service';
+import { settleCodPaymentIfComplete } from '../codSettlement';
 import { deliveryAgentPayoutsService } from '@modules/deliveryAgents/deliveryAgentPayouts.service';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { PAYMENT_STATUS } from '@core/constants/statuses';
@@ -16,7 +17,8 @@ describe('applyShipmentStatus idempotency (F-17)', () => {
 
   function stubTransaction() {
     mock.method(sequelize, 'transaction', async (callback: (t: unknown) => Promise<unknown>) => {
-      return callback({ LOCK: { UPDATE: 'UPDATE' } });
+      // Commits at once, so after-commit work (customer emails) runs as on a real commit.
+      return callback({ LOCK: { UPDATE: 'UPDATE' }, afterCommit: (fn: () => void) => fn() });
     });
   }
 
@@ -99,7 +101,6 @@ describe('applyShipmentStatus idempotency (F-17)', () => {
       // No TCS on this part: nothing to record at dispatch.
       tcsAmountPaise: 0,
     }));
-    mock.method(SubOrder, 'findAll', async () => [{ status: 'DELIVERED' }]);
     mock.method(Order, 'update', async () => [1]);
 
     const order = {
@@ -128,7 +129,9 @@ describe('applyShipmentStatus idempotency (F-17)', () => {
       },
     };
 
-    mock.method(Shipment, 'findAll', async () => [shipment]);
+    // The order's only part, with its shipment: cascade reads the status, COD settlement
+    // reads whether that shipment's cash was collected.
+    mock.method(SubOrder, 'findAll', async () => [{ id: 'sub-3', status: 'DELIVERED', shipment }]);
 
     await shippingService.applyShipmentStatus(shipment as unknown as Shipment, 'DELIVERED');
 
@@ -140,5 +143,40 @@ describe('applyShipmentStatus idempotency (F-17)', () => {
     await shippingService.applyShipmentStatus(shipment as unknown as Shipment, 'DELIVERED');
     assert.equal(earningCount, 1);
     assert.equal(notifyCount, 1);
+  });
+});
+
+describe('COD settlement waits for every part still owed', () => {
+  afterEach(() => {
+    mock.restoreAll();
+  });
+
+  it('keeps a two-vendor COD order unpaid while the other part has not shipped', async () => {
+    let orderPaid = false;
+    const order = {
+      id: 'order-4',
+      paymentMethod: 'COD',
+      paymentStatus: PAYMENT_STATUS.PENDING,
+      update: async (fields: { paymentStatus?: string }) => {
+        if (fields.paymentStatus === PAYMENT_STATUS.PAID) orderPaid = true;
+        return order;
+      },
+    };
+    mock.method(Order, 'findByPk', async () => order);
+    mock.method(SubOrder, 'findByPk', async () => ({ id: 'sub-a', orderId: 'order-4' }));
+    const collected = { status: 'DELIVERED', codAmount: 500, codCollected: true };
+    const parts = [
+      { id: 'sub-a', status: 'DELIVERED', shipment: collected },
+      { id: 'sub-b', status: 'CONFIRMED', shipment: null },
+    ];
+    mock.method(SubOrder, 'findAll', async () => parts);
+
+    await settleCodPaymentIfComplete('sub-a', {} as never);
+    assert.equal(orderPaid, false);
+
+    // Vendor B cancels its unshipped part: nothing else is owed, the order is paid.
+    parts[1]!.status = 'CANCELLED';
+    await settleCodPaymentIfComplete('sub-b', {} as never);
+    assert.equal(orderPaid, true);
   });
 });

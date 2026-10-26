@@ -1,5 +1,6 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
-import { ValidationError } from '@core/errors';
+import { assertPartPaidFor, assertSubOrderTransition, VENDOR_VISIBLE_ORDER_WHERE } from './subOrderTransitions';
+import { recordPartShipment } from './partShipment';
 import { SubOrder } from '@database/models/subOrder.model';
 import { Vendor } from '@database/models/vendor.model';
 import { Order } from '@database/models/order.model';
@@ -27,7 +28,9 @@ import {
 } from '@modules/pricing/refundSplit';
 import { mapSubOrder } from '@modules/orders/orderDisplayMappers';
 import { notificationsService } from '@modules/notifications/notifications.service';
-import { shippingService } from '@modules/shipping/shipping.service';
+import { settleCodPaymentIfComplete } from '@modules/shipping/codSettlement';
+import { rollUpOrderStatus } from '@modules/orders/orderStatusRollup';
+import { logAudit } from '@modules/audit/audit.service';
 import { issuePartCardRefund, markPartCardRefundPending } from '@modules/payments/partCardRefund';
 import { walletService } from '@modules/wallet/wallet.service';
 import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
@@ -37,23 +40,8 @@ import {
 } from '@modules/wallet/walletOrderRollback';
 import type { GetSubOrdersQuery } from './suborders.dto';
 import { issueTaxInvoicesOnDispatch } from '@modules/pricing/taxInvoiceIssue';
-import { codAmountForSubOrder } from '@modules/shipping/codCollection';
 import { destroyCouponUsageForOrder } from '@modules/coupons/couponEngine';
 import { isReversedPart } from '@modules/pricing/partReversal';
-
-/**
- * Transitions reachable through this manual, vendor/admin-facing endpoint.
- * DELIVERED is deliberately absent from every entry — that transition is
- * only reachable through the delivery agent's OTP-gated confirmation
- * (`deliveryAgents.service.ts`'s `confirmDelivery`), never a plain status
- * PATCH, so an order can't be marked delivered without proof the customer
- * actually received it. RETURNED is likewise not settable here — the
- * returns module owns that lifecycle via `ReturnRequest.status`.
- */
-const SUBORDER_MANUAL_TRANSITIONS: Record<string, readonly string[]> = {
-  [ORDER_STATUS.PENDING]: [ORDER_STATUS.CONFIRMED, ORDER_STATUS.SHIPPED, ORDER_STATUS.CANCELLED],
-  [ORDER_STATUS.CONFIRMED]: [ORDER_STATUS.SHIPPED, ORDER_STATUS.CANCELLED],
-};
 
 /** Vendor/admin need to see who's delivering an order, not every internal column. */
 const shipmentInclude = {
@@ -85,13 +73,6 @@ const returnRequestInclude = {
     },
   ],
 };
-
-function assertSubOrderTransition(from: string, to: string) {
-  if (from === to) return;
-  if (!SUBORDER_MANUAL_TRANSITIONS[from]?.includes(to)) {
-    throw new ValidationError({ status: [`Cannot move an order from ${from} to ${to} here`] });
-  }
-}
 
 /**
  * Non-wallet (cash/Razorpay/COD) share of a suborder refund. The wallet-funded share
@@ -147,7 +128,10 @@ export class SubordersService {
       where,
       include: [
         { model: OrderItem, as: 'items' },
-        { model: Order, as: 'order' },
+        // A vendor never sees a checkout still awaiting payment: nothing to do on it yet.
+        vendorId
+          ? { model: Order, as: 'order', where: VENDOR_VISIBLE_ORDER_WHERE, required: true }
+          : { model: Order, as: 'order' },
         { model: Vendor, as: 'vendor' },
         shipmentInclude,
         returnRequestInclude,
@@ -196,10 +180,23 @@ export class SubordersService {
       const row = await SubOrder.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
       if (!row) throw new NotFoundError('SubOrder');
       assertSubOrderTransition(row.status, status);
+      assertPartPaidFor(
+        await Order.findByPk(row.orderId, { attributes: ['paymentMethod', 'paymentStatus'], transaction }),
+      );
+      // Who moved the part, and from what: a cancel here restocks and refunds.
+      await logAudit({
+        actorId: updatedBy,
+        action: 'SUBORDER_STATUS_UPDATED',
+        entityType: 'SubOrder',
+        entityId: id,
+        metadata: { previousStatus: row.status, newStatus: status, trackingId: trackingId ?? null },
+        transaction,
+      });
 
       await row.update({ status, trackingId: trackingId ?? row.trackingId, updatedBy }, { transaction });
       if (status === ORDER_STATUS.SHIPPED || status === ORDER_STATUS.DELIVERED) {
         await issueTaxInvoicesOnDispatch(id, transaction);
+        await rollUpOrderStatus(row.orderId, transaction);
       }
 
       if (status === ORDER_STATUS.CANCELLED) {
@@ -343,50 +340,20 @@ export class SubordersService {
               await destroyCouponUsageForOrder(parentOrder.id, transaction);
             }
             orderFullyCancelled = true;
+          } else {
+            // The rest may all be shipped or delivered already: the order follows them.
+            await rollUpOrderStatus(parentOrder.id, transaction);
+            // The other parcels may all be delivered and paid: with this, the last part
+            // still owed, cancelled, the order is paid in full.
+            if (parentOrder.paymentMethod === PAYMENT_METHOD.COD) {
+              await settleCodPaymentIfComplete(id, transaction);
+            }
           }
         }
       }
 
       if (status === ORDER_STATUS.SHIPPED && trackingId) {
-        const parentOrder = await Order.findByPk(row.orderId, {
-          transaction,
-          attributes: [
-            'id',
-            'paymentMethod',
-            'walletAmountUsed',
-            'giftWrapFeeAmount',
-            'originalTotalAmount',
-            'totalAmount',
-            'razorpayAmountPaid',
-            'razorpayPaymentId',
-          ],
-        });
-        // What is still owed at the door for this shipment: its share of the order, less
-        // the wallet already applied, plus the gift-wrap fee on the first shipment.
-        const codAmount =
-          parentOrder?.paymentMethod === 'COD'
-            ? await codAmountForSubOrder(parentOrder, id, transaction)
-            : null;
-        const [shipment, created] = await Shipment.findOrCreate({
-          where: { subOrderId: id },
-          defaults: {
-            subOrderId: id,
-            carrier: 'MANUAL',
-            trackingNumber: trackingId,
-            status: 'IN_TRANSIT',
-            shippedAt: new Date(),
-            codAmount,
-          } as never,
-          transaction,
-        });
-        if (!created) {
-          await shippingService.applyShipmentStatus(
-            shipment,
-            'IN_TRANSIT',
-            { trackingNumber: trackingId, carrier: shipment.carrier ?? 'MANUAL' },
-            transaction,
-          );
-        }
+        await recordPartShipment(id, row.orderId, trackingId, transaction);
       }
       return row.reload({
         include: [
@@ -430,10 +397,12 @@ export class SubordersService {
         });
       }
       if (status === ORDER_STATUS.CANCELLED) {
-        void notificationsService.sendOrderCancelled(order.userId, order.id, {
-          orderId: order.id,
-          orderNumber,
-        });
+        // The whole order only once its last part goes: an "order cancelled" email for one
+        // vendor's part misled, and then blocked the real one.
+        const notify = orderFullyCancelled
+          ? notificationsService.sendOrderCancelled(order.userId, order.id, { orderId: order.id, orderNumber })
+          : notificationsService.sendSubOrderCancelled(order.userId, suborder.id, { orderId: order.id, orderNumber });
+        void notify;
       }
     }
 

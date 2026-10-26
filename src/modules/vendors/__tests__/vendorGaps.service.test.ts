@@ -184,6 +184,8 @@ describe('Vendor Modules Gap Fixes Verification', () => {
       });
 
       mock.method(notificationsService, 'sendOrderCancelled', () => {});
+      // Sub-order status changes are audited.
+      mock.method(AuditLog, 'create', async () => ({}) as never);
 
       await subordersService.updateStatus(
         '22222222-2222-2222-2222-222222222222',

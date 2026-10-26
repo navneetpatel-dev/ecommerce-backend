@@ -2,11 +2,10 @@ import { getReportDefinition } from './reportRegistry';
 import { resolveReportColumnLabel } from '../reports.constants';
 import { assertReportRange } from './queryHelpers';
 import { createReportRowIterator, countReportRows } from './export/ReportRowIterator';
-import { actorCanAccess, isVendorStaff, resolveFiltersForActor } from './reportEngine.helpers';
+import { assertActorMayRunReport, resolveFiltersForActor } from './reportEngine.helpers';
 import { documentKeyToPdfTitle } from '@core/export/exportFilenames';
 import type { ExportSource, ExportActor } from '@core/export';
 import { registerExportDomain } from '@core/export';
-import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
@@ -59,12 +58,7 @@ export async function resolveReportExportSource(
 ): Promise<ExportSource> {
   const def = getReportDefinition(reportType);
   if (!def) throw new NotFoundError(ERROR_MESSAGES.REPORT_NOT_FOUND);
-  if (!actorCanAccess(actor.permissions as any, actor.roleName, def.permissions)) {
-    throw new ForbiddenError(ERROR_MESSAGES.REPORT_FORBIDDEN);
-  }
-  if (isVendorStaff(actor.permissions as any, actor.roleName) && def.financial) {
-    throw new ForbiddenError(ERROR_MESSAGES.REPORT_FORBIDDEN);
-  }
+  assertActorMayRunReport(actor as any, def);
 
   const parsed = toReportFilters(rawFilters);
   assertReportRange(parsed);

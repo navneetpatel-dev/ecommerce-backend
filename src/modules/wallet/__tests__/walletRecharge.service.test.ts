@@ -35,6 +35,7 @@ describe('WalletRechargeService.validateRechargeAmount', () => {
       walletRechargeEnabled: false,
     }));
     mock.method(walletService, 'getBalance', async () => 0);
+    mock.method(walletService, 'lockedBalance', async () => 0);
     await assert.rejects(
       () => walletRechargeService.validateRechargeAmount('user-1', 500),
       (err) => isValidation(err, ERROR_MESSAGES.WALLET_RECHARGE_DISABLED),
@@ -44,6 +45,7 @@ describe('WalletRechargeService.validateRechargeAmount', () => {
   it('rejects amount below minimum', async () => {
     mock.method(settingsService, 'getPlatformSettings', async () => defaultSettings);
     mock.method(walletService, 'getBalance', async () => 0);
+    mock.method(walletService, 'lockedBalance', async () => 0);
     await assert.rejects(
       () => walletRechargeService.validateRechargeAmount('user-1', 0),
       (err) =>
@@ -54,6 +56,7 @@ describe('WalletRechargeService.validateRechargeAmount', () => {
   it('rejects amount above maximum', async () => {
     mock.method(settingsService, 'getPlatformSettings', async () => defaultSettings);
     mock.method(walletService, 'getBalance', async () => 0);
+    mock.method(walletService, 'lockedBalance', async () => 0);
     await assert.rejects(
       () => walletRechargeService.validateRechargeAmount('user-1', 20000),
       (err) =>
@@ -65,6 +68,7 @@ describe('WalletRechargeService.validateRechargeAmount', () => {
   it('rejects when the top-up would exceed max balance', async () => {
     mock.method(settingsService, 'getPlatformSettings', async () => defaultSettings);
     mock.method(walletService, 'getBalance', async () => 49950);
+    mock.method(walletService, 'lockedBalance', async () => 49950);
     await assert.rejects(
       () => walletRechargeService.validateRechargeAmount('user-1', 100),
       (err) => isValidation(err, ERROR_MESSAGES.WALLET_MAX_BALANCE_EXCEEDED),
@@ -74,6 +78,7 @@ describe('WalletRechargeService.validateRechargeAmount', () => {
   it('credits one point per rupee: ₹500 is 500 points', async () => {
     mock.method(settingsService, 'getPlatformSettings', async () => defaultSettings);
     mock.method(walletService, 'getBalance', async () => 0);
+    mock.method(walletService, 'lockedBalance', async () => 0);
     const result = await walletRechargeService.validateRechargeAmount('user-1', 500);
     assert.equal(result.amount, 500);
     assert.equal(result.pointsToCredit, 500);
@@ -86,6 +91,7 @@ describe('WalletRechargeService.previewRechargeAmount', () => {
   it('returns preview points and ok validation for valid amount', async () => {
     mock.method(settingsService, 'getPlatformSettings', async () => defaultSettings);
     mock.method(walletService, 'getBalance', async () => 0);
+    mock.method(walletService, 'lockedBalance', async () => 0);
     const preview = await walletRechargeService.previewRechargeAmount('user-1', 500);
     assert.equal(preview.validationCode, 'ok');
     assert.equal(preview.pointsToCredit, 500);
@@ -94,6 +100,7 @@ describe('WalletRechargeService.previewRechargeAmount', () => {
   it('returns max-balance without throwing', async () => {
     mock.method(settingsService, 'getPlatformSettings', async () => defaultSettings);
     mock.method(walletService, 'getBalance', async () => 49950);
+    mock.method(walletService, 'lockedBalance', async () => 49950);
     const preview = await walletRechargeService.previewRechargeAmount('user-1', 100);
     assert.equal(preview.validationCode, 'max-balance');
   });
@@ -153,6 +160,7 @@ describe('WalletRechargeService.handlePaymentCaptured max balance', () => {
     mock.method(WalletRechargeOrder, 'findOne', async () => rechargeRow);
     mock.method(settingsService, 'getPlatformSettings', async () => defaultSettings);
     mock.method(walletService, 'getBalance', async () => 49500);
+    mock.method(walletService, 'lockedBalance', async () => 49500);
     mock.method(paymentsService, 'createRazorpayRefund', async () => 'rfnd_cap_1');
     mock.method(notificationsService, 'sendWalletRechargeFailed', async () => undefined);
 

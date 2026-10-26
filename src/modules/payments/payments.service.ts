@@ -1,41 +1,30 @@
 import crypto from 'crypto';
+import { razorpayWebhookEventId } from './razorpayWebhookEventId';
+import { createIdempotentRazorpayRefund } from './razorpayRefund';
+import type { GatewayPayment } from './razorpayOrderPayments';
 import { env } from '@config/env';
 import { razorpay, razorpayConfigured } from '@config/razorpay';
 import { AppError } from '@core/errors/AppError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { sequelize } from '@database/models';
 import { Order } from '@database/models/order.model';
-import { SubOrder } from '@database/models/subOrder.model';
-import { OrderItem } from '@database/models/orderItem.model';
-import { ProductVariant } from '@database/models/productVariant.model';
-import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { Coupon } from '@database/models/coupon.model';
 import { WebhookEvent } from '@database/models/webhookEvent.model';
 import { User } from '@database/models/user.model';
 import { SavedPaymentMethod } from '@database/models/savedPaymentMethod.model';
 import { NotFoundError } from '@core/errors/NotFoundError';
-import { cartService } from '@modules/cart/cart.service';
-import {
-  recordCouponUsagesForOrder,
-  destroyCouponUsageForOrder,
-} from '@modules/coupons/couponEngine';
-import { Op } from 'sequelize';
-import {
-  ORDER_STATUS,
-  PAYMENT_METHOD,
-  PAYMENT_STATUS,
-  COMMISSION_STATUS,
-  REFUND_STATUS,
-  allSubOrdersCancellable,
-} from '@core/constants/statuses';
+import { recordCouponUsagesForOrder } from '@modules/coupons/couponEngine';
+import { ORDER_STATUS, PAYMENT_STATUS, REFUND_STATUS } from '@core/constants/statuses';
 import { logger } from '@core/logger';
 import { ERROR_MESSAGES, ERROR_CODES } from '@core/constants/errors';
 import { RAZORPAY_MIN_AMOUNT_PAISE } from '@core/constants/http';
 import { toPaise } from '@modules/pricing/money';
+import { checkoutAmountDue } from '@modules/pricing/displayMoney';
 import { notifyOrderConfirmed } from '@modules/notifications/orderNotifications';
 import { notificationsService } from '@modules/notifications/notifications.service';
-import { rollbackOrderWalletIfNeeded } from '@modules/wallet/walletOrderRollback';
 import { markPartCardRefundProcessed } from './partCardRefund';
+import { failedOrderRefundAttempt } from './orderCancelRefund';
+import { refundIfSupersededRechargePayment } from '@modules/wallet/supersededRechargePayment';
 
 export type RazorpayCheckoutPayload = {
   razorpayOrderId: string;
@@ -59,160 +48,137 @@ function safeTimingEqual(a: string, b: string): boolean {
   return crypto.timingSafeEqual(aBuf, bBuf);
 }
 
-type OrderForRollback = Order & {
-  subOrders?: (SubOrder & { items?: OrderItem[] })[];
+/**
+ * The Razorpay order was created for exactly what the order owes (its total less the
+ * wallet share), in rupees: a capture for anything else is not this order's payment.
+ * A payload without an amount (older events) is taken as before.
+ */
+function capturedMatchesOrder(order: Order, payment: GatewayPayment): boolean {
+  if (payment.currency && payment.currency !== 'INR') return false;
+  if (payment.amount == null) return true;
+  return Number(payment.amount) === toPaise(checkoutAmountDue(order.totalAmount, order.walletAmountUsed));
+}
+
+type RazorpayWebhookEvent = {
+  id?: string;
+  event: string;
+  payload?: {
+    payment?: {
+      entity?: {
+        id: string;
+        order_id: string;
+        /** Captured amount, in paise. */
+        amount?: number;
+        currency?: string;
+        /** Present when the customer opted to save this instrument. */
+        token_id?: string | null;
+        method?: string;
+        card?: { last4?: string; network?: string; type?: string } | null;
+        vpa?: string | null;
+      };
+    };
+    refund?: {
+      entity?: {
+        id: string;
+        payment_id: string;
+        amount: number;
+        status?: string;
+        notes?: Record<string, string> | null;
+      };
+    };
+  };
 };
 
 export class PaymentsService {
-  private async restoreCancelledRazorpayOrder(razorpayOrderId: string): Promise<string | null> {
-    return this.cancelUnpaidOrder({ razorpayOrderId });
-  }
-
   /**
-   * Cancel an online order that was never paid: restock, void its ledgers and coupon
-   * use, return the items to the cart and the wallet money applied at checkout.
+   * Confirms the order a captured Razorpay payment pays for: from the payment.captured
+   * webhook, or from the expiry job when that webhook never came. Safe to repeat for a
+   * payment. A capture on an order cancelled unpaid is refunded, and so is a second
+   * capture on an order another payment already paid (two attempts both went through).
    */
-  private async cancelUnpaidOrder(
-    where: { razorpayOrderId: string } | { id: string },
-  ): Promise<string | null> {
-    let cancelledOrderId: string | null = null;
+  async confirmCapturedPayment(payment: GatewayPayment): Promise<void> {
+    let confirmedOrderId: string | null = null;
+    let confirmedOrderUserId: string | null = null;
+    let cancelledPaidOrder: Order | null = null;
+    let doublePaidOrderId: string | null = null;
+    let mismatchedOrderId: string | null = null;
     await sequelize.transaction(async (t) => {
-      const locked = await Order.findOne({
-        where,
+      const order = await Order.findOne({
+        where: { razorpayOrderId: payment.order_id },
         transaction: t,
         lock: t.LOCK.UPDATE,
       });
-
-      if (!locked) return;
-      if (locked.paymentStatus === PAYMENT_STATUS.PAID) return;
-
-      if (locked.status === ORDER_STATUS.CANCELLED) {
-        const walletRestored = await rollbackOrderWalletIfNeeded(locked, locked.userId, t);
-        if (walletRestored) {
-          await locked.update({ walletAmountUsed: 0 }, { transaction: t });
-        }
-        cancelledOrderId = locked.id;
+      if (!order) return;
+      if (order.paymentStatus === PAYMENT_STATUS.PAID) {
+        if (order.razorpayPaymentId !== payment.id) doublePaidOrderId = order.id;
+        return;
+      }
+      // Never revive a cancelled order: its stock and wallet money are already back.
+      if (order.status === ORDER_STATUS.CANCELLED) {
+        cancelledPaidOrder = order;
+        return;
+      }
+      if (!capturedMatchesOrder(order, payment)) {
+        mismatchedOrderId = order.id;
         return;
       }
 
-      const orderResult = await Order.findByPk(locked.id, {
-        include: [
-          {
-            model: SubOrder,
-            as: 'subOrders',
-            include: [{ model: OrderItem, as: 'items' }],
-          },
-        ],
-        transaction: t,
-      });
-
-      if (!orderResult) return;
-
-      const order = orderResult as OrderForRollback;
-
-      // Defense in depth, matching checkout.service.ts's cancelPendingCheckout and
-      // ordersCancel.service.ts's cancelPaidOrder: never restock/un-order a suborder that has
-      // already moved past pre-shipment, even though a `payment.failed` webhook for an order
-      // still PENDING payment shouldn't normally reach a shipped suborder.
-      if (!allSubOrdersCancellable(order.subOrders ?? [])) return;
-
-      const restoreLines: Array<{ variantId: string; quantity: number }> = [];
-
-      for (const subOrder of order.subOrders ?? []) {
-        for (const item of subOrder.items ?? []) {
-          restoreLines.push({ variantId: item.variantId, quantity: item.quantity });
-          await ProductVariant.increment('stock', {
-            by: item.quantity,
-            where: { id: item.variantId },
-            transaction: t,
-          });
-        }
-
-        await subOrder.update({ status: ORDER_STATUS.CANCELLED }, { transaction: t });
-        await CommissionLedger.destroy({
-          where: { subOrderId: subOrder.id, status: COMMISSION_STATUS.PENDING },
-          transaction: t,
-        });
-      }
-
-      await destroyCouponUsageForOrder(order.id, t);
-
-      await cartService.restoreItemsToUserCart(order.userId, restoreLines, t);
-
-      await rollbackOrderWalletIfNeeded(order, order.userId, t);
-
       await order.update(
         {
-          status: ORDER_STATUS.CANCELLED,
-          paymentStatus: PAYMENT_STATUS.FAILED,
-          walletAmountUsed: 0,
+          paymentStatus: PAYMENT_STATUS.PAID,
+          razorpayPaymentId: payment.id,
+          status: ORDER_STATUS.CONFIRMED,
         },
         { transaction: t },
       );
-      cancelledOrderId = order.id;
+      await this.applyCouponOnPaymentCaptured(order, t);
+      confirmedOrderId = order.id;
+      confirmedOrderUserId = order.userId;
     });
-    return cancelledOrderId;
-  }
-
-  /**
-   * Expire online checkouts nobody paid for: orders still awaiting their Razorpay
-   * payment after `CHECKOUT_PENDING_PAYMENT_TTL_MINUTES` (the customer closed the
-   * browser mid-payment, so neither the dismiss call nor a payment.failed webhook came).
-   * Until then the wallet money applied at checkout stays deducted, the stock stays
-   * reserved and the vendor's ledger counts a sale. An order Razorpay holds a captured
-   * or authorized payment for is left to its webhook.
-   */
-  async expireAbandonedCheckouts(now = new Date()): Promise<{ expired: number; skipped: number }> {
-    const cutoff = new Date(now.getTime() - env.CHECKOUT_PENDING_PAYMENT_TTL_MINUTES * 60 * 1000);
-    const stale = await Order.findAll({
-      where: {
-        paymentMethod: PAYMENT_METHOD.RAZORPAY,
-        paymentStatus: PAYMENT_STATUS.PENDING,
-        status: { [Op.ne]: ORDER_STATUS.CANCELLED },
-        createdAt: { [Op.lt]: cutoff },
-      },
-      attributes: ['id', 'userId', 'razorpayOrderId'],
-      order: [['createdAt', 'ASC']],
-      limit: 100,
-    });
-
-    let expired = 0;
-    let skipped = 0;
-    for (const order of stale) {
-      if (order.razorpayOrderId) {
-        if (!razorpayConfigured) {
-          skipped += 1;
-          continue;
-        }
-        try {
-          const payments = await razorpay.orders.fetchPayments(order.razorpayOrderId);
-          const paid = (payments.items ?? []).some((payment) =>
-            ['captured', 'authorized'].includes(String(payment.status)),
-          );
-          if (paid) {
-            skipped += 1;
-            continue;
-          }
-        } catch (error) {
-          // Unknown at the gateway: try again on the next run rather than guess.
-          logger.warn('Abandoned checkout check failed', {
-            orderId: order.id,
-            reason: error instanceof Error ? error.message : String(error),
-          });
-          skipped += 1;
-          continue;
-        }
-      }
-      const cancelledOrderId = await this.cancelUnpaidOrder({ id: order.id });
-      if (cancelledOrderId) {
-        expired += 1;
-        void notificationsService.sendOrderCancelled(order.userId, cancelledOrderId, {
-          orderId: cancelledOrderId,
-          orderNumber: cancelledOrderId.slice(0, 8).toUpperCase(),
+    if (cancelledPaidOrder) {
+      await this.refundPaymentForCancelledOrder(cancelledPaidOrder, payment.id, Number(payment.amount ?? 0));
+    }
+    if (mismatchedOrderId) {
+      // Not what the order owes: never confirm on it. Refunded; the order stays unpaid
+      // and expires like any unpaid checkout. Throws on failure, so the webhook retries.
+      logger.error('Captured payment does not match the order amount; refunding it', {
+        orderId: mismatchedOrderId,
+        paymentId: payment.id,
+        amountPaise: payment.amount,
+        currency: payment.currency,
+      });
+      if (Number(payment.amount ?? 0) > 0) {
+        await this.createRazorpayRefund(payment.id, Number(payment.amount), {
+          orderId: mismatchedOrderId,
+          paymentId: payment.id,
+          reason: 'AMOUNT_MISMATCH',
         });
       }
     }
-    return { expired, skipped };
+    if (doublePaidOrderId && Number(payment.amount ?? 0) > 0) {
+      // Throws on failure, so the webhook is retried rather than the money kept.
+      logger.warn('Second captured payment on a paid order; refunding it', {
+        orderId: doublePaidOrderId,
+        paymentId: payment.id,
+      });
+      await this.createRazorpayRefund(payment.id, Number(payment.amount), {
+        orderId: doublePaidOrderId,
+        paymentId: payment.id,
+        reason: 'DUPLICATE_PAYMENT',
+      });
+    }
+    if (confirmedOrderId) {
+      void notifyOrderConfirmed(confirmedOrderId);
+    }
+    if (confirmedOrderUserId && payment.token_id) {
+      const buyer = await User.findByPk(confirmedOrderUserId);
+      void this.persistSavedMethodFromPayment(confirmedOrderUserId, buyer?.razorpayCustomerId, {
+        token_id: payment.token_id,
+        method: payment.method,
+        card: payment.card,
+        vpa: payment.vpa,
+      });
+    }
   }
 
   /**
@@ -225,7 +191,11 @@ export class PaymentsService {
     paymentId: string,
     amountPaise: number,
   ): Promise<void> {
-    await order.update({ razorpayPaymentId: paymentId, cancelRefundStatus: REFUND_STATUS.PENDING });
+    await order.update({
+      razorpayPaymentId: paymentId,
+      cancelRefundStatus: REFUND_STATUS.PENDING,
+      cancelRefundAmountPaise: amountPaise > 0 ? amountPaise : null,
+    });
     if (amountPaise <= 0) return;
     try {
       const refundId = await this.createRazorpayRefund(paymentId, amountPaise, {
@@ -245,8 +215,8 @@ export class PaymentsService {
         reason: error instanceof Error ? error.message : String(error),
       });
       await order.update({
+        ...failedOrderRefundAttempt(),
         paymentStatus: PAYMENT_STATUS.PAID,
-        cancelRefundStatus: REFUND_STATUS.FAILED,
         cancelRefundAmountPaise: amountPaise,
       });
     }
@@ -439,11 +409,7 @@ export class PaymentsService {
     if (!razorpayConfigured) {
       throw new AppError(ERROR_MESSAGES.RAZORPAY_NOT_CONFIGURED, 503, ERROR_CODES.RAZORPAY_NOT_CONFIGURED);
     }
-    const refund = await razorpay.payments.refund(paymentId, {
-      amount: amountPaise,
-      notes,
-    });
-    return String(refund.id);
+    return createIdempotentRazorpayRefund(paymentId, amountPaise, notes);
   }
 
   /**
@@ -474,7 +440,7 @@ export class PaymentsService {
   /**
    * Authoritative payment confirmation. Idempotent via WebhookEvent dedup.
    */
-  async handleRazorpayWebhook(rawBody: Buffer | string, signature: string | undefined) {
+  async handleRazorpayWebhook(rawBody: Buffer | string, signature: string | undefined, suppliedEventId?: string) {
     if (!env.RAZORPAY_WEBHOOK_SECRET) {
       throw new AppError(ERROR_MESSAGES.RAZORPAY_NOT_CONFIGURED, 503, ERROR_CODES.RAZORPAY_NOT_CONFIGURED);
     }
@@ -492,109 +458,45 @@ export class PaymentsService {
       throw new AppError(ERROR_MESSAGES.INVALID_SIGNATURE, 400, ERROR_CODES.INVALID_SIGNATURE);
     }
 
-    const event = JSON.parse(bodyString) as {
-      id: string;
-      event: string;
-      payload?: {
-        payment?: {
-          entity?: {
-            id: string;
-            order_id: string;
-            /** Captured amount, in paise. */
-            amount?: number;
-            /** Present when the customer opted to save this instrument. */
-            token_id?: string | null;
-            method?: string;
-            card?: { last4?: string; network?: string; type?: string } | null;
-            vpa?: string | null;
-          };
-        };
-        refund?: {
-          entity?: {
-            id: string;
-            payment_id: string;
-            amount: number;
-            status?: string;
-            notes?: Record<string, string> | null;
-          };
-        };
-      };
-    };
+    const event = JSON.parse(bodyString) as RazorpayWebhookEvent;
 
-    if (!event?.id) {
-      throw new ValidationError(ERROR_MESSAGES.INVALID_WEBHOOK_PAYLOAD);
-    }
+    const eventId = razorpayWebhookEventId(event, bodyString, suppliedEventId);
 
     const [, created] = await WebhookEvent.findOrCreate({
-      where: { provider: 'razorpay', eventId: event.id },
-      defaults: { provider: 'razorpay', eventId: event.id, payload: event as unknown as Record<string, unknown> },
+      where: { provider: 'razorpay', eventId },
+      defaults: { provider: 'razorpay', eventId, payload: event as unknown as Record<string, unknown> },
     });
 
     if (!created) {
       return { received: true, duplicate: true };
     }
 
+    try {
+      await this.processRazorpayEvent(event);
+    } catch (error) {
+      // Not processed after all: forget the event, so Razorpay's retry (it retries on a
+      // non-2xx) runs it again instead of being answered "duplicate". Each step is safe
+      // to repeat.
+      await WebhookEvent.destroy({ where: { provider: 'razorpay', eventId }, force: true });
+      throw error;
+    }
+    return { received: true, duplicate: false };
+  }
+
+  private async processRazorpayEvent(event: RazorpayWebhookEvent): Promise<void> {
     if (event.event === 'payment.captured') {
       const payment = event.payload?.payment?.entity;
       if (payment?.order_id && payment?.id) {
         const { walletRechargeService } = await import('@modules/wallet/walletRecharge.service');
-        const handledRecharge = await walletRechargeService.handlePaymentCaptured(
-          payment.order_id,
-          payment.id,
-        );
+        const handledRecharge =
+          (await walletRechargeService.handlePaymentCaptured(payment.order_id, payment.id)) ||
+          (await refundIfSupersededRechargePayment(payment.order_id, payment.id, Number(payment.amount ?? 0)));
         const { giftCardsService } = await import('@modules/giftCards/giftCards.service');
         const handledGiftCard = !handledRecharge
           ? await giftCardsService.handlePaymentCaptured(payment.order_id, payment.id)
           : false;
         if (!handledRecharge && !handledGiftCard) {
-          let confirmedOrderId: string | null = null;
-          let confirmedOrderUserId: string | null = null;
-          let cancelledPaidOrder: Order | null = null;
-          await sequelize.transaction(async (t) => {
-            const order = await Order.findOne({
-              where: { razorpayOrderId: payment.order_id },
-              transaction: t,
-              lock: t.LOCK.UPDATE,
-            });
-            if (!order) return;
-            if (order.paymentStatus === PAYMENT_STATUS.PAID) return;
-            // Never revive a cancelled order: its stock and wallet money are already back.
-            if (order.status === ORDER_STATUS.CANCELLED) {
-              cancelledPaidOrder = order;
-              return;
-            }
-
-            await order.update(
-              {
-                paymentStatus: PAYMENT_STATUS.PAID,
-                razorpayPaymentId: payment.id,
-                status: ORDER_STATUS.CONFIRMED,
-              },
-              { transaction: t },
-            );
-            await this.applyCouponOnPaymentCaptured(order, t);
-            confirmedOrderId = order.id;
-            confirmedOrderUserId = order.userId;
-          });
-          if (cancelledPaidOrder) {
-            await this.refundPaymentForCancelledOrder(
-              cancelledPaidOrder,
-              payment.id,
-              Number(payment.amount ?? 0),
-            );
-          }
-          if (confirmedOrderId) {
-            void notifyOrderConfirmed(confirmedOrderId);
-          }
-          if (confirmedOrderUserId && payment.token_id) {
-            const buyer = await User.findByPk(confirmedOrderUserId);
-            void this.persistSavedMethodFromPayment(confirmedOrderUserId, buyer?.razorpayCustomerId, {
-              token_id: payment.token_id,
-              method: payment.method,
-              card: payment.card,
-              vpa: payment.vpa,
-            });
-          }
+          await this.confirmCapturedPayment(payment);
         }
       }
     }
@@ -609,18 +511,14 @@ export class PaymentsService {
           ? await giftCardsService.handlePaymentFailed(payment.order_id)
           : false;
         if (!handledRecharge && !handledGiftCard) {
+          // One failed attempt: Razorpay's checkout stays open for a retry on the same
+          // order, so it is not cancelled here. A checkout abandoned for good is cancelled
+          // by the customer closing it, or by the expiry job after its payment window.
           const order = await Order.findOne({ where: { razorpayOrderId: payment.order_id } });
           if (order) {
             void notificationsService.sendPaymentFailed(order.userId, order.id, {
               orderId: order.id,
               orderNumber: order.id.slice(0, 8).toUpperCase(),
-            });
-          }
-          const cancelledOrderId = await this.restoreCancelledRazorpayOrder(payment.order_id);
-          if (cancelledOrderId && order) {
-            void notificationsService.sendOrderCancelled(order.userId, cancelledOrderId, {
-              orderId: cancelledOrderId,
-              orderNumber: cancelledOrderId.slice(0, 8).toUpperCase(),
             });
           }
         }
@@ -630,8 +528,6 @@ export class PaymentsService {
     if (event.event === 'refund.processed') {
       await this.handleRefundWebhook(event.payload?.refund?.entity);
     }
-
-    return { received: true, duplicate: false };
   }
 
   private async handleRefundWebhook(
@@ -683,6 +579,10 @@ export class PaymentsService {
       }
       return;
     }
+
+    // A second payment, or one on a superseded recharge order, refunded in full: no
+    // order, return or recharge records it.
+    if (['DUPLICATE_PAYMENT', 'SUPERSEDED_RECHARGE', 'AMOUNT_MISMATCH'].includes(String(notes.reason))) return;
 
     const returnRequestId =
       typeof notes.returnRequestId === 'string' ? notes.returnRequestId : null;

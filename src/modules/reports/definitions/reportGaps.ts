@@ -539,7 +539,7 @@ async function paymentGatewayReconciliation(filters: ReportFilters) {
   `;
   return pagedSqlQuery({
     selectSql,
-    orderBySql: `"createdAt" DESC`,
+    orderBySql: `"createdAt" DESC, "sourceType" ASC, "orderId" ASC`,
     replacements: sqlReplacements(filters),
     filters,
     mapRow: (row) => ({
@@ -602,7 +602,7 @@ async function codRemittance(filters: ReportFilters) {
   `;
   return pagedSqlQuery({
     selectSql,
-    orderBySql: `"createdAt" DESC`,
+    orderBySql: `"createdAt" DESC, "orderId" DESC`,
     replacements: sqlReplacements(filters),
     filters,
     mapRow: (row) => ({
@@ -636,14 +636,14 @@ async function shippingLogistics(filters: ReportFilters) {
       so."createdAt" AS "createdAt"
     FROM sub_orders so
     LEFT JOIN shipments sh ON sh."subOrderId" = so.id AND sh."deletedAt" IS NULL
-    LEFT JOIN vendors v ON v.id = so."vendorId" AND v."deletedAt" IS NULL
+    LEFT JOIN vendors v ON v.id = so."vendorId"
     WHERE so."deletedAt" IS NULL
       AND so."createdAt" BETWEEN :from AND :to
       ${vendorFilter}
   `;
   return pagedSqlQuery({
     selectSql,
-    orderBySql: `"createdAt" DESC`,
+    orderBySql: `"createdAt" DESC, "subOrderId" DESC`,
     replacements: sqlReplacements(filters),
     filters,
     mapRow: (row) => ({
@@ -689,7 +689,7 @@ async function abandonedCartReport(filters: ReportFilters) {
   `;
   const page = await pagedSqlQuery({
     selectSql,
-    orderBySql: `"lastActivityAt" DESC`,
+    orderBySql: `"lastActivityAt" DESC, "cartId" ASC`,
     replacements: sqlReplacements(filters),
     filters,
     mapRow: (row) => ({
@@ -918,7 +918,7 @@ async function vendorKycCompliance(filters: ReportFilters) {
   const replacements = { ...sqlReplacements(filters) };
   return pagedSqlQuery({
     selectSql,
-    orderBySql: `"vendorName" ASC`,
+    orderBySql: `"vendorName" ASC, "vendorId" ASC`,
     replacements,
     filters,
     mapRow: (row) => ({
@@ -994,14 +994,14 @@ async function vendorPayoutReconciliation(filters: ReportFilters) {
         ELSE 'REVIEW'
       END AS "reconStatus"
     FROM payouts p
-    INNER JOIN vendors v ON v.id = p."vendorId" AND v."deletedAt" IS NULL
+    INNER JOIN vendors v ON v.id = p."vendorId"
     WHERE p."deletedAt" IS NULL
       AND p."createdAt" BETWEEN :from AND :to
       ${vendorFilter}
   `;
   return pagedSqlQuery({
     selectSql,
-    orderBySql: `"createdAt" DESC`,
+    orderBySql: `"createdAt" DESC, "payoutId" DESC`,
     replacements: sqlReplacements(filters),
     filters,
     mapRow: (row) => ({

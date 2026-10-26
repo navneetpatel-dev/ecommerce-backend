@@ -147,7 +147,7 @@ async function cancellations(filters: ReportFilters) {
 
   return pagedSqlQuery({
     selectSql,
-    orderBySql: `"cancelledAt" DESC`,
+    orderBySql: `"cancelledAt" DESC, "subOrderId" DESC`,
     replacements,
     filters,
     mapRow: (row) => ({
@@ -324,7 +324,7 @@ async function stuckOrders(filters: ReportFilters) {
 
   return pagedSqlQuery({
     selectSql,
-    orderBySql: '"hoursStuck" DESC',
+    orderBySql: '"hoursStuck" DESC, reason ASC, "subOrderId" ASC, "returnId" ASC NULLS FIRST',
     replacements,
     filters,
     mapRow: (row) => ({

@@ -15,8 +15,13 @@ import { ORDER_STATUS, RETURN_STATUS } from '@core/constants/statuses';
 
 describe('PayoutsService.process return-window and dispute hold', () => {
   beforeEach(() => {
-    // The run reads each vendor's state for its commission GST (CGST + SGST or IGST);
-    // tests that care mock their own vendor after this.
+    // The run reads every vendor's state in one batched `Vendor.findAll` for its
+    // commission GST (CGST + SGST or IGST); per-vendor lookups still use findByPk.
+    // Tests that care mock their own vendor after this.
+    mock.method(Vendor, 'findAll', async (options: { where?: { id?: Record<symbol, string[]> } }) => {
+      const ids = options.where?.id?.[Op.in] ?? [];
+      return ids.map((id) => ({ id, state: null })) as never;
+    });
     mock.method(Vendor, 'findByPk', async () => ({ state: null, businessName: 'Store' }) as never);
   });
 
@@ -136,10 +141,7 @@ describe('PayoutsService.process return-window and dispute hold', () => {
       commissionGstRatePercent: 18,
       defaultReturnWindow: 7,
     }));
-    let scans = 0;
     mock.method(CommissionLedger, 'findAll', async () => {
-      scans += 1;
-      if (scans > 1) return [];
       return [
         {
           id: 'cl-a',
@@ -166,17 +168,44 @@ describe('PayoutsService.process return-window and dispute hold', () => {
       created.push(fields);
       return { id: 'payout-fail', ...fields } as never;
     });
-    mock.method(Vendor, 'findByPk', async () => ({ businessName: 'Store' }) as never);
+    // The vendor lookup inside the payout transaction fails: the batch fails.
+    let vendorLookups = 0;
+    mock.method(Vendor, 'findByPk', async () => {
+      vendorLookups += 1;
+      if (vendorLookups === 1) throw new Error('database unavailable');
+      return { businessName: 'Store' } as never;
+    });
     mock.method(User, 'findOne', async () => null);
     mock.method(Role, 'findOne', async () => null);
 
     await payoutsService.process('actor-1');
 
-    // The locked re-read finds nothing, so the batch is recorded as FAILED at what it
-    // would have paid: 890.00 + 200.01 (summed in paise; BIGINT arrives as a string) less
+    // The batch is recorded as FAILED at what it would have paid: 890.00 + 200.01 (summed in paise; BIGINT arrives as a string) less
     // 18% GST on the ₹100 commission — not the gross 1090.01.
     assert.equal(created.length, 1);
     assert.equal(created[0]?.amount, 1072.01);
+  });
+
+  it('records nothing when another run already settled the batch', async () => {
+    mock.method(settingsService, 'getPlatformSettings', async () => ({ tdsRatePercent: 0, defaultReturnWindow: 7 }));
+    let scans = 0;
+    mock.method(CommissionLedger, 'findAll', async () => {
+      scans += 1;
+      // The scan saw the rows; by the time their locks were free, the other run had paid them.
+      if (scans > 1) return [];
+      return [
+        { id: 'cl-a', vendorId: 'vendor-1', createdAt: new Date(), netPayoutAmountPaise: 10000, commissionAmountPaise: 0, taxableAmountPaise: 10000 },
+      ] as never;
+    });
+    mock.method(sequelize, 'transaction', async (callback: (t: { LOCK: { UPDATE: string } }) => Promise<unknown>) =>
+      callback({ LOCK: { UPDATE: 'UPDATE' } }),
+    );
+    const create = mock.method(Payout, 'create', async () => ({ id: 'payout-x' }) as never);
+
+    const created = await payoutsService.process('actor-1');
+
+    assert.equal(created.length, 0);
+    assert.equal(create.mock.callCount(), 0, 'no FAILED payout and no failure notice');
   });
 
   it('carries ledgers forward when vendor-borne cashback cost exceeds the sales', async () => {

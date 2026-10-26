@@ -22,9 +22,32 @@ export type TaxInvoiceSnapshotLine = {
  * Returns rewrite the order lines afterwards; the invoice keeps these amounts and
  * the credit note carries the return, so the return is not counted twice.
  */
+/**
+ * Who an invoice is from and to, frozen when it is issued. The buyer's address book and
+ * the vendor's profile can change later; GSTR-1 (B2B vs B2C, place of supply) and the
+ * invoice PDF must keep reading what the invoice said.
+ */
+export type TaxInvoiceParties = {
+  supplierName: string | null;
+  supplierGstin: string | null;
+  supplierState: string | null;
+  recipientGstin: string | null;
+  recipientState: string | null;
+  recipientAddress: {
+    line1: string;
+    line2: string | null;
+    city: string;
+    state: string;
+    pincode: string;
+    country: string;
+  } | null;
+};
+
 export type TaxInvoiceSnapshot = {
   /** The invoice value: value of supply + GST. */
   totalPaise: Paise;
+  /** Set when the invoice is issued (dispatch); older invoices have none. */
+  parties?: TaxInvoiceParties;
   lines: TaxInvoiceSnapshotLine[];
   /**
    * What the platform pays towards the invoice for a coupon it funds (its share and the

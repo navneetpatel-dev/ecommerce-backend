@@ -1,6 +1,6 @@
 import type { Transaction } from 'sequelize';
+import { acquireUserWalletLock, lockedBalance } from './walletLedgerLock';
 import { sequelize } from '@database/models';
-import { User } from '@database/models/user.model';
 import { WalletLedger } from '@database/models/walletLedger.model';
 import { WalletWriteOff } from '@database/models/walletWriteOff.model';
 import { ValidationError } from '@core/errors/ValidationError';
@@ -64,35 +64,15 @@ function serializeWalletLedger(row: WalletLedger): WalletTransactionView {
 }
 
 /**
- * Serialize all wallet mutations per user — including when the ledger is empty
- * (FOR UPDATE on WalletLedger alone cannot lock a missing row).
- */
-async function acquireUserWalletLock(userId: string, transaction: Transaction): Promise<void> {
-  const user = await User.findByPk(userId, {
-    transaction,
-    lock: transaction.LOCK.UPDATE,
-  });
-  if (!user) {
-    throw new ValidationError(ERROR_MESSAGES.USER_NOT_FOUND_OR_BLOCKED);
-  }
-}
-
-async function lockedBalance(userId: string, transaction: Transaction): Promise<number> {
-  await acquireUserWalletLock(userId, transaction);
-  const last = await WalletLedger.findOne({
-    where: { userId },
-    order: [['createdAt', 'DESC']],
-    transaction,
-    lock: transaction.LOCK.UPDATE,
-  });
-  return roundMoney(Number(last?.balanceAfter ?? 0));
-}
-
-/**
  * Single gate for all WalletLedger writes.
  * Nothing else in the codebase should create wallet rows directly.
  */
 export class WalletService {
+  /** The balance under the user's wallet lock: for a limit check that must hold until the write. */
+  lockedBalance(userId: string, transaction: Transaction): Promise<number> {
+    return lockedBalance(userId, transaction);
+  }
+
   async getBalance(userId: string, transaction?: Transaction): Promise<number> {
     const last = await WalletLedger.findOne({
       where: { userId },

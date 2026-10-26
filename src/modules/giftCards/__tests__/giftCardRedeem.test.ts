@@ -29,6 +29,7 @@ describe('gift card redemption and the wallet limit', () => {
     mock.method(GiftCard, 'findOne', async () => card as never);
     mock.method(settingsService, 'getPlatformSettings', async () => ({ walletMaxBalancePoints: 50_000 }) as never);
     mock.method(walletService, 'getBalance', async () => balance);
+    mock.method(walletService, 'lockedBalance', async () => balance);
     const credit = mock.method(walletService, 'credit', async () => ({}) as never);
     return { updates, credit };
   }

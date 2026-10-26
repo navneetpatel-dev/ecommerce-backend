@@ -4,6 +4,7 @@ import { SubOrder } from '@database/models/subOrder.model';
 import { nextVendorTaxInvoiceNumber } from './vendorInvoiceSequence';
 import { isReversedPart } from './partReversal';
 import { recordTcsCollectionOnDispatch } from './tcsLedger';
+import { currentInvoiceParties } from './taxInvoiceParties';
 
 /**
  * Issue the tax invoices for a sub-order when it is dispatched (shipped, picked up or
@@ -28,8 +29,16 @@ export async function issueTaxInvoicesOnDispatch(
 
   if (!subOrder.taxInvoiceNumber) {
     const invoice = await nextVendorTaxInvoiceNumber(subOrder.vendorId, new Date(), transaction);
+    const snapshot = subOrder.taxInvoiceSnapshot;
     await subOrder.update(
-      { taxInvoiceNumber: invoice.number, taxInvoiceIssuedAt: invoice.issuedAt },
+      {
+        taxInvoiceNumber: invoice.number,
+        taxInvoiceIssuedAt: invoice.issuedAt,
+        // Who it is from and to, as of issue: later profile/address edits don't rewrite it.
+        ...(snapshot
+          ? { taxInvoiceSnapshot: { ...snapshot, parties: await currentInvoiceParties(subOrder, transaction) } }
+          : {}),
+      },
       { transaction },
     );
   }

@@ -25,6 +25,7 @@ import { vendorPayablePaise } from '../engine/vendorPayable';
 import { PART_RETURN_DESCRIPTION_PREFIX } from '@modules/wallet/walletOrderRollback';
 import { gstDocumentReplacements, scopedGstDocumentLinesSql } from '../engine/gstDocumentsSql';
 import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
+import { GMV_CATEGORY_KEYSET, GMV_KEYSET, GST_TCS_KEYSET, HSN_SALES_KEYSET } from './adminFinanceKeysets';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { AuditLog } from '@database/models/auditLog.model';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
@@ -78,7 +79,7 @@ function gstTcsSelectSql(vendorFilter: string): string {
       SUM(t."tcsIgstPaise")::bigint AS "tcsIgstPaise",
       SUM(t."tcsAmountPaise")::bigint AS "tcsTotalPaise"
     FROM tcs_ledgers t
-    INNER JOIN vendors v ON v.id = t."vendorId" AND v."deletedAt" IS NULL
+    INNER JOIN vendors v ON v.id = t."vendorId"
     INNER JOIN orders o ON o.id = t."orderId" AND o."deletedAt" IS NULL
     WHERE t."deletedAt" IS NULL
       AND t."createdAt" BETWEEN :from AND :to
@@ -103,7 +104,7 @@ function gstTcsSelectSql(vendorFilter: string): string {
       SUM(t."tcsIgstPaise")::bigint AS "tcsIgstPaise",
       SUM(t."tcsAmountPaise")::bigint AS "tcsTotalPaise"
     FROM tcs_ledgers t
-    INNER JOIN vendors v ON v.id = t."vendorId" AND v."deletedAt" IS NULL
+    INNER JOIN vendors v ON v.id = t."vendorId"
     INNER JOIN orders o ON o.id = t."orderId" AND o."deletedAt" IS NULL
     WHERE t."deletedAt" IS NULL
       AND t."createdAt" BETWEEN :from AND :to
@@ -130,13 +131,6 @@ function mapGstTcsRow(row: Record<string, unknown>) {
     tcsTotal: fromPaise(Number(row.tcsTotalPaise ?? 0)),
   };
 }
-
-const GST_TCS_KEYSET: KeysetOrderCol[] = [
-  { column: 'groupType', direction: 'ASC' },
-  { column: 'period', direction: 'DESC' },
-  { column: 'state', direction: 'ASC' },
-  { column: 'vendorId', direction: 'ASC' },
-];
 
 async function gstTcsExport(
   filters: ReportFilters,
@@ -170,7 +164,7 @@ async function tds194oSummary(filters: ReportFilters) {
       SUM(t."taxableAmountPaise")::bigint AS "grossTaxablePaise",
       SUM(t."tdsAmountPaise")::bigint AS "tdsAmountPaise"
     FROM tds_ledgers t
-    INNER JOIN vendors v ON v.id = t."vendorId" AND v."deletedAt" IS NULL
+    INNER JOIN vendors v ON v.id = t."vendorId"
     WHERE t."deletedAt" IS NULL
       AND t."createdAt" BETWEEN :from AND :to
       AND (:vendorId::uuid IS NULL OR t."vendorId" = :vendorId)
@@ -231,7 +225,7 @@ function tds194oSelectSql(): string {
       SUM(t."taxableAmountPaise")::bigint AS "grossTaxablePaise",
       SUM(t."tdsAmountPaise")::bigint AS "tdsAmountPaise"
     FROM tds_ledgers t
-    INNER JOIN vendors v ON v.id = t."vendorId" AND v."deletedAt" IS NULL
+    INNER JOIN vendors v ON v.id = t."vendorId"
     WHERE t."deletedAt" IS NULL
       AND t."createdAt" BETWEEN :from AND :to
       AND (:vendorId::uuid IS NULL OR t."vendorId" = :vendorId)
@@ -312,12 +306,6 @@ function mapHsnSalesRow(row: Record<string, unknown>) {
     tax: fromPaise(cgst + sgst + igst),
   };
 }
-
-const HSN_SALES_KEYSET: KeysetOrderCol[] = [
-  { column: 'supplierGstin', direction: 'ASC' },
-  { column: 'hsnCode', direction: 'ASC' },
-  { column: 'gstRate', direction: 'ASC' },
-];
 
 async function hsnSalesExport(
   filters: ReportFilters,
@@ -613,7 +601,7 @@ function vendorSettlementSelectSql(): string {
     WITH ledger_agg AS (
       SELECT cl."vendorId" AS "vendorId", MAX(v."businessName") AS "vendorName"
       FROM commission_ledgers cl
-      INNER JOIN vendors v ON v.id = cl."vendorId" AND v."deletedAt" IS NULL
+      INNER JOIN vendors v ON v.id = cl."vendorId"
       WHERE cl."deletedAt" IS NULL
         AND cl."createdAt" BETWEEN :from AND :to
         AND cl.status <> '${COMMISSION_STATUS.CLAWED_BACK}'
@@ -631,7 +619,7 @@ function vendorSettlementSelectSql(): string {
         SUM(CASE WHEN p.status = 'FAILED' THEN p.amount::numeric ELSE 0 END) AS "payoutFailed",
         string_agg(DISTINCT p.status::text, ',') AS "payoutStatus"
       FROM payouts p
-      INNER JOIN vendors v ON v.id = p."vendorId" AND v."deletedAt" IS NULL
+      INNER JOIN vendors v ON v.id = p."vendorId"
       WHERE p."deletedAt" IS NULL
         AND p."createdAt" BETWEEN :from AND :to
         AND (:vendorId::uuid IS NULL OR p."vendorId" = :vendorId)
@@ -750,7 +738,7 @@ function commissionRevenueSelectSql(): string {
     FROM order_items oi
     INNER JOIN sub_orders s ON s.id = oi."subOrderId"
     INNER JOIN orders o ON o.id = s."orderId"
-    INNER JOIN vendors v ON v.id = s."vendorId" AND v."deletedAt" IS NULL
+    INNER JOIN vendors v ON v.id = s."vendorId"
     LEFT JOIN product_variants pv ON pv.id = oi."variantId"
     LEFT JOIN products p ON p.id = pv."productId"
     WHERE oi."deletedAt" IS NULL
@@ -904,7 +892,7 @@ function couponDiscountSelectSql(): string {
       SUM(CASE WHEN cl."referenceType" IS NULL
         THEN COALESCE(s."shippingDiscountAmountPaise", 0) ELSE 0 END)::bigint AS "freeShippingPaise"
     FROM commission_ledgers cl
-    INNER JOIN vendors v ON v.id = cl."vendorId" AND v."deletedAt" IS NULL
+    INNER JOIN vendors v ON v.id = cl."vendorId"
     LEFT JOIN sub_orders s ON s.id = cl."subOrderId"
     WHERE cl."deletedAt" IS NULL
       AND cl."createdAt" BETWEEN :from AND :to
@@ -970,9 +958,9 @@ async function gmvSales(filters: ReportFilters) {
       FROM order_items oi
       INNER JOIN sub_orders s ON s.id = oi."subOrderId" AND s."deletedAt" IS NULL
       INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
-      INNER JOIN product_variants pv ON pv.id = oi."variantId" AND pv."deletedAt" IS NULL
-      INNER JOIN products p ON p.id = pv."productId" AND p."deletedAt" IS NULL
-      LEFT JOIN vendors v ON v.id = s."vendorId" AND v."deletedAt" IS NULL
+      INNER JOIN product_variants pv ON pv.id = oi."variantId"
+      INNER JOIN products p ON p.id = pv."productId"
+      LEFT JOIN vendors v ON v.id = s."vendorId"
       WHERE oi."deletedAt" IS NULL
         AND o."createdAt" BETWEEN :from AND :to
         AND ${GMV_SUB_ORDER_SQL}
@@ -1004,7 +992,7 @@ async function gmvSales(filters: ReportFilters) {
       SUM(${subtotalExpr})::bigint AS "gmvPaise"
     FROM sub_orders s
     INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
-    LEFT JOIN vendors v ON v.id = s."vendorId" AND v."deletedAt" IS NULL
+    LEFT JOIN vendors v ON v.id = s."vendorId"
     WHERE o."createdAt" BETWEEN :from AND :to
       AND ${GMV_SUB_ORDER_SQL}
       AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)
@@ -1025,17 +1013,6 @@ async function gmvSales(filters: ReportFilters) {
   });
 }
 
-const GMV_KEYSET: KeysetOrderCol[] = [
-  { column: 'gmvPaise', direction: 'DESC' },
-  { column: 'vendorId', direction: 'ASC' },
-];
-
-const GMV_CATEGORY_KEYSET: KeysetOrderCol[] = [
-  { column: 'gmvPaise', direction: 'DESC' },
-  { column: 'vendorId', direction: 'ASC' },
-  { column: 'categoryId', direction: 'ASC' },
-];
-
 async function gmvSalesExport(
   filters: ReportFilters,
   cursor: { values: unknown[] } | null,
@@ -1053,9 +1030,9 @@ async function gmvSalesExport(
       FROM order_items oi
       INNER JOIN sub_orders s ON s.id = oi."subOrderId" AND s."deletedAt" IS NULL
       INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
-      INNER JOIN product_variants pv ON pv.id = oi."variantId" AND pv."deletedAt" IS NULL
-      INNER JOIN products p ON p.id = pv."productId" AND p."deletedAt" IS NULL
-      LEFT JOIN vendors v ON v.id = s."vendorId" AND v."deletedAt" IS NULL
+      INNER JOIN product_variants pv ON pv.id = oi."variantId"
+      INNER JOIN products p ON p.id = pv."productId"
+      LEFT JOIN vendors v ON v.id = s."vendorId"
       WHERE oi."deletedAt" IS NULL
         AND o."createdAt" BETWEEN :from AND :to
         AND ${GMV_SUB_ORDER_SQL}
@@ -1088,7 +1065,7 @@ async function gmvSalesExport(
       SUM(${subtotalExpr})::bigint AS "gmvPaise"
     FROM sub_orders s
     INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
-    LEFT JOIN vendors v ON v.id = s."vendorId" AND v."deletedAt" IS NULL
+    LEFT JOIN vendors v ON v.id = s."vendorId"
     WHERE o."createdAt" BETWEEN :from AND :to
       AND ${GMV_SUB_ORDER_SQL}
       AND (:vendorId::uuid IS NULL OR s."vendorId" = :vendorId)

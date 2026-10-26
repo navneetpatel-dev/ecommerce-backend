@@ -1,9 +1,9 @@
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { PERMISSIONS, type PermissionKey } from '@core/permissions/permissionKeys';
-import { ROLES } from '@core/constants/statuses';
+import { DELIVERY_ROLES, ROLES, VENDOR_ROLES } from '@core/constants/statuses';
 import { normalizeReportFilters } from './queryHelpers';
-import type { ReportFilters } from './types';
+import type { ReportDefinition, ReportFilters } from './types';
 import type { ReportActor } from './reportEngine.types';
 
 export function actorCanAccess(
@@ -14,6 +14,38 @@ export function actorCanAccess(
   if (roleName === ROLES.SUPER_ADMIN) return true;
   if (required.length === 0) return true;
   return required.some((p) => permissions.includes(p));
+}
+
+/** Roles that never see platform-wide (admin-audience) reports. */
+const NON_ADMIN_ROLES: readonly string[] = [...VENDOR_ROLES, ...DELIVERY_ROLES, ROLES.CUSTOMER];
+
+/**
+ * Whether the actor may see a report of this audience at all, before permission keys.
+ * Admin reports are platform-wide and not vendor-scoped, and vendor roles share some
+ * permission keys with admins (payout.view, product.manage…), so the keys alone would
+ * hand a vendor every agent's PAN or every vendor's settlement.
+ */
+export function actorCanSeeAudience(
+  actor: Pick<ReportActor, 'roleName' | 'vendorId'>,
+  audience: ReportDefinition['audience'],
+): boolean {
+  if (actor.roleName === ROLES.SUPER_ADMIN) return true;
+  if (!audience.startsWith('admin_')) return true;
+  return !actor.vendorId && !NON_ADMIN_ROLES.includes(actor.roleName);
+}
+
+/** Audience, permission and vendor-staff gates every report run and export passes. */
+export function assertActorMayRunReport(
+  actor: Pick<ReportActor, 'roleName' | 'vendorId' | 'permissions'>,
+  def: Pick<ReportDefinition, 'audience' | 'permissions' | 'financial'>,
+): void {
+  if (
+    !actorCanSeeAudience(actor, def.audience) ||
+    !actorCanAccess(actor.permissions, actor.roleName, def.permissions) ||
+    (isVendorStaff(actor.permissions, actor.roleName) && def.financial)
+  ) {
+    throw new ForbiddenError(ERROR_MESSAGES.REPORT_FORBIDDEN);
+  }
 }
 
 export function isVendorStaff(permissions: PermissionKey[], roleName: string): boolean {
@@ -44,11 +76,6 @@ export function resolveFiltersForActor(
     }
     filters.scopedVendorId = actor.vendorId;
     filters.vendorId = actor.vendorId;
-  } else if (
-    actor.roleName !== ROLES.SUPER_ADMIN &&
-    !actor.permissions.includes(PERMISSIONS.COMMISSION_VIEW)
-  ) {
-    filters.vendorId = filters.vendorId ?? null;
   }
   return filters;
 }

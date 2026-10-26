@@ -29,7 +29,8 @@ describe('runScheduledWeeklyReports', () => {
       id: 'admin-1',
       email: 'admin@example.com',
       vendorId: null,
-    } as User;
+      role: { name: ROLES.SUPER_ADMIN },
+    } as unknown as User;
 
     mock.method(User, 'findAll', async () => [admin]);
     const exportMock = mock.method(reportEngine, 'runExportDirect', async (_actor, reportType) => ({
@@ -105,7 +106,7 @@ describe('runScheduledWeeklyReports', () => {
   it('emails only the explicit recipient list when configured', async () => {
     mockSettings({ scheduledReportsRecipients: ['ops@example.com'] });
     const findAllMock = mock.method(User, 'findAll', async () => [
-      { id: 'user-1', email: 'ops@example.com', vendorId: null } as User,
+      { id: 'user-1', email: 'ops@example.com', vendorId: null, role: { name: ROLES.SUPER_ADMIN } } as unknown as User,
     ]);
     mock.method(reportEngine, 'runExportDirect', async (_actor, reportType) => ({
       buffer: Buffer.from(`report:${reportType}`),
@@ -123,5 +124,31 @@ describe('runScheduledWeeklyReports', () => {
     assert.equal(sent, 2);
     const whereArg = findAllMock.mock.calls[0]?.arguments[0] as { where: { email: string[] } };
     assert.deepEqual(whereArg.where.email, ['ops@example.com']);
+  });
+
+  it('runs each recipient as their own role, never as a super admin', async () => {
+    mockSettings({ scheduledReportsRecipients: ['shop@example.com'] });
+    mock.method(User, 'findAll', async () => [
+      {
+        id: 'vendor-user',
+        email: 'shop@example.com',
+        vendorId: 'vendor-1',
+        roleId: undefined,
+        role: { name: ROLES.VENDOR_OWNER },
+      } as unknown as User,
+    ]);
+    const actors: Array<{ roleName: string }> = [];
+    mock.method(reportEngine, 'runExportDirect', async (actor: { roleName: string }) => {
+      actors.push(actor);
+      throw new Error('You do not have access to this report');
+    });
+    const sendMailMock = mock.fn(async () => ({ messageId: 'test-id', provider: 'console' }));
+
+    const sent = await runScheduledWeeklyReports({ sendMail: sendMailMock, now: MATCHING_MONDAY_6AM_UTC });
+
+    assert.ok(actors.length > 0);
+    assert.ok(actors.every((actor) => actor.roleName === ROLES.VENDOR_OWNER));
+    assert.equal(sent, 0);
+    assert.equal(sendMailMock.mock.callCount(), 0);
   });
 });

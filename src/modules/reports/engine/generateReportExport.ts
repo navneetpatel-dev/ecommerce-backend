@@ -1,5 +1,4 @@
 import { PassThrough } from 'node:stream';
-import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
@@ -14,7 +13,7 @@ import { resolveReportColumnLabel } from '../reports.constants';
 import { reportExportConfig } from '../reportExportConfig';
 import { emitReportExportMetric } from '../reportExportMetrics';
 import type { ReportActor } from './reportEngine.types';
-import { actorCanAccess, isVendorStaff, resolveFiltersForActor } from './reportEngine.helpers';
+import { assertActorMayRunReport, resolveFiltersForActor } from './reportEngine.helpers';
 
 export type DirectExportResult = {
   buffer: Buffer;
@@ -31,12 +30,7 @@ export async function generateReportExport(
 ): Promise<DirectExportResult> {
   const def = getReportDefinition(reportType);
   if (!def) throw new NotFoundError(ERROR_MESSAGES.REPORT_NOT_FOUND);
-  if (!actorCanAccess(actor.permissions, actor.roleName, def.permissions)) {
-    throw new ForbiddenError(ERROR_MESSAGES.REPORT_FORBIDDEN);
-  }
-  if (isVendorStaff(actor.permissions, actor.roleName) && def.financial) {
-    throw new ForbiddenError(ERROR_MESSAGES.REPORT_FORBIDDEN);
-  }
+  assertActorMayRunReport(actor, def);
   assertReportRange(rawFilters);
   const filters = resolveFiltersForActor(actor, rawFilters, def.vendorScoped);
   if (def.audience === 'customer') filters.userId = actor.id;

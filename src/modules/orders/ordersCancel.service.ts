@@ -10,6 +10,7 @@ import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { TcsLedger } from '@database/models/tcsLedger.model';
 import {
   ORDER_STATUS,
+  PAYMENT_METHOD,
   PAYMENT_STATUS,
   COMMISSION_STATUS,
   REFUND_STATUS,
@@ -24,6 +25,9 @@ import { orderRazorpayPaidPaise } from '@modules/pricing/refundSplit';
 import { rollbackOrderWalletIfNeeded } from '@modules/wallet/walletOrderRollback';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { logAudit } from '@modules/audit/audit.service';
+import { failedOrderRefundAttempt } from '@modules/payments/orderCancelRefund';
+import { subordersService } from '@modules/suborders/suborders.service';
+import { isReversedPart } from '@modules/pricing/partReversal';
 
 type OrderForCancel = Order & {
   subOrders?: (SubOrder & { items?: OrderItem[] })[];
@@ -38,6 +42,7 @@ export async function cancelPaidOrder(
   let razorpayDue = 0;
   let razorpayPaymentId: string | null = null;
   let alreadyCancelled = false;
+  let remainingPartIds: string[] = [];
 
   await sequelize.transaction(async (t) => {
     const locked = await Order.findByPk(orderId, {
@@ -48,7 +53,13 @@ export async function cancelPaidOrder(
     if (!isAdmin && locked.userId !== userId) {
       throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_ORDER);
     }
-    if (locked.paymentStatus !== PAYMENT_STATUS.PAID && !isAdmin) {
+    // A COD order is unpaid until delivery, and its customer may cancel it before it
+    // ships too. An unpaid online order is an abandoned checkout, cancelled elsewhere.
+    if (
+      !isAdmin &&
+      locked.paymentStatus !== PAYMENT_STATUS.PAID &&
+      locked.paymentMethod !== PAYMENT_METHOD.COD
+    ) {
       throw new ValidationError(ERROR_MESSAGES.ORDER_CANCEL_PAID_ONLY);
     }
     if (locked.status === ORDER_STATUS.CANCELLED) {
@@ -68,6 +79,18 @@ export async function cancelPaidOrder(
       throw new ValidationError(ERROR_MESSAGES.ORDER_CANCEL_SHIPPED);
     }
 
+    // Lock the parts before reading their status: a vendor ships a part by locking only
+    // its SubOrder row, so without this a part shipped while we waited on the Order lock
+    // would still read CONFIRMED here and be overwritten to CANCELLED — refunded and
+    // restocked while the parcel is on its way. Same id order as every other part lock.
+    await SubOrder.findAll({
+      where: { orderId },
+      attributes: ['id'],
+      order: [['id', 'ASC']],
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+
     const orderResult = await Order.findByPk(orderId, {
       include: [
         {
@@ -84,7 +107,20 @@ export async function cancelPaidOrder(
     razorpayDue = fromPaise(orderRazorpayPaidPaise(order));
     razorpayPaymentId = order.razorpayPaymentId;
 
-    if (!allSubOrdersCancellable(order.subOrders ?? [])) {
+    // Part of the order was cancelled already: what the customer gets back is the rest's
+    // share, which the part cancellation works out (and the last part settles the order).
+    // So the remaining parts are cancelled that way, after this transaction.
+    const parts = order.subOrders ?? [];
+    const liveParts = parts.filter((part) => !isReversedPart(part.status));
+    if (liveParts.length > 0 && liveParts.length < parts.length) {
+      if (!allSubOrdersCancellable(liveParts)) {
+        throw new ValidationError(ERROR_MESSAGES.ORDER_CANCEL_ITEMS_SHIPPED);
+      }
+      remainingPartIds = liveParts.map((part) => part.id);
+      return;
+    }
+
+    if (!allSubOrdersCancellable(parts)) {
       throw new ValidationError(ERROR_MESSAGES.ORDER_CANCEL_ITEMS_SHIPPED);
     }
 
@@ -116,13 +152,24 @@ export async function cancelPaidOrder(
         walletAmountUsed: 0,
         // Every suborder is cancelled here too — nothing will ever deliver, so no cashback is due.
         pendingCashbackAmount: 0,
-        cancelRefundStatus: REFUND_STATUS.PENDING,
+        // Nothing was charged on an unpaid (COD) order — its wallet spend went back above —
+        // so no refund is pending; "Refund processing" would never clear.
+        cancelRefundStatus:
+          order.paymentStatus === PAYMENT_STATUS.PAID ? REFUND_STATUS.PENDING : REFUND_STATUS.NONE,
+        // Recorded with the cancel, so a refund cut off before it reached Razorpay is
+        // found and retried (failStalledRefunds).
+        cancelRefundAmountPaise: razorpayPaymentId && razorpayDue > 0 ? toPaise(razorpayDue) : null,
         updatedBy: userId,
       },
       { transaction: t },
     );
     cancelledOrderId = order.id;
   });
+
+  for (const partId of remainingPartIds) {
+    await subordersService.updateStatus(partId, ORDER_STATUS.CANCELLED, undefined, userId);
+  }
+  if (remainingPartIds.length > 0) return { orderId, cancelled: true };
 
   const order = await Order.findByPk(orderId);
   if (!order) throw new NotFoundError('Order');
@@ -143,7 +190,7 @@ export async function cancelPaidOrder(
           });
         } catch {
           await order.update({
-            cancelRefundStatus: REFUND_STATUS.FAILED,
+            ...failedOrderRefundAttempt(),
             cancelRefundAmountPaise: toPaise(razorpayDue),
           });
         }

@@ -2,6 +2,7 @@ import { BaseRepository } from '@core/repository/BaseRepository';
 import { Order } from '@database/models/order.model';
 import { Op, type WhereOptions } from 'sequelize';
 import { sequelize } from '@database/models';
+import { ORDER_VENDOR_ATTRIBUTES } from './orderPublicAttributes';
 
 export class OrdersRepository extends BaseRepository<Order> {
   constructor() {
@@ -47,7 +48,7 @@ export class OrdersRepository extends BaseRepository<Order> {
         },
         {
           association: 'subOrders',
-          include: ['items', 'vendor', 'shipment'],
+          include: ['items', { association: 'vendor', attributes: ORDER_VENDOR_ATTRIBUTES }, 'shipment'],
         },
       ],
       order: [['createdAt', 'DESC']],

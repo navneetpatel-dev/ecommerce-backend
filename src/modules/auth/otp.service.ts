@@ -24,20 +24,26 @@ function generateNumericCode(): string {
 }
 
 export class OtpService {
+  /**
+   * Issues a code, voiding the user's earlier unused one for the same purpose and
+   * subject. `subjectId` ties a parcel's code to that shipment or return, so another
+   * parcel's code neither voids nor confirms it.
+   */
   async issueCodeForUser(
     userId: string,
     purpose: OtpPurpose,
     transaction?: Transaction,
+    subjectId: string | null = null,
   ): Promise<{ id: string; code: string }> {
     const code = generateNumericCode();
     const codeHash = await bcrypt.hash(code, 10);
     const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60_000);
     await OtpCode.update(
       { consumedAt: new Date() },
-      { where: { userId, purpose, consumedAt: { [Op.is]: null } }, transaction },
+      { where: { userId, purpose, subjectId, consumedAt: { [Op.is]: null } }, transaction },
     );
     const otp = await OtpCode.create(
-      { userId, purpose, codeHash, expiresAt, attempts: 0 },
+      { userId, purpose, subjectId, codeHash, expiresAt, attempts: 0 },
       { transaction },
     );
     return { id: otp.id, code };
@@ -48,9 +54,10 @@ export class OtpService {
     purpose: OtpPurpose,
     code: string,
     transaction: Transaction,
+    subjectId: string | null = null,
   ): Promise<OtpVerificationResult> {
     const otp = await OtpCode.findOne({
-      where: { userId, purpose, consumedAt: { [Op.is]: null } },
+      where: { userId, purpose, subjectId, consumedAt: { [Op.is]: null } },
       order: [['createdAt', 'DESC']],
       transaction,
       lock: transaction.LOCK.UPDATE,

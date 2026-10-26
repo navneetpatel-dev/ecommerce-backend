@@ -17,6 +17,8 @@ export const CreateCheckoutSchema = z
     shippingMethodByVendor: z.record(z.string()).optional(),
     giftWrap: z.boolean().optional().default(false),
     giftMessage: z.string().trim().max(500).optional(),
+    /** The grand total the customer saw on the last quote (see assertExpectedGrandTotal). */
+    expectedGrandTotal: z.coerce.number().min(0).optional(),
   })
   .transform((body) => {
     const shippingAddressId = body.shippingAddressId ?? body.addressId;
@@ -29,6 +31,7 @@ export const CreateCheckoutSchema = z
       shippingMethodByVendor: body.shippingMethodByVendor ?? {},
       giftWrap: body.giftWrap ?? false,
       giftMessage: body.giftMessage || undefined,
+      expectedGrandTotal: body.expectedGrandTotal,
     };
   })
   .refine((body) => Boolean(body.shippingAddressId), {

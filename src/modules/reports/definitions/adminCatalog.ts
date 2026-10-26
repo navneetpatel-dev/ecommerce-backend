@@ -57,12 +57,11 @@ async function productPerformance(filters: ReportFilters) {
     INNER JOIN orders o
       ON o.id = so."orderId"
       AND o."deletedAt" IS NULL
+    -- Sales stay counted once a product is deleted (soft-deleted rows remain).
     INNER JOIN product_variants pv
       ON pv.id = oi."variantId"
-      AND pv."deletedAt" IS NULL
     INNER JOIN products p
       ON p.id = pv."productId"
-      AND p."deletedAt" IS NULL
     WHERE oi."deletedAt" IS NULL
       AND o."createdAt" BETWEEN :from AND :to
       AND ${REPORTABLE_ORDER_SQL}
@@ -74,7 +73,7 @@ async function productPerformance(filters: ReportFilters) {
 
   return pagedSqlQuery({
     selectSql,
-    orderBySql: `"gmvPaise" DESC`,
+    orderBySql: `"gmvPaise" DESC, "productId" ASC`,
     replacements,
     filters,
     mapRow: (row) => ({
@@ -112,12 +111,11 @@ async function categoryPerformance(filters: ReportFilters) {
     INNER JOIN orders o
       ON o.id = so."orderId"
       AND o."deletedAt" IS NULL
+    -- Sales stay counted once a product is deleted (soft-deleted rows remain).
     INNER JOIN product_variants pv
       ON pv.id = oi."variantId"
-      AND pv."deletedAt" IS NULL
     INNER JOIN products p
       ON p.id = pv."productId"
-      AND p."deletedAt" IS NULL
     LEFT JOIN categories c
       ON c.id = COALESCE(oi."categoryId", p."categoryId")
       AND c."deletedAt" IS NULL
@@ -132,7 +130,7 @@ async function categoryPerformance(filters: ReportFilters) {
 
   return pagedSqlQuery({
     selectSql,
-    orderBySql: `"gmvPaise" DESC`,
+    orderBySql: `"gmvPaise" DESC, "categoryId" ASC NULLS LAST`,
     replacements,
     filters,
     mapRow: (row) => ({
@@ -227,7 +225,7 @@ async function reviewRatingSummary(filters: ReportFilters) {
 
   return pagedSqlQuery({
     selectSql,
-    orderBySql: `"reviewCount" DESC`,
+    orderBySql: `"reviewCount" DESC, "productId" ASC`,
     replacements,
     filters,
     mapRow: (row) => ({

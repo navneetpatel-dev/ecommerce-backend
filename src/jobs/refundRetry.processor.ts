@@ -4,12 +4,15 @@ import { ReturnRequest } from '@database/models/returnRequest.model';
 import { REFUND_STATUS } from '@core/constants/statuses';
 import { returnsService } from '@modules/returns/returns.service';
 import { retryFailedPartCardRefunds } from '@modules/payments/partCardRefund';
+import { failStalledRefunds, retryFailedOrderCancelRefunds } from '@modules/payments/orderCancelRefund';
 
 export const REFUND_RETRY_JOB = 'refund-retry';
 
 const MAX_ATTEMPTS = 5;
 
 export async function runRefundRetry(): Promise<{ retried: number; failed: number }> {
+  // Refunds cut off before they reached Razorpay are retried below like failed ones.
+  await failStalledRefunds();
   const rows = await ReturnRequest.findAll({
     where: {
       refundStatus: REFUND_STATUS.FAILED,
@@ -40,6 +43,10 @@ export async function runRefundRetry(): Promise<{ retried: number; failed: numbe
   const parts = await retryFailedPartCardRefunds();
   retried += parts.retried;
   failed += parts.failed;
+  // And whole-order cancellation refunds.
+  const orders = await retryFailedOrderCancelRefunds();
+  retried += orders.retried;
+  failed += orders.failed;
 
   logger.info('Refund retry job finished', { retried, failed });
   return { retried, failed };

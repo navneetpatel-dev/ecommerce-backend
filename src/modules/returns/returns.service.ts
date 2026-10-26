@@ -67,7 +67,6 @@ import {
   returnFeeInvoiceLine,
   unissuedPlatformInvoice,
 } from '@modules/pricing/platformFeeInvoice';
-import { resolveReturnWindowForCategory } from '@modules/products/pdpPolicy';
 import { walletService } from '@modules/wallet/wallet.service';
 import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
 import {
@@ -75,12 +74,14 @@ import {
   shrinkPendingCashbackForReturn,
 } from '@modules/wallet/cashback.service';
 import { logAudit } from '@modules/audit/audit.service';
-import { paymentsService } from '@modules/payments/payments.service';
 import {
   cascadeDeleteEntityMedia,
   S3_ENTITY_TYPES,
 } from '@core/s3';
 import { isReversedPart } from '@modules/pricing/partReversal';
+import { retryReturnCardRefund, sendReturnCardRefund, type PendingReturnCardRefund } from './returnCardRefund';
+import { serializeReturn } from './returnSerializer';
+import { isWithinReturnWindow, returnWindowFor } from './returnWindow';
 import {
   getCreditNotePdfForActor,
   getDebitNotePdfForActor,
@@ -116,6 +117,13 @@ type CreateReturnInput = {
 // NOTE: REJECTED is only reachable from REQUESTED. Approving a return synchronously moves real
 // money (wallet credit and/or a Razorpay refund initiation) and freezes vendor accounting — there
 // is no reversal path for any of that, so an already-APPROVED return must never be rejectable.
+/** A refund `startRefund` began: fields for the return row, and what is left after commit. */
+type StartedRefund = {
+  patch: Record<string, unknown>;
+  cardRefund: PendingReturnCardRefund | null;
+  completeImmediately: boolean;
+};
+
 const ALLOWED_TRANSITIONS: Record<ReturnStatus, ReturnStatus[]> = {
   [RETURN_STATUS.REQUESTED]: [RETURN_STATUS.APPROVED, RETURN_STATUS.REJECTED],
   [RETURN_STATUS.APPROVED]: [
@@ -383,69 +391,6 @@ async function findReturnForUpdate(id: string, t: Transaction): Promise<ReturnRe
   });
 }
 
-function serializeReturn(
-  row: ReturnRequest | (ReturnRequest & { orderItem?: OrderItem }),
-  slaDays: number,
-) {
-  const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
-  const creditNote = plain.CreditNote ?? plain.creditNote ?? null;
-  const debitNote = plain.DebitNote ?? plain.debitNote ?? null;
-  const refundStatus = plain.refundStatus ?? REFUND_STATUS.NONE;
-  let refundCustomerMessage: string | null = null;
-  if (refundStatus === REFUND_STATUS.INITIATED) {
-    refundCustomerMessage = `Refund initiated — bank posting may take ${slaDays} business days.`;
-  } else if (refundStatus === REFUND_STATUS.FAILED) {
-    refundCustomerMessage = 'There was an issue processing your bank refund. Our team is retrying.';
-  } else if (refundStatus === REFUND_STATUS.COMPLETED) {
-    refundCustomerMessage = 'Refund completed.';
-  }
-  return {
-    id: plain.id,
-    orderItemId: plain.orderItemId,
-    subOrderId: plain.subOrderId ?? null,
-    reason: plain.reason,
-    reasonCode: plain.reasonCode,
-    returnQuantity: plain.returnQuantity != null ? Number(plain.returnQuantity) : null,
-    status: plain.status,
-    type: plain.type ?? RETURN_TYPE.REFUND,
-    deliveryAgentId: plain.deliveryAgentId ?? null,
-    pickupOtpVerifiedAt: plain.pickupOtpVerifiedAt ?? null,
-    pickupFailureReason: plain.pickupFailureReason ?? null,
-    rejectionReason: plain.rejectionReason ?? null,
-    preferredRepickupSlot: plain.preferredRepickupSlot ?? null,
-    replacementDeliveredAt: plain.replacementDeliveredAt ?? null,
-    replacementProofUrl: plain.replacementProofUrl ?? null,
-    photoUrls: Array.isArray(plain.photoUrls) ? plain.photoUrls : [],
-    refundMethod: plain.refundMethod ?? null,
-    refundStatus: plain.refundStatus ?? REFUND_STATUS.NONE,
-    refundCustomerMessage,
-    refundAmount: plain.refundAmount != null ? Number(plain.refundAmount) : null,
-    refundTaxAmount: plain.refundTaxAmount != null ? Number(plain.refundTaxAmount) : null,
-    refundMerchandiseAmount:
-      plain.refundMerchandiseAmount != null ? Number(plain.refundMerchandiseAmount) : null,
-    refundCommissionAmount:
-      plain.refundCommissionAmount != null ? Number(plain.refundCommissionAmount) : null,
-    refundTcsAmount: plain.refundTcsAmount != null ? Number(plain.refundTcsAmount) : null,
-    refundNetClawback: plain.refundNetClawback != null ? Number(plain.refundNetClawback) : null,
-    walletRefundAmount: Number(plain.walletRefundAmount ?? 0),
-    razorpayRefundAmount: Number(plain.razorpayRefundAmount ?? 0),
-    shippingRefundAmount: Number(plain.shippingRefundAmount ?? 0),
-    returnShippingFeeAmount: Number(plain.returnShippingFeeAmount ?? 0),
-    razorpayRefundId: plain.razorpayRefundId ?? null,
-    receivedAt: plain.receivedAt ?? null,
-    resolvedAt: plain.resolvedAt,
-    createdAt: plain.createdAt,
-    productName: plain.orderItem?.productName ?? null,
-    customerName: plain.user?.name ?? null,
-    creditNoteNumber: creditNote?.number ?? null,
-    creditNoteId: creditNote?.id ?? null,
-    debitNoteNumber: debitNote?.number ?? null,
-    debitNoteId: debitNote?.id ?? null,
-    againstInvoiceNumber:
-      creditNote?.againstInvoiceNumber ?? debitNote?.againstInvoiceNumber ?? null,
-  };
-}
-
 function assertTransition(from: ReturnStatus, to: ReturnStatus) {
   const allowed = ALLOWED_TRANSITIONS[from] ?? [];
   if (!allowed.includes(to)) {
@@ -570,6 +515,44 @@ export class ReturnsService {
     return serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }, slaDays);
   }
 
+  /**
+   * Puts a picked-up return's units back into stock. Never automatic: the vendor or an
+   * admin decides the item is fit to resell (a damaged one is not). Done once per return.
+   */
+  async restock(
+    returnId: string,
+    actor: { id: string; roleId: string; role: { name: string }; vendorId?: string | null },
+  ) {
+    await sequelize.transaction(async (t) => {
+      const row = await findReturnForUpdate(returnId, t);
+      const orderItem = (row as (ReturnRequest & { orderItem?: OrderItem & { subOrder?: SubOrder } }) | null)
+        ?.orderItem;
+      if (!row || !orderItem?.subOrder) throw new NotFoundError('ReturnRequest');
+      const ownsPart = Boolean(actor.vendorId) && orderItem.subOrder.vendorId === actor.vendorId;
+      if (!ownsPart && !(await this.canManageRefunds(actor))) {
+        throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_RETURN);
+      }
+      if (!row.receivedAt) {
+        throw new ValidationError({ status: ['The item must be picked up before it can be restocked'] });
+      }
+      if (row.restockedAt) {
+        throw new ValidationError({ status: ['This return has already been restocked'] });
+      }
+      const quantity = Number(row.returnQuantity ?? orderItem.quantity);
+      await ProductVariant.increment('stock', { by: quantity, where: { id: orderItem.variantId }, transaction: t });
+      await row.update({ restockedAt: new Date(), restockedBy: actor.id, updatedBy: actor.id }, { transaction: t });
+      await logAudit({
+        actorId: actor.id,
+        action: 'RETURN_RESTOCKED',
+        entityType: 'ReturnRequest',
+        entityId: row.id,
+        metadata: { variantId: orderItem.variantId, quantity },
+        transaction: t,
+      });
+    });
+    return this.getById(returnId, actor);
+  }
+
   async listForVendor(vendorId: string, query: { page: number; limit: number }) {
     const slaDays = await refundSlaDays();
     const offset = paginationOffset(query.page, query.limit);
@@ -614,6 +597,9 @@ export class ReturnsService {
   async create(userId: string, data: CreateReturnInput) {
     const slaDays = await refundSlaDays();
     return sequelize.transaction(async (t: Transaction) => {
+      // One return per line: two requests at once would both find none and both create
+      // one. The line's lock makes the second wait and then see the first.
+      await OrderItem.findByPk(data.orderItemId, { attributes: ['id'], transaction: t, lock: t.LOCK.UPDATE });
       const orderItem = await OrderItem.findByPk(data.orderItemId, {
         include: [
           {
@@ -647,21 +633,19 @@ export class ReturnsService {
         throw new ForbiddenError(ERROR_MESSAGES.ITEM_MUST_BE_DELIVERED);
       }
 
-      const returnWindow = await resolveReturnWindowForCategory(item.variant?.product?.categoryId);
-      if (!returnWindow.returnsAllowed || returnWindow.returnWindowDays == null) {
-        throw new ValidationError(ERROR_MESSAGES.RETURN_NOT_ALLOWED);
-      }
-      const windowDays = returnWindow.returnWindowDays;
       // Prefer the real delivery timestamp (Shipment.deliveredAt, set once by the OTP-gated
       // delivery-agent confirmation) over SubOrder.updatedAt, which is a generic timestamp any
       // later, unrelated write to the row (a payout run, an admin edit, another return) bumps —
       // silently resetting/extending the return window if used.
-      const deliveredAt = item.subOrder.shipment?.deliveredAt ?? item.subOrder.updatedAt;
-      if (deliveredAt) {
-        const expires = new Date(deliveredAt.getTime() + windowDays * 24 * 60 * 60 * 1000);
-        if (Date.now() > expires.getTime()) {
-          throw new ValidationError(ERROR_MESSAGES.RETURN_WINDOW_EXPIRED);
-        }
+      const returnWindow = await returnWindowFor(
+        item.variant?.product?.categoryId,
+        item.subOrder.shipment?.deliveredAt ?? item.subOrder.updatedAt,
+      );
+      if (!returnWindow.allowed) {
+        throw new ValidationError(ERROR_MESSAGES.RETURN_NOT_ALLOWED);
+      }
+      if (!isWithinReturnWindow(returnWindow)) {
+        throw new ValidationError(ERROR_MESSAGES.RETURN_WINDOW_EXPIRED);
       }
 
       const existing = await ReturnRequest.findOne({
@@ -911,6 +895,9 @@ export class ReturnsService {
     await orderItem.update(
       isFullReturn
         ? {
+            // Nothing of the line stands, its units included (as a partial return keeps
+            // only what is left): sales and units-sold reports read the line's quantity.
+            quantity: 0,
             lineSubtotal: 0,
             lineTotal: 0,
             taxBreakdown: null,
@@ -1018,7 +1005,9 @@ export class ReturnsService {
           subOrderId: ledger.subOrderId,
           commissionRate: ledger.commissionRate,
           discountBearer: ledger.discountBearer,
-          saleAmountPaise: -reversal.refundMerchandisePaise,
+          // The sale is the commission base, the vendor's value of supply (with the
+          // platform's coupon share): reverse that, not the customer's taxable value.
+          saleAmountPaise: -reversal.refundSupplyTaxablePaise,
           commissionAmountPaise: -reversal.refundCommissionPaise,
           taxableAmountPaise: -reversal.refundMerchandisePaise,
           supplyTaxablePaise: -reversal.refundSupplyTaxablePaise,
@@ -1040,7 +1029,7 @@ export class ReturnsService {
     } else if (ledger) {
       const salePaise = Math.max(
         0,
-        frozenPaise(ledger.saleAmountPaise) - reversal.refundMerchandisePaise,
+        frozenPaise(ledger.saleAmountPaise) - reversal.refundSupplyTaxablePaise,
       );
       const commissionPaise = Math.max(
         0,
@@ -1317,17 +1306,16 @@ export class ReturnsService {
         );
       }
 
+      // Refunds start on pickup, so one that settles at RECEIVED is done: REFUNDED, which
+      // also stops it holding the vendor's payout. A return refunded before its pickup
+      // (older rows) keeps its logistics status; CLOSED stays CLOSED.
       const nextStatus =
-        row.status === RETURN_STATUS.CLOSED
-          ? RETURN_STATUS.CLOSED
-          : row.status === RETURN_STATUS.PICKUP_SCHEDULED ||
-              row.status === RETURN_STATUS.RECEIVED
-            ? row.status
-            : RETURN_STATUS.REFUNDED;
+        row.status === RETURN_STATUS.CLOSED || row.status === RETURN_STATUS.PICKUP_SCHEDULED
+          ? row.status
+          : RETURN_STATUS.REFUNDED;
 
       await row.update(
         {
-          // Preserve logistics progress; only stamp REFUNDED when still at APPROVED.
           status: nextStatus,
           refundStatus: REFUND_STATUS.COMPLETED,
           resolvedById: auditActorId ?? row.resolvedById,
@@ -1355,12 +1343,101 @@ export class ReturnsService {
     }
   }
 
+  /**
+   * Freezes the return's accounting reversal and starts paying the customer back: the
+   * wallet share is credited here, the card share is handed back for the caller to send
+   * to Razorpay after commit. Runs once per return — on pickup (RECEIVED), or when an
+   * admin refunds without one (REFUNDED) — never at approval: a return whose pickup
+   * fails and closes must not have paid out (refund-on-pickup policy).
+   */
+  private async startRefund(row: ReturnRequest, actorId: string, t: Transaction): Promise<StartedRefund> {
+    const patch: Record<string, unknown> = {};
+    let cardRefund: PendingReturnCardRefund | null = null;
+    let completeImmediately = false;
+    // Two returns on one order refunded at once would each rewrite the order's totals from
+    // a stale read and apply the refund caps as if the other didn't exist: one at a time.
+    const orderId = (row as ReturnRequest & { orderItem?: { subOrder?: { orderId?: string } } }).orderItem?.subOrder
+      ?.orderId;
+    if (orderId) await Order.findByPk(orderId, { attributes: ['id'], transaction: t, lock: t.LOCK.UPDATE });
+    const { reversal, order } = await this.freezeVendorAccountingOnApprove(row, actorId, t);
+    const customerRefund = fromPaise(reversal.customerRefundPaise);
+    const split = await this.splitRefundAmounts(order, customerRefund, t);
+
+    // The refund recorded is what goes back: the wallet and card shares, which fall
+    // short of the reversal only when earlier refunds on the order took the rest.
+    patch.refundAmount = fromPaise(toPaise(split.walletRefund) + toPaise(split.razorpayRefund));
+    patch.refundTaxAmount = fromPaise(reversal.refundTaxPaise);
+    patch.refundMerchandiseAmountPaise = reversal.refundMerchandisePaise;
+    patch.refundSupplyTaxablePaise = reversal.refundSupplyTaxablePaise;
+    patch.refundSupplyTaxPaise = reversal.refundSupplyTaxPaise;
+    patch.refundCommissionAmount = fromPaise(reversal.refundCommissionPaise);
+    patch.refundTcsAmount = fromPaise(reversal.refundTcsPaise);
+    patch.refundNetClawback = fromPaise(reversal.refundNetClawbackPaise);
+    patch.shippingRefundAmount = fromPaise(reversal.shippingRefundPaise);
+    patch.returnShippingFeeAmount = fromPaise(reversal.returnShippingFeePaise);
+    patch.walletRefundAmount = split.walletRefund;
+    patch.razorpayRefundAmount = split.razorpayRefund;
+    patch.refundMethod = split.refundMethod;
+    patch.refundStatus =
+      split.razorpayRefund > 0 ? REFUND_STATUS.INITIATED : REFUND_STATUS.PENDING;
+
+    if (split.walletRefund > 0) {
+      const desc =
+        order.paymentMethod === PAYMENT_METHOD.COD
+          ? WALLET_DESCRIPTIONS.COD_REFUND
+          : WALLET_DESCRIPTIONS.WALLET_PORTION_REFUND;
+      await walletService.credit(
+        row.userId,
+        split.walletRefund,
+        {
+          type:
+            order.paymentMethod === PAYMENT_METHOD.COD
+              ? WALLET_REFERENCE_TYPE.COD_REFUND
+              : WALLET_REFERENCE_TYPE.WALLET_REFUND,
+          id: row.id,
+        },
+        desc,
+        t,
+        { pointSource: WALLET_POINT_SOURCE.PURCHASED, expiresAt: null },
+      );
+    }
+
+    if (split.razorpayRefund > 0) {
+      if (!order.razorpayPaymentId) {
+        throw new ValidationError(ERROR_MESSAGES.RETURN_REFUND_PENDING);
+      }
+      cardRefund = {
+        returnId: row.id,
+        paymentId: order.razorpayPaymentId,
+        amountPaise: toPaise(split.razorpayRefund),
+      };
+    } else {
+      completeImmediately = true;
+      patch.refundStatus = REFUND_STATUS.COMPLETED;
+    }
+    return { patch, cardRefund, completeImmediately };
+  }
+
+  /**
+   * Starts the refund of a return whose pickup the agent just confirmed, inside the
+   * pickup's transaction (see `startRefund`). Returns what to run once it commits.
+   */
+  async startRefundOnPickup(returnId: string, actorId: string, t: Transaction): Promise<() => Promise<void>> {
+    const row = await findReturnForUpdate(returnId, t);
+    if (!row || row.type === RETURN_TYPE.EXCHANGE || row.refundAmount != null) return async () => {};
+    const started = await this.startRefund(row, actorId, t);
+    await row.update(started.patch, { transaction: t });
+    return async () => {
+      if (started.cardRefund) {
+        await sendReturnCardRefund(started.cardRefund, row.orderItemId, await refundSlaDays());
+      }
+      if (started.completeImmediately) await this.completeRefundTrack(returnId, actorId);
+    };
+  }
+
   async transition(id: string, status: ReturnStatus, actorId: string, rejectionReason?: string) {
     const slaDays = await refundSlaDays();
-    const razorpayBox: {
-      refund: { returnId: string; paymentId: string; amountPaise: number } | null;
-    } = { refund: null };
-    let shouldCompleteRefundImmediately = false;
+    const refundBox: { started: StartedRefund | null } = { started: null };
 
     const result = await sequelize.transaction(async (t: Transaction) => {
       const row = await findReturnForUpdate(id, t);
@@ -1388,68 +1465,15 @@ export class ReturnsService {
         patch.receivedAt = new Date();
       }
 
+      // The refund goes out on pickup (RECEIVED), or when an admin refunds without one
+      // (REFUNDED) — never at approval, so a return whose pickup fails paid nothing.
       if (
-        status === RETURN_STATUS.APPROVED &&
+        (status === RETURN_STATUS.RECEIVED || status === RETURN_STATUS.REFUNDED) &&
         row.type !== RETURN_TYPE.EXCHANGE &&
         row.refundAmount == null
       ) {
-        const { reversal, order } = await this.freezeVendorAccountingOnApprove(row, actorId, t);
-        const customerRefund = fromPaise(reversal.customerRefundPaise);
-        const split = await this.splitRefundAmounts(order, customerRefund, t);
-
-        // The refund recorded is what goes back: the wallet and card shares, which fall
-        // short of the reversal only when earlier refunds on the order took the rest.
-        patch.refundAmount = fromPaise(toPaise(split.walletRefund) + toPaise(split.razorpayRefund));
-        patch.refundTaxAmount = fromPaise(reversal.refundTaxPaise);
-        patch.refundMerchandiseAmountPaise = reversal.refundMerchandisePaise;
-        patch.refundSupplyTaxablePaise = reversal.refundSupplyTaxablePaise;
-        patch.refundSupplyTaxPaise = reversal.refundSupplyTaxPaise;
-        patch.refundCommissionAmount = fromPaise(reversal.refundCommissionPaise);
-        patch.refundTcsAmount = fromPaise(reversal.refundTcsPaise);
-        patch.refundNetClawback = fromPaise(reversal.refundNetClawbackPaise);
-        patch.shippingRefundAmount = fromPaise(reversal.shippingRefundPaise);
-        patch.returnShippingFeeAmount = fromPaise(reversal.returnShippingFeePaise);
-        patch.walletRefundAmount = split.walletRefund;
-        patch.razorpayRefundAmount = split.razorpayRefund;
-        patch.refundMethod = split.refundMethod;
-        patch.refundStatus =
-          split.razorpayRefund > 0 ? REFUND_STATUS.INITIATED : REFUND_STATUS.PENDING;
-
-        if (split.walletRefund > 0) {
-          const desc =
-            order.paymentMethod === PAYMENT_METHOD.COD
-              ? WALLET_DESCRIPTIONS.COD_REFUND
-              : WALLET_DESCRIPTIONS.WALLET_PORTION_REFUND;
-          await walletService.credit(
-            row.userId,
-            split.walletRefund,
-            {
-              type:
-                order.paymentMethod === PAYMENT_METHOD.COD
-                  ? WALLET_REFERENCE_TYPE.COD_REFUND
-                  : WALLET_REFERENCE_TYPE.WALLET_REFUND,
-              id: row.id,
-            },
-            desc,
-            t,
-            { pointSource: WALLET_POINT_SOURCE.PURCHASED, expiresAt: null },
-          );
-        }
-
-        if (split.razorpayRefund > 0) {
-          if (!order.razorpayPaymentId) {
-            throw new ValidationError(ERROR_MESSAGES.RETURN_REFUND_PENDING);
-          }
-          razorpayBox.refund = {
-            returnId: row.id,
-            paymentId: order.razorpayPaymentId,
-            amountPaise: toPaise(split.razorpayRefund),
-          };
-        } else {
-          shouldCompleteRefundImmediately = true;
-          patch.refundStatus = REFUND_STATUS.COMPLETED;
-          // Stay on APPROVED for logistics; refund track completion flips to REFUNDED after txn.
-        }
+        refundBox.started = await this.startRefund(row, actorId, t);
+        Object.assign(patch, refundBox.started.patch);
       }
 
       if (status === RETURN_STATUS.CLOSED) {
@@ -1465,60 +1489,30 @@ export class ReturnsService {
         if (row.type === RETURN_TYPE.EXCHANGE) {
           throw new ValidationError(ERROR_MESSAGES.RETURN_INVALID_TRANSITION);
         }
-        const refundStatus = String(row.refundStatus ?? REFUND_STATUS.NONE);
-        if (
-          Number(row.razorpayRefundAmount ?? 0) > 0 &&
-          refundStatus !== REFUND_STATUS.COMPLETED
-        ) {
-          throw new ValidationError(ERROR_MESSAGES.RETURN_REFUND_PENDING);
+        // Refunded earlier (on pickup): only a settled card share may close the track.
+        // Started just now: its card share is on its way, startRefund set the status.
+        if (!refundBox.started) {
+          const refundStatus = String(row.refundStatus ?? REFUND_STATUS.NONE);
+          if (
+            Number(row.razorpayRefundAmount ?? 0) > 0 &&
+            refundStatus !== REFUND_STATUS.COMPLETED
+          ) {
+            throw new ValidationError(ERROR_MESSAGES.RETURN_REFUND_PENDING);
+          }
+          patch.refundStatus = REFUND_STATUS.COMPLETED;
         }
-        patch.refundStatus = REFUND_STATUS.COMPLETED;
       }
 
       await row.update(patch, { transaction: t });
       return serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }, slaDays);
     });
 
-    const pendingRazorpay = razorpayBox.refund;
-    if (pendingRazorpay) {
-      try {
-        const refundId = await paymentsService.createRazorpayRefund(
-          pendingRazorpay.paymentId,
-          pendingRazorpay.amountPaise,
-          { returnRequestId: pendingRazorpay.returnId },
-        );
-        await ReturnRequest.update(
-          { razorpayRefundId: refundId, refundStatus: REFUND_STATUS.INITIATED },
-          { where: { id: pendingRazorpay.returnId } },
-        );
-        const orderItem = await OrderItem.findByPk(result.orderItemId, {
-          include: [{ model: SubOrder, as: 'subOrder', include: [{ model: Order, as: 'order' }] }],
-        });
-        const order = (orderItem as any)?.subOrder?.order as Order | undefined;
-        if (order?.userId) {
-          void notificationsService.sendRefundInitiated(order.userId, pendingRazorpay.returnId, {
-            orderId: order.id,
-            orderNumber: order.id.slice(0, 8).toUpperCase(),
-            amount: Number(pendingRazorpay.amountPaise) / 100,
-            slaDays,
-          });
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Refund failed';
-        const failedRow = await ReturnRequest.findByPk(pendingRazorpay.returnId);
-        if (failedRow) {
-          await failedRow.update({
-            refundStatus: REFUND_STATUS.FAILED,
-            refundAttemptCount: Number(failedRow.refundAttemptCount ?? 0) + 1,
-            lastRefundAttemptAt: new Date(),
-            refundFailureReason: message.slice(0, 255),
-          });
-        }
-        throw new ValidationError(ERROR_MESSAGES.RETURN_REFUND_PENDING);
-      }
+    const started = refundBox.started;
+    if (started?.cardRefund) {
+      await sendReturnCardRefund(started.cardRefund, result.orderItemId, slaDays);
     }
 
-    if (shouldCompleteRefundImmediately || status === RETURN_STATUS.REFUNDED) {
+    if (started ? started.completeImmediately : status === RETURN_STATUS.REFUNDED) {
       await this.completeRefundTrack(id, actorId);
       const refreshed = await ReturnRequest.findByPk(id, { include: returnListInclude });
       if (refreshed) {
@@ -1534,6 +1528,7 @@ export class ReturnsService {
       const orderNumber = order.id.slice(0, 8).toUpperCase();
       if (
         status === RETURN_STATUS.APPROVED ||
+        status === RETURN_STATUS.REJECTED ||
         status === RETURN_STATUS.CLOSED ||
         status === RETURN_STATUS.PICKUP_SCHEDULED ||
         status === RETURN_STATUS.RECEIVED
@@ -1558,46 +1553,9 @@ export class ReturnsService {
   }
 
   /** Called from refund.processed webhook — flips refund track when Razorpay portion settles. */
-  async retryRazorpayRefund(returnRequestId: string, actorId: string): Promise<void> {
-    const row = await ReturnRequest.findByPk(returnRequestId);
-    if (!row) throw new NotFoundError('ReturnRequest');
-    if (row.refundStatus !== REFUND_STATUS.FAILED) {
-      throw new ValidationError(ERROR_MESSAGES.RETURN_REFUND_RETRY_FAILED_ONLY);
-    }
-    const razorpayAmount = Number(row.razorpayRefundAmount ?? 0);
-    if (razorpayAmount <= 0) {
-      throw new ValidationError(ERROR_MESSAGES.RETURN_NO_RAZORPAY_REFUND);
-    }
-
-    const orderItem = await OrderItem.findByPk(row.orderItemId, {
-      include: [{ model: SubOrder, as: 'subOrder', include: [{ model: Order, as: 'order' }] }],
-    });
-    const order = (orderItem as any)?.subOrder?.order as Order | undefined;
-    const paymentId = order?.razorpayPaymentId;
-    if (!paymentId) throw new ValidationError(ERROR_MESSAGES.RETURN_NO_RAZORPAY_PAYMENT);
-
-    const amountPaise = toPaise(razorpayAmount);
-    try {
-      const refundId = await paymentsService.createRazorpayRefund(paymentId, amountPaise, {
-        returnRequestId: row.id,
-      });
-      await row.update({
-        razorpayRefundId: refundId,
-        refundStatus: REFUND_STATUS.INITIATED,
-        refundFailureReason: null,
-        updatedBy: actorId === 'system' ? row.userId : actorId,
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Refund failed';
-      await row.update({
-        refundStatus: REFUND_STATUS.FAILED,
-        refundAttemptCount: Number(row.refundAttemptCount ?? 0) + 1,
-        lastRefundAttemptAt: new Date(),
-        refundFailureReason: message.slice(0, 255),
-        updatedBy: actorId === 'system' ? row.userId : actorId,
-      });
-      throw new ValidationError(ERROR_MESSAGES.RETURN_REFUND_PENDING);
-    }
+  /** Retry of a return's failed card refund (admin, or the refund-retry job). */
+  retryRazorpayRefund(returnRequestId: string, actorId: string): Promise<void> {
+    return retryReturnCardRefund(returnRequestId, actorId);
   }
 
   async markRazorpayRefundProcessed(input: {
@@ -1664,6 +1622,14 @@ export class ReturnsService {
   async delete(returnId: string, actorUserId: string) {
     const row = await ReturnRequest.findByPk(returnId);
     if (!row) throw new NotFoundError('ReturnRequest');
+    // Only a request nothing came of: once approved it carries refunds, credit notes and
+    // ledger entries, and deleting it would hide them from the customer and from admins.
+    const deletable =
+      (row.status === RETURN_STATUS.REQUESTED || row.status === RETURN_STATUS.REJECTED) &&
+      row.refundAmount == null;
+    if (!deletable) {
+      throw new ValidationError({ status: ['Only a return that was never approved can be deleted'] });
+    }
 
     const photoUrls = Array.isArray(row.photoUrls) ? row.photoUrls : [];
     await row.update({ deletedBy: actorUserId });

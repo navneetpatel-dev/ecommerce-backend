@@ -17,10 +17,11 @@ import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
-import { ADMIN_ROLES, ORDER_STATUS, PAYMENT_STATUS, ROLES } from '@core/constants/statuses';
-import { PERMISSIONS } from '@core/constants/permissions';
-import { userHasPermission } from '@middleware/rbac.middleware';
+import { ORDER_STATUS } from '@core/constants/statuses';
 import { Op, type Transaction } from 'sequelize';
+import { settleCodPaymentIfComplete } from './codSettlement';
+import { canSeeShipmentDetails, type ShipmentViewer } from './shipmentAccess';
+import { rollUpOrderStatus } from '@modules/orders/orderStatusRollup';
 import { sequelize } from '@database/models';
 import type { CreateZoneRequest, UpdateZoneRequest, CreateRateRequest, UpdateRateRequest, GetShippingRatesRequest } from './shipping.dto';
 import { logAudit } from '@modules/audit/audit.service';
@@ -33,7 +34,6 @@ import { WebhookPayloadSchema } from './shipping.dto';
 import { deliveryAgentPayoutsService } from '@modules/deliveryAgents/deliveryAgentPayouts.service';
 import { issueTaxInvoicesOnDispatch } from '@modules/pricing/taxInvoiceIssue';
 import { issueRtoCreditNotes, refundReturnedUndeliveredPart } from './rtoSettlement';
-import { isReversedPart } from '@modules/pricing/partReversal';
 import { reverseTcsForReturnedPart } from '@modules/pricing/tcsLedger';
 import { fromPaise, toPaise } from '@modules/pricing/money';
 import { priceWithRuleGst } from '@modules/tax/gstPricing';
@@ -80,6 +80,14 @@ const WEBHOOK_STATUS_MAP: Record<string, string> = {
   FAILED: 'FAILED',
   CANCELLED: 'FAILED',
   CANCELED: 'FAILED',
+  // The carrier sends a parcel back (RTO) and hands it to the seller: without these a
+  // carrier-only parcel never settled — no refund, no restock — as only an agent could.
+  RTO: 'RTO_INITIATED',
+  RTO_INITIATED: 'RTO_INITIATED',
+  RTOINITIATED: 'RTO_INITIATED',
+  RTO_DELIVERED: 'RTO_DELIVERED',
+  RTODELIVERED: 'RTO_DELIVERED',
+  RETURNED_TO_ORIGIN: 'RTO_DELIVERED',
 };
 
 /**
@@ -90,10 +98,10 @@ const WEBHOOK_STATUS_MAP: Record<string, string> = {
  */
 const SHIPMENT_STATUS_TRANSITIONS: Record<string, readonly string[]> = {
   PENDING: ['PICKED_UP', 'IN_TRANSIT', 'OUT_FOR_DELIVERY', 'DELIVERED', 'FAILED'],
-  PICKED_UP: ['IN_TRANSIT', 'OUT_FOR_DELIVERY', 'DELIVERED', 'FAILED'],
-  IN_TRANSIT: ['OUT_FOR_DELIVERY', 'DELIVERED', 'FAILED'],
-  OUT_FOR_DELIVERY: ['DELIVERED', 'FAILED'],
-  FAILED: ['PICKED_UP', 'IN_TRANSIT', 'OUT_FOR_DELIVERY'],
+  PICKED_UP: ['IN_TRANSIT', 'OUT_FOR_DELIVERY', 'DELIVERED', 'FAILED', 'RTO_INITIATED'],
+  IN_TRANSIT: ['OUT_FOR_DELIVERY', 'DELIVERED', 'FAILED', 'RTO_INITIATED'],
+  OUT_FOR_DELIVERY: ['DELIVERED', 'FAILED', 'RTO_INITIATED'],
+  FAILED: ['PICKED_UP', 'IN_TRANSIT', 'OUT_FOR_DELIVERY', 'RTO_INITIATED'],
   RTO_INITIATED: ['RTO_DELIVERED'],
   DELIVERED: [],
   RTO_DELIVERED: [],
@@ -113,11 +121,7 @@ function isTerminalShipmentStatus(status: string): boolean {
   return status === 'DELIVERED' || status === 'RTO_DELIVERED';
 }
 
-type TrackingActor = {
-  id: string;
-  vendorId: string | null;
-  role: { name: string };
-} | null;
+type TrackingActor = ShipmentViewer | null;
 
 function normalizeCarrier(carrier: string): string {
   return carrier
@@ -144,19 +148,17 @@ async function cascadeOrderDeliveredAndNotify(subOrderId: string, transaction: T
   const subOrder = await SubOrder.findByPk(subOrderId, { transaction });
   if (!subOrder) return;
 
-  const siblings = await SubOrder.findAll({ where: { orderId: subOrder.orderId }, transaction });
-  const terminal = new Set(['DELIVERED', 'CANCELLED', 'RETURNED']);
-  const allSettled = siblings.every((sibling) => terminal.has(sibling.status));
-  const anyDelivered = siblings.some((sibling) => sibling.status === 'DELIVERED');
-  if (allSettled && anyDelivered) {
-    await Order.update({ status: ORDER_STATUS.DELIVERED }, { where: { id: subOrder.orderId }, transaction });
-  }
+  await rollUpOrderStatus(subOrder.orderId, transaction);
 
   const order = await Order.findByPk(subOrder.orderId, { transaction, attributes: ['userId'] });
+  // Only once the delivery is saved: a rollback (an earning or audit write failing)
+  // must not leave the customer with a "Delivered" email.
   if (order) {
-    void notificationsService.sendSubOrderDelivered(order.userId, subOrderId, {
-      orderId: subOrder.orderId,
-      orderNumber: subOrder.orderId.slice(0, 8).toUpperCase(),
+    transaction.afterCommit(() => {
+      void notificationsService.sendSubOrderDelivered(order.userId, subOrderId, {
+        orderId: subOrder.orderId,
+        orderNumber: subOrder.orderId.slice(0, 8).toUpperCase(),
+      });
     });
   }
 }
@@ -203,21 +205,7 @@ async function cascadeRtoDeliveredAndSettle(subOrderId: string, transaction: Tra
   const order = subOrder.order;
   if (order) {
     const siblings = await SubOrder.findAll({ where: { orderId: order.id }, transaction });
-    const terminal = new Set(['DELIVERED', 'CANCELLED', 'RETURNED']);
-    const allSettled = siblings.every((s) => terminal.has(s.status));
-    if (allSettled) {
-      const anyDelivered = siblings.some((s) => s.status === 'DELIVERED');
-      const allReturned = siblings.every((s) => s.status === 'RETURNED');
-      const targetStatus = anyDelivered ? ORDER_STATUS.DELIVERED : allReturned ? ORDER_STATUS.RETURNED : ORDER_STATUS.CANCELLED;
-      await Order.update(
-        {
-          status: targetStatus,
-          // Nothing was delivered: no cashback will ever be due (as on a full cancellation).
-          ...(anyDelivered ? {} : { pendingCashbackAmount: 0 }),
-        },
-        { where: { id: order.id }, transaction },
-      );
-    }
+    await rollUpOrderStatus(order.id, transaction);
 
     // 4. Refund the part the way a cancellation does: its wallet share back as the
     // checkout spend it was, its cash share back to the card (after commit). The last
@@ -237,39 +225,16 @@ async function notifyCustomerOfFailedAttempt(shipment: Shipment, resolvedStatus:
   const order = await Order.findByPk(subOrder.orderId, { transaction, attributes: ['userId'] });
   if (!order) return;
 
-  void notificationsService.sendDeliveryAttemptFailed(order.userId, shipment.id, {
-    trackingNumber: shipment.trackingNumber,
-    reason:
-      resolvedStatus === 'RTO_INITIATED'
-        ? 'Delivery could not be completed after 3 attempts — the parcel is being returned to the seller.'
-        : (shipment.failureReason ?? 'Delivery attempt unsuccessful'),
-    failedAttemptCount: shipment.failedAttemptCount,
+  transaction.afterCommit(() => {
+    void notificationsService.sendDeliveryAttemptFailed(order.userId, shipment.id, {
+      trackingNumber: shipment.trackingNumber,
+      reason:
+        resolvedStatus === 'RTO_INITIATED'
+          ? 'Delivery could not be completed after 3 attempts — the parcel is being returned to the seller.'
+          : (shipment.failureReason ?? 'Delivery attempt unsuccessful'),
+      failedAttemptCount: shipment.failedAttemptCount,
+    });
   });
-}
-
-/**
- * Marks the order PAID once every COD shipment still owed has had cash collected at the
- * door. A parcel that came back undelivered (RTO) owes nothing — its part is reversed —
- * so it no longer holds the order unpaid once the other parcels are delivered and paid.
- * Runs on delivery and on RTO, whichever settles the order last.
- */
-async function settleCodPaymentIfComplete(subOrderId: string, transaction: Transaction) {
-  const subOrder = await SubOrder.findByPk(subOrderId, { transaction });
-  if (!subOrder) return;
-  const order = await Order.findByPk(subOrder.orderId, { transaction });
-  if (!order || order.paymentMethod !== 'COD' || order.paymentStatus === PAYMENT_STATUS.PAID) return;
-
-  const siblingShipments = (await Shipment.findAll({
-    include: [{ association: 'subOrder', where: { orderId: order.id }, attributes: ['status'] }],
-    transaction,
-  })) as (Shipment & { subOrder?: SubOrder })[];
-  const codShipments = siblingShipments.filter(
-    (s) => s.codAmount != null && s.status !== 'RTO_INITIATED' && s.status !== 'RTO_DELIVERED' && !isReversedPart(s.subOrder?.status),
-  );
-  const allCollected = codShipments.length > 0 && codShipments.every((s) => s.codCollected);
-  if (allCollected) {
-    await order.update({ paymentStatus: PAYMENT_STATUS.PAID }, { transaction });
-  }
 }
 
 /** What a zone's rates say about delivering a basket there (see `checkServiceability`). */
@@ -662,13 +627,7 @@ export const shippingService = {
       subOrder?: SubOrder & { order?: Order & { shippingAddress?: Address | null } };
     };
     const subOrder = shipmentWithOrder.subOrder;
-    const isAdmin =
-      (ADMIN_ROLES as readonly string[]).includes(actor.role.name) ||
-      (await userHasPermission(actor, PERMISSIONS.SHIPPING_MANAGE, PERMISSIONS.ORDER_MANAGE));
-    const isCustomerOwner = actor.role.name === ROLES.CUSTOMER && subOrder?.order?.userId === actor.id;
-    const isVendorOwner = actor.vendorId != null && subOrder?.vendorId === actor.vendorId;
-    const isDeliveryAgent = actor.role.name === ROLES.DELIVERY_AGENT;
-    if (!isAdmin && !isCustomerOwner && !isVendorOwner && !isDeliveryAgent) {
+    if (!(await canSeeShipmentDetails(actor, shipmentWithOrder))) {
       throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_ORDER);
     }
     const plain = shipment.get({ plain: true }) as Record<string, unknown>;
@@ -812,7 +771,17 @@ export const shippingService = {
         await issueTaxInvoicesOnDispatch(shipment.subOrderId, transaction);
       }
       if (status === 'DELIVERED') {
-        await SubOrder.update({ status: 'DELIVERED' }, { where: { id: shipment.subOrderId }, transaction });
+        // Never revive a part that was cancelled or came back (RTO): it has been refunded.
+        await SubOrder.update(
+          { status: 'DELIVERED' },
+          {
+            where: {
+              id: shipment.subOrderId,
+              status: { [Op.notIn]: [ORDER_STATUS.CANCELLED, ORDER_STATUS.RETURNED] },
+            },
+            transaction,
+          },
+        );
         await cascadeOrderDeliveredAndNotify(shipment.subOrderId, transaction);
         await settleCodPaymentIfComplete(shipment.subOrderId, transaction);
         if (shipment.deliveryAgentId) {

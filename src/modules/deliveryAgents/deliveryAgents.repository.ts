@@ -161,7 +161,7 @@ export class DeliveryAgentsRepository extends BaseRepository<DeliveryAgent> {
 
   async activeCounts(deliveryAgentId: string) {
     return Promise.all([
-      Shipment.count({ where: { deliveryAgentId, status: { [Op.notIn]: ['DELIVERED', 'FAILED'] } } }),
+      Shipment.count({ where: { deliveryAgentId, status: { [Op.notIn]: ['DELIVERED', 'FAILED', 'RTO_DELIVERED'] } } }),
       ReturnRequest.count({ where: { deliveryAgentId, status: 'PICKUP_SCHEDULED' } }),
     ]);
   }
@@ -171,7 +171,7 @@ export class DeliveryAgentsRepository extends BaseRepository<DeliveryAgent> {
     return Shipment.findAll({
       where: {
         deliveryAgentId: { [Op.is]: null },
-        status: { [Op.notIn]: ['DELIVERED', 'FAILED'] },
+        status: { [Op.notIn]: ['DELIVERED', 'FAILED', 'RTO_DELIVERED'] },
       },
       include: [{
         model: SubOrder,

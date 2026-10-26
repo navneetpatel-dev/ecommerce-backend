@@ -12,14 +12,11 @@ import { DeliveryAgentEarning } from '@database/models/deliveryAgentEarning.mode
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { DeliveryAgentDocument } from '@database/models/deliveryAgentDocument.model';
 import { DeliveryRating } from '@database/models/deliveryRating.model';
-import { ProductVariant } from '@database/models/productVariant.model';
 import { AuditLog } from '@database/models/auditLog.model';
 import { NotFoundError, ValidationError } from '@core/errors';
-import { ERROR_MESSAGES } from '@core/constants/errors';
 import {
   DELIVERY_AGENT_REQUIRED_DOCUMENT_TYPES,
   RETURN_STATUS,
-  RETURN_TYPE,
   ROLES,
   USER_STATUS,
 } from '@core/constants/statuses';
@@ -41,7 +38,7 @@ import type {
   UpdateDeliveryAgentRequest,
 } from './deliveryAgents.dto';
 import { deliveryAgentsRepository as repo } from './deliveryAgents.repository';
-import { deliveryAgentPayoutsService } from './deliveryAgentPayouts.service';
+import { confirmReturnPickup } from './returnPickupConfirm';
 import { deliveryRatingsService } from './deliveryRatings.service';
 import { istStartOfDay } from '@modules/pricing/istCalendar';
 
@@ -804,7 +801,7 @@ export class DeliveryAgentsService {
     const vendorUser = await User.findOne({ where: { vendorId }, attributes: ['id'] });
     if (!vendorUser) throw new ValidationError({ shipmentId: ['Vendor has no linked account'] });
 
-    const otp = await otpService.issueCodeForUser(vendorUser.id, 'RTO_HANDOVER_CONFIRMATION');
+    const otp = await otpService.issueCodeForUser(vendorUser.id, 'RTO_HANDOVER_CONFIRMATION', undefined, shipment.id);
     await notificationsService.sendRtoHandoverOtp(vendorUser.id, otp.id, {
       code: otp.code,
       expiresInMinutes: OTP_TTL_MINUTES,
@@ -830,6 +827,7 @@ export class DeliveryAgentsService {
         'RTO_HANDOVER_CONFIRMATION',
         otpCode,
         transaction,
+        shipment.id,
       );
       if (!verification.valid) return { shipment: null, verification };
 
@@ -870,7 +868,7 @@ export class DeliveryAgentsService {
     if (!customerId) {
       throw new ValidationError({ shipmentId: ['Shipment has no linked customer'] });
     }
-    const otp = await otpService.issueCodeForUser(customerId, 'DELIVERY_CONFIRMATION');
+    const otp = await otpService.issueCodeForUser(customerId, 'DELIVERY_CONFIRMATION', undefined, shipment.id);
     await notificationsService.sendDeliveryOtp(customerId, otp.id, {
       code: otp.code,
       expiresInMinutes: OTP_TTL_MINUTES,
@@ -947,6 +945,7 @@ export class DeliveryAgentsService {
         'DELIVERY_CONFIRMATION',
         input.otpCode,
         transaction,
+        shipment.id,
       );
       if (!verification.valid) {
         return { shipment: null, verification };
@@ -978,20 +977,26 @@ export class DeliveryAgentsService {
     return result.shipment;
   }
 
-  async forceConfirmDelivery(shipmentId: string, actorId: string, reason: string) {
+  async forceConfirmDelivery(shipmentId: string, actorId: string, reason: string, codCollected = false) {
     const shipment = await Shipment.findByPk(shipmentId);
     if (!shipment) throw new NotFoundError('Shipment');
     if (shipment.status === 'DELIVERED') return shipment;
     if (shipment.status !== 'OUT_FOR_DELIVERY') {
       throw new ValidationError({ status: ['Only an out-for-delivery shipment can be force confirmed'] });
     }
-    const updated = await shippingService.applyShipmentStatus(shipment, 'DELIVERED', { updatedBy: actorId });
+    // A COD parcel is collected only when the admin says so: otherwise the cash would be
+    // charged to the agent and the order marked paid for money nobody took.
+    const isCod = shipment.codAmount != null;
+    const updated = await shippingService.applyShipmentStatus(shipment, 'DELIVERED', {
+      updatedBy: actorId,
+      ...(isCod ? { codCollected, codCollectedAt: codCollected ? new Date() : null } : {}),
+    });
     await logAudit({
       actorId,
       action: 'DELIVERY_FORCE_CONFIRMED',
       entityType: 'Shipment',
       entityId: shipment.id,
-      metadata: { reason },
+      metadata: { reason, ...(isCod ? { codCollected } : {}) },
     });
     return updated;
   }
@@ -1012,7 +1017,7 @@ export class DeliveryAgentsService {
     if (pickup.status !== RETURN_STATUS.PICKUP_SCHEDULED) {
       throw new ValidationError({ status: ['Return is not scheduled for pickup'] });
     }
-    const otp = await otpService.issueCodeForUser(pickup.userId, 'RETURN_PICKUP_CONFIRMATION');
+    const otp = await otpService.issueCodeForUser(pickup.userId, 'RETURN_PICKUP_CONFIRMATION', undefined, pickup.id);
     await notificationsService.sendReturnPickupOtp(pickup.userId, otp.id, {
       code: otp.code,
       expiresInMinutes: OTP_TTL_MINUTES,
@@ -1071,91 +1076,13 @@ export class DeliveryAgentsService {
     return pickup;
   }
 
-  async confirmPickup(
+  confirmPickup(
     returnId: string,
     deliveryAgentId: string,
     actorId: string,
     input: { otpCode: string; itemConditionPhotoUrls?: string[]; replacementProofUrl?: string },
   ) {
-    const result = await sequelize.transaction(async (transaction) => {
-      const row = await repo.assignedPickup(returnId, deliveryAgentId, transaction);
-      if (!row) throw new NotFoundError('AssignedReturnPickup');
-      if (row.status !== RETURN_STATUS.PICKUP_SCHEDULED) {
-        throw new ValidationError({ status: ['Return is not scheduled for pickup'] });
-      }
-      if (row.type === RETURN_TYPE.EXCHANGE) {
-        if (!input.itemConditionPhotoUrls?.length) {
-          throw new ValidationError({ itemConditionPhotoUrls: ['Condition photos are required for an exchange'] });
-        }
-        if (!input.replacementProofUrl) {
-          throw new ValidationError({ replacementProofUrl: ['Replacement handover proof is required'] });
-        }
-        const orderItem = (row as ReturnRequest & { orderItem?: { variantId: string } }).orderItem;
-        if (!orderItem?.variantId) {
-          throw new ValidationError({ orderItemId: ['Return has no replacement variant'] });
-        }
-        const variant = await ProductVariant.findByPk(orderItem.variantId, {
-          transaction,
-          lock: transaction.LOCK.UPDATE,
-        });
-        const replacementQuantity = Number(row.returnQuantity ?? 1);
-        if (!variant || Number(variant.stock) < replacementQuantity) {
-          throw new ValidationError(ERROR_MESSAGES.INSUFFICIENT_STOCK);
-        }
-        await variant.update(
-          { stock: Number(variant.stock) - replacementQuantity, updatedBy: actorId },
-          { transaction },
-        );
-      }
-      const verification = await otpService.verifyCodeForUser(
-        row.userId,
-        'RETURN_PICKUP_CONFIRMATION',
-        input.otpCode,
-        transaction,
-      );
-      if (!verification.valid) {
-        return { pickup: null, verification };
-      }
-      await row.update(
-        {
-          status: RETURN_STATUS.RECEIVED,
-          receivedAt: new Date(),
-          pickupOtpVerifiedAt: new Date(),
-          pickupFailureReason: null,
-          photoUrls: input.itemConditionPhotoUrls?.length
-            ? [...row.photoUrls, ...input.itemConditionPhotoUrls]
-            : row.photoUrls,
-          replacementDeliveredAt: row.type === RETURN_TYPE.EXCHANGE ? new Date() : null,
-          replacementProofUrl: input.replacementProofUrl ?? null,
-          updatedBy: actorId,
-        },
-        { transaction },
-      );
-      await deliveryAgentPayoutsService.recordEarning(deliveryAgentId, 'PICKUP', row.id, transaction);
-      await logAudit({
-        actorId,
-        action: 'RETURN_PICKUP_CONFIRMED',
-        entityType: 'ReturnRequest',
-        entityId: row.id,
-        metadata: { type: row.type, otpVerified: true },
-        transaction,
-      });
-      return { pickup: row, verification };
-    });
-
-    if (!result.verification.valid) {
-      throw new ValidationError({ otpCode: [result.verification.message] });
-    }
-    const pickup = result.pickup;
-    if (!pickup) throw new NotFoundError('AssignedReturnPickup');
-
-    const orderId = (pickup as any).subOrder?.orderId ?? (pickup as any).subOrder?.order?.id;
-    void notificationsService.sendOrderReturned(pickup.userId, pickup.id, {
-      orderId,
-      orderNumber: orderId ? String(orderId).slice(0, 8).toUpperCase() : '',
-      status: RETURN_STATUS.RECEIVED,
-    });
-    return pickup;
+    return confirmReturnPickup(returnId, deliveryAgentId, actorId, input);
   }
 }
 

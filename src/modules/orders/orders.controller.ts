@@ -4,6 +4,7 @@ import { ok } from '@core/http/ApiResponse';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { userHasPermission } from '@middleware/rbac.middleware';
 import { ordersService } from './orders.service';
+import { retryOrderCancelRefund } from '@modules/payments/orderCancelRefund';
 import { CreateOrderSchema, GetOrdersQuerySchema, UpdateOrderStatusSchema } from './orders.dto';
 
 export const createOrder = asyncHandler(async (req: Request, res: Response) => {
@@ -35,4 +36,11 @@ export const cancelOrder = asyncHandler(async (req: Request, res: Response) => {
   const isAdmin = await userHasPermission(req.user, PERMISSIONS.ORDER_MANAGE);
   const result = await ordersService.cancelPaidOrder(req.params.id!, req.user!.id, isAdmin);
   res.json(ok(result));
+});
+
+/** Admin retry of a whole-order cancellation refund that failed. */
+export const retryCancelRefund = asyncHandler(async (req: Request, res: Response) => {
+  await retryOrderCancelRefund(req.params.id!);
+  const order = await ordersService.getOrderById(req.params.id!);
+  res.json(ok(order));
 });

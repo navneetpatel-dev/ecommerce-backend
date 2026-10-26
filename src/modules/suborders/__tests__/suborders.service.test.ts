@@ -8,6 +8,7 @@ import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { TcsLedger } from '@database/models/tcsLedger.model';
 import { WalletLedger } from '@database/models/walletLedger.model';
 import { sequelize } from '@database/models';
+import { AuditLog } from '@database/models/auditLog.model';
 import { subordersService } from '@modules/suborders/suborders.service';
 import { walletService } from '@modules/wallet/wallet.service';
 import { paymentsService } from '@modules/payments/payments.service';
@@ -63,6 +64,8 @@ describe('SubordersService cancellation refund split', () => {
     mock.method(CommissionLedger, 'destroy', async () => 1);
     mock.method(TcsLedger, 'destroy', async () => 1);
     mock.method(notificationsService, 'sendOrderCancelled', () => undefined);
+    mock.method(notificationsService, 'sendSubOrderCancelled', () => undefined);
+    mock.method(AuditLog, 'create', async () => ({}) as never);
   }
 
   it('full cancel of mixed-payment last suborder credits wallet once for the wallet share and refunds Razorpay for the rest', async () => {
@@ -209,7 +212,7 @@ describe('SubordersService cancellation refund split', () => {
       subtotal: 500,
       customerTotal: 500,
       update: async () => undefined,
-      reload: async () => mockSubOrder,
+      reload: async () => ({ ...mockSubOrder, order: { id: ORDER_ID, userId: 'user-123' } }),
     };
     stubCancellationBase(mockSubOrder);
     mock.method(walletService, 'credit', async () => ({}) as never);
@@ -236,11 +239,69 @@ describe('SubordersService cancellation refund split', () => {
       throw new Error('gateway down');
     });
 
+    const orderEmail = mock.method(notificationsService, 'sendOrderCancelled', () => undefined);
+    const partEmail = mock.method(notificationsService, 'sendSubOrderCancelled', () => undefined);
     await subordersService.updateStatus(SUB_A, ORDER_STATUS.CANCELLED, undefined, 'actor-1');
 
+    // One part of two: the customer hears about the part, not a cancelled order.
+    assert.equal(partEmail.mock.callCount(), 1);
+    assert.equal(orderEmail.mock.callCount(), 0);
     assert.equal(subOrderUpdates.at(-1)?.cancelRefundStatus, 'FAILED');
     assert.ok(subOrderUpdates.at(-1)?.cancelRefundLastAttemptAt instanceof Date);
     // Not the last part: the order's own refund status is left alone.
     assert.equal(orderUpdate.mock.callCount(), 0);
+  });
+
+  it('refuses to cancel an already-cancelled part, so restock and refunds never run twice', async () => {
+    const mockSubOrder = {
+      id: SUB_A,
+      orderId: ORDER_ID,
+      status: ORDER_STATUS.CANCELLED,
+      subtotal: 500,
+      customerTotal: 500,
+      update: async () => undefined,
+      reload: async () => mockSubOrder,
+    };
+    stubCancellationBase(mockSubOrder);
+    mock.method(Order, 'findByPk', async () => ({ id: ORDER_ID }) as unknown as Order);
+    const restock = mock.method(ProductVariant, 'increment', async () => undefined);
+    const credit = mock.method(walletService, 'credit', async () => ({}) as never);
+    const refund = mock.method(paymentsService, 'createRazorpayRefund', async () => 'rfnd_x');
+
+    await assert.rejects(
+      subordersService.updateStatus(SUB_A, ORDER_STATUS.CANCELLED, undefined, 'actor-1'),
+      /Cannot move an order from CANCELLED to CANCELLED/,
+    );
+    assert.equal(restock.mock.callCount(), 0);
+    assert.equal(credit.mock.callCount(), 0);
+    assert.equal(refund.mock.callCount(), 0);
+  });
+
+  it('refuses to confirm, ship or cancel a part of an online order still awaiting payment', async () => {
+    const mockSubOrder = {
+      id: SUB_A,
+      orderId: ORDER_ID,
+      status: ORDER_STATUS.PENDING,
+      subtotal: 500,
+      customerTotal: 500,
+      update: async () => undefined,
+      reload: async () => mockSubOrder,
+    };
+    stubCancellationBase(mockSubOrder);
+    mock.method(Order, 'findByPk', async () => ({
+      id: ORDER_ID,
+      paymentMethod: PAYMENT_METHOD.RAZORPAY,
+      paymentStatus: PAYMENT_STATUS.PENDING,
+    }) as unknown as Order);
+    const restock = mock.method(ProductVariant, 'increment', async () => undefined);
+
+    for (const next of [ORDER_STATUS.CONFIRMED, ORDER_STATUS.SHIPPED, ORDER_STATUS.CANCELLED]) {
+      await assert.rejects(
+        subordersService.updateStatus(SUB_A, next, 'AWB123', 'actor-1'),
+        /awaiting payment/,
+      );
+    }
+    assert.equal(restock.mock.callCount(), 0);
+    assert.equal(subOrderUpdates.length, 0);
   });
 });

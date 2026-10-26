@@ -127,3 +127,56 @@ describe('PaymentsService cancellation refund webhook', () => {
     assert.equal(returnMatcher.mock.callCount(), 1);
   });
 });
+
+describe('PaymentsService webhook event id', () => {
+  afterEach(() => mock.restoreAll());
+
+  /** Razorpay's real body shape: no top-level `id`; the event id comes as a header. */
+  function signedBodyWithoutId() {
+    const body = JSON.stringify({
+      entity: 'event',
+      account_id: 'acc_test',
+      event: 'payment.authorized',
+      contains: ['payment'],
+      payload: {},
+      created_at: 1_760_000_000,
+    });
+    const signature = crypto
+      .createHmac('sha256', env.RAZORPAY_WEBHOOK_SECRET!)
+      .update(body)
+      .digest('hex');
+    return { body, signature };
+  }
+
+  it('dedups on the x-razorpay-event-id header when the body has no id', async (t) => {
+    if (!env.RAZORPAY_WEBHOOK_SECRET) return t.skip('RAZORPAY_WEBHOOK_SECRET unset');
+    const eventIds: string[] = [];
+    mock.method(WebhookEvent, 'findOrCreate', async (opts: { where: { eventId: string } }) => {
+      eventIds.push(opts.where.eventId);
+      return [{}, true] as never;
+    });
+
+    const { body, signature } = signedBodyWithoutId();
+    const result = await paymentsService.handleRazorpayWebhook(body, signature, 'evt_header_1');
+
+    assert.deepEqual(eventIds, ['evt_header_1']);
+    assert.notEqual((result as { duplicate?: boolean }).duplicate, true);
+  });
+
+  it('falls back to a stable body hash without the header, so a retry is still a duplicate', async (t) => {
+    if (!env.RAZORPAY_WEBHOOK_SECRET) return t.skip('RAZORPAY_WEBHOOK_SECRET unset');
+    const eventIds: string[] = [];
+    mock.method(WebhookEvent, 'findOrCreate', async (opts: { where: { eventId: string } }) => {
+      eventIds.push(opts.where.eventId);
+      return [{}, true] as never;
+    });
+
+    const { body, signature } = signedBodyWithoutId();
+    await paymentsService.handleRazorpayWebhook(body, signature);
+    await paymentsService.handleRazorpayWebhook(body, signature);
+
+    assert.equal(eventIds.length, 2);
+    assert.equal(eventIds[0], eventIds[1]);
+    assert.match(eventIds[0]!, /^[0-9a-f]{64}$/);
+  });
+});

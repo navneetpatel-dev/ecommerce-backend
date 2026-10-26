@@ -471,9 +471,9 @@ export class CartService {
 
       let cart;
       if (userId) {
-        cart = await cartRepository.findOrCreateByUser(userId, t);
+        cart = await cartRepository.findOrCreateByUser(userId, t, { lock: true });
       } else if (sessionId) {
-        cart = await cartRepository.findOrCreateBySession(sessionId, t);
+        cart = await cartRepository.findOrCreateBySession(sessionId, t, { lock: true });
       } else {
         throw new ValidationError('No user or session ID provided');
       }
@@ -589,7 +589,7 @@ export class CartService {
         return { merged: false };
       }
 
-      const userCart = await cartRepository.findOrCreateByUser(userId, t);
+      const userCart = await cartRepository.findOrCreateByUser(userId, t, { lock: true });
       if (guestCart.id === userCart.id) {
         return { merged: false };
       }

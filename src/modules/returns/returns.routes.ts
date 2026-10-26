@@ -27,6 +27,12 @@ router.get(
 );
 router.patch('/:id/transition', authenticate, authorize(PERMISSIONS.ORDER_REFUND), validate(TransitionReturnSchema), returnsController.transition);
 router.post('/:id/reschedule-pickup', authenticate, validate(RescheduleReturnPickupSchema), returnsController.reschedulePickup);
+router.post(
+  '/:id/restock',
+  authenticate,
+  authorize(PERMISSIONS.ORDER_REFUND, PERMISSIONS.SUBORDER_MANAGE),
+  returnsController.restock,
+);
 router.post('/:id/retry-refund', authenticate, authorize(PERMISSIONS.ORDER_REFUND), returnsController.retryRefund);
 router.delete('/:id', authenticate, authorize(PERMISSIONS.ORDER_REFUND), returnsController.remove);
 

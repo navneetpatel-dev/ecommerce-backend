@@ -56,16 +56,39 @@ export function gstDocumentLinesSql(): string {
       (line->>'sgstPaise')::bigint AS "sgstPaise",
       (line->>'igstPaise')::bigint AS "igstPaise"`;
   const recipient = `NULLIF(TRIM(a.gstin), '') AS "recipientGstin", COALESCE(NULLIF(a.state, ''), 'UNKNOWN') AS state`;
+  // A goods invoice (and a note against it) reads its parties as issued; an invoice from
+  // before they were frozen falls back to the live address and vendor profile.
+  const parties = `so."taxInvoiceSnapshot"->'parties'`;
+  const issuedRecipient = `
+      CASE WHEN ${parties} IS NOT NULL THEN NULLIF(${parties}->>'recipientGstin', '')
+        ELSE NULLIF(TRIM(a.gstin), '') END AS "recipientGstin",
+      COALESCE(
+        CASE WHEN ${parties} IS NOT NULL THEN NULLIF(${parties}->>'recipientState', '')
+          ELSE NULLIF(a.state, '') END,
+        'UNKNOWN'
+      ) AS state`;
+  // The frozen supplier is the vendor's: a platform document (no vendor) stays the
+  // platform's even when it joins a vendor's invoice (a shipping credit note).
+  const issuedSupplierName = (vendorIdColumn: string) =>
+    `COALESCE(CASE WHEN ${vendorIdColumn} IS NOT NULL THEN ${parties}->>'supplierName' END, v."businessName", :platformName)`;
+  const issuedSupplierGstin = (vendorIdColumn: string) => `COALESCE(
+        CASE
+          WHEN ${vendorIdColumn} IS NULL THEN :platformGstin
+          WHEN ${parties} IS NOT NULL THEN NULLIF(${parties}->>'supplierGstin', '')
+          ELSE NULLIF(v."gstNumber", '')
+        END,
+        ''
+      )`;
   return `
     -- Goods: each part's tax invoice as issued.
     SELECT
       'INVOICE'::text AS "docType",
       'GOODS'::text AS source,
       so."vendorId" AS "supplierVendorId",
-      COALESCE(v."businessName", :platformName) AS "supplierName",
-      COALESCE(NULLIF(v."gstNumber", ''), CASE WHEN so."vendorId" IS NULL THEN :platformGstin END, '') AS "supplierGstin",
+      ${issuedSupplierName('so."vendorId"')} AS "supplierName",
+      ${issuedSupplierGstin('so."vendorId"')} AS "supplierGstin",
       NULL::uuid AS "recipientVendorId",
-      ${recipient},
+      ${issuedRecipient},
       so."taxInvoiceNumber" AS "documentNumber",
       so."taxInvoiceIssuedAt" AS "documentDate",
       NULL::text AS "againstInvoiceNumber",
@@ -99,10 +122,10 @@ export function gstDocumentLinesSql(): string {
       'CREDIT_NOTE'::text,
       CASE WHEN cn."vendorId" IS NULL AND cn."orderItemId" IS NULL THEN 'PLATFORM_FEE' ELSE 'GOODS' END,
       cn."vendorId",
-      COALESCE(v."businessName", :platformName),
-      COALESCE(NULLIF(v."gstNumber", ''), CASE WHEN cn."vendorId" IS NULL THEN :platformGstin END, ''),
+      ${issuedSupplierName('cn."vendorId"')},
+      ${issuedSupplierGstin('cn."vendorId"')},
       NULL::uuid,
-      ${recipient},
+      ${issuedRecipient},
       cn.number,
       COALESCE(cn."issuedAt", cn."createdAt"),
       cn."againstInvoiceNumber",

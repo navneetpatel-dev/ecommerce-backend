@@ -57,7 +57,7 @@ export const submitDeliveryRating = asyncHandler(async (req: Request, res: Respo
 });
 
 export const getDeliveryRating = asyncHandler(async (req: Request, res: Response) => {
-  const rating = await deliveryRatingsService.forShipment(req.params.shipmentId!);
+  const rating = await deliveryRatingsService.forShipment(req.params.shipmentId!, req.user!);
   res.json(ok(rating));
 });
 

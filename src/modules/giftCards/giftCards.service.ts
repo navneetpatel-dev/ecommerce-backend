@@ -236,7 +236,8 @@ export class GiftCardsService {
       // Same ceiling a recharge has: a gift card is not a way around the wallet limit.
       // Refused here, the card stays ACTIVE for when the balance has room.
       const settings = await settingsService.getPlatformSettings();
-      const balance = await walletService.getBalance(userId, t);
+      // Locked: two redemptions at once must not both pass the wallet's maximum.
+      const balance = await walletService.lockedBalance(userId, t);
       if (roundMoney(balance + Number(row.amount)) > Number(settings.walletMaxBalancePoints)) {
         throw new ValidationError(ERROR_MESSAGES.GIFT_CARD_WALLET_MAX_BALANCE_EXCEEDED);
       }

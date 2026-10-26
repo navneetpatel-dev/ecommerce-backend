@@ -1,3 +1,4 @@
+import { escapeCsvField, neutralizeCsvFormula } from '@core/export/csvCell';
 import { resolveReportColumnLabel } from '../reports.constants';
 import type { ReportColumn } from './types';
 
@@ -15,7 +16,7 @@ function formatCell(value: unknown, format?: string): string {
     const n = Number(value);
     return Number.isFinite(n) ? `${n} pts` : '0 pts';
   }
-  return typeof value === 'object' ? JSON.stringify(value) : String(value);
+  return neutralizeCsvFormula(typeof value === 'object' ? JSON.stringify(value) : String(value));
 }
 
 export function buildCsvBuffer(
@@ -23,10 +24,7 @@ export function buildCsvBuffer(
   rows: Record<string, unknown>[],
 ): Buffer {
   const headers = columns.map((col) => resolveReportColumnLabel(col.labelKey));
-  const escape = (value: string) => {
-    if (/[",\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
-    return value;
-  };
+  const escape = escapeCsvField;
   const lines = [
     headers.map(escape).join(','),
     ...rows.map((row) =>

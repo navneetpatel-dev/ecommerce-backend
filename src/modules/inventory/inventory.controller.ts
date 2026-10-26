@@ -17,7 +17,7 @@ export const getLowStock = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const updateStock = asyncHandler(async (req: Request, res: Response) => {
-  res.json(ok(await inventoryService.updateStock(req.params.variantId!, req.body.stock, req.user!.id)));
+  res.json(ok(await inventoryService.updateStock(req.params.variantId!, req.body.stock, req.user!.id, req.body.expectedStock)));
 });
 
 export const createStockAlert = asyncHandler(async (req: Request, res: Response) => {

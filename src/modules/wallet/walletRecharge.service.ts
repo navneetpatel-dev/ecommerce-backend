@@ -419,7 +419,7 @@ export class WalletRechargeService {
       }
 
       const settings = await settingsService.getPlatformSettings();
-      const balance = await walletService.getBalance(row.userId, transaction);
+      const balance = await walletService.lockedBalance(row.userId, transaction);
       const points = Number(row.pointsCredited);
       if (balance + points > settings.walletMaxBalancePoints) {
         await row.update(

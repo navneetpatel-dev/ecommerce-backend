@@ -6,6 +6,7 @@ import { NotFoundError } from '@core/errors/NotFoundError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
+import { canSeeShipmentDetails, type ShipmentViewer } from '@modules/shipping/shipmentAccess';
 
 /** Optional, dismissible post-delivery rating — one per shipment, never blocks anything. */
 export const deliveryRatingsService = {
@@ -46,7 +47,21 @@ export const deliveryRatingsService = {
     return row;
   },
 
-  async forShipment(shipmentId: string) {
+  /** A shipment's rating, for the people who may see that shipment (and no one else). */
+  async forShipment(shipmentId: string, viewer: ShipmentViewer) {
+    const shipment = await Shipment.findByPk(shipmentId, {
+      attributes: ['id', 'deliveryAgentId'],
+      include: [{
+        model: SubOrder,
+        as: 'subOrder',
+        attributes: ['vendorId'],
+        include: [{ model: Order, as: 'order', attributes: ['userId'] }],
+      }],
+    });
+    if (!shipment) throw new NotFoundError('Shipment');
+    if (!(await canSeeShipmentDetails(viewer, shipment as Shipment & { subOrder?: SubOrder & { order?: Order } }))) {
+      throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_ORDER);
+    }
     return DeliveryRating.findOne({ where: { shipmentId } });
   },
 

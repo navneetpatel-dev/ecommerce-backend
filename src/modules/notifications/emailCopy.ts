@@ -30,6 +30,7 @@ export const EMAIL_COPY = {
     SUBORDER_DELIVERED: 'Delivered — #{orderNumber}',
     REVIEW_REQUEST: 'How was your order?',
     ORDER_CANCELLED: 'Order cancelled — #{orderNumber}',
+    SUBORDER_CANCELLED: 'Part of your order was cancelled — #{orderNumber}',
     ORDER_RETURNED: 'Return update — #{orderNumber}',
     REFUND_PROCESSED: 'Refund processed — #{orderNumber}',
     REFUND_INITIATED: 'Refund initiated — #{orderNumber}',
@@ -98,6 +99,8 @@ export const EMAIL_COPY = {
     SUBORDER_DELIVERED: 'Your items for order #{orderNumber} were delivered.',
     REVIEW_REQUEST: 'How was your recent order #{orderNumber}? Your review helps other shoppers.',
     ORDER_CANCELLED: 'Order #{orderNumber} has been cancelled.',
+    SUBORDER_CANCELLED:
+      'Some items in order #{orderNumber} were cancelled and anything you paid for them is refunded. The rest of your order goes ahead.',
     ORDER_RETURNED: 'Your return for order #{orderNumber} has been updated ({status}).',
     REFUND_PROCESSED: 'A refund of ₹{amount} for order #{orderNumber} has been processed.',
     REFUND_INITIATED:

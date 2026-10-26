@@ -106,6 +106,35 @@ describe('report engine', () => {
     assert.ok(catalog.some((d) => d.type === 'staff-orders' || d.type === 'staff-inventory'));
   });
 
+  it('vendor owner never sees or runs admin reports, even with a shared permission key', async () => {
+    const owner: ReportActor = {
+      id: randomUUID(),
+      vendorId: randomUUID(),
+      roleName: ROLES.VENDOR_OWNER,
+      // payout.view is also the gate on the platform-wide agent TDS (PAN) report.
+      permissions: [PERM_KEYS.PAYOUT_VIEW, PERM_KEYS.SUBORDER_MANAGE, PERM_KEYS.PRODUCT_UPDATE],
+    };
+    const catalog = reportEngine.catalog(owner);
+    assert.ok(catalog.every((d) => !d.audience.startsWith('admin_')));
+    await assert.rejects(
+      reportEngine.runJson(owner, 'delivery-agent-tds-194c', { from: '2026-09-01', to: '2026-09-30' } as never),
+      (err: Error) => err.name === 'ForbiddenError' || /access to this report/.test(err.message),
+    );
+  });
+
+  it('wallet reports need commission.view, not analytics.view alone', async () => {
+    const catalogManager: ReportActor = {
+      id: randomUUID(),
+      vendorId: null,
+      roleName: ROLES.ADMIN_CATALOG_MANAGER,
+      permissions: [PERM_KEYS.ANALYTICS_VIEW],
+    };
+    const types = reportEngine.catalog(catalogManager).map((d) => d.type);
+    for (const type of ['wallet-liability', 'wallet-recharge', 'cashback-write-offs']) {
+      assert.equal(types.includes(type), false, type);
+    }
+  });
+
   it('vendor owner gets 403 when probing another vendorId', async (t) => {
     if (!dbReady) return t.skip('database unavailable');
     const vendorA = await Vendor.create({

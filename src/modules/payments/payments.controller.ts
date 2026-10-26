@@ -20,7 +20,11 @@ export const verifyPayment = asyncHandler(async (req: Request, res: Response) =>
 export const handleRazorpayWebhook = asyncHandler(async (req: Request, res: Response) => {
   const signature = req.headers[HEADERS.RAZORPAY_SIGNATURE] as string | undefined;
   const rawBody = req.body as Buffer | string;
-  const result = await paymentsService.handleRazorpayWebhook(rawBody, signature);
+  const result = await paymentsService.handleRazorpayWebhook(
+    rawBody,
+    signature,
+    req.header(HEADERS.RAZORPAY_EVENT_ID),
+  );
   res.status(200).json(result);
 });
 

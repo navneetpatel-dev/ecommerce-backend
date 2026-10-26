@@ -1,4 +1,4 @@
-import type { Transaction } from 'sequelize';
+import { Op, type Transaction } from 'sequelize';
 import { Vendor } from '@database/models/vendor.model';
 import { VendorInvoiceSequence } from '@database/models/vendorInvoiceSequence.model';
 
@@ -118,15 +118,20 @@ async function lockOrCreateSequence(
   if (row) return row;
 
   try {
-    row = await VendorInvoiceSequence.create(
-      {
-        vendorId,
-        financialYear,
-        kind,
-        nextValue: 1,
-        prefix,
-      },
-      { transaction },
+    // In a savepoint: when a concurrent first document of the year wins the insert, only
+    // the savepoint is rolled back and the lookup below still runs (a failed statement
+    // would otherwise abort the whole transaction).
+    row = await VendorInvoiceSequence.sequelize!.transaction({ transaction }, (savepoint) =>
+      VendorInvoiceSequence.create(
+        {
+          vendorId,
+          financialYear,
+          kind,
+          nextValue: 1,
+          prefix,
+        },
+        { transaction: savepoint },
+      ),
     );
   } catch {
     row = await VendorInvoiceSequence.findOne({
@@ -140,6 +145,40 @@ async function lockOrCreateSequence(
     throw new Error('Failed to allocate vendor document sequence');
   }
   return row;
+}
+
+/**
+ * The vendor's invoice prefix: stored, and unique across vendors (a unique index). A
+ * vendor without one gets it now, derived from the slug and stored, with a short id
+ * suffix when another vendor already has it: derived alone, "shop-alpha-gear" and
+ * "shop-beta-gear" both gave SHOPGEAR and their invoice numbers collided.
+ */
+async function vendorInvoicePrefix(vendorId: string, transaction: Transaction): Promise<string> {
+  const idHex = vendorId.replace(/-/g, '').toUpperCase();
+  const vendor = await Vendor.findByPk(vendorId, {
+    attributes: ['id', 'slug', 'invoicePrefix'],
+    transaction,
+    lock: transaction.LOCK.UPDATE,
+    paranoid: false,
+  });
+  if (!vendor) return idHex.slice(0, 8) || PLATFORM_PREFIX;
+  if (vendor.invoicePrefix) return resolveInvoicePrefix({ invoicePrefix: vendor.invoicePrefix });
+
+  let candidate = resolveInvoicePrefix({ slug: vendor.slug, vendorId });
+  if (candidate === PLATFORM_PREFIX) candidate = idHex.slice(0, 8);
+  const taken = (value: string) =>
+    Vendor.findOne({
+      where: { invoicePrefix: value, id: { [Op.ne]: vendorId } },
+      attributes: ['id'],
+      paranoid: false,
+      transaction,
+    });
+  if (await taken(candidate)) {
+    candidate = `${candidate.slice(0, 12)}${idHex.slice(0, 4)}`;
+    if (await taken(candidate)) candidate = `${candidate.slice(0, 8)}${idHex.slice(0, 8)}`;
+  }
+  await vendor.update({ invoicePrefix: candidate }, { transaction });
+  return candidate;
 }
 
 /**
@@ -160,20 +199,7 @@ export async function nextVendorDocumentNumber(
   if (kind === VENDOR_DOCUMENT_KIND.COMMISSION_INVOICE) {
     prefix = PLATFORM_PREFIX;
   } else if (vendorId) {
-    const vendor = await Vendor.findByPk(vendorId, {
-      attributes: ['id', 'slug', 'invoicePrefix'],
-      transaction,
-      lock: transaction.LOCK.SHARE,
-    });
-    prefix = resolveInvoicePrefix({
-      invoicePrefix: vendor?.invoicePrefix,
-      slug: vendor?.slug,
-      vendorId,
-    });
-    // Avoid cross-vendor collisions when slug/prefix are missing (all would be PLAT).
-    if (prefix === PLATFORM_PREFIX) {
-      prefix = vendorId.replace(/-/g, '').slice(0, 8).toUpperCase() || PLATFORM_PREFIX;
-    }
+    prefix = await vendorInvoicePrefix(vendorId, transaction);
   }
 
   // Commission invoices are platform-issued → always platform sequence row.

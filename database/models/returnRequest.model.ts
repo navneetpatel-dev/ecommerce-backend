@@ -52,6 +52,9 @@ export class ReturnRequest extends Model<InferAttributes<ReturnRequest>, InferCr
   declare lastRefundAttemptAt: CreationOptional<Date | null>;
   declare refundFailureReason: CreationOptional<string | null>;
   declare receivedAt: CreationOptional<Date | null>;
+  /** When a vendor/admin put the returned units back into stock (never automatic). */
+  declare restockedAt: CreationOptional<Date | null>;
+  declare restockedBy: CreationOptional<string | null>;
   declare deliveryAgentId: CreationOptional<string | null>;
   declare pickupOtpVerifiedAt: CreationOptional<Date | null>;
   declare pickupFailureReason: CreationOptional<string | null>;
@@ -127,6 +130,8 @@ export const initReturnRequestModel = (sequelize: Sequelize) => {
       lastRefundAttemptAt: { type: DataTypes.DATE, allowNull: true },
       refundFailureReason: { type: DataTypes.STRING(255), allowNull: true },
       receivedAt: { type: DataTypes.DATE, allowNull: true },
+      restockedAt: { type: DataTypes.DATE, allowNull: true },
+      restockedBy: { type: DataTypes.UUID, allowNull: true },
       deliveryAgentId: { type: DataTypes.UUID, allowNull: true },
       pickupOtpVerifiedAt: { type: DataTypes.DATE, allowNull: true },
       pickupFailureReason: { type: DataTypes.TEXT, allowNull: true },

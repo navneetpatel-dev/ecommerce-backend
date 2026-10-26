@@ -1,4 +1,5 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
+import { vendorDashboardOrderCounts } from './vendorDashboardCounts';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { AppError } from '@core/errors/AppError';
@@ -807,32 +808,7 @@ export class VendorsService {
     const vendor = await vendorsRepository.findById(vendorId);
     if (!vendor) throw new NotFoundError('Vendor');
 
-    const [today] = await sequelize.query<{ orders: string }>(
-      `SELECT COUNT(*)::int AS orders
-       FROM sub_orders
-       WHERE "vendorId" = :vendorId
-         AND status <> :cancelled
-         AND "createdAt" >= :dayStart`,
-      {
-        // Today and this month in India time (midnight IST), not UTC.
-        replacements: { vendorId, cancelled: ORDER_STATUS.CANCELLED, dayStart: istStartOfDay(new Date()) },
-        type: QueryTypes.SELECT,
-      },
-    );
-    const [pending] = await sequelize.query<{ shipments: string }>(
-      `SELECT COUNT(*)::int AS shipments
-       FROM sub_orders
-       WHERE "vendorId" = :vendorId
-         AND status IN (:pending, :confirmed)`,
-      {
-        replacements: {
-          vendorId,
-          pending: ORDER_STATUS.PENDING,
-          confirmed: ORDER_STATUS.CONFIRMED,
-        },
-        type: QueryTypes.SELECT,
-      },
-    );
+    const { today, pending } = await vendorDashboardOrderCounts(vendorId);
     const [month] = await sequelize.query<{ revenuePaise: string | null }>(
       `SELECT COALESCE(SUM(${sqlGmvPaise('s')}), 0)::bigint AS "revenuePaise"
        FROM sub_orders s

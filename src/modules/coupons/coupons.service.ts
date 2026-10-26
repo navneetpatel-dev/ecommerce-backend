@@ -137,6 +137,8 @@ async function gstInclusiveCouponLines(
 async function loadCartLines(userId: string): Promise<{
   cart: Cart | null;
   lines: CartLineForCoupon[];
+  /** A cart line left out as unavailable (out of stock, unpublished) — maybe for now. */
+  hasUnavailable: boolean;
 }> {
   const cart = await Cart.findOne({
     where: { userId },
@@ -195,7 +197,11 @@ async function loadCartLines(userId: string): Promise<{
 
   // Coupons are set against the prices the customer sees, GST included, valued as the
   // cart bills them (to the customer's default address, as the cart preview is).
-  return { cart, lines: await gstInclusiveCouponLines(lines, await defaultShippingState(userId)) };
+  return {
+    cart,
+    lines: await gstInclusiveCouponLines(lines, await defaultShippingState(userId)),
+    hasUnavailable: items.length < ((cart as any)?.items ?? []).length,
+  };
 }
 
 /** Single-product lines for PDP eligible-offer preview (qty 1, primary variant price). */
@@ -817,7 +823,7 @@ export class CouponsService {
       type: string;
     }>;
   }> {
-    const { cart, lines } = await loadCartLines(userId);
+    const { cart, lines, hasUnavailable } = await loadCartLines(userId);
     const codes = cart ? resolveCartCouponCodes(cart) : [];
     if (!cart || codes.length === 0) {
       return {
@@ -838,8 +844,11 @@ export class CouponsService {
       shippingByVendor: shipping.byVendor,
     });
 
+    // While a line is unavailable (often briefly out of stock) the coupon may only fail
+    // for now: report it as not applied but keep it, rather than drop it for good on a
+    // cart view. Checkout refuses a cart with unavailable lines anyway.
     if (!result.valid || result.coupons.length === 0) {
-      await cart.update({ couponCode: null, couponCodes: [] });
+      if (!hasUnavailable) await cart.update({ couponCode: null, couponCodes: [] });
       return {
         removed: true,
         reason: result.reason ?? ERROR_MESSAGES.COUPON_NOT_APPLICABLE,
@@ -850,10 +859,12 @@ export class CouponsService {
     }
 
     const nextCodes = result.coupons.map((c) => c.code);
-    await cart.update({
-      couponCode: result.primaryCoupon?.code ?? nextCodes[0] ?? null,
-      couponCodes: nextCodes,
-    });
+    if (!hasUnavailable) {
+      await cart.update({
+        couponCode: result.primaryCoupon?.code ?? nextCodes[0] ?? null,
+        couponCodes: nextCodes,
+      });
+    }
 
     return {
       removed: false,

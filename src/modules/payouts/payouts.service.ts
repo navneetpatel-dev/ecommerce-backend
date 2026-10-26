@@ -37,6 +37,7 @@ import { vendorNetPayoutPaise } from '@modules/pricing/frozenMoneySql';
 import { gstPeriodOf } from '@modules/pricing/gstPeriod';
 import { subOrdersInReturnWindow, type DeliveredSubOrder } from './returnWindowHold';
 import { vendorStatesFor } from './payoutVendorStates';
+import { undoFailedPayout } from './payoutFailure';
 
 async function notifyPayoutFailed(params: {
   vendorId: string;
@@ -246,10 +247,8 @@ export class PayoutsService {
             transaction,
             lock: transaction.LOCK.UPDATE,
           });
-          if (!locked.length) {
-            // Race guard: typed so the per-vendor catch records a FAILED-payout reason.
-            throw new ValidationError('No pending commission ledgers');
-          }
+          // A concurrent run settled these rows meanwhile: nothing to pay, not a failure.
+          if (!locked.length) return null;
 
           // Net less 194-O TDS on each sale's value, less GST on commission, less vendor-borne
           // cashback cost — the same breakdown the vendor dashboard shows as pending
@@ -387,7 +386,7 @@ export class PayoutsService {
           }
 
           await CommissionLedger.update(
-            { status: COMMISSION_STATUS.SETTLED, updatedBy: actorId },
+            { status: COMMISSION_STATUS.SETTLED, payoutId: payoutRow.id, updatedBy: actorId },
             { where: { id: locked.map((item) => item.id) }, transaction },
           );
           // Each sale keeps the 194-O rate this payout deducted at (the rate in force
@@ -508,12 +507,13 @@ export class PayoutsService {
         { status: PAYOUT_STATUS.FAILED, failureReason: input.reason, updatedBy: actorId },
         { transaction },
       );
+      const undone = await undoFailedPayout(payout.id, actorId, transaction);
       await logAudit({
         actorId,
         action: 'PAYOUT_MARKED_FAILED',
         entityType: 'Payout',
         entityId: payout.id,
-        metadata: { vendorId: payout.vendorId, amount: Number(payout.amount), reason: input.reason },
+        metadata: { vendorId: payout.vendorId, amount: Number(payout.amount), reason: input.reason, ...undone },
         transaction,
       });
       return payout;

@@ -146,12 +146,14 @@ describe('coupon usage attribution (F-18)', () => {
     await recordAt('payments-capture');
   });
 
-  it('checkout wallet-paid and COD sites pass appliedCouponBreakdown, not discountTotal / n', () => {
+  it('checkout records usage once at placement, for every payment method, from appliedCouponBreakdown', () => {
     const src = sourceOf('../../checkout/checkout.service.ts');
     const usageCalls = src.match(/recordCouponUsagesForOrder\(/g) ?? [];
     const breakdownPasses = src.match(/breakdown:\s*appliedCouponBreakdown/g) ?? [];
-    assert.equal(usageCalls.length, 2);
-    assert.equal(breakdownPasses.length, 2);
+    assert.equal(usageCalls.length, 1);
+    assert.equal(breakdownPasses.length, 1);
+    // Held from placement, not only for COD: unpaid online checkouts count toward limits.
+    assert.doesNotMatch(src, /coupons\.length > 0 && data\.paymentMethod === PAYMENT_METHOD\.COD/);
     assert.doesNotMatch(src, /discountTotal\s*\/\s*coupons\.length/);
   });
 

@@ -1,11 +1,14 @@
 import { logger } from '@core/logger';
-import { paymentsService } from '@modules/payments/payments.service';
+import {
+  expireAbandonedCheckouts,
+  type AbandonedCheckoutRun,
+} from '@modules/payments/abandonedCheckouts';
 
 export const CHECKOUT_EXPIRY_JOB = 'checkout-expiry';
 
-/** Cancel online checkouts left unpaid past their payment window (see expireAbandonedCheckouts). */
-export async function runCheckoutExpiry(): Promise<{ expired: number; skipped: number }> {
-  const result = await paymentsService.expireAbandonedCheckouts();
+/** Settle online checkouts left unpaid past their payment window (see expireAbandonedCheckouts). */
+export async function runCheckoutExpiry(): Promise<AbandonedCheckoutRun> {
+  const result = await expireAbandonedCheckouts();
   logger.info('Checkout expiry finished', result);
   return result;
 }

@@ -221,7 +221,7 @@ module.exports = {
         seoTitle: 'Apparel',
         seoDescription: 'Everyday clothing for men and women.',
         commissionRate: 10,
-        imageUrl: 'https://images.unsplash.com/photo-1441986304907-64674bd600d8?w=400&fit=crop',
+        imageUrl: 'https://images.unsplash.com/photo-1489987707025-afc232f7ea0f?w=400&fit=crop',
         children: [
           {
             name: 'Tops',

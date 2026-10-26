@@ -20,22 +20,26 @@ interface SubOrderTdsInfo {
   tdsSection: string;
 }
 
-/** Batches a TDS-ledger lookup for a set of subOrderIds (TdsLedger is a separate table, not a CommissionLedger column). */
-async function getTdsBySubOrder(subOrderIds: string[]): Promise<Map<string, SubOrderTdsInfo>> {
+/**
+ * The TDS deducted against each ledger row (TdsLedger records the row it was taken on).
+ * Keyed by row, not sub-order: a sale, its return clawback and a cashback cost on the
+ * same sub-order each showed the sub-order's whole TDS before.
+ */
+async function getTdsByLedger(subOrderIds: string[]): Promise<Map<string, SubOrderTdsInfo>> {
   const map = new Map<string, SubOrderTdsInfo>();
   if (!subOrderIds.length) return map;
   const rows = await TdsLedger.findAll({ where: { subOrderId: { [Op.in]: subOrderIds } } });
-  const paiseBySubOrder = new Map<string, number>();
+  const paiseByLedger = new Map<string, number>();
   for (const row of rows) {
-    const subOrderId = row.subOrderId;
-    if (!subOrderId) continue;
-    if (!map.has(subOrderId)) {
-      map.set(subOrderId, { tdsAmount: 0, tdsRatePercent: Number(row.ratePercent), tdsSection: row.section });
+    const ledgerId = row.commissionLedgerId;
+    if (!ledgerId) continue;
+    if (!map.has(ledgerId)) {
+      map.set(ledgerId, { tdsAmount: 0, tdsRatePercent: Number(row.ratePercent), tdsSection: row.section });
     }
-    paiseBySubOrder.set(subOrderId, (paiseBySubOrder.get(subOrderId) ?? 0) + Number(row.tdsAmountPaise));
+    paiseByLedger.set(ledgerId, (paiseByLedger.get(ledgerId) ?? 0) + Number(row.tdsAmountPaise));
   }
-  for (const [subOrderId, paise] of paiseBySubOrder) {
-    map.get(subOrderId)!.tdsAmount = fromPaise(paise);
+  for (const [ledgerId, paise] of paiseByLedger) {
+    map.get(ledgerId)!.tdsAmount = fromPaise(paise);
   }
   return map;
 }
@@ -47,8 +51,9 @@ function serializeCommission(
 ) {
   const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
   const { Vendor: vendorAssoc } = plain;
-  const tds = tdsBySubOrder.get(plain.subOrderId);
-  const gst = gstBySubOrder.get(plain.subOrderId);
+  const tds = tdsBySubOrder.get(plain.id);
+  // The goods' GST belongs to the sale row only, not its clawbacks and cashback costs.
+  const gst = plain.referenceType ? undefined : gstBySubOrder.get(plain.subOrderId);
   return {
     id: plain.id,
     vendorId: plain.vendorId,
@@ -89,7 +94,7 @@ export class CommissionsService {
     });
     const subOrderIds = [...new Set(rows.map((row) => row.subOrderId))];
     const [tdsBySubOrder, gstBySubOrder] = await Promise.all([
-      getTdsBySubOrder(subOrderIds),
+      getTdsByLedger(subOrderIds),
       getGstBreakdownForSubOrders(subOrderIds),
     ]);
     return {
@@ -105,7 +110,7 @@ export class CommissionsService {
     });
     const subOrderIds = [...new Set(rows.map((row) => row.subOrderId))];
     const [tdsBySubOrder, gstBySubOrder] = await Promise.all([
-      getTdsBySubOrder(subOrderIds),
+      getTdsByLedger(subOrderIds),
       getGstBreakdownForSubOrders(subOrderIds),
     ]);
     return rows.map((row) => serializeCommission(row, tdsBySubOrder, gstBySubOrder));

@@ -32,18 +32,28 @@ export class InventoryService {
     });
   }
 
-  async updateStock(variantId: string, stock: number, updatedBy: string) {
+  async updateStock(variantId: string, requestedStock: number, updatedBy: string, expectedStock?: number) {
+    let stock = requestedStock;
     // Row-locked so concurrent edits serialise (oversell guard); back-in-stock
     // notifications run after commit so the lock is not held during fan-out.
     const { updated, previousStock } = await sequelize.transaction(async (t) => {
+      // Postgres rejects FOR UPDATE on the nullable side of an outer join (it failed every
+      // edit): lock the variant alone, then load its product.
+      await ProductVariant.findByPk(variantId, { attributes: ['id'], transaction: t, lock: t.LOCK.UPDATE });
       const variant = await ProductVariant.findByPk(variantId, {
         include: [{ model: Product, as: 'product' }],
         transaction: t,
-        lock: t.LOCK.UPDATE,
       });
       if (!variant) throw new NotFoundError('ProductVariant');
 
       const previous = Number(variant.stock ?? 0);
+      // Orders take and give back stock while the editor is open (an order placed, an
+      // unpaid one expiring). Writing the typed number over that would undo them, e.g.
+      // counting units an unpaid order still holds as free. So the edit is the change
+      // from what the editor showed, applied to the stock as it is now.
+      if (expectedStock != null && expectedStock !== previous) {
+        stock = Math.max(0, previous + (requestedStock - expectedStock));
+      }
       const row = await variant.update(
         { stock, updatedBy },
         { transaction: t },

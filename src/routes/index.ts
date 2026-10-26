@@ -12,6 +12,7 @@ import checkoutRoutes from '@modules/checkout/checkout.routes';
 import ordersRoutes from '@modules/orders/orders.routes';
 import subordersRoutes from '@modules/suborders/suborders.routes';
 import couponsRoutes from '@modules/coupons/coupons.routes';
+import { couponApplyRateLimiter, couponQuoteRateLimiter } from '@middleware/rateLimiter.middleware';
 import commissionsRoutes from '@modules/commissions/commissions.routes';
 import payoutsRoutes from '@modules/payouts/payouts.routes';
 import shippingRoutes from '@modules/shipping/shipping.routes';
@@ -50,6 +51,10 @@ router.use(API_MOUNTS.admin, adminRoutes);
 router.use(API_MOUNTS.categories, categoriesRoutes);
 router.use(API_MOUNTS.products, productsRoutes);
 router.use(API_MOUNTS.cart, cartRoutes);
+// Coupon codes can be guessed through apply and the checkout quote: rate-limited here,
+// with the other limiters, so the feature routers don't open a Redis connection.
+router.post(`${API_MOUNTS.coupons}/apply`, couponApplyRateLimiter);
+router.post(`${API_MOUNTS.checkout}/quote`, couponQuoteRateLimiter);
 router.use(API_MOUNTS.checkout, checkoutRoutes);
 router.use(API_MOUNTS.orders, ordersRoutes);
 router.use(API_MOUNTS.suborders, subordersRoutes);

@@ -17,7 +17,11 @@ function quoteIdent(column: string): string {
   return `"${column}"`;
 }
 
-/** Builds `(a < va) OR (a = va AND b > vb) …` matching mixed ASC/DESC order. */
+/**
+ * Builds `(a < va) OR (a = va AND b > vb) …` matching mixed ASC/DESC order, NULL-safe:
+ * Postgres sorts NULLs last ascending and first descending, and a plain `a > NULL` is
+ * never true — paging stopped dead at the first NULL key (a platform row's vendorId).
+ */
 export function buildKeysetPredicate(
   order: KeysetOrderCol[],
   cursor: KeysetCursor,
@@ -30,10 +34,16 @@ export function buildKeysetPredicate(
   const replacements: Record<string, unknown> = {};
   const parts: string[] = [];
   for (let i = 0; i < order.length; i += 1) {
-    const eqs = order.slice(0, i).map((col, j) => `${quoteIdent(col.column)} = :${paramPrefix}_${j}`);
+    const eqs = order
+      .slice(0, i)
+      .map((col, j) => `${quoteIdent(col.column)} IS NOT DISTINCT FROM :${paramPrefix}_${j}`);
     const col = order[i]!;
-    const op = col.direction === 'DESC' ? '<' : '>';
-    const cmp = `${quoteIdent(col.column)} ${op} :${paramPrefix}_${i}`;
+    const name = quoteIdent(col.column);
+    const value = `:${paramPrefix}_${i}`;
+    const cmp =
+      col.direction === 'DESC'
+        ? `((${value} IS NULL AND ${name} IS NOT NULL) OR ${name} < ${value})`
+        : `(${value} IS NOT NULL AND (${name} > ${value} OR ${name} IS NULL))`;
     parts.push(`(${[...eqs, cmp].join(' AND ')})`);
     replacements[`${paramPrefix}_${i}`] = cursor.values[i];
   }

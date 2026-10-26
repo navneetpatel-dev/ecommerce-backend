@@ -16,6 +16,8 @@ export type OtpPurpose =
 export class OtpCode extends Model<InferAttributes<OtpCode>, InferCreationAttributes<OtpCode>> {
   declare id: CreationOptional<string>;
   declare userId: string | null;
+  /** The shipment or return a parcel code is for; null for account codes (login). */
+  declare subjectId: CreationOptional<string | null>;
   declare channel: CreationOptional<'EMAIL'>;
   declare purpose: OtpPurpose;
   declare codeHash: string;
@@ -35,6 +37,7 @@ export const initOtpCodeModel = (sequelize: Sequelize) => {
     {
       id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
       userId: { type: DataTypes.UUID, allowNull: true },
+      subjectId: { type: DataTypes.UUID, allowNull: true },
       channel: { type: DataTypes.ENUM('EMAIL'), allowNull: false, defaultValue: 'EMAIL' },
       purpose: {
         type: DataTypes.ENUM(

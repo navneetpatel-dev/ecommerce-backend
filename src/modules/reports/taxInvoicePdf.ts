@@ -348,6 +348,7 @@ export function toTaxInvoiceSourceFromSubOrder(
   const vendor = subOrder.vendor;
   const lineTotal = sumRupees(items.map(lineAmount));
   const snapshot = subOrder.taxInvoiceSnapshot;
+  const parties = snapshot?.parties;
   const contributionPaise = Math.max(0, Number(snapshot?.platformContributionPaise ?? 0));
   // The invoice is the value of supply + GST; the customer pays it less what the platform
   // pays for a coupon it funds.
@@ -371,11 +372,12 @@ export function toTaxInvoiceSourceFromSubOrder(
         }
       : {}),
     buyerName: order.user?.name ?? null,
-    shippingAddress: order.shippingAddress ?? null,
+    // As issued; an invoice from before its parties were frozen shows them as they stand.
+    shippingAddress: parties ? parties.recipientAddress : (order.shippingAddress ?? null),
     seller: {
-      businessName: vendor?.businessName || COPY.platformSeller,
-      gstNumber: vendor?.gstNumber ?? null,
-      state: vendor?.state ?? null,
+      businessName: parties?.supplierName || vendor?.businessName || COPY.platformSeller,
+      gstNumber: parties ? parties.supplierGstin : (vendor?.gstNumber ?? null),
+      state: parties ? parties.supplierState : (vendor?.state ?? null),
       items,
     },
   };
@@ -402,10 +404,7 @@ export function toTaxInvoiceSource(
       totalAmount: roundMoney(order.totalAmount),
       buyerName: order.user?.name ?? null,
       shippingAddress: order.shippingAddress ?? null,
-      seller: {
-        businessName: COPY.platformSeller,
-        items: [],
-      },
+      seller: { businessName: COPY.platformSeller, items: [] },
     };
   }
   return toTaxInvoiceSourceFromSubOrder(

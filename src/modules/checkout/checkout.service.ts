@@ -15,6 +15,7 @@ import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
 import { paymentsService } from '@modules/payments/payments.service';
 import { cartService } from '@modules/cart/cart.service';
+import { cartRepository } from '@modules/cart/cart.repository';
 import { settingsService } from '@modules/settings/settings.service';
 import {
   validateCouponSet,
@@ -54,7 +55,6 @@ import {
   COMMISSION_STATUS,
   DISCOUNT_BEARER,
   WALLET_REFERENCE_TYPE,
-  UNAVAILABLE_REASON,
   allSubOrdersCancellable,
 } from '@core/constants/statuses';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
@@ -62,6 +62,10 @@ import { resolveCodForCatalogItems } from '@modules/products/pdpPolicy';
 import { notifyOrderConfirmed } from '@modules/notifications/orderNotifications';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { buildCheckoutOrderTotals, resolveShippingDisplayKey, resolveTaxDisplayKey } from './checkoutOrderTotals';
+import { lockCartVariantsAndAssertStock } from './lockCartStock';
+import { assertExpectedGrandTotal } from './checkoutTotalCheck';
+import { razorpayOrderPayments } from '@modules/payments/razorpayOrderPayments';
+import { unpaidOrders } from '@modules/payments/unpaidOrderCancel';
 import {
   taxInvoiceSnapshotLine,
   type TaxInvoiceSnapshotLine,
@@ -155,51 +159,6 @@ function assertCartItemsAvailable(cart: CartWithItems) {
   }
 }
 
-/**
- * Row-locks every distinct variant in the cart (SELECT ... FOR UPDATE) and re-checks stock
- * against the locked values. Must run inside the order-creation transaction, after the initial
- * (unlocked) `assertCartItemsAvailable` check and before any stock decrement, so two concurrent
- * checkouts for the same last unit serialize on the lock instead of both reading stale stock.
- */
-async function lockCartVariantsAndAssertStock(cart: CartWithItems, transaction: any) {
-  const variantIds = [...new Set(cart.items.map((item) => String(item.variantId)))];
-  // `ORDER BY id` is required, not cosmetic: without it, Postgres doesn't guarantee the order it
-  // acquires locks for a multi-row `WHERE id IN (...) FOR UPDATE`. Two concurrent checkouts
-  // sharing overlapping variants, listed in different orders (e.g. cart [X, Y] vs. cart [Y, X]),
-  // could then lock them in opposite orders and deadlock. Sorting both transactions' lock
-  // acquisition into the same deterministic (ascending id) order rules that out entirely.
-  const lockedVariants = await ProductVariant.findAll({
-    where: { id: variantIds },
-    order: [['id', 'ASC']],
-    transaction,
-    lock: transaction.LOCK.UPDATE,
-  });
-  const lockedById = new Map(lockedVariants.map((variant) => [String(variant.id), variant]));
-
-  const unavailable = cart.items
-    .map((item) => {
-      const locked = lockedById.get(String(item.variantId));
-      if (!locked || Number(locked.stock) < Number(item.quantity)) {
-        return {
-          cartItemId: item.id,
-          variantId: item.variantId,
-          productName: item.variant?.product?.name ?? null,
-          unavailableReason: UNAVAILABLE_REASON.OUT_OF_STOCK,
-        };
-      }
-      return null;
-    })
-    .filter(Boolean);
-
-  if (unavailable.length > 0) {
-    throw new AppError(ERROR_MESSAGES.ITEMS_UNAVAILABLE, 422, ERROR_CODES.ITEMS_UNAVAILABLE, {
-      items: unavailable,
-    });
-  }
-
-  return lockedById;
-}
-
 function catalogItemsForCod(
   items: (CartItem & { variant: ProductVariant & { product: any } })[],
 ) {
@@ -259,6 +218,30 @@ function toPricedLines(
     categoryId: item.variant.product.categoryId ?? null,
     weightGrams: item.variant.weightGrams ?? null,
   }));
+}
+
+function paidCannotCancel() {
+  return new AppError(
+    ERROR_MESSAGES.CHECKOUT_PAID_CANNOT_CANCEL,
+    409,
+    ERROR_CODES.CHECKOUT_PAID_CANNOT_CANCEL,
+  );
+}
+
+/**
+ * Before a closed checkout is cancelled: Razorpay may already hold its payment (a UPI
+ * approval landing as the customer closes the window, its webhook not in yet). A captured
+ * one confirms the order; either way it is paid, not cancelled.
+ */
+async function confirmIfPaidAtGateway(orderId: string, userId: string): Promise<void> {
+  const order = await Order.findByPk(orderId, {
+    attributes: ['id', 'userId', 'paymentStatus', 'razorpayOrderId'],
+  });
+  if (!order || order.userId !== userId || !order.razorpayOrderId) return;
+  if (order.paymentStatus === PAYMENT_STATUS.PAID) return;
+  const gateway = await razorpayOrderPayments.fetch(order.razorpayOrderId);
+  if (gateway?.captured) await paymentsService.confirmCapturedPayment(gateway.captured);
+  if (gateway?.captured || gateway?.authorized) throw paidCannotCancel();
 }
 
 export class CheckoutService {
@@ -490,6 +473,10 @@ export class CheckoutService {
     data: CreateCheckoutRequest,
   ): Promise<{ orderId: string; razorpayOrderId?: string; amount?: number; currency?: string; keyId?: string }> {
     const orderResult = await sequelize.transaction(async (t) => {
+      // One checkout per cart at a time. Without the lock a second request (double click,
+      // second tab) reads the same items, waits on the variant locks, and once the first
+      // commits and clears the cart places a second order from what it already read.
+      await cartRepository.lockByUser(userId, t);
       const cart = await loadUserCart(userId, t);
 
       assertCartItemsAvailable(cart);
@@ -604,6 +591,7 @@ export class CheckoutService {
       // eligibility, wallet clamp, amountDue and the Razorpay order amount below.
       const giftWrapFeeAmount = resolveGiftWrapFee(data.giftWrap);
       const orderTotalRupees = roundMoney(fromPaise(customerGrandTotalPaise) + giftWrapFeeAmount);
+      assertExpectedGrandTotal(data.expectedGrandTotal, orderTotalRupees);
       if (data.paymentMethod === PAYMENT_METHOD.COD) {
         const codAvailable = await resolveCodForCatalogItems(
           catalogItemsForCod(cart.items),
@@ -717,17 +705,6 @@ export class CheckoutService {
           },
           { transaction: t },
         );
-        if (coupons.length > 0) {
-          await recordCouponUsagesForOrder({
-            coupons,
-            breakdown: appliedCouponBreakdown,
-            discountTotal,
-            userId,
-            orderId: orderRow.id,
-            actorId: userId,
-            transaction: t,
-          });
-        }
       }
 
       // COD has no payment webhook — confirm placement so fulfillment + reports can see it.
@@ -869,8 +846,10 @@ export class CheckoutService {
         }
       }
 
-      // Usage is webhook-driven for Razorpay. COD has no webhook — record on place.
-      if (coupons.length > 0 && data.paymentMethod === PAYMENT_METHOD.COD) {
+      // Every order holds its coupon use from placement, under the coupon lock taken by
+      // validation: recorded only at payment, several unpaid online checkouts each passed
+      // the limit. A cancelled or expired checkout gives the use back.
+      if (coupons.length > 0) {
         await recordCouponUsagesForOrder({
           coupons,
           breakdown: appliedCouponBreakdown,
@@ -901,7 +880,15 @@ export class CheckoutService {
         void notifyOrderConfirmed(order.id);
         return { orderId: order.id };
       }
-      const razorpay = await paymentsService.createRazorpayOrderForOrder(order, remainder);
+      let razorpay: Awaited<ReturnType<typeof paymentsService.createRazorpayOrderForOrder>>;
+      try {
+        razorpay = await paymentsService.createRazorpayOrderForOrder(order, remainder);
+      } catch (error) {
+        // Nothing can pay this order: undo it now — cart, stock, wallet and coupon back —
+        // instead of holding them until the expiry job, with the customer's cart empty.
+        await unpaidOrders.cancel({ id: order.id });
+        throw error;
+      }
       return {
         orderId: order.id,
         ...razorpay,
@@ -916,6 +903,7 @@ export class CheckoutService {
     userId: string,
     data: CancelCheckoutRequest,
   ): Promise<{ restored: boolean; orderId: string }> {
+    await confirmIfPaidAtGateway(data.orderId, userId);
     const orderResult = await sequelize.transaction(async (t) => {
       const locked = await Order.findByPk(data.orderId, {
         transaction: t,
@@ -928,9 +916,7 @@ export class CheckoutService {
       if (locked.userId !== userId) {
         throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_ORDER);
       }
-      if (locked.paymentStatus === PAYMENT_STATUS.PAID) {
-        throw new ValidationError(ERROR_MESSAGES.CHECKOUT_PAID_CANNOT_CANCEL);
-      }
+      if (locked.paymentStatus === PAYMENT_STATUS.PAID) throw paidCannotCancel();
       if (locked.status === ORDER_STATUS.CANCELLED) {
         const walletRestored = await rollbackOrderWalletIfNeeded(locked, userId, t);
         if (walletRestored) {

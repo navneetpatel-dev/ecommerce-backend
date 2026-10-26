@@ -31,6 +31,8 @@ export class CommissionLedger extends Model<InferAttributes<CommissionLedger>, I
   /** Section 194-O TDS rate in force when the sale was placed; null on adjustment rows. */
   declare tdsRatePercent: CreationOptional<number | string | null>;
   declare status: 'PENDING' | 'SETTLED' | 'CLAWED_BACK';
+  /** The payout that settled this row (null while pending, and for rows settled before). */
+  declare payoutId: CreationOptional<string | null>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -75,6 +77,7 @@ export const initCommissionLedgerModel = (sequelize: Sequelize) => {
       referenceType: { type: DataTypes.STRING(64), allowNull: true },
       tdsRatePercent: { type: DataTypes.DECIMAL(6, 3), allowNull: true },
       status: { type: DataTypes.ENUM('PENDING', 'SETTLED', 'CLAWED_BACK'), defaultValue: 'PENDING' },
+      payoutId: { type: DataTypes.UUID, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

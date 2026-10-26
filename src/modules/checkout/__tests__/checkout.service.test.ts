@@ -11,6 +11,7 @@ import { cartService } from '@modules/cart/cart.service';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { checkoutService } from '../checkout.service';
 import { ORDER_STATUS, PAYMENT_STATUS } from '@core/constants/statuses';
+import { Cart } from '@database/models/cart.model';
 
 const ORDER_ID = '11111111-1111-4111-8111-111111111111';
 const USER_ID = '22222222-2222-4222-8222-222222222222';
@@ -72,5 +73,43 @@ describe('CheckoutService.cancelPendingCheckout coupon rollback', () => {
     const remaining = await CouponUsage.findOne({ where: { orderId: ORDER_ID } });
     assert.equal(remaining, null);
     assert.equal(usedCount, 0);
+  });
+});
+
+describe('CheckoutService.createOrderFromCart stock lock', () => {
+  afterEach(() => {
+    mock.restoreAll();
+  });
+
+  it('checks stock against the variant total when a cart holds two lines of it', async () => {
+    mock.method(sequelize, 'transaction', async (callback: (t: unknown) => Promise<unknown>) =>
+      callback({ LOCK: { UPDATE: 'UPDATE' } }),
+    );
+    const variant = {
+      id: 'var-1',
+      stock: 3,
+      product: { name: 'Mug', status: 'LIVE', vendor: { status: 'APPROVED', kycVerified: true } },
+    };
+    const cart = {
+      id: 'cart-1',
+      items: [
+        { id: 'line-1', variantId: 'var-1', quantity: 2, variant },
+        { id: 'line-2', variantId: 'var-1', quantity: 2, variant },
+      ],
+    };
+    mock.method(Cart, 'findOne', async () => cart);
+    mock.method(ProductVariant, 'findAll', async () => [{ id: 'var-1', stock: 3 }]);
+    const decrement = mock.fn(async () => undefined);
+    (variant as unknown as { decrement: unknown }).decrement = decrement;
+
+    await assert.rejects(
+      checkoutService.createOrderFromCart(USER_ID, {
+        shippingAddressId: '44444444-4444-4444-8444-444444444444',
+        paymentMethod: 'COD',
+      } as never),
+      (err: { statusCode?: number; details?: { items?: unknown[] } }) =>
+        err.statusCode === 422 && err.details?.items?.length === 2,
+    );
+    assert.equal(decrement.mock.callCount(), 0);
   });
 });

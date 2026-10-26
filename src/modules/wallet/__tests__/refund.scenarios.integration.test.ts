@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { describe, it, before, after, mock } from 'node:test';
 import { randomUUID } from 'node:crypto';
-import { Op } from 'sequelize';
+import { Op, QueryTypes } from 'sequelize';
 import { sequelize } from '@database/models';
 import { ensureTestRoles } from '../../../testHelpers/ensureTestRoles';
 import { User } from '@database/models/user.model';
@@ -64,6 +64,13 @@ import {
 import { cancelPaidOrder } from '@modules/orders/ordersCancel.service';
 import { subordersService } from '@modules/suborders/suborders.service';
 import { shippingService } from '@modules/shipping/shipping.service';
+import { otpService } from '@modules/auth/otp.service';
+import { inventoryService } from '@modules/inventory/inventory.service';
+import { notificationsService } from '@modules/notifications/notifications.service';
+import { NotificationLog } from '@database/models/notificationLog.model';
+import { gstDocumentLinesSql } from '@modules/reports/engine/gstDocumentsSql';
+import { taxInvoiceSnapshotLine } from '@modules/pricing/taxInvoiceSnapshot';
+import { nextVendorDocumentNumber, VENDOR_DOCUMENT_KIND } from '@modules/pricing/vendorInvoiceSequence';
 import { Shipment } from '@database/models/shipment.model';
 
 let dbReady = false;
@@ -371,6 +378,16 @@ async function setPlatformReturnShippingFee(fee: number) {
   await row.update({ value });
 }
 
+/**
+ * Approves a return and confirms its pickup. Refunds start on pickup (RECEIVED), not at
+ * approval, so this is where a return's refund and accounting reversal happen.
+ */
+async function approveAndPickUp(returnId: string, actorId: string) {
+  await returnsService.transition(returnId, RETURN_STATUS.APPROVED, actorId);
+  await returnsService.transition(returnId, RETURN_STATUS.PICKUP_SCHEDULED, actorId);
+  return returnsService.transition(returnId, RETURN_STATUS.RECEIVED, actorId);
+}
+
 describe('consolidated refund scenarios (seeded)', () => {
   before(async () => {
     try {
@@ -452,7 +469,7 @@ describe('consolidated refund scenarios (seeded)', () => {
       reasonCode: RETURN_REASON.DAMAGED,
       reason: 'Damaged on arrival',
     });
-    const approved = await returnsService.transition(rr.id, RETURN_STATUS.APPROVED, customer.id);
+    const approved = await approveAndPickUp(rr.id, customer.id);
 
     assert.equal(Number(approved.shippingRefundAmount), 49);
     assert.ok(Number(approved.refundAmount) >= 167 - 0.01);
@@ -505,7 +522,7 @@ describe('consolidated refund scenarios (seeded)', () => {
       reasonCode: RETURN_REASON.DAMAGED,
       reason: 'Damaged',
     });
-    await returnsService.transition(rr.id, RETURN_STATUS.APPROVED, customer.id);
+    await approveAndPickUp(rr.id, customer.id);
 
     // The paid record is left as paid...
     await sale!.reload();
@@ -543,7 +560,7 @@ describe('consolidated refund scenarios (seeded)', () => {
       reasonCode: RETURN_REASON.NO_LONGER_NEEDED,
       reason: 'Changed mind',
     });
-    const approved = await returnsService.transition(rr.id, RETURN_STATUS.APPROVED, customer.id);
+    const approved = await approveAndPickUp(rr.id, customer.id);
 
     assert.equal(Number(approved.shippingRefundAmount), 0);
     assert.equal(Number(approved.returnShippingFeeAmount), 50);
@@ -581,7 +598,7 @@ describe('consolidated refund scenarios (seeded)', () => {
       reasonCode: RETURN_REASON.NO_LONGER_NEEDED,
       reason: 'Changed mind',
     });
-    const approved = await returnsService.transition(rr.id, RETURN_STATUS.APPROVED, customer.id);
+    const approved = await approveAndPickUp(rr.id, customer.id);
 
     // 100 + 18 − 150 clamps to 0. Backing merchandise out of the total would give
     // 0 − 18 − 0 + 150 = 132; the stored engine value is the real 100.
@@ -612,7 +629,7 @@ describe('consolidated refund scenarios (seeded)', () => {
       reasonCode: RETURN_REASON.OTHER,
       reason: 'Other',
     });
-    const approved = await returnsService.transition(rr.id, RETURN_STATUS.APPROVED, customer.id);
+    const approved = await approveAndPickUp(rr.id, customer.id);
     assert.equal(Number(approved.returnShippingFeeAmount), 25);
     await assertReturnRefundPurchasedNonExpiring(customer.id, rr.id);
   });
@@ -641,7 +658,7 @@ describe('consolidated refund scenarios (seeded)', () => {
       reasonCode: RETURN_REASON.DAMAGED,
       reason: 'Damaged',
     });
-    const afterApprove = await returnsService.transition(rr.id, RETURN_STATUS.APPROVED, customer.id);
+    const afterApprove = await approveAndPickUp(rr.id, customer.id);
     assert.equal(afterApprove.refundStatus, REFUND_STATUS.INITIATED);
     assert.notEqual(afterApprove.status, RETURN_STATUS.REFUNDED);
     assert.equal(createRefund.mock.callCount(), 1);
@@ -688,7 +705,7 @@ describe('consolidated refund scenarios (seeded)', () => {
       reasonCode: RETURN_REASON.DAMAGED,
       reason: 'Damaged',
     });
-    const approved = await returnsService.transition(rr.id, RETURN_STATUS.APPROVED, customer.id);
+    const approved = await approveAndPickUp(rr.id, customer.id);
     // Simulate an approval that never froze its merchandise figure.
     await ReturnRequest.update({ refundMerchandiseAmountPaise: null }, { where: { id: rr.id } });
 
@@ -776,7 +793,7 @@ describe('consolidated refund scenarios (seeded)', () => {
       reasonCode: RETURN_REASON.DAMAGED,
       reason: 'Damaged',
     });
-    const approved = await returnsService.transition(rr.id, RETURN_STATUS.APPROVED, customer.id);
+    const approved = await approveAndPickUp(rr.id, customer.id);
 
     assert.ok(Number(approved.walletRefundAmount) > 0);
     assert.ok(Number(approved.razorpayRefundAmount) > 0);
@@ -891,7 +908,7 @@ describe('consolidated refund scenarios (seeded)', () => {
       reason: 'Damaged',
       returnQuantity: 1,
     });
-    await returnsService.transition(rr.id, RETURN_STATUS.APPROVED, customer.id);
+    await approveAndPickUp(rr.id, customer.id);
     const afterReturn = await Order.findByPk(order.id);
     assert.equal(Number(afterReturn!.pendingCashbackAmount), 25);
 
@@ -1094,8 +1111,8 @@ describe('consolidated refund scenarios (seeded)', () => {
       reasonCode: RETURN_REASON.DAMAGED,
       reason: 'Damaged B',
     });
-    const approvedA = await returnsService.transition(rrA.id, RETURN_STATUS.APPROVED, customer.id);
-    const approvedB = await returnsService.transition(rrB.id, RETURN_STATUS.APPROVED, customer.id);
+    const approvedA = await approveAndPickUp(rrA.id, customer.id);
+    const approvedB = await approveAndPickUp(rrB.id, customer.id);
 
     const refundPaise = toPaise(Number(approvedA.razorpayRefundAmount));
     assert.equal(refundPaise, toPaise(Number(approvedB.razorpayRefundAmount)));
@@ -1859,7 +1876,7 @@ describe('consolidated refund scenarios (seeded)', () => {
       reasonCode: RETURN_REASON.DAMAGED,
       reason: 'Damaged on arrival',
     });
-    await returnsService.transition(rr.id, RETURN_STATUS.APPROVED, customer.id);
+    await approveAndPickUp(rr.id, customer.id);
     await assertReturnRefundPurchasedNonExpiring(customer.id, rr.id);
 
     const credit = await WalletLedger.findOne({
@@ -1879,5 +1896,496 @@ describe('consolidated refund scenarios (seeded)', () => {
       },
     });
     assert.equal(swept.length, 0);
+  });
+
+  it('16. a customer cancel waiting on the order lock never overwrites a part the vendor just shipped', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    const { order, sub } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.RAZORPAY,
+      totalAmount: 80,
+      walletAmountUsed: 80,
+      razorpayAmountPaid: 0,
+      shippingCharged: 0,
+      lineTaxable: 67.8,
+      lineTax: 12.2,
+    });
+    await Order.update({ status: ORDER_STATUS.CONFIRMED }, { where: { id: order.id } });
+    await SubOrder.update({ status: ORDER_STATUS.CONFIRMED }, { where: { id: sub.id } });
+
+    // The vendor's ship holds the part's row lock (and not the order's) while it works.
+    const vendorTxn = await sequelize.transaction();
+    await SubOrder.findByPk(sub.id, { transaction: vendorTxn, lock: vendorTxn.LOCK.UPDATE });
+    const cancel = cancelPaidOrder(order.id, customer.id, false).then(
+      () => null,
+      (err: unknown) => err,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await SubOrder.update({ status: ORDER_STATUS.SHIPPED }, { where: { id: sub.id }, transaction: vendorTxn });
+    await vendorTxn.commit();
+
+    const error = await withTimeout(cancel, 10_000);
+    assert.ok(error instanceof ValidationError, 'cancel must refuse once the part has shipped');
+    assert.equal((await SubOrder.findByPk(sub.id))!.status, ORDER_STATUS.SHIPPED);
+    assert.equal((await Order.findByPk(order.id))!.status, ORDER_STATUS.CONFIRMED);
+  });
+
+  it('18. approval pays nothing; the refund is issued when the item is picked up', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    const { item } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.COD,
+      totalAmount: 118,
+      shippingCharged: 0,
+      lineTaxable: 100,
+      lineTax: 18,
+    });
+    const rr = await returnsService.create(customer.id, {
+      orderItemId: item.id,
+      reasonCode: RETURN_REASON.DAMAGED,
+      reason: 'Damaged',
+    });
+
+    await returnsService.transition(rr.id, RETURN_STATUS.APPROVED, customer.id);
+    const scheduled = await returnsService.transition(rr.id, RETURN_STATUS.PICKUP_SCHEDULED, customer.id);
+    assert.equal(scheduled.refundAmount, null);
+    assert.equal(scheduled.refundCustomerMessage, 'Your refund is issued once the item is picked up.');
+    assert.equal(await walletService.getBalance(customer.id), 0);
+    assert.equal(await CreditNote.count({ where: { returnRequestId: rr.id } }), 0);
+
+    const received = await returnsService.transition(rr.id, RETURN_STATUS.RECEIVED, customer.id);
+    assert.ok(Number(received.refundAmount) > 0);
+    assert.equal(received.refundStatus, REFUND_STATUS.COMPLETED);
+    // Refund settled after pickup: the return is done and no longer holds the payout.
+    assert.equal(received.status, RETURN_STATUS.REFUNDED);
+    // The whole line came back: none of its units count as sold any more.
+    assert.equal((await OrderItem.findByPk(item.id))!.quantity, 0);
+    assert.ok(Math.abs((await walletService.getBalance(customer.id)) - Number(received.refundAmount)) < 0.02);
+  });
+
+  it('19. a picked-up return is restocked only on request, and only once', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    const { item } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.COD,
+      totalAmount: 118,
+      shippingCharged: 0,
+      lineTaxable: 100,
+      lineTax: 18,
+    });
+    const rr = await returnsService.create(customer.id, {
+      orderItemId: item.id,
+      reasonCode: RETURN_REASON.NO_LONGER_NEEDED,
+      reason: 'Changed my mind',
+    });
+    const vendorActor = {
+      id: customer.id,
+      roleId: await roleId(ROLES.VENDOR_OWNER),
+      role: { name: ROLES.VENDOR_OWNER },
+      vendorId: vendor.id,
+    };
+    const stockOf = async () => Number((await ProductVariant.findByPk(item.variantId))!.stock);
+
+    await returnsService.transition(rr.id, RETURN_STATUS.APPROVED, customer.id);
+    await assert.rejects(returnsService.restock(rr.id, vendorActor), ValidationError);
+
+    await returnsService.transition(rr.id, RETURN_STATUS.PICKUP_SCHEDULED, customer.id);
+    const before = await stockOf();
+    await returnsService.transition(rr.id, RETURN_STATUS.RECEIVED, customer.id);
+    // Pickup alone never restocks.
+    assert.equal(await stockOf(), before);
+
+    const restocked = await returnsService.restock(rr.id, vendorActor);
+    assert.ok(restocked.restockedAt);
+    assert.equal(await stockOf(), before + Number(item.quantity));
+    await assert.rejects(returnsService.restock(rr.id, vendorActor), ValidationError);
+    assert.equal(await stockOf(), before + Number(item.quantity));
+    await ProductVariant.decrement('stock', { by: Number(item.quantity), where: { id: item.variantId } });
+    // Refunded: it can't be deleted out of the customer's and admins' sight.
+    await assert.rejects(returnsService.delete(rr.id, customer.id), ValidationError);
+    assert.ok(await ReturnRequest.findByPk(rr.id));
+  });
+
+  it('20. a COD customer can cancel before shipment; no refund is left pending', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    const { order, sub } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.COD,
+      totalAmount: 118,
+      shippingCharged: 0,
+      lineTaxable: 100,
+      lineTax: 18,
+    });
+    await Order.update(
+      { status: ORDER_STATUS.CONFIRMED, paymentStatus: PAYMENT_STATUS.PENDING },
+      { where: { id: order.id } },
+    );
+    await SubOrder.update({ status: ORDER_STATUS.CONFIRMED }, { where: { id: sub.id } });
+
+    await cancelPaidOrder(order.id, customer.id, false);
+
+    const cancelled = (await Order.findByPk(order.id))!;
+    assert.equal(cancelled.status, ORDER_STATUS.CANCELLED);
+    assert.equal(cancelled.cancelRefundStatus, REFUND_STATUS.NONE);
+    assert.equal((await SubOrder.findByPk(sub.id))!.status, ORDER_STATUS.CANCELLED);
+  });
+
+  it('21. after one part is cancelled, the customer can still cancel the rest', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    const { order, sub } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.COD,
+      totalAmount: 118,
+      shippingCharged: 0,
+      lineTaxable: 100,
+      lineTax: 18,
+    });
+    await Order.update(
+      { status: ORDER_STATUS.CONFIRMED, paymentStatus: PAYMENT_STATUS.PENDING },
+      { where: { id: order.id } },
+    );
+    await SubOrder.update({ status: ORDER_STATUS.CONFIRMED }, { where: { id: sub.id } });
+    const other = await addSiblingPart(sub, { status: ORDER_STATUS.CONFIRMED });
+
+    await subordersService.updateStatus(other.id, ORDER_STATUS.CANCELLED, undefined, customer.id);
+    await cancelPaidOrder(order.id, customer.id, false);
+
+    assert.equal((await SubOrder.findByPk(sub.id))!.status, ORDER_STATUS.CANCELLED);
+    assert.equal((await SubOrder.findByPk(other.id))!.status, ORDER_STATUS.CANCELLED);
+    assert.equal((await Order.findByPk(order.id))!.status, ORDER_STATUS.CANCELLED);
+  });
+
+  it('22. two return requests for one line at once create exactly one return', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    const { item } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.COD,
+      totalAmount: 118,
+      shippingCharged: 0,
+      lineTaxable: 100,
+      lineTax: 18,
+    });
+    const request = () =>
+      returnsService.create(customer.id, {
+        orderItemId: item.id,
+        reasonCode: RETURN_REASON.DAMAGED,
+        reason: 'Damaged',
+      });
+
+    const results = await Promise.allSettled([request(), request()]);
+
+    assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
+    assert.equal(await ReturnRequest.count({ where: { orderItemId: item.id } }), 1);
+  });
+
+  it('23. two returns on one order picked up at once end exactly as one after the other', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    mock.method(paymentsService, 'createRazorpayRefund', async () => `rfnd_${randomUUID().slice(0, 8)}`);
+
+    /** A two-line card order with both returns scheduled for pickup. */
+    async function twoReturnsAwaitingPickup() {
+      const customer = await createCustomer();
+      const vendor = await createVendor();
+      const { order, sub, item } = await seedFullOrder({
+        userId: customer.id,
+        vendorId: vendor.id,
+        paymentMethod: PAYMENT_METHOD.RAZORPAY,
+        totalAmount: 400,
+        razorpayAmountPaid: 400,
+        shippingCharged: 0,
+        lineTaxable: 169.49,
+        lineTax: 30.51,
+        razorpayPaymentId: `pay_${randomUUID().slice(0, 10)}`,
+      });
+      const item2 = await OrderItem.create({
+        ...(item.get({ plain: true }) as Record<string, unknown>),
+        id: undefined,
+        variantId: await resolveVariantId(),
+        productName: 'Second line',
+      } as never);
+      const ids: string[] = [];
+      for (const line of [item, item2]) {
+        const rr = await returnsService.create(customer.id, {
+          orderItemId: line.id,
+          reasonCode: RETURN_REASON.DAMAGED,
+          reason: 'Damaged',
+        });
+        await returnsService.transition(rr.id, RETURN_STATUS.APPROVED, customer.id);
+        await returnsService.transition(rr.id, RETURN_STATUS.PICKUP_SCHEDULED, customer.id);
+        ids.push(rr.id);
+      }
+      return { customer, order, sub, ids };
+    }
+    async function outcome(orderId: string, subId: string, ids: string[]) {
+      const rows = await ReturnRequest.findAll({ where: { id: ids } });
+      return {
+        refundedPaise: rows.reduce((sum, r) => sum + toPaise(Number(r.razorpayRefundAmount ?? 0)), 0),
+        subtotalPaise: Number((await SubOrder.findByPk(subId))!.subtotalPaise),
+        orderTotal: Number((await Order.findByPk(orderId))!.totalAmount),
+      };
+    }
+
+    const one = await twoReturnsAwaitingPickup();
+    for (const id of one.ids) await returnsService.transition(id, RETURN_STATUS.RECEIVED, one.customer.id);
+
+    const both = await twoReturnsAwaitingPickup();
+    await Promise.all(both.ids.map((id) => returnsService.transition(id, RETURN_STATUS.RECEIVED, both.customer.id)));
+
+    assert.deepEqual(
+      await outcome(both.order.id, both.sub.id, both.ids),
+      await outcome(one.order.id, one.sub.id, one.ids),
+    );
+  });
+
+  it('24. a tracking number already on another parcel is refused at dispatch', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const awb = `AWB-${randomUUID().slice(0, 8)}`;
+    const parts: SubOrder[] = [];
+    let actorId = '';
+    for (let i = 0; i < 2; i += 1) {
+      const customer = await createCustomer();
+      actorId = customer.id;
+      const vendor = await createVendor();
+      const { order, sub } = await seedFullOrder({
+        userId: customer.id,
+        vendorId: vendor.id,
+        paymentMethod: PAYMENT_METHOD.COD,
+        totalAmount: 118,
+        shippingCharged: 0,
+        lineTaxable: 100,
+        lineTax: 18,
+      });
+      await Order.update({ status: ORDER_STATUS.CONFIRMED, paymentStatus: PAYMENT_STATUS.PENDING }, { where: { id: order.id } });
+      await SubOrder.update({ status: ORDER_STATUS.CONFIRMED }, { where: { id: sub.id } });
+      parts.push(sub);
+    }
+
+    await subordersService.updateStatus(parts[0]!.id, ORDER_STATUS.SHIPPED, awb, actorId);
+    await assert.rejects(
+      subordersService.updateStatus(parts[1]!.id, ORDER_STATUS.SHIPPED, awb, actorId),
+      /already used by another shipment/,
+    );
+    assert.equal((await SubOrder.findByPk(parts[1]!.id))!.status, ORDER_STATUS.CONFIRMED);
+    assert.equal(await Shipment.count({ where: { trackingNumber: awb } }), 1);
+  });
+
+  it('25. two parcels out for delivery each keep their own code', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const parcelA = randomUUID();
+    const parcelB = randomUUID();
+    const a = await otpService.issueCodeForUser(customer.id, 'DELIVERY_CONFIRMATION', undefined, parcelA);
+    const b = await otpService.issueCodeForUser(customer.id, 'DELIVERY_CONFIRMATION', undefined, parcelB);
+
+    await sequelize.transaction(async (txn) => {
+      // B's code does not confirm A, and issuing B did not void A's.
+      const crossed = await otpService.verifyCodeForUser(customer.id, 'DELIVERY_CONFIRMATION', b.code, txn, parcelA);
+      assert.equal(crossed.valid, a.code === b.code);
+      const own = await otpService.verifyCodeForUser(customer.id, 'DELIVERY_CONFIRMATION', a.code, txn, parcelA);
+      assert.equal(own.valid || a.code === b.code, true);
+      const ownB = await otpService.verifyCodeForUser(customer.id, 'DELIVERY_CONFIRMATION', b.code, txn, parcelB);
+      assert.equal(ownB.valid, true);
+    });
+  });
+
+  it('26. a carrier-only parcel sent back to the seller settles from the carrier\'s updates', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    const { order, sub } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.COD,
+      totalAmount: 118,
+      shippingCharged: 0,
+      lineTaxable: 100,
+      lineTax: 18,
+    });
+    await Order.update({ status: ORDER_STATUS.CONFIRMED, paymentStatus: PAYMENT_STATUS.PENDING }, { where: { id: order.id } });
+    await SubOrder.update({ status: ORDER_STATUS.CONFIRMED }, { where: { id: sub.id } });
+    const awb = `AWB-${randomUUID().slice(0, 8)}`;
+    await subordersService.updateStatus(sub.id, ORDER_STATUS.SHIPPED, awb, customer.id);
+
+    await sequelize.transaction((txn) => shippingService.processWebhook(awb, 'RTO', txn));
+    await sequelize.transaction((txn) => shippingService.processWebhook(awb, 'RETURNED_TO_ORIGIN', txn));
+
+    assert.equal((await Shipment.findOne({ where: { trackingNumber: awb } }))!.status, 'RTO_DELIVERED');
+    assert.equal((await SubOrder.findByPk(sub.id))!.status, ORDER_STATUS.RETURNED);
+    assert.equal((await Order.findByPk(order.id))!.status, ORDER_STATUS.RETURNED);
+  });
+
+  it('27. two vendors whose slugs give the same prefix never share invoice numbers', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const head = randomUUID().replace(/[^a-z]/g, '').padEnd(4, 'q').slice(0, 4);
+    const alpha = await createVendor();
+    const beta = await createVendor();
+    await alpha.update({ slug: `${head}-alpha-gear-${randomUUID().slice(0, 4)}x-gear` });
+    await beta.update({ slug: `${head}-beta-gear-${randomUUID().slice(0, 4)}y-gear` });
+
+    const numbers = await sequelize.transaction(async (txn) => [
+      (await nextVendorDocumentNumber(alpha.id, VENDOR_DOCUMENT_KIND.TAX_INVOICE, new Date(), txn)).number,
+      (await nextVendorDocumentNumber(beta.id, VENDOR_DOCUMENT_KIND.TAX_INVOICE, new Date(), txn)).number,
+    ]);
+
+    const [alphaPrefix, betaPrefix] = numbers.map((n) => n.split('/')[0]);
+    assert.notEqual(alphaPrefix, betaPrefix);
+    assert.notEqual(numbers[0], numbers[1]);
+    // Stored: the next document keeps the same prefix.
+    assert.equal((await Vendor.findByPk(beta.id))!.invoicePrefix, betaPrefix);
+  });
+
+  it('28. an issued invoice keeps its parties when the buyer later edits the address', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    const { order, sub, item } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.COD,
+      totalAmount: 118,
+      shippingCharged: 0,
+      lineTaxable: 100,
+      lineTax: 18,
+    });
+    await Order.update({ status: ORDER_STATUS.CONFIRMED, paymentStatus: PAYMENT_STATUS.PENDING }, { where: { id: order.id } });
+    // The amounts frozen at checkout; the parties are added when the invoice is issued.
+    const snapshotLine = taxInvoiceSnapshotLine(
+      item.id,
+      {
+        quantity: 1,
+        unitPricePaise: 10000,
+        supplyTaxablePaise: 10000,
+        supplyTax: { cgst: 900, sgst: 900, igst: 0, gstPercentage: 18 },
+      },
+      '6109',
+    );
+    await SubOrder.update(
+      {
+        status: ORDER_STATUS.CONFIRMED,
+        taxInvoiceNumber: null,
+        taxInvoiceIssuedAt: null,
+        taxInvoiceSnapshot: { totalPaise: 11800, lines: [snapshotLine] },
+      } as never,
+      { where: { id: sub.id } },
+    );
+    await subordersService.updateStatus(sub.id, ORDER_STATUS.SHIPPED, `AWB-${randomUUID().slice(0, 8)}`, customer.id);
+
+    // Months later the buyer turns the address into a business one in another state.
+    const addressId = (await Order.findByPk(order.id))!.shippingAddressId;
+    await Address.update({ gstin: '27AAAAA0000A1Z5', state: 'MH' }, { where: { id: addressId } });
+
+    const [line] = (await sequelize.query(
+      `SELECT "recipientGstin", state FROM (${gstDocumentLinesSql()}) d WHERE d."subOrderId" = :subOrderId AND d."docType" = 'INVOICE' LIMIT 1`,
+      {
+        replacements: { subOrderId: sub.id, platformName: 'Platform', platformGstin: '' },
+        type: QueryTypes.SELECT,
+      },
+    )) as Array<{ recipientGstin: string | null; state: string }>;
+    assert.equal(line?.recipientGstin, null);
+    assert.equal(line?.state, 'KA');
+  });
+
+  it('29. a fully returned sale with a platform coupon nets to no sale in the ledger', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    const { sub, item } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.COD,
+      totalAmount: 118,
+      shippingCharged: 0,
+      lineTaxable: 100,
+      lineTax: 18,
+    });
+    // The platform funded a ₹20 coupon: the vendor's value of supply (and the sale the
+    // commission is on) is ₹120, though the customer's taxable value is ₹100.
+    await item.update({ supplyTaxablePaise: 12000, supplyTaxPaise: 2160 } as never);
+    const sale = await CommissionLedger.findOne({ where: { subOrderId: sub.id, referenceType: null } });
+    await sale!.update({ status: COMMISSION_STATUS.SETTLED, saleAmountPaise: 12000, supplyTaxablePaise: 12000 } as never);
+
+    const rr = await returnsService.create(customer.id, {
+      orderItemId: item.id,
+      reasonCode: RETURN_REASON.DAMAGED,
+      reason: 'Damaged',
+    });
+    await approveAndPickUp(rr.id, customer.id);
+
+    const rows = await CommissionLedger.findAll({ where: { subOrderId: sub.id } });
+    const netSalePaise = rows.reduce((sum, row) => sum + Number(row.saleAmountPaise), 0);
+    assert.equal(netSalePaise, 0);
+  });
+
+  it('30. each status of a return gets its own email; a repeat of one is not resent', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const returnId = randomUUID();
+    const send = (status: string) =>
+      notificationsService.sendOrderReturned(customer.id, returnId, { orderNumber: 'ABC', status });
+
+    const approved = await send(RETURN_STATUS.APPROVED);
+    const received = await send(RETURN_STATUS.RECEIVED);
+    const repeated = await send(RETURN_STATUS.RECEIVED);
+
+    assert.ok(approved && received);
+    assert.notEqual(approved!.id, received!.id);
+    assert.equal(repeated?.id, received!.id);
+    assert.equal(await NotificationLog.count({ where: { referenceId: returnId } }), 2);
+  });
+
+  it('31. a stock edit keeps the units orders took while the editor was open', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const variantId = await resolveVariantId();
+    const original = Number((await ProductVariant.findByPk(variantId))!.stock);
+    try {
+      await ProductVariant.update({ stock: 5 }, { where: { id: variantId } });
+      // The editor shows 5; an order then takes 3.
+      await ProductVariant.decrement('stock', { by: 3, where: { id: variantId } });
+      // The vendor adds 3 received units: types 8 over the 5 they saw.
+      await inventoryService.updateStock(variantId, 8, customer.id, 5);
+      assert.equal(Number((await ProductVariant.findByPk(variantId))!.stock), 5);
+    } finally {
+      await ProductVariant.update({ stock: original }, { where: { id: variantId } });
+    }
+  });
+
+  it('32. ledger rows written back to back never tie, so the balance reads the last', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    await sequelize.transaction(async (txn) => {
+      for (const [amount, pointSource] of [[10, 'PROMOTIONAL'], [20, 'PURCHASED'], [5, 'PURCHASED']] as const) {
+        await walletService.credit(
+          customer.id,
+          amount,
+          { type: WALLET_REFERENCE_TYPE.TOPUP, id: randomUUID() },
+          'seed',
+          txn,
+          { pointSource },
+        );
+      }
+    });
+    const rows = await WalletLedger.findAll({ where: { userId: customer.id }, order: [['createdAt', 'ASC']] });
+    const times = rows.map((row) => new Date(row.createdAt).getTime());
+    assert.equal(new Set(times).size, times.length);
+    assert.equal(await walletService.getBalance(customer.id), 35);
   });
 });

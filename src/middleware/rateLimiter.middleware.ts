@@ -1,3 +1,4 @@
+import type { RequestHandler } from 'express';
 import rateLimit, { type Options } from 'express-rate-limit';
 import { RedisStore } from 'rate-limit-redis';
 import Redis from 'ioredis';
@@ -78,3 +79,28 @@ export const couponApplyRateLimiter = rateLimit({
   handler: jsonRateLimitHandler,
   message: ERROR_MESSAGES.COUPON_APPLY_RATE_LIMITED,
 });
+
+/**
+ * Checkout quotes that carry coupon codes. The quote is re-run on every checkout change,
+ * so this is looser than /coupons/apply, but still stops codes being guessed through it.
+ */
+let couponQuoteLimiter: RequestHandler | null = null;
+// Built on first use, not at import: its store opens a Redis connection.
+const buildCouponQuoteLimiter = (): RequestHandler => rateLimit({
+  store: redisRateLimitStore('coupon-quote'),
+  passOnStoreError: true,
+  windowMs: 60 * 1000,
+  limit: isDev ? 120 : 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: jsonRateLimitHandler,
+  message: ERROR_MESSAGES.COUPON_APPLY_RATE_LIMITED,
+});
+
+export const couponQuoteRateLimiter: RequestHandler = (req, res, next) => {
+  const body = req.body as { couponCode?: unknown; couponCodes?: unknown } | undefined;
+  const hasCodes = Boolean(body?.couponCode) || (Array.isArray(body?.couponCodes) && body.couponCodes.length > 0);
+  if (!hasCodes) return next();
+  couponQuoteLimiter ??= buildCouponQuoteLimiter();
+  return couponQuoteLimiter(req, res, next);
+};

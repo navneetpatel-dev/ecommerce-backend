@@ -1,0 +1,134 @@
+name: Deploy
+
+# main → CI → build image → migrate database → roll API + worker on ECS.
+#
+# Re-running an older successful run redeploys that commit (its image is reused
+# from ECR, migrations are a no-op), which is the rollback path.
+# Run manually (Actions → Deploy → Run workflow) to roll out env/secret changes
+# made in Terraform without a code change.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-backend-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    name: Deploy to AWS (production)
+    needs: ci
+    # Skipped until the AWS side exists (see DEPLOYMENT.md); CI still gates main.
+    if: vars.AWS_DEPLOY_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment:
+      name: production
+      url: ${{ vars.API_URL }}
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      ECS_API_SERVICE: ${{ vars.ECS_API_SERVICE }}
+      ECS_WORKER_SERVICE: ${{ vars.ECS_WORKER_SERVICE }}
+      ECS_MIGRATE_TASK: ${{ vars.ECS_MIGRATE_TASK }}
+      ECS_PRIVATE_SUBNETS: ${{ vars.ECS_PRIVATE_SUBNETS }}
+      ECS_TASK_SECURITY_GRP: ${{ vars.ECS_TASK_SECURITY_GRP }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Resolve image
+        id: image
+        run: |
+          image="${{ steps.ecr.outputs.registry }}/${ECR_REPOSITORY}:${GITHUB_SHA}"
+          echo "uri=$image" >> "$GITHUB_OUTPUT"
+          if aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
+               --image-ids imageTag="$GITHUB_SHA" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Image for $GITHUB_SHA already in ECR — reusing it."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.image.outputs.exists == 'false'
+
+      - name: Build and push image
+        if: steps.image.outputs.exists == 'false'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.image.outputs.uri }}
+          build-args: APP_VERSION=${{ github.sha }}
+          provenance: false
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Register task definitions
+        id: taskdefs
+        run: |
+          chmod +x .github/scripts/ecs-deploy.sh
+          image="${{ steps.image.outputs.uri }}"
+          {
+            echo "api=$(.github/scripts/ecs-deploy.sh register "$ECS_API_SERVICE" "$image")"
+            echo "worker=$(.github/scripts/ecs-deploy.sh register "$ECS_WORKER_SERVICE" "$image")"
+            echo "migrate=$(.github/scripts/ecs-deploy.sh register "$ECS_MIGRATE_TASK" "$image")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run database migrations
+        run: |
+          .github/scripts/ecs-deploy.sh run-task \
+            "${{ steps.taskdefs.outputs.migrate }}" \
+            "$ECS_PRIVATE_SUBNETS" \
+            "$ECS_TASK_SECURITY_GRP"
+
+      - name: Roll out API and worker
+        run: |
+          .github/scripts/ecs-deploy.sh roll \
+            "$ECS_API_SERVICE=${{ steps.taskdefs.outputs.api }}" \
+            "$ECS_WORKER_SERVICE=${{ steps.taskdefs.outputs.worker }}"
+
+      - name: Smoke test
+        if: vars.API_URL != ''
+        run: |
+          for _ in $(seq 1 10); do
+            if curl -fsS "${{ vars.API_URL }}/health/live"; then echo; exit 0; fi
+            sleep 6
+          done
+          echo "::error::${{ vars.API_URL }}/health/live did not respond"
+          exit 1
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Backend deploy"
+            echo "- Commit: \`${GITHUB_SHA::7}\`"
+            echo "- Image: \`${{ steps.image.outputs.uri }}\`"
+            echo "- API: \`${{ steps.taskdefs.outputs.api }}\`"
+            echo "- Worker: \`${{ steps.taskdefs.outputs.worker }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

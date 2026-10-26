@@ -15,7 +15,9 @@ import { returnsService } from '@modules/returns/returns.service';
 import { walletService } from '@modules/wallet/wallet.service';
 import { paymentsService } from '@modules/payments/payments.service';
 import { notificationsService } from '@modules/notifications/notifications.service';
-import { RETURN_STATUS } from '@core/constants/statuses';
+import { RETURN_STATUS, RETURN_TYPE } from '@core/constants/statuses';
+import { sequelize } from '@database/models';
+import { otpService } from '@modules/auth/otp.service';
 
 describe('Delivery Module Comprehensive Verification', () => {
   afterEach(() => {
@@ -250,6 +252,61 @@ describe('Delivery Module Comprehensive Verification', () => {
 
       assert.equal(updatedStatus, RETURN_STATUS.CLOSED);
       assert.match(rejectionReason ?? '', /Closed after 3 failed pickup attempts/);
+    });
+  });
+
+  describe('deliveryAgentsService.confirmPickup', () => {
+    it('checks the OTP before taking replacement stock, so a wrong code costs nothing', async () => {
+      mock.method(sequelize, 'transaction', async (callback: (t: unknown) => Promise<unknown>) =>
+        callback({ LOCK: { UPDATE: 'UPDATE' } }),
+      );
+      mock.method(deliveryAgentsRepository, 'assignedPickup', async () => ({
+        id: 'return-x',
+        userId: 'user-x',
+        type: RETURN_TYPE.EXCHANGE,
+        status: RETURN_STATUS.PICKUP_SCHEDULED,
+        returnQuantity: 1,
+        orderItem: { variantId: 'var-x' },
+        photoUrls: [],
+        update: async () => undefined,
+      }) as unknown as ReturnRequest);
+      mock.method(otpService, 'verifyCodeForUser', async () => ({ valid: false, message: 'Wrong code' }));
+      const variantLookup = mock.method(ProductVariant, 'findByPk', async () => ({ stock: 5, update: async () => undefined }));
+      const refundStart = mock.method(returnsService, 'startRefundOnPickup', async () => async () => undefined);
+
+      await assert.rejects(
+        deliveryAgentsService.confirmPickup('return-x', 'agent-x', 'actor-x', {
+          otpCode: '000000',
+          itemConditionPhotoUrls: ['https://cdn.example/a.jpg'],
+          replacementProofUrl: 'https://cdn.example/b.jpg',
+        }),
+      );
+      assert.equal(variantLookup.mock.callCount(), 0);
+      assert.equal(refundStart.mock.callCount(), 0);
+    });
+  });
+
+  describe('deliveryAgentsService.forceConfirmDelivery', () => {
+    it('never marks COD cash collected unless the admin says it was', async () => {
+      mock.method(Shipment, 'findByPk', async () => ({
+        id: 'ship-cod',
+        status: 'OUT_FOR_DELIVERY',
+        codAmount: 750,
+      }) as never);
+      const extras: Array<Record<string, unknown>> = [];
+      mock.method(shippingService, 'applyShipmentStatus', async (_s: unknown, _status: string, extra: Record<string, unknown>) => {
+        extras.push(extra);
+        return {} as never;
+      });
+      mock.method(AuditLog, 'create', async () => ({}) as never);
+
+      await deliveryAgentsService.forceConfirmDelivery('ship-cod', 'admin-1', 'Signed slip on file');
+      await deliveryAgentsService.forceConfirmDelivery('ship-cod', 'admin-1', 'Cash receipt photo', true);
+
+      assert.equal(extras[0]?.codCollected, false);
+      assert.equal(extras[0]?.codCollectedAt, null);
+      assert.equal(extras[1]?.codCollected, true);
+      assert.ok(extras[1]?.codCollectedAt instanceof Date);
     });
   });
 });

@@ -9,6 +9,7 @@ export const sequelize = new Sequelize({
   username: env.DB_USER,
   password: env.DB_PASSWORD,
   dialect: 'postgres',
+  ...(env.DB_SSL ? { dialectOptions: { ssl: { require: true, rejectUnauthorized: false } } } : {}),
   logging: env.LOG_LEVEL === 'debug' ? (msg) => logger.debug(msg) : false,
   pool: {
     max: env.DB_POOL_MAX,

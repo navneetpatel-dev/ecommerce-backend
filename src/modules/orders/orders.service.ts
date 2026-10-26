@@ -3,6 +3,9 @@ import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { ordersRepository } from './orders.repository';
+import { assertPartPaidFor } from '@modules/suborders/subOrderTransitions';
+import { returnableOrderItemIds } from './orderReturnability';
+import { ORDER_DELIVERY_AGENT_ATTRIBUTES, ORDER_VENDOR_ATTRIBUTES } from './orderPublicAttributes';
 import { sequelize } from '@database/models';
 import { OrderItem } from '@database/models/orderItem.model';
 import { Vendor } from '@database/models/vendor.model';
@@ -28,12 +31,12 @@ import { logAudit } from '@modules/audit/audit.service';
  * order has its own dedicated flow (`POST /:id/cancel` -> `cancelPaidOrder`)
  * that atomically handles stock restores, refunds, wallet rollbacks,
  * and ledger cleanups; this manual status-transition path is for
- * exceptional support interventions only.
+ * exceptional support interventions only. SHIPPED is absent too: an order ships
+ * part by part and follows its parts (`rollUpOrderStatus`).
  */
 const ORDER_MANUAL_TRANSITIONS: Record<string, string[]> = {
   PENDING: [ORDER_STATUS.CONFIRMED, ORDER_STATUS.CANCELLED],
-  CONFIRMED: [ORDER_STATUS.SHIPPED, ORDER_STATUS.CANCELLED],
-  SHIPPED: [ORDER_STATUS.CANCELLED],
+  CONFIRMED: [ORDER_STATUS.CANCELLED],
 };
 
 function assertOrderTransition(from: string, to: string) {
@@ -46,7 +49,7 @@ const orderDetailInclude = [
   {
     association: 'subOrders',
     include: [
-      { model: Vendor, as: 'vendor' },
+      { model: Vendor, as: 'vendor', attributes: ORDER_VENDOR_ATTRIBUTES },
       {
         model: OrderItem,
         as: 'items',
@@ -76,6 +79,7 @@ const orderDetailInclude = [
           {
             model: DeliveryAgent,
             as: 'deliveryAgent',
+            attributes: ORDER_DELIVERY_AGENT_ATTRIBUTES,
           },
           {
             model: ShipmentAttempt,
@@ -127,9 +131,20 @@ export class OrdersService {
       throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_ORDER);
     }
     const mapped = mapOrderResponse(order as unknown as Record<string, unknown>);
+    const { linesWithReturns, ...summary } = await this.orderReturnSummary(
+      mapped.subOrders as unknown as Array<{ id: string }>,
+    );
+    const returnable = await returnableOrderItemIds(
+      ((order as unknown as { subOrders?: unknown[] }).subOrders ?? []) as Parameters<typeof returnableOrderItemIds>[0],
+      linesWithReturns,
+    );
     return {
       ...mapped,
-      ...(await this.orderReturnSummary(mapped.subOrders as unknown as Array<{ id: string }>)),
+      subOrders: mapped.subOrders.map((part) => ({
+        ...part,
+        items: part.items.map((item) => ({ ...item, canReturn: returnable.has(String(item.id)) })),
+      })),
+      ...summary,
     };
   }
 
@@ -140,11 +155,15 @@ export class OrdersService {
   private async orderReturnSummary(subOrders: Array<{ id: string }>) {
     const subOrderIds = subOrders.map((sub) => sub.id).filter(Boolean);
     if (subOrderIds.length === 0) {
-      return { openReturnCount: 0, returnRefundAlerts: [] as Array<{ id: string; refundStatus: string }> };
+      return {
+        openReturnCount: 0,
+        returnRefundAlerts: [] as Array<{ id: string; refundStatus: string }>,
+        linesWithReturns: new Set<string>(),
+      };
     }
     const rows = await ReturnRequest.findAll({
       where: { subOrderId: { [Op.in]: subOrderIds } },
-      attributes: ['id', 'status', 'refundStatus'],
+      attributes: ['id', 'status', 'refundStatus', 'orderItemId'],
     });
     const openStatuses = new Set<string>([
       RETURN_STATUS.REQUESTED,
@@ -156,7 +175,9 @@ export class OrdersService {
     const returnRefundAlerts = rows
       .filter((row) => row.refundStatus === REFUND_STATUS.INITIATED || row.refundStatus === REFUND_STATUS.FAILED)
       .map((row) => ({ id: row.id, refundStatus: String(row.refundStatus) }));
-    return { openReturnCount, returnRefundAlerts };
+    // One return per line: a line with any return request can't be returned again.
+    const linesWithReturns = new Set(rows.map((row) => String(row.orderItemId)));
+    return { openReturnCount, returnRefundAlerts, linesWithReturns };
   }
 
   async updateOrderStatus(id: string, status: string, actorId?: string) {
@@ -174,11 +195,13 @@ export class OrdersService {
       return this.getOrderById(id);
     }
 
-    return sequelize.transaction(async (t) => {
-      const order = await ordersRepository.findById(id, { transaction: t });
+    await sequelize.transaction(async (t) => {
+      const order = await ordersRepository.findById(id, { transaction: t, lock: t.LOCK.UPDATE });
       if (!order) throw new NotFoundError('Order');
 
       assertOrderTransition(order.status, status);
+      // An online order is confirmed by its payment, never by hand before it lands.
+      assertPartPaidFor(order);
       await ordersRepository.update(
         id,
         { status: status as never, updatedBy: actorId ?? null } as any,
@@ -195,9 +218,9 @@ export class OrdersService {
           transaction: t,
         });
       }
-
-      return this.getOrderById(id);
     });
+    // Read after commit: inside, it ran on another connection and saw the old status.
+    return this.getOrderById(id);
   }
 }
 

@@ -295,7 +295,7 @@ export const confirmDelivery = asyncHandler(async (req: Request, res: Response) 
 });
 
 export const forceConfirmDelivery = asyncHandler(async (req: Request, res: Response) => {
-  const shipment = await deliveryAgentsService.forceConfirmDelivery(req.params.shipmentId!, req.user!.id, req.body.reason);
+  const shipment = await deliveryAgentsService.forceConfirmDelivery(req.params.shipmentId!, req.user!.id, req.body.reason, req.body.codCollected === true);
   res.json(ok(shipment));
 });
 

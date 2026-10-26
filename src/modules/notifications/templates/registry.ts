@@ -103,6 +103,7 @@ function defaultCta(type: NotificationType, data: EmailTemplateData): { label?: 
     case 'PAYMENT_RECEIPT':
     case 'PAYMENT_FAILED':
     case 'ORDER_CANCELLED':
+    case 'SUBORDER_CANCELLED':
     case 'ORDER_RETURNED':
     case 'REFUND_PROCESSED':
     case 'REFUND_INITIATED':

@@ -2,6 +2,8 @@ import { z } from 'zod';
 
 export const UpdateStockSchema = z.object({
   stock: z.number().int().nonnegative(),
+  /** The stock the editor showed; with it, the edit is applied as a change on top of now. */
+  expectedStock: z.number().int().nonnegative().optional(),
 });
 
 export type UpdateStockRequest = z.infer<typeof UpdateStockSchema>;
