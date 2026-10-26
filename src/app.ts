@@ -51,7 +51,7 @@ app.use(
     origin: [
       env.CLIENT_URL,
       ...(env.NODE_ENV !== 'production'
-        ? ['http://localhost:5173', 'http://localhost:3000']
+        ? ['http://localhost:5273', 'http://localhost:5173', 'http://localhost:3000']
         : []),
     ],
     credentials: true,
