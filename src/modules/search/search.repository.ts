@@ -79,10 +79,17 @@ interface CategoryAutocompleteRow {
 
 const liveProductFilters = `
   p."deletedAt" IS NULL
+  AND p.name NOT ILIKE 'Seed %'
   AND p.status = :liveStatus
   AND v.status = :approvedStatus
   AND v."kycVerified" = true
   AND v."deletedAt" IS NULL
+  AND EXISTS (
+    SELECT 1 FROM categories c
+    WHERE c.id = p."categoryId"
+      AND c.status = 'ACTIVE'
+      AND c."deletedAt" IS NULL
+  )
 `;
 
 const primaryImageLateral = `

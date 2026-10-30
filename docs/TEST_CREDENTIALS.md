@@ -171,17 +171,13 @@ Examples:
 
 All customer passwords: **Test@123**
 
-### Sample Customer Accounts
+Emails follow the seeder: `firstname.lastname{n}@example.com` (index `n` from 0 to 99). Index 54 is fixed:
 
-1. **customer1@example.com** - Has orders, reviews, cart items, wishlist
-2. **customer2@example.com** - Has orders, wallet balance
-3. **customer3@example.com** - Has active cart and wishlist
-4. **customer4@example.com** - Has order history
-5. **customer5@example.com** - Has wallet transactions
-   ...
-6. **customer100@example.com**
+- **Email**: amit.gupta54@example.com
+- **Password**: Test@123
+- **Role**: CUSTOMER
 
-**Note**: Customers 1-40 have wallet transactions, 1-50 have active carts, 1-60 have wishlists
+Other customers are random `firstname.lastname{n}@example.com` addresses from the same seeder. Do not use `customer1@example.com` or `rahul.sharma0@example.com`; those addresses are not seeded.
 
 ---
 
@@ -236,7 +232,7 @@ All customer passwords: **Test@123**
 - ❌ Cannot create or delete products
 - ❌ Cannot request payouts or view commission details
 
-### Customer Testing (e.g., `customer1@example.com`)
+### Customer Testing (e.g., `amit.gupta54@example.com`)
 
 - ✅ Browse products (500 products across 50+ categories)
 - ✅ Search and filter products
@@ -299,7 +295,7 @@ All customer passwords: **Test@123**
 
 ### Complete Purchase Flow
 
-1. Login as customer1@example.com
+1. Login as amit.gupta54@example.com
 2. Browse products by category
 3. Add 3-5 products to cart
 4. Apply coupon code (e.g., WELCOME10)

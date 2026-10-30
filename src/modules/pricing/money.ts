@@ -35,6 +35,21 @@ export function roundMoney(value: unknown): number {
   return fromPaise(toPaise(coerceRupees(value)));
 }
 
+/**
+ * Unit and extended price from one paise total, so quantity × unit equals the line
+ * at two decimal places. The line moves by less than one paise per unit when the
+ * total does not divide evenly.
+ */
+export function alignUnitAndLine(
+  lineTotalPaise: Paise,
+  quantity: number,
+): { unitPricePaise: Paise; lineTotalPaise: Paise } {
+  const qty = Math.max(1, Math.trunc(quantity) || 1);
+  const line = Math.round(lineTotalPaise);
+  const unitPricePaise = Math.round(line / qty);
+  return { unitPricePaise, lineTotalPaise: unitPricePaise * qty };
+}
+
 /** Distribute `total` across weights; remainder goes to the largest weight index. */
 export function allocateProportionally(total: Paise, weights: number[]): Paise[] {
   const n = weights.length;

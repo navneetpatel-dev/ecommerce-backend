@@ -1,3 +1,4 @@
+import { Op } from 'sequelize';
 import { BaseRepository } from '@core/repository/BaseRepository';
 import { ProductQuestion } from '@database/models/productQuestion.model';
 import { PRODUCT_ANSWER_STATUS, PRODUCT_QUESTION_STATUS } from '@core/constants/statuses';
@@ -8,9 +9,22 @@ export class ProductQnaRepository extends BaseRepository<ProductQuestion> {
   }
 
   /** Public PDP Q&A — PUBLISHED only, most recent first, answers nested oldest-first. */
-  async findPublishedForProduct(productId: string, limit: number, offset: number) {
+  async findPublishedForProduct(
+    productId: string,
+    limit: number,
+    offset: number,
+    viewerUserId?: string,
+  ) {
     return this.model.findAndCountAll({
-      where: { productId, status: PRODUCT_QUESTION_STATUS.PUBLISHED },
+      where: {
+        productId,
+        [Op.or]: [
+          { status: PRODUCT_QUESTION_STATUS.PUBLISHED },
+          ...(viewerUserId
+            ? [{ status: PRODUCT_QUESTION_STATUS.PENDING, userId: viewerUserId }]
+            : []),
+        ],
+      },
       include: [
         { association: 'user', attributes: ['id', 'name'] },
         {

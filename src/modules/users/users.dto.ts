@@ -55,10 +55,10 @@ export const CreateAddressSchema = z.object({
     .transform((v) => (v ? v.toUpperCase() : v)),
   isDefault: z.boolean().optional().default(false),
   deliveryInstructions: z.string().trim().max(500).optional().nullable(),
-  // Required on create: a real device-captured GPS fix, not a geocode of the
-  // typed address. Powers the live-ETA distance on the tracking page.
-  lat: z.number().min(-90).max(90),
-  lng: z.number().min(-180).max(180),
+  // Optional device GPS fix. A 6-digit address can be saved when the browser
+  // denies or fails geolocation; coordinates are stored when capture succeeds.
+  lat: z.number().min(-90).max(90).optional().nullable(),
+  lng: z.number().min(-180).max(180).optional().nullable(),
 });
 
 export const UpdateAddressSchema = CreateAddressSchema.partial();

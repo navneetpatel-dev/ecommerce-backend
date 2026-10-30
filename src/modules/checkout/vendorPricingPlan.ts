@@ -11,7 +11,7 @@ import { pricingService } from '@modules/pricing/pricing.service';
 import { resolveVendorDiscountBearer } from '@modules/coupons/couponEngine';
 import type { PlatformSettingsPayload } from '@modules/settings/settings.service';
 import type { GstPriceBand } from '@modules/pricing/pricing.engine';
-import { fromPaise, toPaise, type Paise } from '@modules/pricing/money';
+import { alignUnitAndLine, fromPaise, toPaise, type Paise } from '@modules/pricing/money';
 import { preGstDiscountPaise, priceWithRuleGst, type GstRatedLine } from '@modules/tax/gstPricing';
 
 /**
@@ -317,22 +317,18 @@ export function priceVendorRows(input: {
             discountBearer: bearer,
           }).paise
         : priced.paise;
+    const lines = Object.fromEntries(
+      gross.lines.map((line, index) => {
+        const aligned = alignUnitAndLine(
+          line.taxablePaise + line.tax.total,
+          row.lines[index]!.quantity,
+        );
+        return [line.key, aligned];
+      }),
+    );
     inclusiveByVendor[row.vendorId] = {
-      itemsPaise: gross.taxablePaise + gross.tax.total,
-      lines: Object.fromEntries(
-        gross.lines.map((line, index) => [
-          line.key,
-          {
-            unitPricePaise: toPaise(
-              priceWithRuleGst(
-                { gstPercentage: ratedLines[index]!.gstPercentage, gstPriceBand: ratedLines[index]!.gstPriceBand },
-                row.lines[index]!.unitPrice,
-              ),
-            ),
-            lineTotalPaise: line.taxablePaise + line.tax.total,
-          },
-        ]),
-      ),
+      itemsPaise: Object.values(lines).reduce((sum, line) => sum + line.lineTotalPaise, 0),
+      lines,
     };
 
     pricedByVendor[row.vendorId] = priced;

@@ -134,7 +134,7 @@ export class OrdersService {
     const { linesWithReturns, ...summary } = await this.orderReturnSummary(
       mapped.subOrders as unknown as Array<{ id: string }>,
     );
-    const returnable = await returnableOrderItemIds(
+    const { returnable, windowClosed } = await returnableOrderItemIds(
       ((order as unknown as { subOrders?: unknown[] }).subOrders ?? []) as Parameters<typeof returnableOrderItemIds>[0],
       linesWithReturns,
     );
@@ -142,7 +142,11 @@ export class OrdersService {
       ...mapped,
       subOrders: mapped.subOrders.map((part) => ({
         ...part,
-        items: part.items.map((item) => ({ ...item, canReturn: returnable.has(String(item.id)) })),
+        items: part.items.map((item) => ({
+          ...item,
+          canReturn: returnable.has(String(item.id)),
+          returnWindowClosed: windowClosed.has(String(item.id)),
+        })),
       })),
       ...summary,
     };

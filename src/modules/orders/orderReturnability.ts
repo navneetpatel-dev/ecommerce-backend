@@ -22,8 +22,9 @@ export async function returnableOrderItemIds(
   parts: ReturnablePart[],
   linesWithReturns: Set<string>,
   now: Date = new Date(),
-): Promise<Set<string>> {
+): Promise<{ returnable: Set<string>; windowClosed: Set<string> }> {
   const returnable = new Set<string>();
+  const windowClosed = new Set<string>();
   for (const part of parts) {
     if (part.status !== ORDER_STATUS.DELIVERED) continue;
     const deliveredAt = part.shipment?.deliveredAt ?? part.updatedAt ?? null;
@@ -31,7 +32,8 @@ export async function returnableOrderItemIds(
       if (Number(line.quantity) <= 0 || linesWithReturns.has(line.id)) continue;
       const window = await returnWindowFor(line.variant?.product?.categoryId, deliveredAt);
       if (isWithinReturnWindow(window, now)) returnable.add(line.id);
+      else windowClosed.add(line.id);
     }
   }
-  return returnable;
+  return { returnable, windowClosed };
 }

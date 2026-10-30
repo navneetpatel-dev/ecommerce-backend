@@ -11,6 +11,7 @@ import { sequelize } from '@database/models';
 import { GiftCard } from '@database/models/giftCard.model';
 import { roundMoney, toPaise } from '@modules/pricing/money';
 import { paymentsService } from '@modules/payments/payments.service';
+import { razorpayOrderPayments } from '@modules/payments/razorpayOrderPayments';
 import { walletService } from '@modules/wallet/wallet.service';
 import { settingsService } from '@modules/settings/settings.service';
 import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
@@ -130,6 +131,24 @@ export class GiftCardsService {
       razorpayPaymentId: input.razorpayPaymentId,
       razorpaySignature: input.razorpaySignature,
     });
+
+    const gateway = await razorpayOrderPayments.fetch(input.razorpayOrderId);
+    const captured = gateway?.captured;
+    if (captured && captured.id === input.razorpayPaymentId) {
+      const pending = await GiftCard.findOne({
+        where: { razorpayOrderId: input.razorpayOrderId },
+        attributes: ['amount'],
+      });
+      if (pending && captured.amount !== toPaise(Number(pending.amount))) {
+        throw new AppError(
+          ERROR_MESSAGES.PAYMENT_AMOUNT_MISMATCH,
+          422,
+          ERROR_CODES.PAYMENT_AMOUNT_MISMATCH,
+        );
+      }
+    } else if (gateway) {
+      throw new AppError(ERROR_MESSAGES.PAYMENT_NOT_CAPTURED, 409, ERROR_CODES.PAYMENT_NOT_CAPTURED);
+    }
 
     const { giftCard } = await this.activateFromPayment({
       razorpayOrderId: input.razorpayOrderId,

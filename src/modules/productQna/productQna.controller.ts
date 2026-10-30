@@ -15,7 +15,11 @@ export const ask = asyncHandler(async (req: Request, res: Response) => {
 
 export const getByProduct = asyncHandler(async (req: Request, res: Response) => {
   const query = pageLimitQuerySchema.parse(req.query);
-  const result = await productQnaService.getProductQuestions(req.params.productId!, query);
+  const result = await productQnaService.getProductQuestions(
+    req.params.productId!,
+    query,
+    req.user?.id,
+  );
   res.json(ok(result.questions, { pagination: result.pagination }));
 });
 

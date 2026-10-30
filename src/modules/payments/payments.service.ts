@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { razorpayWebhookEventId } from './razorpayWebhookEventId';
 import { createIdempotentRazorpayRefund } from './razorpayRefund';
-import type { GatewayPayment } from './razorpayOrderPayments';
+import { razorpayOrderPayments, type GatewayPayment } from './razorpayOrderPayments';
 import { env } from '@config/env';
 import { razorpay, razorpayConfigured } from '@config/razorpay';
 import { AppError } from '@core/errors/AppError';
@@ -13,6 +13,7 @@ import { WebhookEvent } from '@database/models/webhookEvent.model';
 import { User } from '@database/models/user.model';
 import { SavedPaymentMethod } from '@database/models/savedPaymentMethod.model';
 import { NotFoundError } from '@core/errors/NotFoundError';
+import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { recordCouponUsagesForOrder } from '@modules/coupons/couponEngine';
 import { ORDER_STATUS, PAYMENT_STATUS, REFUND_STATUS } from '@core/constants/statuses';
 import { logger } from '@core/logger';
@@ -435,6 +436,47 @@ export class PaymentsService {
     }
 
     return { verified: true };
+  }
+
+  /**
+   * Signed Checkout callback. Confirms a captured payment here so a paid order
+   * does not wait on the webhook (which is still the idempotent path for the same confirm).
+   */
+  async confirmVerifiedCheckout(
+    userId: string,
+    input: { razorpayOrderId: string; razorpayPaymentId: string; razorpaySignature: string },
+  ): Promise<{ verified: true; paymentStatus: string }> {
+    this.verifyPaymentSignature(input);
+
+    const order = await Order.findOne({ where: { razorpayOrderId: input.razorpayOrderId } });
+    if (!order) throw new NotFoundError('Order');
+    if (order.userId !== userId) throw new ForbiddenError(ERROR_MESSAGES.FORBIDDEN);
+    if (order.paymentStatus === PAYMENT_STATUS.PAID) {
+      return { verified: true, paymentStatus: PAYMENT_STATUS.PAID };
+    }
+
+    const gateway = await razorpayOrderPayments.fetch(input.razorpayOrderId);
+    const captured = gateway?.captured;
+    if (!captured || captured.id !== input.razorpayPaymentId) {
+      throw new AppError(
+        ERROR_MESSAGES.PAYMENT_NOT_CAPTURED,
+        409,
+        ERROR_CODES.PAYMENT_NOT_CAPTURED,
+      );
+    }
+
+    await this.confirmCapturedPayment(captured);
+
+    const refreshed = await Order.findByPk(order.id, { attributes: ['paymentStatus'] });
+    if (refreshed?.paymentStatus !== PAYMENT_STATUS.PAID) {
+      throw new AppError(
+        ERROR_MESSAGES.PAYMENT_AMOUNT_MISMATCH,
+        422,
+        ERROR_CODES.PAYMENT_AMOUNT_MISMATCH,
+      );
+    }
+
+    return { verified: true, paymentStatus: PAYMENT_STATUS.PAID };
   }
 
   /**

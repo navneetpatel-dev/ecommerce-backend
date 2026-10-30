@@ -27,7 +27,9 @@ describe('returnableOrderItemIds', () => {
     const inside = await returnableOrderItemIds(parts, new Set(['already-asked']), new Date('2026-10-12T00:00:00Z'));
     const after = await returnableOrderItemIds(parts, new Set(['already-asked']), new Date('2026-11-30T00:00:00Z'));
 
-    assert.deepEqual([...inside], ['fresh']);
-    assert.equal(after.size, 0);
+    assert.deepEqual([...inside.returnable], ['fresh']);
+    assert.equal(inside.windowClosed.size, 0);
+    assert.equal(after.returnable.size, 0);
+    assert.deepEqual([...after.windowClosed], ['fresh']);
   });
 });

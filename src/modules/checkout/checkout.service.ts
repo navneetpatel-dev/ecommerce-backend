@@ -17,6 +17,7 @@ import { paymentsService } from '@modules/payments/payments.service';
 import { cartService } from '@modules/cart/cart.service';
 import { cartRepository } from '@modules/cart/cart.repository';
 import { settingsService } from '@modules/settings/settings.service';
+import { customerCouponName } from '@modules/coupons/coupon.utils';
 import {
   validateCouponSet,
   resolveCartCouponCodes,
@@ -58,6 +59,8 @@ import {
   allSubOrdersCancellable,
 } from '@core/constants/statuses';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
+import { env } from '@config/env';
+import { PINCODE_PATTERN } from '@core/constants/pincode';
 import { resolveCodForCatalogItems } from '@modules/products/pdpPolicy';
 import { notifyOrderConfirmed } from '@modules/notifications/orderNotifications';
 import { notificationsService } from '@modules/notifications/notifications.service';
@@ -129,6 +132,12 @@ async function loadUserCart(userId: string, transaction?: any): Promise<CartWith
   }
 
   return cart;
+}
+
+function assertDeliverablePincode(pincode: string) {
+  if (!PINCODE_PATTERN.test(String(pincode ?? '').trim())) {
+    throw new AppError(ERROR_MESSAGES.PINCODE_INVALID, 422, ERROR_CODES.PINCODE_INVALID);
+  }
 }
 
 function assertCartItemsAvailable(cart: CartWithItems) {
@@ -289,6 +298,7 @@ export class CheckoutService {
     if (!shippingAddress) {
       throw new NotFoundError('Shipping address');
     }
+    assertDeliverablePincode(shippingAddress.pincode);
 
     const availableItems = cart.items.filter((item) => {
       const product = item.variant?.product;
@@ -320,7 +330,12 @@ export class CheckoutService {
     let discount = 0;
     let cashbackAmount = 0;
     let applied: { code: string; discount: number; cashbackAmount?: number } | null = null;
-    let appliedCoupons: Array<{ code: string; discount: number; cashbackAmount?: number }> = [];
+    let appliedCoupons: Array<{
+      code: string;
+      name?: string;
+      discount: number;
+      cashbackAmount?: number;
+    }> = [];
     let vendorDiscountShares: Record<string, number> = {};
     let vendorShippingDiscountShares: Record<string, number> = {};
     let vendorBorneDiscountShares: Record<string, number> = {};
@@ -343,6 +358,12 @@ export class CheckoutService {
       vendorBorneDiscountShares = result.vendorBorneDiscountShares;
       appliedCoupons = result.perCoupon.map((entry) => ({
         code: entry.code,
+        name: customerCouponName(
+          result.coupons.find((coupon) => coupon.code === entry.code) ?? {
+            code: entry.code,
+            type: entry.type,
+          },
+        ),
         discount: entry.discount,
         cashbackAmount: entry.cashbackAmount,
       }));
@@ -490,6 +511,7 @@ export class CheckoutService {
       if (!shippingAddress) {
         throw new NotFoundError('Shipping address');
       }
+      assertDeliverablePincode(shippingAddress.pincode);
 
       const settings = await settingsService.getPlatformSettings();
       const itemById = new Map(cart.items.map((item) => [String(item.id), item]));
@@ -691,7 +713,7 @@ export class CheckoutService {
           userId,
           walletAmountUsed,
           { type: WALLET_REFERENCE_TYPE.ORDER, id: orderRow.id },
-          `${WALLET_DESCRIPTIONS.CHECKOUT_SPEND} #${orderRow.id.slice(0, 8).toUpperCase()}`,
+          `${WALLET_DESCRIPTIONS.CHECKOUT_SPEND} #${orderRow.id.slice(0, 8)}`,
           t,
         );
       }
@@ -897,6 +919,63 @@ export class CheckoutService {
 
     void notifyOrderConfirmed(order.id);
     return { orderId: order.id };
+  }
+
+  /**
+   * Pay-now for an order that already has a Razorpay order id. Returns the same
+   * checkout payload as placement, without creating a second gateway order.
+   */
+  async resumePendingPayment(
+    userId: string,
+    orderId: string,
+  ): Promise<{
+    orderId: string;
+    razorpayOrderId: string;
+    amount: number;
+    currency: string;
+    keyId: string;
+    checkoutConfigId?: string;
+  }> {
+    await confirmIfPaidAtGateway(orderId, userId);
+    const order = await Order.findByPk(orderId);
+    if (!order) throw new NotFoundError('Order');
+    if (order.userId !== userId) {
+      throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_ORDER);
+    }
+    const payable =
+      order.paymentMethod === PAYMENT_METHOD.RAZORPAY &&
+      order.paymentStatus === PAYMENT_STATUS.PENDING &&
+      order.status !== ORDER_STATUS.CANCELLED &&
+      Boolean(order.razorpayOrderId);
+    if (!payable) {
+      throw new ValidationError(ERROR_MESSAGES.CHECKOUT_PAYMENT_NOT_OPEN);
+    }
+    if (!env.RAZORPAY_KEY_ID) {
+      throw new AppError(
+        ERROR_MESSAGES.RAZORPAY_NOT_CONFIGURED,
+        503,
+        ERROR_CODES.RAZORPAY_NOT_CONFIGURED,
+      );
+    }
+    const storedDue = Number(order.razorpayAmountPaid ?? 0);
+    const amountRupees =
+      storedDue > 0
+        ? storedDue
+        : checkoutAmountDue(Number(order.totalAmount), Number(order.walletAmountUsed ?? 0));
+    const amount = toPaise(amountRupees);
+    if (amount < RAZORPAY_MIN_AMOUNT_PAISE) {
+      throw new ValidationError(ERROR_MESSAGES.ORDER_AMOUNT_BELOW_RAZORPAY_MIN);
+    }
+    return {
+      orderId: order.id,
+      razorpayOrderId: String(order.razorpayOrderId),
+      amount,
+      currency: 'INR',
+      keyId: env.RAZORPAY_KEY_ID,
+      ...(env.RAZORPAY_CHECKOUT_CONFIG_ID
+        ? { checkoutConfigId: env.RAZORPAY_CHECKOUT_CONFIG_ID }
+        : {}),
+    };
   }
 
   async cancelPendingCheckout(

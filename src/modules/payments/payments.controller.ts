@@ -5,10 +5,10 @@ import { paymentsService } from './payments.service';
 import { VerifyPaymentSchema } from './payments.dto';
 import { HEADERS } from '@core/constants/http';
 
-/** UX confirmation only — does not mark the order paid. */
+/** Signed Checkout callback — confirms a captured payment; the webhook stays idempotent. */
 export const verifyPayment = asyncHandler(async (req: Request, res: Response) => {
   const dto = VerifyPaymentSchema.parse(req.body);
-  const result = paymentsService.verifyPaymentSignature({
+  const result = await paymentsService.confirmVerifiedCheckout(req.user!.id, {
     razorpayOrderId: dto.razorpayOrderId!,
     razorpayPaymentId: dto.razorpayPaymentId!,
     razorpaySignature: dto.razorpaySignature!,

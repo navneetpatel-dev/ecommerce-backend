@@ -45,8 +45,8 @@ function serializeQuestion(row: ProductQuestion, opts?: { publishedAnswersOnly?:
 export class ProductQnaService {
   /**
    * Pre-moderation, same policy as reviews: new questions start PENDING and
-   * only become customer-visible once a moderator publishes them (see
-   * `getProductQuestions`, which only ever returns PUBLISHED rows).
+   * only become public once a moderator publishes them. The asker still sees
+   * their own pending question on the product page.
    */
   async askQuestion(userId: string, data: { productId: string; question: string }) {
     const product = await Product.findByPk(data.productId);
@@ -61,9 +61,18 @@ export class ProductQnaService {
   }
 
   /** Public PDP Q&A — PUBLISHED questions and PUBLISHED answers only. */
-  async getProductQuestions(productId: string, query: { page: number; limit: number }) {
+  async getProductQuestions(
+    productId: string,
+    query: { page: number; limit: number },
+    viewerUserId?: string,
+  ) {
     const offset = paginationOffset(query.page, query.limit);
-    const { rows, count } = await productQnaRepository.findPublishedForProduct(productId, query.limit, offset);
+    const { rows, count } = await productQnaRepository.findPublishedForProduct(
+      productId,
+      query.limit,
+      offset,
+      viewerUserId,
+    );
     return {
       questions: rows.map((row) => serializeQuestion(row, { publishedAnswersOnly: true })),
       pagination: buildPaginationMeta(count, query.page, query.limit),

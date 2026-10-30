@@ -113,11 +113,28 @@ const DEFAULTS: PlatformSettingsPayload = {
   scheduledReportsHourUtc: 6,
 };
 
+/** Presets outside the stored cap are a broken config; raise the cap so they can be paid. */
+function alignWalletRecharge(settings: PlatformSettingsPayload): PlatformSettingsPayload {
+  const minInr = settings.walletMinRechargeInr;
+  const presets = (settings.walletRechargePresetsInr ?? []).filter(
+    (amount) => Number.isFinite(amount) && amount >= minInr,
+  );
+  const highestPreset = presets.reduce((highest, amount) => Math.max(highest, amount), minInr);
+  const maxInr = Math.max(settings.walletMaxRechargeInr, highestPreset);
+  return {
+    ...settings,
+    walletMaxRechargeInr: maxInr,
+    walletRechargePresetsInr: presets.filter((amount) => amount <= maxInr),
+  };
+}
+
 export const settingsService = {
   async getPlatformSettings(): Promise<PlatformSettingsPayload> {
     const row = await PlatformSetting.findOne({ where: { key: SETTINGS_KEY } });
-    if (!row) return { ...DEFAULTS };
-    return { ...DEFAULTS, ...(row.value as Partial<PlatformSettingsPayload>) };
+    const merged = row
+      ? { ...DEFAULTS, ...(row.value as Partial<PlatformSettingsPayload>) }
+      : { ...DEFAULTS };
+    return alignWalletRecharge(merged);
   },
 
   async updatePlatformSettings(

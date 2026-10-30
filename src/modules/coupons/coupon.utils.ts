@@ -2,6 +2,30 @@ import type { Coupon, CouponConfig } from '@database/models/coupon.model';
 import { allocateProportionally, fromPaise, toPaise, roundMoney } from '@modules/pricing/money';
 import { lineSubtotal } from '@modules/pricing/displayMoney';
 
+/** Shopper-facing offer name. Internal codes such as CS-COUPON-PLATFORM-10 stay off the cart. */
+export function customerCouponName(coupon: {
+  code: string;
+  type: string;
+  value?: number | null;
+}): string {
+  const value = Number(coupon.value ?? 0);
+  const amount = Number.isFinite(value) && value > 0 ? String(roundMoney(value)).replace(/\.00$/, '') : '';
+  switch (coupon.type) {
+    case 'PERCENTAGE':
+      return amount ? `${amount}% off` : 'Percent off';
+    case 'FLAT':
+      return amount ? `₹${amount} off` : 'Amount off';
+    case 'FREE_SHIPPING':
+      return 'Free shipping';
+    case 'CASHBACK':
+      return amount ? `${amount}% cashback` : 'Cashback';
+    case 'BOGO':
+      return 'Buy one, get one';
+    default:
+      return coupon.code;
+  }
+}
+
 export type CartLineForCoupon = {
   productId: string;
   variantId?: string;

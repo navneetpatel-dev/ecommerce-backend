@@ -260,7 +260,10 @@ export class CartService {
     // The priced lines' GST-inclusive totals come from the engine, so they add up to the bill.
     for (const item of mappedItems) {
       const inclusive = inclusiveLines[item.id];
-      if (inclusive) item.lineDisplaySubtotal = inclusive.lineTotal;
+      if (inclusive) {
+        item.lineDisplaySubtotal = inclusive.lineTotal;
+        item.product = { ...item.product, displayPrice: inclusive.unitPrice };
+      }
     }
 
     if (appliedCoupon && appliedCoupon.cashbackAmount > 0) {
@@ -300,7 +303,7 @@ export class CartService {
     merchandiseDiscountTotal: number;
   }): Promise<{
     preview: NonNullable<CartView['pricingPreview']>;
-    inclusiveLines: Record<string, { lineTotal: number }>;
+    inclusiveLines: Record<string, { lineTotal: number; unitPrice: number }>;
   }> {
     const merchandiseSubtotal = sumRupees(input.items.map((item) => item.lineSubtotal));
     if (input.items.length === 0) {
@@ -388,7 +391,7 @@ export class CartService {
     let grandTotalPaise = 0;
     let itemsPaise = 0;
     let itemsPayablePaise = 0;
-    const inclusiveLines: Record<string, { lineTotal: number }> = {};
+    const inclusiveLines: Record<string, { lineTotal: number; unitPrice: number }> = {};
     for (const [vendorId, priced] of Object.entries(pricedByVendor)) {
       const p = priced.paise;
       discountPaise += p.merchandiseDiscountPaise + p.shippingDiscountPaise;
@@ -400,7 +403,10 @@ export class CartService {
       if (inclusive) {
         itemsPaise += inclusive.itemsPaise;
         for (const [key, line] of Object.entries(inclusive.lines)) {
-          inclusiveLines[key] = { lineTotal: fromPaise(line.lineTotalPaise) };
+          inclusiveLines[key] = {
+            lineTotal: fromPaise(line.lineTotalPaise),
+            unitPrice: fromPaise(line.unitPricePaise),
+          };
         }
       }
     }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { coerceRupees, fromPaise, roundMoney, sumRupees, toPaise } from '../money';
+import { alignUnitAndLine, coerceRupees, fromPaise, roundMoney, sumRupees, toPaise } from '../money';
 
 describe('pricing money', () => {
   it('coerces Sequelize DECIMAL strings without changing stored value', () => {
@@ -28,6 +28,16 @@ describe('pricing money', () => {
     assert.equal(sumRupees([0.1, 0.2]) - 0.3, 0);
     assert.equal(sumRupees(['10.20', '10.20', '10.20']), 30.6);
     assert.equal(sumRupees(['-5.05', 5.05]), 0);
+  });
+
+  it('aligns unit and line so quantity times unit equals the line', () => {
+    const even = alignUnitAndLine(651248, 4);
+    assert.equal(even.unitPricePaise * 4, even.lineTotalPaise);
+    const odd = alignUnitAndLine(651247, 4);
+    assert.equal(odd.unitPricePaise * 4, odd.lineTotalPaise);
+    const single = alignUnitAndLine(351943, 1);
+    assert.equal(single.unitPricePaise, 351943);
+    assert.equal(single.lineTotalPaise, 351943);
   });
 
   it('treats missing values as nothing to add', () => {

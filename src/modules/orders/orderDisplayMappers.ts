@@ -1,11 +1,10 @@
-import { coerceRupees, fromPaise, roundMoney, toPaise } from '@modules/pricing/money';
+import { alignUnitAndLine, coerceRupees, fromPaise, roundMoney, toPaise } from '@modules/pricing/money';
 import { gstOnTaxablePaise } from '@modules/pricing/pricing.engine';
 import {
   checkoutAmountDue,
   combinedDiscount,
   lineTotal,
   orderItemDisplayLineSubtotal,
-  priceWithGst,
   recomputeOrderDisplayFields,
   shippingCharged,
   subOrderCustomerTotal,
@@ -43,14 +42,23 @@ function orderItemInclusive(item: Record<string, unknown>, unitPrice: number, qu
   const tax = item.taxBreakdown as { cgst?: unknown; sgst?: unknown; gstPercentage?: unknown };
   const rate = Number(tax.gstPercentage ?? 0);
   const intraState = coerceRupees(tax.cgst) > 0 || coerceRupees(tax.sgst) > 0;
-  const displayUnitPrice = priceWithGst(unitPrice, rate);
   const paidPaise = toPaise(roundMoney(item.taxableAmount)) + toPaise(roundMoney(item.taxAmount));
-  if (toPaise(roundMoney(item.discountAmount)) <= 0) {
-    return { displayUnitPrice, lineDisplaySubtotal: fromPaise(paidPaise), paidPaise };
-  }
-  const linePaise = toPaise(unitPrice) * quantity;
-  const grossPaise = linePaise + gstOnTaxablePaise(linePaise, Number.isFinite(rate) ? rate : 0, intraState).total;
-  return { displayUnitPrice, lineDisplaySubtotal: fromPaise(grossPaise), paidPaise };
+  const grossPaise =
+    toPaise(roundMoney(item.discountAmount)) <= 0
+      ? paidPaise
+      : (() => {
+          const linePaise = toPaise(unitPrice) * quantity;
+          return (
+            linePaise +
+            gstOnTaxablePaise(linePaise, Number.isFinite(rate) ? rate : 0, intraState).total
+          );
+        })();
+  const aligned = alignUnitAndLine(grossPaise, quantity);
+  return {
+    displayUnitPrice: fromPaise(aligned.unitPricePaise),
+    lineDisplaySubtotal: fromPaise(aligned.lineTotalPaise),
+    paidPaise,
+  };
 }
 
 export function mapOrderItem(item: Record<string, unknown>) {

@@ -88,7 +88,7 @@ export async function creditPendingCashbackForOrder(
       order.userId,
       proratedPending,
       { type: WALLET_REFERENCE_TYPE.CASHBACK, id: order.id },
-      `${WALLET_DESCRIPTIONS.CASHBACK_CREDIT} #${order.id.slice(0, 8).toUpperCase()}`,
+      `${WALLET_DESCRIPTIONS.CASHBACK_CREDIT} #${order.id.slice(0, 8)}`,
       transaction,
       {
         pointSource: WALLET_POINT_SOURCE.PROMOTIONAL,

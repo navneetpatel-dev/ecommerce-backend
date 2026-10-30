@@ -1,4 +1,4 @@
-import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional, NonAttribute } from 'sequelize';
+import { Model, DataTypes, Op, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional, NonAttribute } from 'sequelize';
 import type { ProductVariant } from './productVariant.model';
 import type { ProductImage } from './productImage.model';
 import { PRODUCT_STATUS, VENDOR_STATUS, type ProductStatus } from '@core/constants/statuses';
@@ -56,7 +56,15 @@ export class Product extends Model<InferAttributes<Product>, InferCreationAttrib
 
     // Customer-facing catalog rule — define once; every shopper query uses this scope.
     Product.addScope('customerVisible', {
-      where: { status: PRODUCT_STATUS.LIVE },
+      where: {
+        status: PRODUCT_STATUS.LIVE,
+        name: { [Op.notILike]: 'Seed %' },
+        [Op.and]: [
+          Sequelize.literal(
+            `"Product"."categoryId" IN (SELECT id FROM categories WHERE status = 'ACTIVE' AND "deletedAt" IS NULL)`,
+          ),
+        ],
+      },
       include: [
         {
           model: models.Vendor,

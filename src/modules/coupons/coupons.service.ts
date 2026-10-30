@@ -39,7 +39,7 @@ import {
   resolveCartCouponCodes,
   type CartLineForCoupon,
 } from './couponEngine';
-import { generateCouponCode } from './coupon.utils';
+import { customerCouponName, generateCouponCode } from './coupon.utils';
 import { sqlKeptCouponDiscountPaise } from './couponDiscountSql';
 import { listCouponBatchViews, type CouponBatchView } from './couponBatchViews';
 
@@ -733,6 +733,7 @@ export class CouponsService {
     } | null;
     appliedCoupons: Array<{
       code: string;
+      name: string;
       discount: number;
       cashbackAmount: number;
       type: string;
@@ -796,6 +797,12 @@ export class CouponsService {
       },
       appliedCoupons: result.perCoupon.map((entry) => ({
         code: entry.code,
+        name: customerCouponName(
+          result.coupons.find((coupon) => coupon.code === entry.code) ?? {
+            code: entry.code,
+            type: entry.type,
+          },
+        ),
         discount: entry.discount,
         cashbackAmount: entry.cashbackAmount,
         type: entry.type,
@@ -818,6 +825,7 @@ export class CouponsService {
     } | null;
     appliedCoupons: Array<{
       code: string;
+      name: string;
       discount: number;
       cashbackAmount: number;
       type: string;
@@ -881,6 +889,12 @@ export class CouponsService {
       },
       appliedCoupons: result.perCoupon.map((entry) => ({
         code: entry.code,
+        name: customerCouponName(
+          result.coupons.find((coupon) => coupon.code === entry.code) ?? {
+            code: entry.code,
+            type: entry.type,
+          },
+        ),
         discount: entry.discount,
         cashbackAmount: entry.cashbackAmount,
         type: entry.type,
@@ -925,6 +939,7 @@ export class CouponsService {
 
     const eligible: Array<{
       code: string;
+      name: string;
       type: string;
       discount: number;
       cashbackAmount: number;
@@ -941,6 +956,7 @@ export class CouponsService {
       if (result.valid) {
         eligible.push({
           code: coupon.code,
+          name: customerCouponName(coupon),
           type: coupon.type,
           discount: result.discount,
           cashbackAmount: result.cashbackAmount,
