@@ -14,14 +14,14 @@ describe('coupon lines valued as the bill shows them', () => {
     const vendor = { id: 'v1', state: 'MAHARASHTRA', commissionRate: 10 } as unknown as Vendor;
     mock.method(Vendor, 'findAll', async () => [vendor] as never);
     const lookup = mock.method(taxService, 'getGstRateRule', async () => ({ gstPercentage: 5, gstPriceBand: null }));
-    // ₹10.25 × 2 at 5%: ₹10.76 a piece (₹21.52 for two), but the bill charges GST on the
-    // line — ₹20.50 + ₹1.03 = ₹21.53.
+    // ₹10.25 × 2 at 5%: GST on the line is ₹20.50 + ₹1.03 = ₹21.53, which the bill
+    // shows as ₹10.77 a piece and ₹21.54 for two (unit × quantity, to the paisa).
     const lines = await withGstInclusiveLineValues(
       [{ productId: 'p1', categoryId: 'c1', vendorId: 'v1', unitPrice: 10.25, quantity: 2 }],
       'KARNATAKA',
     );
-    assert.equal(lines[0]!.unitPrice, 10.76);
-    assert.equal(linesSubtotal(lines), 21.53);
+    assert.equal(lines[0]!.unitPrice, 10.77);
+    assert.equal(linesSubtotal(lines), 21.54);
     assert.equal(lookup.mock.callCount(), 1);
 
     const row: VendorPricingRow = {
@@ -40,6 +40,6 @@ describe('coupon lines valued as the bill shows them', () => {
       shippingStateCode: 'KARNATAKA',
       settings: { defaultCommissionRate: 10, tcsRatePercent: 0 } as PlatformSettingsPayload,
     });
-    assert.equal(inclusiveByVendor.v1!.itemsPaise, 2_153);
+    assert.equal(inclusiveByVendor.v1!.itemsPaise, 2_154);
   });
 });

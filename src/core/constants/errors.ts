@@ -171,10 +171,8 @@ export const ERROR_MESSAGES = {
   OAUTH_PASSWORD_ACCOUNT: 'This account uses Google sign-in. Continue with Google instead.',
   OAUTH_STATE_INVALID: 'Sign-in session expired. Please try again.',
   VENDOR_NOT_PENDING: 'Vendor is not in PENDING status',
-  VENDOR_KYC_INCOMPLETE:
-    'Vendor cannot be approved until all required KYC documents are uploaded and verified',
-  VENDOR_KYC_BLOCKS_PRODUCT:
-    'This category requires additional verified KYC documents before the product can go live',
+  VENDOR_KYC_INCOMPLETE: 'Vendor cannot be approved until all required KYC documents are uploaded and verified',
+  VENDOR_KYC_BLOCKS_PRODUCT: 'This category requires additional verified KYC documents before the product can go live',
   VENDOR_BUSINESS_NAME_EXISTS: 'Business name already exists',
   VENDOR_CATEGORIES_INVALID: 'One or more categories are invalid',
   VENDOR_ENTITY_TYPE_REQUIRED: 'Business entity type is required',
@@ -182,8 +180,7 @@ export const ERROR_MESSAGES = {
   PRODUCT_COMPARE_AT_BELOW_PRICE: 'MRP must be greater than or equal to the selling price',
   PRODUCT_COMPARE_AT_BELOW_PRICE_WITH_GST:
     'MRP includes GST, so it must be at least the selling price with GST (what the customer pays) of every variant',
-  PRODUCT_VARIANT_ABOVE_MRP:
-    "This price with GST is above the product's MRP. Raise the MRP (it includes GST) or lower the price",
+  PRODUCT_VARIANT_ABOVE_MRP: "This price with GST is above the product's MRP. Raise the MRP (it includes GST) or lower the price",
   PRODUCT_SPECS_TOO_MANY: `Too many specification rows (maximum ${PRODUCT_FIELD_LIMITS.SPECS_MAX})`,
   PRODUCT_SPEC_KEY_INVALID: `Specification labels must be between 1 and ${PRODUCT_FIELD_LIMITS.SPEC_KEY_MAX} characters`,
   PRODUCT_SPEC_DUPLICATE_KEY: 'Specification labels must be unique',
@@ -201,8 +198,7 @@ export const ERROR_MESSAGES = {
   CATEGORY_INACTIVE: 'Category must be active to assign products',
   CATEGORY_REASSIGN_SAME: 'Source and target categories must be different',
   CATEGORY_ATTRIBUTE_EXISTS: 'An attribute with this name already exists on the category',
-  CATEGORY_SECONDARY_INVALID:
-    'Secondary categories must be active and different from the primary category',
+  CATEGORY_SECONDARY_INVALID: 'Secondary categories must be active and different from the primary category',
   ITEMS_UNAVAILABLE: 'Some items in your cart are no longer available',
   VENDOR_UNAVAILABLE: 'This seller is currently unavailable',
   COUPON_INACTIVE: 'Coupon is not active',
@@ -212,8 +208,7 @@ export const ERROR_MESSAGES = {
   COUPON_RESTRICTION: 'You are not eligible for this coupon',
   COUPON_MIN_ORDER: 'Order does not meet the minimum requirements for this coupon',
   COUPON_STACK: 'This coupon cannot be combined with another coupon',
-  COUPON_DUPLICATE_SCOPE:
-    'Only one platform coupon and one coupon per seller can be applied together',
+  COUPON_DUPLICATE_SCOPE: 'Only one platform coupon and one coupon per seller can be applied together',
   DOCUMENT_SEQUENCE_MISSING: 'Document number sequence is not configured',
   WALLET_INSUFFICIENT_BALANCE: 'Insufficient wallet balance',
   WALLET_INVALID_AMOUNT: 'Wallet amount must be greater than zero',
@@ -243,10 +238,8 @@ export const ERROR_MESSAGES = {
   REPORT_FORBIDDEN: 'You do not have access to this report',
   REPORT_EXPORT_RATE_LIMITED: 'Too many export requests — please wait and try again',
   REPORT_RANGE_TOO_WIDE: 'Report date range exceeds the maximum allowed window',
-  S3_NOT_CONFIGURED:
-    'File upload is not available right now. Please try again later.',
-  S3_ACCESS_DENIED:
-    'File upload is temporarily unavailable. Please try again later or contact support.',
+  S3_NOT_CONFIGURED: 'File upload is not available right now. Please try again later.',
+  S3_ACCESS_DENIED: 'File upload is temporarily unavailable. Please try again later or contact support.',
   UPLOAD_INVALID_DATA_URL: 'Invalid file data URL',
   UPLOAD_INVALID_CONTENT_TYPE: 'File type is not allowed for this upload',
   UPLOAD_EMPTY: 'File is empty',
@@ -277,12 +270,10 @@ export const ERROR_MESSAGES = {
   BUG_VIDEO_DURATION_UNKNOWN: 'Unable to verify the recording duration; please re-record and try again',
   BUG_WONT_FIX_REASON_REQUIRED: 'A reason is required when marking a bug as will not fix',
   BUG_DUPLICATE_TARGET_REQUIRED: 'A duplicate target bug report is required',
-  BUG_DUPLICATE_TARGET_INVALID:
-    'Duplicate target must be an existing open report that is not itself a duplicate',
+  BUG_DUPLICATE_TARGET_INVALID: 'Duplicate target must be an existing open report that is not itself a duplicate',
   BUG_FORBIDDEN: 'You do not have access to this bug report',
   BUG_NOT_FOUND: 'Bug report not found',
-  BUG_REPORTER_FIELDS_FORBIDDEN:
-    'Reporters cannot set assignee, affected module, or status',
+  BUG_REPORTER_FIELDS_FORBIDDEN: 'Reporters cannot set assignee, affected module, or status',
   BUG_REPORTER_ROLE_INVALID: 'Only customers and vendors can file bug reports',
   INVALID_SIGNATURE: 'Payment verification failed. Please try again.',
   ORDER_CANCEL_PAID_ONLY: 'Only paid orders can be cancelled',
@@ -305,8 +296,7 @@ export const ERROR_MESSAGES = {
   RETURN_NO_RAZORPAY_PAYMENT: 'This order has no online payment to refund',
   PART_REFUND_RETRY_FAILED_ONLY: 'Only a failed card refund can be retried',
   PART_REFUND_FAILED: 'The card refund could not be issued. Try again later.',
-  TAX_DEFAULT_RULE_EXISTS:
-    'A default tax rule (no category) already exists. Edit it, or give this rule a category.',
+  TAX_DEFAULT_RULE_EXISTS: 'A default tax rule (no category) already exists. Edit it, or give this rule a category.',
   WALLET_RECHARGE_RAZORPAY_MIN: 'Recharge amount is below the minimum allowed for online payment',
   NOT_YOUR_PRODUCT_REVIEW: 'You do not have access to this product review',
   AUTH_RATE_LIMITED: 'Too many login attempts. Please wait a few minutes and try again.',
@@ -315,10 +305,8 @@ export const ERROR_MESSAGES = {
   SHIPPING_STATUS_UNSUPPORTED: 'This shipment status is not supported',
   SHIPPING_WEBHOOK_NOT_CONFIGURED: 'Shipping webhook processing is not configured',
   ORDER_AMOUNT_BELOW_RAZORPAY_MIN: 'Order amount is below the minimum allowed for online payment',
-  PAYMENT_NOT_CAPTURED:
-    'Payment has not been captured yet. It will confirm once the bank completes it.',
-  PAYMENT_AMOUNT_MISMATCH:
-    'The payment amount does not match this order, so it was not marked paid.',
+  PAYMENT_NOT_CAPTURED: 'Payment has not been captured yet. It will confirm once the bank completes it.',
+  PAYMENT_AMOUNT_MISMATCH: 'The payment amount does not match this order, so it was not marked paid.',
   INVALID_WEBHOOK_PAYLOAD: 'Invalid webhook payload',
   OTP_INVALID_OR_EXPIRED: 'The code you entered is invalid or has expired',
   OTP_TOO_MANY_ATTEMPTS: 'Too many incorrect attempts. Request a new code',
