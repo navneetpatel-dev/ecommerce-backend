@@ -562,7 +562,7 @@ async function paymentGatewayReconciliation(filters: ReportFilters) {
 }
 
 /**
- * COD orders with the cash owed at the door and the cash agents collected. Cash due is
+ * COD orders with the cash owed at the door and the cash the courier collected. Cash due is
  * what the shipments are set to collect (`sqlCodCashDuePaise`): cancelled and RTO'd
  * parts leave it, as they leave the order's payment; it used to be the checkout
  * `amountDue`, which overstated it after a partial cancellation or an RTO.

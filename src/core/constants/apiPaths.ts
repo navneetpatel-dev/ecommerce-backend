@@ -35,7 +35,6 @@ export const API_MOUNTS = {
   uploads: '/uploads',
   supportTickets: '/support-tickets',
   bugReports: '/bug-reports',
-  deliveryAgents: '/delivery-agents',
   productQna: '/product-qna',
   giftCards: '/gift-cards',
   payments: '/payments',

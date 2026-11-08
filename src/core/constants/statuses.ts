@@ -146,24 +146,6 @@ export const VENDOR_DOCUMENT_TYPE_VALUES = Object.values(VENDOR_DOCUMENT_TYPE) a
   ...VendorDocumentType[],
 ];
 
-export const DELIVERY_AGENT_DOCUMENT_TYPE = {
-  ID_PROOF: 'ID_PROOF',
-  DRIVING_LICENSE: 'DRIVING_LICENSE',
-  VEHICLE_RC: 'VEHICLE_RC',
-  ADDRESS_PROOF: 'ADDRESS_PROOF',
-} as const;
-export type DeliveryAgentDocumentType =
-  (typeof DELIVERY_AGENT_DOCUMENT_TYPE)[keyof typeof DELIVERY_AGENT_DOCUMENT_TYPE];
-export const DELIVERY_AGENT_DOCUMENT_TYPE_VALUES = Object.values(DELIVERY_AGENT_DOCUMENT_TYPE) as [
-  DeliveryAgentDocumentType,
-  ...DeliveryAgentDocumentType[],
-];
-/** Both must be APPROVED before an agent can go "available for assignment". */
-export const DELIVERY_AGENT_REQUIRED_DOCUMENT_TYPES: readonly DeliveryAgentDocumentType[] = [
-  DELIVERY_AGENT_DOCUMENT_TYPE.ID_PROOF,
-  DELIVERY_AGENT_DOCUMENT_TYPE.DRIVING_LICENSE,
-];
-
 export const USER_STATUS = {
   ACTIVE: 'ACTIVE',
   BLOCKED: 'BLOCKED',
@@ -551,7 +533,6 @@ export const ROLES = {
   ADMIN_CATALOG_MANAGER: 'ADMIN_CATALOG_MANAGER',
   VENDOR_OWNER: 'VENDOR_OWNER',
   VENDOR_STAFF: 'VENDOR_STAFF',
-  DELIVERY_AGENT: 'DELIVERY_AGENT',
   CUSTOMER: 'CUSTOMER',
 } as const;
 export type RoleName = (typeof ROLES)[keyof typeof ROLES];
@@ -564,7 +545,6 @@ export const ROLE_LABELS: Record<RoleName, string> = {
   [ROLES.ADMIN_CATALOG_MANAGER]: 'Catalog Manager',
   [ROLES.VENDOR_OWNER]: 'Vendor Owner',
   [ROLES.VENDOR_STAFF]: 'Vendor Staff',
-  [ROLES.DELIVERY_AGENT]: 'Delivery Agent',
   [ROLES.CUSTOMER]: 'Customer',
 };
 
@@ -575,7 +555,6 @@ export const ADMIN_ROLES = [
 ] as const;
 
 export const VENDOR_ROLES = [ROLES.VENDOR_OWNER, ROLES.VENDOR_STAFF] as const;
-export const DELIVERY_ROLES = [ROLES.DELIVERY_AGENT] as const;
 
 export const GIFT_CARD_STATUS = {
   PENDING: 'PENDING',

@@ -4,7 +4,6 @@ import { ok } from '@core/http/ApiResponse';
 import { pageLimitQuerySchema } from '@core/http/pagination';
 import { COOKIES } from '@core/constants/http';
 import { shippingService } from './shipping.service';
-import { deliveryRatingsService } from '@modules/deliveryAgents/deliveryRatings.service';
 import { GetShippingRatesSchema, GetServiceabilitySchema, UpdateRateSchema } from './shipping.dto';
 
 export const getRates = asyncHandler(async (req: Request, res: Response) => {
@@ -51,14 +50,13 @@ export const deleteZone = asyncHandler(async (req: Request, res: Response) => {
   res.status(204).send();
 });
 
-export const submitDeliveryRating = asyncHandler(async (req: Request, res: Response) => {
-  const rating = await deliveryRatingsService.submit(req.params.shipmentId!, req.user!.id, req.body.rating, req.body.comment);
-  res.status(201).json(ok(rating));
+export const adminUpdateShipmentStatus = asyncHandler(async (req: Request, res: Response) => {
+  const shipment = await shippingService.adminUpdateShipmentStatus(req.params.shipmentId!, req.user!.id, req.body);
+  res.json(ok(shipment));
 });
 
-export const getDeliveryRating = asyncHandler(async (req: Request, res: Response) => {
-  const rating = await deliveryRatingsService.forShipment(req.params.shipmentId!, req.user!);
-  res.json(ok(rating));
+export const adminRtoQueue = asyncHandler(async (_req: Request, res: Response) => {
+  res.json(ok(await shippingService.adminRtoQueue()));
 });
 
 export const listAdminRates = asyncHandler(async (_req: Request, res: Response) => {

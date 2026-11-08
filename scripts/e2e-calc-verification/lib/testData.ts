@@ -4,11 +4,6 @@ export const CREDENTIALS = {
   // (ROLE_PERMISSIONS[SUPER_ADMIN] = PERMISSION_KEYS, all of them) so it's used for every
   // admin-level action in this script instead of a separate ADMIN_ORDER_MANAGER identity.
   superAdmin: { email: 'admin@ecommerce.com', password: 'Admin@123' },
-  deliveryAgents: [
-    { email: 'agent.north@ecommerce.com', password: 'Delivery@123', hub: 'NORTH-HUB' },
-    { email: 'agent.south@ecommerce.com', password: 'Delivery@123', hub: 'SOUTH-HUB' },
-    { email: 'agent.east@ecommerce.com', password: 'Delivery@123', hub: 'EAST-HUB' },
-  ],
 };
 
 // docs/TEST_CREDENTIALS.md's `customerN@example.com` pattern does not exist in this seeded DB

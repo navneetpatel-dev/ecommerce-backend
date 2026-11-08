@@ -3,7 +3,7 @@
 /**
  * Full per-attempt failure history for a shipment. Previously `Shipment`
  * only kept the latest `failureReason`/`failedAttemptCount` — this table
- * records every attempt (note + optional photo) so agents, customers, and
+ * records every attempt (note + optional photo) so admins, customers, and
  * support can see the whole story, not just the most recent line.
  */
 module.exports = {

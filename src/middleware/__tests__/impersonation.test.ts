@@ -77,7 +77,6 @@ describe('requestContext + impersonation attribution', () => {
       email: 'target@example.com',
       roleId: 'role-1',
       vendorId: null,
-      deliveryAgentId: null,
       roleName: 'CUSTOMER',
       impersonatedBy: 'admin-1',
     });
@@ -95,7 +94,6 @@ describe('requestContext + impersonation attribution', () => {
       email: 'user@example.com',
       roleId: 'role-1',
       vendorId: null,
-      deliveryAgentId: null,
       roleName: 'CUSTOMER',
     });
 

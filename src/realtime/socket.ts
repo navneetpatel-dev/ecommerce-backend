@@ -1,31 +1,22 @@
 import type { Server as HttpServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import { env } from '@config/env';
-import { canSeeShipmentDetails } from '@modules/shipping/shipmentAccess';
 import { logger } from '@core/logger';
 import { BEARER_PREFIX } from '@core/constants/http';
 import { loadUserFromBearer } from '@middleware/auth.middleware';
-import { Shipment } from '@database/models/shipment.model';
-import { SubOrder } from '@database/models/subOrder.model';
-import { Order } from '@database/models/order.model';
 import { ExportJob } from '@database/models/exportJob.model';
 
 type SocketUser = {
   id: string;
   vendorId: string | null;
-  deliveryAgentId: string | null;
   role: { name: string };
 } | null;
 
 let io: SocketIOServer | null = null;
 
 /**
- * Live GPS beaconing transport for the delivery module. A single event pair:
- * client emits `subscribe:shipment` (guarded by the same authorization rules
- * as the REST tracking lookup — admin, order owner, vendor owner, delivery
- * agent, or an unauthenticated guest who only ever receives location pings,
- * never shipment data); server pushes `location:update` to that shipment's
- * room whenever the assigned agent's location changes.
+ * Realtime transport for export jobs: a client emits `subscribe:export-job` for a job it
+ * owns and receives that job's progress events (`emitExportJobEvent`).
  */
 export function initSocket(server: HttpServer): SocketIOServer {
   io = new SocketIOServer(server, {
@@ -49,54 +40,6 @@ export function initSocket(server: HttpServer): SocketIOServer {
   });
 
   io.on('connection', (socket) => {
-    socket.on(
-      'subscribe:shipment',
-      async (
-        payload: { trackingNumber?: string },
-        ack?: (res: { ok: boolean; message?: string }) => void,
-      ) => {
-        try {
-          const trackingNumber = String(payload?.trackingNumber ?? '').trim();
-          if (!trackingNumber) {
-            ack?.({ ok: false, message: 'Tracking number required' });
-            return;
-          }
-          const shipment = await Shipment.findOne({
-            where: { trackingNumber },
-            include: [
-              {
-                model: SubOrder,
-                as: 'subOrder',
-                include: [{ model: Order, as: 'order', attributes: ['userId'] }],
-                attributes: ['vendorId'],
-              },
-            ],
-          });
-          if (!shipment) {
-            ack?.({ ok: false, message: 'Shipment not found' });
-            return;
-          }
-
-          // The room streams the agent's live location: only the shipment's own people,
-          // never an anonymous socket or an agent not carrying it.
-          const user = socket.data.user as SocketUser;
-          const facts = shipment as Shipment & { subOrder?: SubOrder & { order?: Order } };
-          if (!(await canSeeShipmentDetails(user, facts))) {
-            ack?.({ ok: false, message: 'Not authorized for this shipment' });
-            return;
-          }
-
-          socket.join(`shipment:${shipment.id}`);
-          ack?.({ ok: true });
-        } catch (error) {
-          logger.warn('socket subscribe:shipment failed', {
-            error: error instanceof Error ? error.message : error,
-          });
-          ack?.({ ok: false, message: 'Could not subscribe' });
-        }
-      },
-    );
-
     socket.on(
       'subscribe:export-job',
       async (
@@ -129,14 +72,6 @@ export function initSocket(server: HttpServer): SocketIOServer {
 
   logger.info('Socket.IO realtime server initialized');
   return io;
-}
-
-/** Called by deliveryAgentsService.updateLocation after persisting the agent's fix. */
-export function emitShipmentLocation(
-  shipmentId: string,
-  payload: { lat: number; lng: number; updatedAt: string },
-): void {
-  io?.to(`shipment:${shipmentId}`).emit('location:update', { shipmentId, ...payload });
 }
 
 export function emitExportJobEvent(

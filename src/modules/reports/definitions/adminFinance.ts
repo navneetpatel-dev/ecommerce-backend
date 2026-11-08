@@ -777,91 +777,6 @@ async function commissionRevenueExport(
   return { rows: page.rows, nextCursor: page.nextCursor };
 }
 
-/**
- * Section 194C TDS on delivery-agent payouts (agents are contractors): per payout, the
- * agent's PAN, gross earnings, rate, TDS withheld and net paid, with the IST month and
- * financial-year quarter the TDS is deposited and returned (Form 26Q) under. Failed
- * payouts are left out — nothing was paid or withheld.
- */
-function deliveryAgentTdsSelectSql(): string {
-  const ist = `p."createdAt" AT TIME ZONE '${IST_TIME_ZONE}'`;
-  return `
-    SELECT
-      p.id::text AS "payoutId",
-      a.id::text AS "agentId",
-      a."fullName" AS "agentName",
-      COALESCE(NULLIF(a."bankDetails"->>'pan', ''), '') AS pan,
-      to_char(${ist}, 'YYYY-MM') AS period,
-      CONCAT(
-        'Q', ((EXTRACT(MONTH FROM ${ist})::int + 8) % 12) / 3 + 1,
-        ' FY', CASE WHEN EXTRACT(MONTH FROM ${ist}) >= 4
-          THEN EXTRACT(YEAR FROM ${ist})::int ELSE EXTRACT(YEAR FROM ${ist})::int - 1 END
-      ) AS quarter,
-      ROUND(p.amount::numeric * 100)::bigint AS "grossPaise",
-      p."tdsRatePercent" AS "tdsRatePercent",
-      ROUND(COALESCE(p."tdsAmount", 0)::numeric * 100)::bigint AS "tdsPaise",
-      ROUND(p."netAmount"::numeric * 100)::bigint AS "netPaise",
-      p.status::text AS status,
-      p."paidAt" AS "paidAt",
-      p."createdAt" AS "createdAt"
-    FROM delivery_agent_payouts p
-    INNER JOIN delivery_agents a ON a.id = p."deliveryAgentId"
-    WHERE p."deletedAt" IS NULL
-      AND p.status::text <> 'FAILED'
-      AND p."createdAt" BETWEEN :from AND :to
-  `;
-}
-
-function mapDeliveryAgentTdsRow(row: Record<string, unknown>) {
-  return {
-    payoutId: String(row.payoutId ?? ''),
-    agentId: String(row.agentId ?? ''),
-    agentName: String(row.agentName ?? ''),
-    pan: String(row.pan ?? ''),
-    period: String(row.period ?? ''),
-    quarter: String(row.quarter ?? ''),
-    grossAmount: fromPaise(Number(row.grossPaise ?? 0)),
-    tdsRatePercent: row.tdsRatePercent == null ? null : Number(row.tdsRatePercent),
-    tdsAmount: fromPaise(Number(row.tdsPaise ?? 0)),
-    netAmount: fromPaise(Number(row.netPaise ?? 0)),
-    status: String(row.status ?? ''),
-    paidAt: row.paidAt,
-  };
-}
-
-const DELIVERY_AGENT_TDS_KEYSET: KeysetOrderCol[] = [
-  { column: 'createdAt', direction: 'DESC' },
-  { column: 'payoutId', direction: 'DESC' },
-];
-
-async function deliveryAgentTds(filters: ReportFilters) {
-  assertReportRange(filters);
-  return pagedSqlQuery({
-    selectSql: deliveryAgentTdsSelectSql(),
-    orderBySql: `"createdAt" DESC, "payoutId" DESC`,
-    replacements: sqlReplacements(filters),
-    filters,
-    mapRow: mapDeliveryAgentTdsRow,
-  });
-}
-
-async function deliveryAgentTdsExport(
-  filters: ReportFilters,
-  cursor: { values: unknown[] } | null,
-  limit: number,
-) {
-  assertReportRange(filters);
-  const page = await keysetSqlQuery({
-    selectSql: deliveryAgentTdsSelectSql(),
-    order: DELIVERY_AGENT_TDS_KEYSET,
-    replacements: sqlReplacements(filters),
-    limit,
-    cursor,
-    mapRow: mapDeliveryAgentTdsRow,
-  });
-  return { rows: page.rows, nextCursor: page.nextCursor };
-}
-
 async function couponDiscountCost(filters: ReportFilters) {
   assertReportRange(filters);
   return pagedSqlQuery({
@@ -1351,28 +1266,6 @@ export const adminFinanceReports: ReportDefinition[] = [
     ],
     query: commissionRevenue,
     exportQuery: commissionRevenueExport,
-  },
-  {
-    type: 'delivery-agent-tds-194c',
-    labelKey: 'reportDeliveryAgentTds194c',
-    audience: 'admin_finance',
-    permissions: [PERMISSIONS.PAYOUT_VIEW],
-    vendorScoped: false,
-    financial: true,
-    columns: [
-      { key: 'agentName', labelKey: 'agentName' },
-      { key: 'pan', labelKey: 'pan' },
-      { key: 'period', labelKey: 'period' },
-      { key: 'quarter', labelKey: 'quarter' },
-      { key: 'grossAmount', labelKey: 'agentPayoutGross', format: 'currency' },
-      { key: 'tdsRatePercent', labelKey: 'tdsRatePercent', format: 'number' },
-      { key: 'tdsAmount', labelKey: 'tdsAmount', format: 'currency' },
-      { key: 'netAmount', labelKey: 'agentPayoutNet', format: 'currency' },
-      { key: 'status', labelKey: 'status' },
-      { key: 'paidAt', labelKey: 'paidAt', format: 'date' },
-    ],
-    query: deliveryAgentTds,
-    exportQuery: deliveryAgentTdsExport,
   },
   {
     type: 'coupon-discount-cost',

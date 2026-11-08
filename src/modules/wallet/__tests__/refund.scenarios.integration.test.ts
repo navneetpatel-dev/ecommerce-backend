@@ -51,6 +51,7 @@ import {
   REFUND_STATUS,
   RETURN_REASON,
   RETURN_STATUS,
+  RETURN_TYPE,
   ROLES,
   WALLET_REFERENCE_TYPE,
   WALLET_POINT_SOURCE,
@@ -64,7 +65,6 @@ import {
 import { cancelPaidOrder } from '@modules/orders/ordersCancel.service';
 import { subordersService } from '@modules/suborders/suborders.service';
 import { shippingService } from '@modules/shipping/shipping.service';
-import { otpService } from '@modules/auth/otp.service';
 import { inventoryService } from '@modules/inventory/inventory.service';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { NotificationLog } from '@database/models/notificationLog.model';
@@ -2187,25 +2187,6 @@ describe('consolidated refund scenarios (seeded)', () => {
     assert.equal(await Shipment.count({ where: { trackingNumber: awb } }), 1);
   });
 
-  it('25. two parcels out for delivery each keep their own code', async (t) => {
-    if (!dbReady) return t.skip('database unavailable');
-    const customer = await createCustomer();
-    const parcelA = randomUUID();
-    const parcelB = randomUUID();
-    const a = await otpService.issueCodeForUser(customer.id, 'DELIVERY_CONFIRMATION', undefined, parcelA);
-    const b = await otpService.issueCodeForUser(customer.id, 'DELIVERY_CONFIRMATION', undefined, parcelB);
-
-    await sequelize.transaction(async (txn) => {
-      // B's code does not confirm A, and issuing B did not void A's.
-      const crossed = await otpService.verifyCodeForUser(customer.id, 'DELIVERY_CONFIRMATION', b.code, txn, parcelA);
-      assert.equal(crossed.valid, a.code === b.code);
-      const own = await otpService.verifyCodeForUser(customer.id, 'DELIVERY_CONFIRMATION', a.code, txn, parcelA);
-      assert.equal(own.valid || a.code === b.code, true);
-      const ownB = await otpService.verifyCodeForUser(customer.id, 'DELIVERY_CONFIRMATION', b.code, txn, parcelB);
-      assert.equal(ownB.valid, true);
-    });
-  });
-
   it('26. a carrier-only parcel sent back to the seller settles from the carrier\'s updates', async (t) => {
     if (!dbReady) return t.skip('database unavailable');
     const customer = await createCustomer();
@@ -2387,5 +2368,44 @@ describe('consolidated refund scenarios (seeded)', () => {
     const times = rows.map((row) => new Date(row.createdAt).getTime());
     assert.equal(new Set(times).size, times.length);
     assert.equal(await walletService.getBalance(customer.id), 35);
+  });
+
+  it('33. an exchange picked up by an admin hands the replacement over once, with no refund', async (t) => {
+    if (!dbReady) return t.skip('database unavailable');
+    const customer = await createCustomer();
+    const vendor = await createVendor();
+    const { item } = await seedFullOrder({
+      userId: customer.id,
+      vendorId: vendor.id,
+      paymentMethod: PAYMENT_METHOD.COD,
+      totalAmount: 118,
+      shippingCharged: 0,
+      lineTaxable: 100,
+      lineTax: 18,
+    });
+    const variant = (await ProductVariant.findByPk(item.variantId))!;
+    const stockBefore = Number(variant.stock);
+    await variant.update({ stock: stockBefore + 5 });
+    try {
+      const rr = await returnsService.create(customer.id, {
+        orderItemId: item.id,
+        reasonCode: RETURN_REASON.DAMAGED,
+        reason: 'Damaged',
+        type: RETURN_TYPE.EXCHANGE,
+      });
+      await returnsService.transition(rr.id, RETURN_STATUS.APPROVED, customer.id);
+      await returnsService.transition(rr.id, RETURN_STATUS.PICKUP_SCHEDULED, customer.id);
+      const received = await returnsService.transition(rr.id, RETURN_STATUS.RECEIVED, customer.id);
+
+      assert.equal(received.status, RETURN_STATUS.RECEIVED);
+      assert.ok(received.replacementDeliveredAt);
+      assert.equal(received.refundAmount, null);
+      assert.equal(Number((await ProductVariant.findByPk(item.variantId))!.stock), stockBefore + 4);
+
+      await returnsService.transition(rr.id, RETURN_STATUS.CLOSED, customer.id);
+      assert.equal(Number((await ProductVariant.findByPk(item.variantId))!.stock), stockBefore + 4);
+    } finally {
+      await ProductVariant.update({ stock: stockBefore }, { where: { id: item.variantId } });
+    }
   });
 });

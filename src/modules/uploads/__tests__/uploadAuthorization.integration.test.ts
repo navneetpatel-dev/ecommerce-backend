@@ -1,6 +1,6 @@
 /**
  * Who may upload files for which entity. Runs assertUploadAllowed against real
- * seeded users, products, returns and delivery agents; skips when Postgres (or the
+ * seeded users, products and returns; skips when Postgres (or the
  * seed data it needs) is unavailable.
  */
 import assert from 'node:assert/strict';
@@ -21,12 +21,10 @@ let customer: Actor;
 let otherCustomer: Actor;
 let vendorOwner: Actor;
 let otherVendorOwner: Actor | null = null;
-let agent: Actor;
 let ownProductId = '';
 let otherVendorProductId = '';
 let otherVendorId = '';
 let customerReturnId = '';
-let otherAgentId = '';
 
 async function actorFor(where: string, params: Record<string, unknown> = {}): Promise<Actor | null> {
   const [row] = await sequelize.query<{
@@ -34,12 +32,10 @@ async function actorFor(where: string, params: Record<string, unknown> = {}): Pr
     vendorId: string | null;
     roleId: string;
     roleName: string;
-    deliveryAgentId: string | null;
   }>(
-    `SELECT u.id, u."vendorId", u."roleId", r.name AS "roleName", da.id AS "deliveryAgentId"
+    `SELECT u.id, u."vendorId", u."roleId", r.name AS "roleName"
      FROM users u
      INNER JOIN roles r ON r.id = u."roleId"
-     LEFT JOIN delivery_agents da ON da."userId" = u.id AND da."deletedAt" IS NULL
      WHERE u."deletedAt" IS NULL AND ${where}
      ORDER BY u.id
      LIMIT 1`,
@@ -49,7 +45,6 @@ async function actorFor(where: string, params: Record<string, unknown> = {}): Pr
   return {
     id: row.id,
     vendorId: row.vendorId,
-    deliveryAgentId: row.deliveryAgentId,
     roleId: row.roleId,
     role: { name: row.roleName },
   };
@@ -78,14 +73,12 @@ describe('upload authorization', () => {
       { type: QueryTypes.SELECT },
     );
     const owner = await actorFor(`r.name = 'VENDOR_OWNER' AND u."vendorId" IS NOT NULL`);
-    const agentActor = await actorFor(`da.id IS NOT NULL`);
-    if (!ret || !owner || !agentActor) return;
+    if (!ret || !owner) return;
 
     customerReturnId = ret.id;
     customer = (await actorFor('u.id = :id', { id: ret.userId }))!;
     otherCustomer = (await actorFor(`r.name = 'CUSTOMER' AND u.id <> :id`, { id: ret.userId }))!;
     vendorOwner = owner;
-    agent = agentActor;
 
     const [own] = await sequelize.query<{ id: string }>(
       `SELECT id FROM products WHERE "vendorId" = :vendorId AND "deletedAt" IS NULL LIMIT 1`,
@@ -96,15 +89,10 @@ describe('upload authorization', () => {
        WHERE "vendorId" <> :vendorId AND "deletedAt" IS NULL LIMIT 1`,
       { replacements: { vendorId: owner.vendorId }, type: QueryTypes.SELECT },
     );
-    const [otherAgent] = await sequelize.query<{ id: string }>(
-      `SELECT id FROM delivery_agents WHERE id <> :id AND "deletedAt" IS NULL LIMIT 1`,
-      { replacements: { id: agentActor.deliveryAgentId }, type: QueryTypes.SELECT },
-    );
-    if (!own || !other || !otherAgent || !otherCustomer) return;
+    if (!own || !other || !otherCustomer) return;
     ownProductId = own.id;
     otherVendorProductId = other.id;
     otherVendorId = other.vendorId;
-    otherAgentId = otherAgent.id;
     otherVendorOwner = await actorFor(
       `r.name = 'VENDOR_OWNER' AND u."vendorId" IS NOT NULL AND u."vendorId" <> :vendorId`,
       { vendorId: owner.vendorId },
@@ -148,20 +136,6 @@ describe('upload authorization', () => {
     await assertUploadAllowed(customer, S3_ENTITY_TYPES.RETURNS, customerReturnId, S3_PURPOSES.PHOTOS);
     await assert.rejects(
       assertUploadAllowed(otherCustomer, S3_ENTITY_TYPES.RETURNS, customerReturnId, S3_PURPOSES.PHOTOS),
-      forbidden,
-    );
-  });
-
-  it('lets a delivery agent upload KYC documents only for itself', async (t) => {
-    if (!ready) return t.skip('database or seed data unavailable');
-    await assertUploadAllowed(
-      agent,
-      S3_ENTITY_TYPES.DELIVERY_AGENT_DOCUMENTS,
-      agent.deliveryAgentId!,
-      S3_PURPOSES.KYC,
-    );
-    await assert.rejects(
-      assertUploadAllowed(agent, S3_ENTITY_TYPES.DELIVERY_AGENT_DOCUMENTS, otherAgentId, S3_PURPOSES.KYC),
       forbidden,
     );
   });

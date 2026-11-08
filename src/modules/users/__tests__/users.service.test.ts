@@ -4,10 +4,6 @@ import { sequelize } from '@database/models';
 import { SubOrder } from '@database/models/subOrder.model';
 import { Order } from '@database/models/order.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
-import { DeliveryAgent } from '@database/models/deliveryAgent.model';
-import { Shipment } from '@database/models/shipment.model';
-import { ReturnRequest } from '@database/models/returnRequest.model';
-import { DeliveryCashDeposit } from '@database/models/deliveryCashDeposit.model';
 import { s3Client } from '@config/s3';
 import { usersRepository } from '../users.repository';
 import { authRepository } from '../../auth/auth.repository';
@@ -93,55 +89,6 @@ describe('UsersService.deleteOwnAccount', () => {
     await usersService.deleteOwnAccount('v-1');
   });
 
-  it('rejects delivery agent with an active shipment or unclosed cash shift, and allows when clear', async () => {
-    stubTransaction();
-    stubUser({ id: 'da-1', role: { name: ROLES.DELIVERY_AGENT } });
-    mock.method(DeliveryAgent, 'findOne', async () => ({ id: 'agent-1', userId: 'da-1' }));
-    mock.method(Shipment, 'count', async () => 3);
-    mock.method(ReturnRequest, 'count', async () => 0);
-    mock.method(Shipment, 'findAll', async () => []);
-    mock.method(DeliveryCashDeposit, 'findAll', async () => []);
-
-    await assert.rejects(
-      () => usersService.deleteOwnAccount('da-1'),
-      (err: unknown) => {
-        assert.ok(err instanceof ForbiddenError);
-        assert.match(err.message, /3 active shipments/);
-        return true;
-      },
-    );
-
-    mock.restoreAll();
-    stubTransaction();
-    stubUser({ id: 'da-1', role: { name: ROLES.DELIVERY_AGENT } });
-    mock.method(DeliveryAgent, 'findOne', async () => ({ id: 'agent-1', userId: 'da-1' }));
-    mock.method(Shipment, 'count', async () => 0);
-    mock.method(ReturnRequest, 'count', async () => 0);
-    mock.method(Shipment, 'findAll', async () => [{ codAmount: 500 }]);
-    mock.method(DeliveryCashDeposit, 'findAll', async () => []);
-
-    await assert.rejects(
-      () => usersService.deleteOwnAccount('da-1'),
-      (err: unknown) => {
-        assert.ok(err instanceof ForbiddenError);
-        assert.match(err.message, /undeposited COD cash/);
-        return true;
-      },
-    );
-
-    mock.restoreAll();
-    stubTransaction();
-    stubUser({ id: 'da-1', role: { name: ROLES.DELIVERY_AGENT } });
-    stubDeleteSideEffects();
-    mock.method(DeliveryAgent, 'findOne', async () => ({ id: 'agent-1', userId: 'da-1' }));
-    mock.method(Shipment, 'count', async () => 0);
-    mock.method(ReturnRequest, 'count', async () => 0);
-    mock.method(Shipment, 'findAll', async () => [{ codAmount: 500 }]);
-    mock.method(DeliveryCashDeposit, 'findAll', async () => [{ amount: 500 }]);
-
-    await usersService.deleteOwnAccount('da-1');
-  });
-
   it('rejects a customer with a PENDING order and allows when only DELIVERED orders remain', async () => {
     stubTransaction();
     stubUser({ id: 'c-1', role: { name: ROLES.CUSTOMER } });
@@ -165,7 +112,7 @@ describe('UsersService.deleteOwnAccount', () => {
     await usersService.deleteOwnAccount('c-1');
   });
 
-  it('allows self-delete for customer, vendor, agent, and admin with zero liabilities', async () => {
+  it('allows self-delete for customer, vendor and admin with zero liabilities', async () => {
     stubTransaction();
     stubDeleteSideEffects();
 
@@ -177,14 +124,6 @@ describe('UsersService.deleteOwnAccount', () => {
     mock.method(SubOrder, 'count', async () => 0);
     mock.method(CommissionLedger, 'count', async () => 0);
     await usersService.deleteOwnAccount('v-clear');
-
-    stubUser({ id: 'da-clear', role: { name: ROLES.DELIVERY_AGENT } });
-    mock.method(DeliveryAgent, 'findOne', async () => ({ id: 'agent-clear', userId: 'da-clear' }));
-    mock.method(Shipment, 'count', async () => 0);
-    mock.method(ReturnRequest, 'count', async () => 0);
-    mock.method(Shipment, 'findAll', async () => []);
-    mock.method(DeliveryCashDeposit, 'findAll', async () => []);
-    await usersService.deleteOwnAccount('da-clear');
 
     stubUser({ id: 'admin-clear', role: { name: ROLES.ADMIN_ORDER_MANAGER } });
     await usersService.deleteOwnAccount('admin-clear');

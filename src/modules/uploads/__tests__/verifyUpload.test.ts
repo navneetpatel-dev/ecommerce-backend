@@ -18,7 +18,6 @@ function customer() {
   return {
     id: randomUUID(),
     vendorId: null,
-    deliveryAgentId: null,
     role: { name: 'CUSTOMER' },
     roleId: 'role-customer',
   };

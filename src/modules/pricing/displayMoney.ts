@@ -293,24 +293,6 @@ export function taxInclusivePrice(
   return roundMoney(roundMoney(basePrice) * (1 + pct / 100));
 }
 
-/** A declared cash deposit further than this from the expected COD cash is flagged for review. */
-export const CASH_DEPOSIT_TOLERANCE_PAISE = 1;
-
-/**
- * Declared-minus-expected gap on an agent's end-of-shift cash deposit (negative =
- * short), in rupees, and whether it exceeds the review tolerance. Computed in paise.
- */
-export function cashDepositDiscrepancy(
-  amount: unknown,
-  expectedAmount: unknown,
-): { discrepancyAmount: number; hasDiscrepancy: boolean } {
-  const gapPaise = toPaise(coerceRupees(amount)) - toPaise(coerceRupees(expectedAmount));
-  return {
-    discrepancyAmount: fromPaise(gapPaise),
-    hasDiscrepancy: Math.abs(gapPaise) > CASH_DEPOSIT_TOLERANCE_PAISE,
-  };
-}
-
 /**
  * How much a wishlisted product's list price has fallen since it was saved, or
  * null when it has not fallen. Drives the wishlist "Price dropped" badge.

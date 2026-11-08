@@ -168,26 +168,8 @@ function defaultCta(type: NotificationType, data: EmailTemplateData): { label?: 
         url: str(data, 'actionUrl', fallback),
       };
     }
-    case 'DELIVERY_ASSIGNED':
-    case 'PICKUP_ASSIGNED':
-      return { label: 'Open delivery dashboard', url: str(data, 'actionUrl', `${base}/delivery/dashboard/today`) };
-    case 'DELIVERY_OTP':
-    case 'RETURN_PICKUP_OTP':
-      return { label: EMAIL_COPY.ctaViewOrder, url: str(data, 'actionUrl', `${base}/orders`) };
-    case 'RTO_HANDOVER_OTP':
-      return { label: EMAIL_COPY.ctaVendorDashboard, url: str(data, 'actionUrl', `${base}/vendor/dashboard`) };
     case 'DELIVERY_ATTEMPT_FAILED':
       return { label: EMAIL_COPY.ctaTrackShipment, url: str(data, 'actionUrl', `${base}/orders/tracking`) };
-    case 'PICKUP_ATTEMPT_FAILED':
-      return { label: 'View return', url: str(data, 'actionUrl', `${base}/my-returns`) };
-    case 'DELIVERY_AGENT_DOCUMENT_EXPIRING':
-    case 'DELIVERY_AGENT_DOCUMENT_EXPIRED':
-      return { label: 'Manage documents', url: str(data, 'actionUrl', `${base}/delivery/dashboard/profile`) };
-    case 'CASH_DEPOSIT_VERIFIED':
-    case 'CASH_DEPOSIT_REJECTED':
-      return { label: 'View cash deposits', url: str(data, 'actionUrl', `${base}/delivery/dashboard/profile`) };
-    case 'RTO_HANDOVER_CONFIRMED':
-      return { label: EMAIL_COPY.ctaVendorDashboard, url: str(data, 'actionUrl', `${base}/vendor/dashboard`) };
     default:
       return { label: EMAIL_COPY.ctaOpenStore, url: base };
   }

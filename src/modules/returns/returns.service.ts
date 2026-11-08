@@ -398,6 +398,20 @@ function assertTransition(from: ReturnStatus, to: ReturnStatus) {
   }
 }
 
+/** Takes an exchange's replacement out of stock (locked), or refuses when there is none. */
+async function handOverExchangeReplacement(row: ReturnRequest, actorId: string, t: Transaction): Promise<void> {
+  const variantId = (row as ReturnRequest & { orderItem?: OrderItem }).orderItem?.variantId;
+  if (!variantId) {
+    throw new ValidationError({ orderItemId: ['Return has no replacement variant'] });
+  }
+  const variant = await ProductVariant.findByPk(variantId, { transaction: t, lock: t.LOCK.UPDATE });
+  const quantity = Number(row.returnQuantity ?? 1);
+  if (!variant || Number(variant.stock) < quantity) {
+    throw new ValidationError(ERROR_MESSAGES.INSUFFICIENT_STOCK);
+  }
+  await variant.update({ stock: Number(variant.stock) - quantity, updatedBy: actorId }, { transaction: t });
+}
+
 async function resolveReturnShippingFeePaise(vendorId: string | null | undefined): Promise<number> {
   const settings = await settingsService.getPlatformSettings();
   let fee = Number(settings.returnShippingFee ?? 0);
@@ -581,19 +595,6 @@ export class ReturnsService {
     };
   }
 
-  /** Customer picks a repickup window after a failed attempt — mirrors shippingService.rescheduleDelivery. */
-  async reschedulePickup(id: string, userId: string, slot: string) {
-    const row = await ReturnRequest.findByPk(id);
-    if (!row) throw new NotFoundError('ReturnRequest');
-    if (row.userId !== userId) throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_RETURN);
-    if (row.status !== RETURN_STATUS.PICKUP_SCHEDULED || !row.pickupFailureReason) {
-      throw new ValidationError({ status: ['Only a failed pickup attempt can be rescheduled'] });
-    }
-    await row.update({ preferredRepickupSlot: slot, pickupFailureReason: null });
-    const slaDays = await refundSlaDays();
-    return serializeReturn(row, slaDays);
-  }
-
   async create(userId: string, data: CreateReturnInput) {
     const slaDays = await refundSlaDays();
     return sequelize.transaction(async (t: Transaction) => {
@@ -633,8 +634,8 @@ export class ReturnsService {
         throw new ForbiddenError(ERROR_MESSAGES.ITEM_MUST_BE_DELIVERED);
       }
 
-      // Prefer the real delivery timestamp (Shipment.deliveredAt, set once by the OTP-gated
-      // delivery-agent confirmation) over SubOrder.updatedAt, which is a generic timestamp any
+      // Prefer the real delivery timestamp (Shipment.deliveredAt, set once when the carrier
+      // or an admin marks it delivered) over SubOrder.updatedAt, which is a generic timestamp any
       // later, unrelated write to the row (a payout run, an admin edit, another return) bumps —
       // silently resetting/extending the return window if used.
       const returnWindow = await returnWindowFor(
@@ -1418,23 +1419,6 @@ export class ReturnsService {
     return { patch, cardRefund, completeImmediately };
   }
 
-  /**
-   * Starts the refund of a return whose pickup the agent just confirmed, inside the
-   * pickup's transaction (see `startRefund`). Returns what to run once it commits.
-   */
-  async startRefundOnPickup(returnId: string, actorId: string, t: Transaction): Promise<() => Promise<void>> {
-    const row = await findReturnForUpdate(returnId, t);
-    if (!row || row.type === RETURN_TYPE.EXCHANGE || row.refundAmount != null) return async () => {};
-    const started = await this.startRefund(row, actorId, t);
-    await row.update(started.patch, { transaction: t });
-    return async () => {
-      if (started.cardRefund) {
-        await sendReturnCardRefund(started.cardRefund, row.orderItemId, await refundSlaDays());
-      }
-      if (started.completeImmediately) await this.completeRefundTrack(returnId, actorId);
-    };
-  }
-
   async transition(id: string, status: ReturnStatus, actorId: string, rejectionReason?: string) {
     const slaDays = await refundSlaDays();
     const refundBox: { started: StartedRefund | null } = { started: null };
@@ -1463,6 +1447,12 @@ export class ReturnsService {
 
       if (status === RETURN_STATUS.RECEIVED) {
         patch.receivedAt = new Date();
+        // An exchange hands the replacement over when the item is picked up: it leaves
+        // stock now, once.
+        if (row.type === RETURN_TYPE.EXCHANGE && !row.replacementDeliveredAt) {
+          await handOverExchangeReplacement(row, actorId, t);
+          patch.replacementDeliveredAt = new Date();
+        }
       }
 
       // The refund goes out on pickup (RECEIVED), or when an admin refunds without one

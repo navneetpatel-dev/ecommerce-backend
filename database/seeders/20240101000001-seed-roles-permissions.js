@@ -17,7 +17,6 @@ const ROLE_NAMES = [
   'ADMIN_CATALOG_MANAGER',
   'VENDOR_OWNER',
   'VENDOR_STAFF',
-  'DELIVERY_AGENT',
   'CUSTOMER',
 ];
 
@@ -29,7 +28,6 @@ const PERMISSION_KEYS = [
   'audit.view', 'analytics.view', 'product.create', 'product.update', 'product.delete',
   'suborder.manage', 'payout.view', 'review.respond',
   'ticket.manage', 'bug_report.manage', 'wallet.adjust',
-  'delivery_agent.manage', 'shipment.delivery_update', 'return.pickup_update',
   'role.manage', 'user.impersonate',
 ];
 
@@ -38,7 +36,6 @@ const ROLE_PERMISSIONS = {
   ADMIN_ORDER_MANAGER: [
     'order.manage', 'suborder.manage', 'order.refund', 'shipping.manage', 'analytics.view', 'audit.view',
     'ticket.manage', 'bug_report.manage', 'wallet.adjust',
-    'delivery_agent.manage',
   ],
   ADMIN_CATALOG_MANAGER: [
     'product.manage', 'product.create', 'product.approve', 'category.manage', 'coupon.manage', 'banner.manage',
@@ -46,7 +43,6 @@ const ROLE_PERMISSIONS = {
   ],
   VENDOR_OWNER: ['product.create', 'product.update', 'product.delete', 'suborder.manage', 'payout.view', 'review.respond'],
   VENDOR_STAFF: ['product.update', 'suborder.manage'],
-  DELIVERY_AGENT: ['shipment.delivery_update', 'return.pickup_update'],
   CUSTOMER: [],
 };
 

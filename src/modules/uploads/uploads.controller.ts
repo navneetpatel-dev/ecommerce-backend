@@ -15,7 +15,6 @@ function uploadActor(req: Request) {
   return {
     id: user.id,
     vendorId: user.vendorId,
-    deliveryAgentId: user.deliveryAgentId,
     role: user.role,
     roleId: user.roleId,
   };
