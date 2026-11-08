@@ -10,6 +10,7 @@ const router = Router();
 
 router.post('/', authenticate, validate(CreateReturnRequestSchema), returnsController.create);
 router.get('/', authenticate, returnsController.list);
+router.get('/estimate', authenticate, returnsController.estimate);
 router.get('/admin', authenticate, authorize(PERMISSIONS.ORDER_REFUND), returnsController.listAdmin);
 router.get(
   '/vendor/me',

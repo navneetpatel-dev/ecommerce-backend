@@ -130,6 +130,8 @@ function defaultCta(type: NotificationType, data: EmailTemplateData): { label?: 
     case 'PAYOUT_FAILED':
     case 'PRODUCT_APPROVED':
     case 'PRODUCT_REJECTED':
+    case 'COUPON_APPROVED':
+    case 'COUPON_REJECTED':
     case 'COUPON_USAGE_LIMIT':
     case 'COUPON_EXPIRING':
       return {

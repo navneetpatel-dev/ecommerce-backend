@@ -31,13 +31,16 @@ export class Coupon extends Model<InferAttributes<Coupon>, InferCreationAttribut
   declare userRestriction: CreationOptional<CouponUserRestriction>;
   declare config: CreationOptional<CouponConfig>;
   declare usageLimitTotal: number | null;
-  declare usageLimitPerUser: CreationOptional<number>;
+  declare usageLimitPerUser: CreationOptional<number | null>;
   declare usedCount: CreationOptional<number>;
   declare startDate: Date;
   declare endDate: Date;
   declare stackable: CreationOptional<boolean>;
   declare priority: CreationOptional<number>;
-  declare status: 'DRAFT' | 'ACTIVE' | 'PAUSED' | 'EXPIRED' | 'ARCHIVED' | 'REJECTED';
+  declare status: 'DRAFT' | 'PENDING_APPROVAL' | 'ACTIVE' | 'PAUSED' | 'EXPIRED' | 'ARCHIVED' | 'REJECTED';
+  declare rejectionNote: CreationOptional<string | null>;
+  /** Listed as an offer. Hidden coupons still work when their code is typed. */
+  declare showInOffers: CreationOptional<boolean>;
   declare discountBearer: CreationOptional<'PLATFORM' | 'VENDOR'>;
   declare batchId: string | null;
   declare createdById: string;
@@ -81,9 +84,11 @@ export const initCouponModel = (sequelize: Sequelize) => {
       stackable: { type: DataTypes.BOOLEAN, defaultValue: false },
       priority: { type: DataTypes.INTEGER, defaultValue: 0 },
       status: {
-        type: DataTypes.ENUM('DRAFT', 'ACTIVE', 'PAUSED', 'EXPIRED', 'ARCHIVED', 'REJECTED'),
+        type: DataTypes.ENUM('DRAFT', 'PENDING_APPROVAL', 'ACTIVE', 'PAUSED', 'EXPIRED', 'ARCHIVED', 'REJECTED'),
         defaultValue: 'DRAFT',
       },
+      rejectionNote: { type: DataTypes.TEXT, allowNull: true },
+      showInOffers: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
       discountBearer: {
         type: DataTypes.ENUM('PLATFORM', 'VENDOR'),
         allowNull: false,

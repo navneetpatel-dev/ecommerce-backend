@@ -18,11 +18,16 @@ export function customerCouponName(coupon: {
     case 'FREE_SHIPPING':
       return 'Free shipping';
     case 'CASHBACK':
-      return amount ? `${amount}% cashback` : 'Cashback';
+      // Set in rupees, like a flat discount.
+      return amount ? `₹${amount} cashback` : 'Cashback';
     case 'BOGO':
       return 'Buy one, get one';
+    case 'TIERED':
+      return 'Tiered discount';
+    case 'BUNDLE':
+      return amount ? `₹${amount} off bundle` : 'Bundle discount';
     default:
-      return coupon.code;
+      return 'Discount';
   }
 }
 
@@ -276,7 +281,4 @@ export function capStackedCouponShares(
   return capped;
 }
 
-export function generateCouponCode(prefix = 'CPN'): string {
-  const rand = Math.random().toString(36).slice(2, 10).toUpperCase();
-  return `${prefix}${rand}`.slice(0, 16);
-}
+export { couponsReplacedBy, generateCouponCode } from './couponCodes';

@@ -6,6 +6,8 @@ export class CouponUsage extends Model<InferAttributes<CouponUsage>, InferCreati
   declare userId: string;
   declare orderId: string;
   declare discountApplied: number;
+  /** What the customer saw it take off, GST included. Null on older rows. */
+  declare customerDiscountApplied: CreationOptional<number | null>;
   declare usedAt: CreationOptional<Date>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
@@ -29,6 +31,7 @@ export const initCouponUsageModel = (sequelize: Sequelize) => {
       userId: { type: DataTypes.UUID, allowNull: false },
       orderId: { type: DataTypes.UUID, allowNull: false },
       discountApplied: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
+      customerDiscountApplied: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       usedAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },

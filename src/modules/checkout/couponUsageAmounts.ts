@@ -1,3 +1,4 @@
+import { actualCouponSavingsPaise } from './actualCouponSavings';
 import { allocateProportionally, fromPaise, toPaise, type Paise } from '@modules/pricing/money';
 import type { AppliedCouponBreakdownEntry, ValidateCouponSetResult } from '@modules/coupons/couponEngine';
 
@@ -17,8 +18,11 @@ export function preGstCouponBreakdown(
   perCoupon: ValidateCouponSetResult['perCoupon'],
   coupons: Array<{ id: string; code: string }>,
   pricedByVendor: Record<string, PricedVendor>,
+  /** Each variant's real GST-inclusive saving, so the usage records what the customer saw. */
+  actualLineDiscountPaise: Record<string, Paise> = {},
 ): AppliedCouponBreakdownEntry[] {
   const totals = new Map<string, Paise>();
+  const customerSavings = actualCouponSavingsPaise(perCoupon, actualLineDiscountPaise);
   for (const [vendorId, priced] of Object.entries(pricedByVendor)) {
     for (const freeShipping of [false, true]) {
       const entries = perCoupon.filter(
@@ -38,6 +42,12 @@ export function preGstCouponBreakdown(
   return perCoupon.flatMap((entry) => {
     const coupon = coupons.find((row) => row.code === entry.code);
     if (!coupon) return [];
-    return [{ couponId: coupon.id, discountApplied: fromPaise(totals.get(entry.code) ?? 0) }];
+    return [
+      {
+        couponId: coupon.id,
+        discountApplied: fromPaise(totals.get(entry.code) ?? 0),
+        customerDiscountApplied: fromPaise(customerSavings.get(entry.code) ?? toPaise(entry.discount)),
+      },
+    ];
   });
 }

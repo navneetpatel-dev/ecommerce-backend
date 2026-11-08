@@ -710,6 +710,8 @@ export class NotificationsService {
     });
   }
 
+  sendCouponDecision(userId: string, type: 'COUPON_APPROVED' | 'COUPON_REJECTED', referenceId: string, templateData: EmailTemplateData = {}) { return this.enqueue({ userId, type, referenceType: 'Coupon', referenceId, templateData }); }
+
   sendCouponUsageLimit(userId: string, couponId: string, templateData: EmailTemplateData = {}) {
     return this.enqueue({
       userId,

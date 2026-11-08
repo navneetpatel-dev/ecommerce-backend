@@ -6,10 +6,17 @@ import { sendPdfDownload } from '@core/http/sendDownload';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { returnsService } from './returns.service';
+import { ReturnEstimateQuerySchema, estimateReturnRefund } from './returnEstimate';
 
 export const create = asyncHandler(async (req: Request, res: Response) => {
   const created = await returnsService.create(req.user!.id, req.body);
   res.status(201).json(ok(created));
+});
+
+/** What a return would refund, shown before the customer asks for it. */
+export const estimate = asyncHandler(async (req: Request, res: Response) => {
+  const query = ReturnEstimateQuerySchema.parse(req.query);
+  res.json(ok(await estimateReturnRefund(req.user!.id, query)));
 });
 
 export const list = asyncHandler(async (req: Request, res: Response) => {

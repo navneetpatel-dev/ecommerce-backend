@@ -25,6 +25,8 @@ import {
   vendorEligibleSubtotals,
 } from './coupon.utils';
 import { isVendorSellable } from '@core/catalog/customerVisibility';
+import { splitCouponsOntoLines, type LineDiscountShares } from './couponLineShares';
+import { minOrderShortfallMessage, minQuantityShortfallMessage } from './couponErrors';
 
 export const LOYAL_CUSTOMER_MIN_PAID_ORDERS = 3;
 
@@ -35,6 +37,8 @@ export type ValidateCouponInput = {
   lines: CartLineForCoupon[];
   shippingTotal?: number;
   shippingByVendor?: Record<string, number>;
+  /** No address yet, so a free-shipping coupon's worth isn't known and isn't counted as ₹0. */
+  shippingUnknown?: boolean;
   /** Existing applied code on cart (for stackable checks). */
   existingCouponCode?: string | null;
   /** All codes already on the cart (multi-coupon). */
@@ -56,8 +60,12 @@ export type ValidateCouponResult = {
   discount: number;
   cashbackAmount: number;
   freeShipping: boolean;
+  /** Valid, but gives the customer nothing as things stand (one unit on BOGO, tier not reached). */
+  zeroBenefit: boolean;
   eligibleSubtotal: number;
   vendorDiscountShares: Record<string, number>;
+  /** The lines this coupon applies to. */
+  eligibleLines: CartLineForCoupon[];
 };
 
 export type ValidateCouponSetResult = {
@@ -74,16 +82,26 @@ export type ValidateCouponSetResult = {
   vendorShippingDiscountShares: Record<string, number>;
   /** Vendor-borne merchandise discount shares (VENDOR bearer coupons only). */
   vendorBorneDiscountShares: Record<string, number>;
+  /** Waived shipping a vendor's own free-shipping coupon funds, taken from their payout. */
+  vendorBorneShippingShares: Record<string, number>;
+  /** Each line's part of the merchandise discount: only lines the coupons apply to. */
+  lineDiscountShares: LineDiscountShares;
   primaryCoupon: Coupon | null;
   /** Per-coupon discount breakdown — each entry's own share, not the aggregate. */
   perCoupon: Array<{
+    couponId: string;
     code: string;
     type: string;
+    vendorId: string | null;
     discount: number;
     cashbackAmount: number;
     freeShipping: boolean;
     /** This coupon's own share by vendor (after stacking caps), as `discount` is split. */
     vendorShares: Record<string, number>;
+    /** The lines it applies to (what its cashback is earned on). */
+    eligibleLines: CartLineForCoupon[];
+    /** Its own discount per variant, GST incl. (paise). */
+    lineShares: Record<string, number>;
   }>;
 };
 
@@ -96,8 +114,10 @@ function fail(reason: string, reasonCode: string): ValidateCouponResult {
     discount: 0,
     cashbackAmount: 0,
     freeShipping: false,
+    zeroBenefit: false,
     eligibleSubtotal: 0,
     vendorDiscountShares: {},
+    eligibleLines: [],
   };
 }
 
@@ -113,6 +133,8 @@ function failSet(reason: string, reasonCode: string): ValidateCouponSetResult {
     vendorDiscountShares: {},
     vendorShippingDiscountShares: {},
     vendorBorneDiscountShares: {},
+    vendorBorneShippingShares: {},
+    lineDiscountShares: {},
     primaryCoupon: null,
     perCoupon: [],
   };
@@ -135,6 +157,37 @@ export function resolveCartCouponCodes(cart: {
 
 function couponHasUsageLimit(coupon: Coupon): boolean {
   return coupon.usageLimitTotal != null || coupon.usageLimitPerUser != null;
+}
+
+/**
+ * The customer's orders, for first-order and segment rules. `open`: every order not
+ * cancelled, failed or refunded, unpaid online ones included, so a second checkout can't
+ * claim "first order" while the first awaits payment. `paid`: orders actually paid or
+ * confirmed, so a cancelled order that is awaiting its refund doesn't count.
+ */
+export async function countQualifyingOrders(
+  userId: string,
+  transaction?: Transaction,
+): Promise<{ open: number; paid: number }> {
+  const live = {
+    userId,
+    status: { [Op.ne]: ORDER_STATUS.CANCELLED },
+    paymentStatus: { [Op.notIn]: [PAYMENT_STATUS.FAILED, PAYMENT_STATUS.REFUNDED] },
+  };
+  const [open, paid] = await Promise.all([
+    Order.count({ where: live, transaction }),
+    Order.count({
+      where: {
+        ...live,
+        [Op.or]: [
+          { paymentStatus: PAYMENT_STATUS.PAID },
+          { status: { [Op.in]: [ORDER_STATUS.CONFIRMED, ORDER_STATUS.SHIPPED, ORDER_STATUS.DELIVERED] } },
+        ],
+      },
+      transaction,
+    }),
+  ]);
+  return { open, paid };
 }
 
 export async function validateCoupon(input: ValidateCouponInput): Promise<ValidateCouponResult> {
@@ -171,8 +224,9 @@ export async function validateCoupon(input: ValidateCouponInput): Promise<Valida
   }
 
   const now = new Date();
+  // Same answer as an unknown code: paused, rejected or future coupons don't reveal themselves.
   if (coupon.status !== COUPON_STATUS.ACTIVE || coupon.startDate > now || coupon.endDate < now) {
-    return fail(ERROR_MESSAGES.COUPON_INACTIVE, ERROR_CODES.COUPON_INACTIVE);
+    return fail(ERROR_MESSAGES.COUPON_INVALID, ERROR_CODES.COUPON_INVALID);
   }
 
   const existingCodes = [
@@ -233,59 +287,41 @@ export async function validateCoupon(input: ValidateCouponInput): Promise<Valida
     : shippingTotal;
 
   if (coupon.minOrderValue != null && eligibleSubtotal < Number(coupon.minOrderValue)) {
-    return fail(ERROR_MESSAGES.COUPON_MIN_ORDER, ERROR_CODES.COUPON_MIN_ORDER);
+    return fail(minOrderShortfallMessage(Number(coupon.minOrderValue), eligibleSubtotal), ERROR_CODES.COUPON_MIN_ORDER);
   }
   if (coupon.minQuantity != null && eligibleQty < Number(coupon.minQuantity)) {
-    return fail(ERROR_MESSAGES.COUPON_MIN_ORDER, ERROR_CODES.COUPON_MIN_ORDER);
+    return fail(minQuantityShortfallMessage(Number(coupon.minQuantity), eligibleQty), ERROR_CODES.COUPON_MIN_ORDER);
   }
 
   const restriction = coupon.userRestriction ?? { type: 'all' };
   const restrictionType = (restriction.type || 'all').toLowerCase();
-  if (input.userId && restrictionType === 'firstorder') {
-    const prior = await Order.count({
-      where: {
-        userId: input.userId,
-        [Op.or]: [
-          { paymentStatus: PAYMENT_STATUS.PAID },
-          { status: { [Op.in]: [ORDER_STATUS.CONFIRMED, ORDER_STATUS.SHIPPED, ORDER_STATUS.DELIVERED] } },
-        ],
-      },
-    });
-    if (prior > 0) {
+  const restrictionValues = Array.isArray(restriction.value)
+    ? restriction.value.map(String)
+    : restriction.value
+      ? [String(restriction.value)]
+      : [];
+  if (restrictionType === 'specific') {
+    // Empty list or no user (a guest's preview): nobody qualifies. Same answer as an unknown
+    // code, so a private code doesn't reveal that it exists.
+    if (!input.userId || !restrictionValues.includes(input.userId)) {
+      return fail(ERROR_MESSAGES.COUPON_INVALID, ERROR_CODES.COUPON_INVALID);
+    }
+  } else if (restrictionType === 'segment') {
+    const wanted = restrictionValues.map((value) => value.toLowerCase());
+    if (!input.userId || wanted.length === 0) {
       return fail(ERROR_MESSAGES.COUPON_RESTRICTION, ERROR_CODES.COUPON_RESTRICTION);
     }
-  } else if (input.userId && restrictionType === 'specific') {
-    const allowed = Array.isArray(restriction.value)
-      ? restriction.value.map(String)
-      : restriction.value
-        ? [String(restriction.value)]
-        : [];
-    if (allowed.length > 0 && !allowed.includes(input.userId)) {
-      return fail(ERROR_MESSAGES.COUPON_RESTRICTION, ERROR_CODES.COUPON_RESTRICTION);
-    }
-  } else if (input.userId && restrictionType === 'segment') {
-    const wanted = Array.isArray(restriction.value)
-      ? restriction.value.map((v) => String(v).toLowerCase())
-      : restriction.value
-        ? [String(restriction.value).toLowerCase()]
-        : [];
-    if (wanted.length === 0) {
-      return fail(ERROR_MESSAGES.COUPON_RESTRICTION, ERROR_CODES.COUPON_RESTRICTION);
-    }
-    const paidOrders = await Order.count({
-      where: {
-        userId: input.userId,
-        [Op.or]: [
-          { paymentStatus: PAYMENT_STATUS.PAID },
-          { status: { [Op.in]: [ORDER_STATUS.CONFIRMED, ORDER_STATUS.SHIPPED, ORDER_STATUS.DELIVERED] } },
-        ],
-      },
-    });
+    const { open, paid } = await countQualifyingOrders(input.userId, input.transaction);
     const segments = new Set<string>();
-    if (paidOrders === 0) segments.add(COUPON_USER_SEGMENT.NEW);
-    if (paidOrders > 0) segments.add(COUPON_USER_SEGMENT.RETURNING);
-    if (paidOrders >= LOYAL_CUSTOMER_MIN_PAID_ORDERS) segments.add(COUPON_USER_SEGMENT.LOYAL);
+    if (open === 0) segments.add(COUPON_USER_SEGMENT.NEW);
+    if (paid > 0) segments.add(COUPON_USER_SEGMENT.RETURNING);
+    if (paid >= LOYAL_CUSTOMER_MIN_PAID_ORDERS) segments.add(COUPON_USER_SEGMENT.LOYAL);
     if (!wanted.some((segment) => segments.has(segment))) {
+      return fail(ERROR_MESSAGES.COUPON_RESTRICTION, ERROR_CODES.COUPON_RESTRICTION);
+    }
+  } else if (input.userId && restrictionType === 'firstorder') {
+    const { open } = await countQualifyingOrders(input.userId, input.transaction);
+    if (open > 0) {
       return fail(ERROR_MESSAGES.COUPON_RESTRICTION, ERROR_CODES.COUPON_RESTRICTION);
     }
   }
@@ -332,8 +368,10 @@ export async function validateCoupon(input: ValidateCouponInput): Promise<Valida
     discount: roundMoney(discount),
     cashbackAmount: roundMoney(cashbackAmount),
     freeShipping,
+    zeroBenefit: discount <= 0 && cashbackAmount <= 0 && !(freeShipping && input.shippingUnknown),
     eligibleSubtotal: roundMoney(eligibleSubtotal),
     vendorDiscountShares,
+    eligibleLines,
   };
 }
 
@@ -347,6 +385,7 @@ export async function validateCouponSet(input: {
   lines: CartLineForCoupon[];
   shippingTotal?: number;
   shippingByVendor?: Record<string, number>;
+  shippingUnknown?: boolean;
   /** Pass the order-creation transaction to lock each coupon row during usage-limit checks. */
   transaction?: Transaction;
 }): Promise<ValidateCouponSetResult> {
@@ -363,6 +402,8 @@ export async function validateCouponSet(input: {
       vendorDiscountShares: {},
       vendorShippingDiscountShares: {},
       vendorBorneDiscountShares: {},
+      vendorBorneShippingShares: {},
+      lineDiscountShares: {},
       primaryCoupon: null,
       perCoupon: [],
     };
@@ -376,6 +417,7 @@ export async function validateCouponSet(input: {
       lines: input.lines,
       shippingTotal: input.shippingTotal,
       shippingByVendor: input.shippingByVendor,
+      shippingUnknown: input.shippingUnknown,
       existingCouponCodes: codes,
       transaction: input.transaction,
     });
@@ -412,6 +454,7 @@ export async function validateCouponSet(input: {
   const vendorDiscountShares: Record<string, number> = {};
   const vendorShippingDiscountShares: Record<string, number> = {};
   const vendorBorneDiscountShares: Record<string, number> = {};
+  const vendorBorneShippingShares: Record<string, number> = {};
   let discount = 0;
   let cashbackAmount = 0;
   let freeShipping = false;
@@ -446,8 +489,12 @@ export async function validateCouponSet(input: {
     discount += result.discount;
     cashbackAmount += result.cashbackAmount;
     perCoupon.push({
+      couponId: coupon.id,
       code: coupon.code,
       type: coupon.type,
+      vendorId: coupon.vendorId ?? null,
+      eligibleLines: result.eligibleLines,
+      lineShares: {},
       discount: result.discount,
       cashbackAmount: result.cashbackAmount,
       freeShipping: result.freeShipping,
@@ -460,6 +507,11 @@ export async function validateCouponSet(input: {
         vendorShippingDiscountShares[vendorId] = roundMoney(
           (vendorShippingDiscountShares[vendorId] ?? 0) + share,
         );
+        if (bearer === DISCOUNT_BEARER.VENDOR) {
+          vendorBorneShippingShares[vendorId] = roundMoney(
+            (vendorBorneShippingShares[vendorId] ?? 0) + share,
+          );
+        }
       } else {
         vendorDiscountShares[vendorId] = roundMoney((vendorDiscountShares[vendorId] ?? 0) + share);
         if (bearer === DISCOUNT_BEARER.VENDOR) {
@@ -473,6 +525,7 @@ export async function validateCouponSet(input: {
 
   const primaryCoupon =
     coupons.find((c) => !c.vendorId) ?? coupons[0] ?? null;
+  const byCoupon: Array<Record<string, number>> = [];
 
   return {
     valid: true,
@@ -485,14 +538,28 @@ export async function validateCouponSet(input: {
     vendorDiscountShares,
     vendorShippingDiscountShares,
     vendorBorneDiscountShares,
+    vendorBorneShippingShares,
+    lineDiscountShares: splitCouponsOntoLines(
+      results.map((result) => ({
+        platform: !result.coupon!.vendorId,
+        vendorBorne: resolveDiscountBearer(result.coupon) === DISCOUNT_BEARER.VENDOR,
+        freeShipping: result.freeShipping,
+        vendorShares: result.vendorDiscountShares,
+        eligibleLines: result.eligibleLines,
+      })),
+      input.lines,
+      byCoupon,
+    ),
     primaryCoupon,
-    perCoupon,
+    perCoupon: perCoupon.map((entry, index) => ({ ...entry, lineShares: byCoupon[index] ?? {} })),
   };
 }
 
 export type AppliedCouponBreakdownEntry = {
   couponId: string;
   discountApplied: number;
+  /** What the customer saw it take off, GST included. */
+  customerDiscountApplied?: number;
 };
 
 export function breakdownFromPerCoupon(
@@ -518,85 +585,12 @@ export function discountAppliedFromBreakdown(
   return fallbackEqualShare;
 }
 
-export async function recordCouponUsage(params: {
-  couponId: string;
-  userId: string;
-  orderId: string;
-  discountApplied: number;
-  actorId?: string;
-  transaction?: Transaction;
-}): Promise<{ created: boolean }> {
-  const existing = await CouponUsage.findOne({
-    where: { couponId: params.couponId, orderId: params.orderId },
-    transaction: params.transaction,
-  });
-  if (existing) {
-    return { created: false };
-  }
-
-  await CouponUsage.create(
-    {
-      couponId: params.couponId,
-      userId: params.userId,
-      orderId: params.orderId,
-      discountApplied: params.discountApplied,
-      createdBy: params.actorId ?? params.userId,
-      updatedBy: params.actorId ?? params.userId,
-      deletedBy: null,
-    },
-    { transaction: params.transaction },
-  );
-
-  await Coupon.increment('usedCount', {
-    by: 1,
-    where: { id: params.couponId },
-    transaction: params.transaction,
-  });
-
-  return { created: true };
-}
-
-export async function recordCouponUsagesForOrder(params: {
-  coupons: Array<{ id: string }>;
-  breakdown: AppliedCouponBreakdownEntry[];
-  discountTotal: number;
-  userId: string;
-  orderId: string;
-  actorId: string;
-  transaction?: Transaction;
-}): Promise<void> {
-  const fallbackEqualShare =
-    params.coupons.length > 0 ? params.discountTotal / params.coupons.length : 0;
-  for (const coupon of params.coupons) {
-    await recordCouponUsage({
-      couponId: coupon.id,
-      userId: params.userId,
-      orderId: params.orderId,
-      discountApplied: discountAppliedFromBreakdown(
-        coupon.id,
-        params.breakdown,
-        fallbackEqualShare,
-      ),
-      actorId: params.actorId,
-      transaction: params.transaction,
-    });
-  }
-}
-
-export async function destroyCouponUsageForOrder(
-  orderId: string,
-  transaction?: Transaction,
-): Promise<void> {
-  const usages = await CouponUsage.findAll({ where: { orderId }, transaction });
-  for (const usage of usages) {
-    await Coupon.decrement('usedCount', {
-      by: 1,
-      where: { id: usage.couponId },
-      transaction,
-    });
-    await usage.destroy({ transaction });
-  }
-}
+export {
+  recordCouponUsage,
+  recordCouponUsagesForOrder,
+  destroyCouponUsageForOrder,
+  destroyCouponUsageForVendorPart,
+} from './couponUsage';
 
 export function resolveDiscountBearer(coupon: Coupon | null): DiscountBearer | null {
   if (!coupon) return null;

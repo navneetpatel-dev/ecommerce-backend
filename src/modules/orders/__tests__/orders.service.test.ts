@@ -33,7 +33,7 @@ describe('OrdersService.getOrderById image join', () => {
     mock.method(ordersRepository, 'findById', async (_id: string, opts?: { include?: unknown }) => {
       capturedInclude = opts?.include;
       return {
-        id: 'order-1',
+        id: '00000000-0000-4000-8000-000000000001',
         userId: 'user-1',
         totalAmount: 100,
         walletAmountUsed: 0,
@@ -43,7 +43,7 @@ describe('OrdersService.getOrderById image join', () => {
         subOrders: [
           {
             id: 'sub-1',
-            orderId: 'order-1',
+            orderId: '00000000-0000-4000-8000-000000000001',
             vendorId: 'vendor-1',
             subtotal: 100,
             shippingCost: 0,
@@ -81,7 +81,7 @@ describe('OrdersService.getOrderById image join', () => {
     });
     mock.method(ReturnRequest, 'findAll', async () => []);
 
-    const order = await ordersService.getOrderById('order-1', 'user-1');
+    const order = await ordersService.getOrderById('00000000-0000-4000-8000-000000000001', 'user-1');
     const productInclude = findProductInclude(capturedInclude);
     assert.ok(productInclude);
     assert.equal(productInclude.paranoid, false);
@@ -127,7 +127,7 @@ describe('Order payloads never carry vendor or agent bank details', () => {
       capturedInclude = opts?.include;
       return null;
     });
-    await ordersService.getOrderById('order-1', 'user-1').catch(() => undefined);
+    await ordersService.getOrderById('00000000-0000-4000-8000-000000000001', 'user-1').catch(() => undefined);
     assert.equal(findIncludes(capturedInclude, 'vendor').length, 1);
     assert.equal(findIncludes(capturedInclude, 'deliveryAgent').length, 1);
     assertNoPrivateFields(capturedInclude);
@@ -154,19 +154,19 @@ describe('OrdersService.updateOrderStatus (admin)', () => {
     mock.method(sequelize, 'transaction', async (callback: (t: unknown) => Promise<unknown>) =>
       callback({ LOCK: { UPDATE: 'UPDATE' } }),
     );
-    mock.method(ordersRepository, 'findById', async () => ({ id: 'order-1', ...fields }) as never);
+    mock.method(ordersRepository, 'findById', async () => ({ id: '00000000-0000-4000-8000-000000000001', ...fields }) as never);
     return mock.method(ordersRepository, 'update', async () => [1] as never);
   }
 
   it('never ships an order by hand: it follows its parts', async () => {
     const update = stubOrder({ status: 'CONFIRMED', paymentMethod: 'COD', paymentStatus: 'PENDING' });
-    await assert.rejects(ordersService.updateOrderStatus('order-1', 'SHIPPED', 'admin-1'), /Cannot move/);
+    await assert.rejects(ordersService.updateOrderStatus('00000000-0000-4000-8000-000000000001', 'SHIPPED', 'admin-1'), /Cannot move/);
     assert.equal(update.mock.callCount(), 0);
   });
 
   it('never confirms an online order still awaiting payment', async () => {
     const update = stubOrder({ status: 'PENDING', paymentMethod: 'RAZORPAY', paymentStatus: 'PENDING' });
-    await assert.rejects(ordersService.updateOrderStatus('order-1', 'CONFIRMED', 'admin-1'), /awaiting payment/);
+    await assert.rejects(ordersService.updateOrderStatus('00000000-0000-4000-8000-000000000001', 'CONFIRMED', 'admin-1'), /awaiting payment/);
     assert.equal(update.mock.callCount(), 0);
   });
 });

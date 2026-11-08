@@ -4,7 +4,7 @@ import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { AppError } from '@core/errors/AppError';
 import { Cart } from '@database/models/cart.model';
 import { CartItem } from '@database/models/cartItem.model';
-import { Order } from '@database/models/order.model';
+import { Order, type CashbackBreakdownEntry, type CouponLineSnapshot } from '@database/models/order.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { OrderItem } from '@database/models/orderItem.model';
 import { ProductVariant } from '@database/models/productVariant.model';
@@ -18,9 +18,12 @@ import { cartService } from '@modules/cart/cart.service';
 import { cartRepository } from '@modules/cart/cart.repository';
 import { settingsService } from '@modules/settings/settings.service';
 import { customerCouponName } from '@modules/coupons/coupon.utils';
+import { couponRejected } from '@modules/coupons/couponErrors';
+import { restoreOrderCouponsToCart } from '@modules/coupons/couponUsage';
+import { buildCashbackBreakdown, buildCouponLineSnapshot, chargeVendorForFreeShipping, resolveCheckoutCouponCodes } from './checkoutCoupons';
+import type { LineDiscountShares } from '@modules/coupons/couponLineShares';
 import {
   validateCouponSet,
-  resolveCartCouponCodes,
   recordCouponUsagesForOrder,
   destroyCouponUsageForOrder,
   type AppliedCouponBreakdownEntry,
@@ -83,6 +86,7 @@ import {
 import { isIntraStateSupply } from '@modules/pricing/gstPlaceOfSupply';
 import { tdsRateForSale } from '@modules/pricing/tds194o';
 import { preGstCouponBreakdown } from './couponUsageAmounts';
+import { withActualLineShares, withActualSavings } from './actualCouponSavings';
 import { withGstInclusiveLineValues } from './gstInclusiveLines';
 import { taxService } from '@modules/tax/tax.service';
 
@@ -202,25 +206,13 @@ function toCouponLines(
   return withGstInclusiveLineValues(lines, shippingStateCode);
 }
 
-function resolveCheckoutCouponCodes(
-  data: { couponCode?: string | null; couponCodes?: string[] },
-  cart: { couponCode?: string | null; couponCodes?: string[] | null },
-): string[] {
-  if (data.couponCodes && data.couponCodes.length > 0) {
-    return [...new Set(data.couponCodes.map((c) => c.trim().toUpperCase()).filter(Boolean))];
-  }
-  if (data.couponCode?.trim()) {
-    return [data.couponCode.trim().toUpperCase()];
-  }
-  return resolveCartCouponCodes(cart);
-}
-
 /** Map cart rows into the normalized shape `vendorPricingPlan` prices. */
 function toPricedLines(
   items: (CartItem & { variant: ProductVariant & { product: any } })[],
 ): PricedLine[] {
   return items.map((item) => ({
     key: String(item.id),
+    variantId: String(item.variantId),
     vendorId: item.variant.product.vendorId || PLATFORM_VENDOR_ID,
     unitPrice: Number(item.variant.price),
     quantity: Number(item.quantity),
@@ -326,19 +318,28 @@ export class CheckoutService {
     });
     const { rows: baseVendorRows, shippingByVendor, shippingTotal } = plan;
 
-    const couponCodes = resolveCheckoutCouponCodes(data, cart);
+    const couponCodes = await resolveCheckoutCouponCodes(data, cart, {
+      userId,
+      lines: () => toCouponLines(quoteCart.items, shippingAddress.state),
+      shippingTotal,
+      shippingByVendor,
+    });
     let discount = 0;
     let cashbackAmount = 0;
     let applied: { code: string; discount: number; cashbackAmount?: number } | null = null;
     let appliedCoupons: Array<{
       code: string;
       name?: string;
+      type?: string;
+      freeShipping?: boolean;
       discount: number;
       cashbackAmount?: number;
+      lineShares?: Record<string, number>;
     }> = [];
     let vendorDiscountShares: Record<string, number> = {};
     let vendorShippingDiscountShares: Record<string, number> = {};
     let vendorBorneDiscountShares: Record<string, number> = {};
+    let lineDiscountShares: LineDiscountShares = {};
 
     if (couponCodes.length > 0) {
       const result = await validateCouponSet({
@@ -349,23 +350,22 @@ export class CheckoutService {
         shippingByVendor,
       });
       if (!result.valid) {
-        throw new ValidationError(result.reason ?? ERROR_MESSAGES.COUPON_INVALID);
+        throw couponRejected(result.reason, result.reasonCode);
       }
       discount = result.discount;
       cashbackAmount = result.cashbackAmount;
       vendorDiscountShares = result.vendorDiscountShares;
       vendorShippingDiscountShares = result.vendorShippingDiscountShares;
       vendorBorneDiscountShares = result.vendorBorneDiscountShares;
+      lineDiscountShares = result.lineDiscountShares;
       appliedCoupons = result.perCoupon.map((entry) => ({
         code: entry.code,
-        name: customerCouponName(
-          result.coupons.find((coupon) => coupon.code === entry.code) ?? {
-            code: entry.code,
-            type: entry.type,
-          },
-        ),
+        type: entry.type,
+        freeShipping: entry.freeShipping,
+        name: customerCouponName(result.coupons.find((coupon) => coupon.code === entry.code) ?? { code: entry.code, type: entry.type }),
         discount: entry.discount,
         cashbackAmount: entry.cashbackAmount,
+        lineShares: entry.lineShares,
       }));
       if (result.primaryCoupon) {
         applied = {
@@ -376,12 +376,13 @@ export class CheckoutService {
       }
     }
 
-    const { pricedByVendor, inclusiveByVendor } = priceVendorRows({
+    const { pricedByVendor, inclusiveByVendor, actualLineDiscountPaise } = priceVendorRows({
       rows: baseVendorRows,
       shares: {
         vendorDiscountShares,
         vendorShippingDiscountShares,
         vendorBorneDiscountShares,
+        lineDiscountShares,
       },
       shippingStateCode: shippingAddress.state,
       settings,
@@ -484,7 +485,7 @@ export class CheckoutService {
       amountDue,
       maxWalletApplicable,
       appliedCoupon: applied,
-      appliedCoupons,
+      appliedCoupons: withActualSavings(appliedCoupons, actualLineDiscountPaise),
       codAvailable,
     };
   }
@@ -534,16 +535,23 @@ export class CheckoutService {
         ]),
       );
 
-      const couponCodes = resolveCheckoutCouponCodes(data, cart);
+      const couponCodes = await resolveCheckoutCouponCodes(data, cart, {
+        userId,
+        lines: () => toCouponLines(cart.items, shippingAddress.state),
+        shippingTotal,
+        shippingByVendor,
+      });
       let couponResult: Awaited<ReturnType<typeof validateCouponSet>> | null = null;
       let cashbackAmount = 0;
-      let cashbackDiscountBearer: 'PLATFORM' | 'VENDOR' | null = null;
-      let cashbackVendorId: string | null = null;
+      let cashbackBreakdown: CashbackBreakdownEntry[] | null = null;
+      let couponLineBreakdown: CouponLineSnapshot[] | null = null;
       let coupons: Coupon[] = [];
       let primaryCoupon: Coupon | null = null;
       let vendorDiscountShares: Record<string, number> = {};
       let vendorShippingDiscountShares: Record<string, number> = {};
       let vendorBorneDiscountShares: Record<string, number> = {};
+      let vendorBorneShippingShares: Record<string, number> = {};
+      let lineDiscountShares: LineDiscountShares = {};
       let appliedCouponBreakdown: AppliedCouponBreakdownEntry[] = [];
 
       if (couponCodes.length > 0) {
@@ -556,31 +564,34 @@ export class CheckoutService {
           transaction: t,
         });
         if (!result.valid) {
-          throw new ValidationError(result.reason ?? ERROR_MESSAGES.COUPON_INVALID);
+          throw couponRejected(result.reason, result.reasonCode);
         }
         couponResult = result;
         cashbackAmount = result.cashbackAmount;
-        coupons = result.coupons;
-        primaryCoupon = result.primaryCoupon;
+        // A coupon that gave nothing (capped away, shipping already free) spends no use.
+        const benefitting = new Set(
+          result.perCoupon
+            .filter((entry) => entry.discount > 0 || entry.cashbackAmount > 0)
+            .map((entry) => entry.code),
+        );
+        coupons = result.coupons.filter((coupon) => benefitting.has(coupon.code));
+        primaryCoupon = coupons.find((coupon) => !coupon.vendorId) ?? coupons[0] ?? null;
         vendorDiscountShares = result.vendorDiscountShares;
         vendorShippingDiscountShares = result.vendorShippingDiscountShares;
         vendorBorneDiscountShares = result.vendorBorneDiscountShares;
-        const cashbackCoupon = coupons.find((c) => c.type === 'CASHBACK');
-        if (cashbackCoupon) {
-          cashbackDiscountBearer =
-            cashbackCoupon.discountBearer === DISCOUNT_BEARER.VENDOR
-              ? DISCOUNT_BEARER.VENDOR
-              : DISCOUNT_BEARER.PLATFORM;
-          cashbackVendorId = cashbackCoupon.vendorId ?? null;
-        }
+        vendorBorneShippingShares = result.vendorBorneShippingShares;
+        lineDiscountShares = result.lineDiscountShares;
+        cashbackBreakdown = buildCashbackBreakdown(result.perCoupon);
+        couponLineBreakdown = buildCouponLineSnapshot(result.perCoupon, coupons);
       }
 
-      const { pricedByVendor, bearerByVendor, customerGrandTotalPaise } = priceVendorRows({
+      const { pricedByVendor, bearerByVendor, customerGrandTotalPaise, actualLineDiscountPaise: actualLines } = priceVendorRows({
         rows: plan.rows,
         shares: {
           vendorDiscountShares,
           vendorShippingDiscountShares,
           vendorBorneDiscountShares,
+          lineDiscountShares,
         },
         shippingStateCode: shippingAddress.state,
         settings,
@@ -602,11 +613,11 @@ export class CheckoutService {
       const discountTotal = fromPaise(orderDiscountPaise);
       // Each coupon's part of it, for its usage record (what the coupon cost its funder).
       if (couponResult) {
-        appliedCouponBreakdown = preGstCouponBreakdown(couponResult.perCoupon, coupons, pricedByVendor);
+        appliedCouponBreakdown = preGstCouponBreakdown(couponResult.perCoupon, coupons, pricedByVendor, actualLines);
+        // Returns hold back from what each line really gave, not the promised figure.
+        if (couponLineBreakdown) couponLineBreakdown = withActualLineShares(couponLineBreakdown, lineDiscountShares, actualLines);
       }
-      const merchandiseSubtotal = fromPaise(merchandisePaise);
-      const orderTaxTotal = fromPaise(orderTaxPaise);
-      const orderShippingTotal = fromPaise(orderShippingPaise);
+      const [merchandiseSubtotal, orderTaxTotal, orderShippingTotal] = [fromPaise(merchandisePaise), fromPaise(orderTaxPaise), fromPaise(orderShippingPaise)];
 
       // Flat platform fee, not part of any vendor's priced rows — added on top
       // the same way the quote adds it to grandTotal, so it flows into COD
@@ -699,8 +710,8 @@ export class CheckoutService {
         walletAmountUsed,
         pendingCashbackAmount: cashbackAmount,
         cashbackCreditedAt: null,
-        cashbackDiscountBearer,
-        cashbackVendorId,
+        cashbackBreakdown,
+        couponLineBreakdown,
         originalTotalAmount: orderTotalRupees,
         razorpayAmountPaid:
           data.paymentMethod === PAYMENT_METHOD.COD ? 0 : Math.max(0, amountDue),
@@ -862,6 +873,14 @@ export class CheckoutService {
             tdsRatePercent,
             status: COMMISSION_STATUS.PENDING,
           }, { transaction: t });
+
+          await chargeVendorForFreeShipping({
+            vendorId,
+            subOrderId: subOrder.id,
+            sharePaise: toPaise(vendorBorneShippingShares[vendorId] ?? 0),
+            shippingDiscountPaise: p.shippingDiscountPaise,
+            transaction: t,
+          });
 
           // TCS is recorded when the part is dispatched and invoiced (pricing/tcsLedger),
           // at the rate frozen on the sub-order here.
@@ -1057,6 +1076,7 @@ export class CheckoutService {
       await destroyCouponUsageForOrder(order.id, t);
 
       await cartService.restoreItemsToUserCart(userId, restoreLines, t);
+      await restoreOrderCouponsToCart(order, userId, t);
 
       await rollbackOrderWalletIfNeeded(order, userId, t);
 

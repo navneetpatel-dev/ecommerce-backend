@@ -10,12 +10,14 @@ import {
   CreateCouponSchema,
   UpdateCouponSchema,
   ApplyCouponSchema,
+  BatchStatusSchema,
   BulkGenerateSchema,
   StatusSchema,
   EligibleCouponsQuerySchema,
   PublicEligibleCouponsQuerySchema,
   RemoveCouponQuerySchema,
 } from './coupons.dto';
+import { CouponCustomerOptionsQuerySchema } from './couponCustomerOptions';
 import * as couponsController from './coupons.controller';
 
 const router = Router();
@@ -92,7 +94,22 @@ router.patch(
 );
 
 // Admin
+// Customers for the "specific customers" picker — before `/:id`
+router.get(
+  '/customer-options',
+  authenticate,
+  authorize(PERMISSIONS.COUPON_MANAGE),
+  validate(CouponCustomerOptionsQuerySchema, 'query'),
+  couponsController.customerOptions,
+);
 router.get('/batches', authenticate, authorize(PERMISSIONS.COUPON_MANAGE), couponsController.listBatches);
+router.patch(
+  '/batches/:id/status',
+  authenticate,
+  authorize(PERMISSIONS.COUPON_MANAGE),
+  validate(BatchStatusSchema),
+  couponsController.setBatchStatus,
+);
 router.post(
   '/jobs/notify-alerts',
   authenticate,

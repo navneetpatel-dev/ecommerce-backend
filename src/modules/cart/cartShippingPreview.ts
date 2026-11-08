@@ -7,6 +7,8 @@ import { Address } from '@database/models/address.model';
 export type CouponShippingPreview = {
   total: number;
   byVendor: Record<string, number>;
+  /** No address to price against: these are placeholders, not a real ₹0. */
+  unknown?: boolean;
 };
 
 /** Cart/pincode-aware shipping total for coupon validation (no coupon service import). */
@@ -14,7 +16,7 @@ export async function resolveCartShippingPreviewForCoupon(
   userId: string | null,
   lines: CartLineForCoupon[],
 ): Promise<CouponShippingPreview> {
-  if (!userId || lines.length === 0) return { total: 0, byVendor: {} };
+  if (!userId || lines.length === 0) return { total: 0, byVendor: {}, unknown: true };
 
   const address = await Address.findOne({
     where: { userId },
@@ -26,6 +28,7 @@ export async function resolveCartShippingPreviewForCoupon(
   if (!address?.pincode) {
     return {
       total: 0,
+      unknown: true,
       byVendor: Object.fromEntries([...new Set(lines.map((line) => line.vendorId ?? 'platform'))].map((vendorId) => [vendorId, 0])),
     };
   }

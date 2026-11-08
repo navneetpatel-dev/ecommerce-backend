@@ -6,7 +6,6 @@ import { SubOrder } from '@database/models/subOrder.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import {
   COMMISSION_REFERENCE_TYPE,
-  COMMISSION_STATUS,
   DISCOUNT_BEARER,
   ORDER_STATUS,
   WALLET_REFERENCE_TYPE,
@@ -19,6 +18,7 @@ import { isReversedPart } from '@modules/pricing/partReversal';
 import { walletService } from '@modules/wallet/wallet.service';
 import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
 import { env } from '@config/env';
+import { cashbackLedgerRow, clawbackCashbackBreakdown, creditCashbackBreakdown } from './cashbackBreakdown';
 
 /**
  * Credits pending cashback once per order (idempotent via cashbackCreditedAt).
@@ -52,6 +52,9 @@ export async function creditPendingCashbackForOrder(
     const allDelivered = relevant.every((s) => s.status === ORDER_STATUS.DELIVERED);
     if (!allDelivered) return false;
     const delivered = relevant[0]!;
+
+    // Orders placed with a per-coupon record: each coupon pays and is charged on its own.
+    if (order.cashbackBreakdown?.length) return creditCashbackBreakdown(order, allSubOrders, relevant, transaction);
 
     // `pending` is frozen at its checkout-time (whole-cart) value — it is never shrunk when a
     // sibling suborder is cancelled (see suborders.service.ts's cancellation branch). Prorate it
@@ -105,26 +108,13 @@ export async function creditPendingCashbackForOrder(
       if (vendorId && subOrder) {
         const amountPaise = toPaise(proratedPending);
         await CommissionLedger.create(
-          {
+          cashbackLedgerRow({
             vendorId,
             subOrderId: subOrder.id,
-            commissionRate: 0,
-            discountBearer: DISCOUNT_BEARER.VENDOR,
-            saleAmountPaise: 0,
-            commissionAmountPaise: -amountPaise,
-            taxableAmountPaise: 0,
-            discountAmountPaise: 0,
-            taxAmountPaise: 0,
-            tcsAmountPaise: 0,
-            netPayoutAmountPaise: -amountPaise,
-            shippingCollectedPaise: 0,
+            amountPaise: -amountPaise,
             referenceType: COMMISSION_REFERENCE_TYPE.CASHBACK_COST,
-            // Pending, so the next payout run deducts it from the vendor's payout.
-            status: COMMISSION_STATUS.PENDING,
-            createdBy: order.userId,
-            updatedBy: order.userId,
-            deletedBy: null,
-          },
+            actorId: order.userId,
+          }),
           { transaction },
         );
       }
@@ -156,7 +146,8 @@ export async function shrinkPendingCashbackForReturn(input: {
   merchandiseAfterPaise: number;
 }): Promise<void> {
   const { order, actorId, transaction, merchandiseBeforePaise, merchandiseAfterPaise } = input;
-  if (order.cashbackCreditedAt) return;
+  // With a per-coupon record, the credit itself leaves returned goods out.
+  if (order.cashbackCreditedAt || order.cashbackBreakdown?.length) return;
   const pendingPaise = toPaise(Number(order.pendingCashbackAmount ?? 0));
   if (pendingPaise <= 0 || merchandiseBeforePaise <= 0) return;
   const keptPaise = Math.max(0, Math.min(merchandiseAfterPaise, merchandiseBeforePaise));
@@ -169,9 +160,9 @@ export async function shrinkPendingCashbackForReturn(input: {
 }
 
 /**
- * Claw back credited cashback proportionally to returned merchandise.
- * Vendor CashbackCost is reversed in FULL on first clawback after credit
- * (vendor does not bear write-off risk from partial wallet recovery).
+ * Claw back credited cashback proportionally to returned merchandise. A vendor's cost is
+ * reversed by the same share, whatever the wallet recovers: the vendor doesn't bear that
+ * write-off risk, and a small return no longer hands back the whole cost.
  */
 export async function clawbackCashbackForReturn(input: {
   order: Order;
@@ -182,6 +173,9 @@ export async function clawbackCashbackForReturn(input: {
   refundMerchandisePaise: number;
   /** Order merchandise taxable paise still on the books before this return was frozen. */
   orderMerchandiseBeforePaise: number;
+  /** What came back, to find the coupons earned on it. */
+  variantId: string;
+  returnQuantity: number;
 }): Promise<void> {
   const {
     order,
@@ -190,8 +184,15 @@ export async function clawbackCashbackForReturn(input: {
     transaction,
     refundMerchandisePaise,
     orderMerchandiseBeforePaise,
+    variantId,
+    returnQuantity,
   } = input;
   if (!order.cashbackCreditedAt) return;
+
+  if (order.cashbackBreakdown?.length) {
+    await clawbackCashbackBreakdown({ order, returnRequestId, actorId, transaction, variantId, returnQuantity });
+    return;
+  }
   const remainingCashback = Number(order.pendingCashbackAmount ?? 0);
   if (remainingCashback <= 0) return;
 
@@ -212,7 +213,8 @@ export async function clawbackCashbackForReturn(input: {
     transaction,
   );
 
-  // Reverse vendor CashbackCost in FULL once (first clawback after credit), regardless of recovery.
+  // Older orders: reverse the same share of the vendor's cost, up to what isn't reversed yet
+  // (one already fully reversed under the old rule gets nothing more).
   if (bearer === DISCOUNT_BEARER.VENDOR) {
     const subIds = (
       await SubOrder.findAll({
@@ -221,47 +223,28 @@ export async function clawbackCashbackForReturn(input: {
         transaction,
       })
     ).map((s) => s.id);
-
-    const alreadyReversed = await CommissionLedger.findOne({
+    const adjustments = await CommissionLedger.findAll({
       where: {
-        referenceType: COMMISSION_REFERENCE_TYPE.CASHBACK_COST_REVERSAL,
+        referenceType: {
+          [Op.in]: [COMMISSION_REFERENCE_TYPE.CASHBACK_COST, COMMISSION_REFERENCE_TYPE.CASHBACK_COST_REVERSAL],
+        },
         subOrderId: { [Op.in]: subIds },
       },
       transaction,
     });
-
-    if (!alreadyReversed) {
-      const costRow = await CommissionLedger.findOne({
-        where: {
-          referenceType: COMMISSION_REFERENCE_TYPE.CASHBACK_COST,
-          subOrderId: { [Op.in]: subIds },
-        },
-        transaction,
-      });
-      if (costRow) {
-        const amountPaise = Math.abs(frozenPaise(costRow.commissionAmountPaise));
+    const costRow = adjustments.find((row) => row.referenceType === COMMISSION_REFERENCE_TYPE.CASHBACK_COST);
+    if (costRow) {
+      const outstandingPaise = adjustments.reduce((sum, row) => sum - frozenPaise(row.commissionAmountPaise), 0);
+      const amountPaise = Math.min(toPaise(clawAmount), outstandingPaise);
+      if (amountPaise > 0) {
         await CommissionLedger.create(
-          {
+          cashbackLedgerRow({
             vendorId: costRow.vendorId,
             subOrderId: costRow.subOrderId,
-            commissionRate: 0,
-            discountBearer: DISCOUNT_BEARER.VENDOR,
-            saleAmountPaise: 0,
-            commissionAmountPaise: amountPaise,
-            taxableAmountPaise: 0,
-            discountAmountPaise: 0,
-            taxAmountPaise: 0,
-            tcsAmountPaise: 0,
-            netPayoutAmountPaise: amountPaise,
-            shippingCollectedPaise: 0,
+            amountPaise,
             referenceType: COMMISSION_REFERENCE_TYPE.CASHBACK_COST_REVERSAL,
-            // Pending, so the next payout run pays it back (or nets it against a cost
-            // that has not been deducted yet).
-            status: COMMISSION_STATUS.PENDING,
-            createdBy: actorId,
-            updatedBy: actorId,
-            deletedBy: null,
-          },
+            actorId,
+          }),
           { transaction },
         );
       }

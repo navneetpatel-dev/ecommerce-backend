@@ -1,6 +1,42 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
 import type { PlatformInvoiceSnapshot } from '@modules/pricing/platformFeeInvoice';
 
+/** A conditional coupon as placed: enough to work out what it gives the items kept after a return. */
+export type CouponLineSnapshot = {
+  couponId: string;
+  type: string;
+  value: number | null;
+  maxDiscountCap: number | null;
+  minOrderValue: number | null;
+  minQuantity: number | null;
+  config: { tiers?: Array<{ minSubtotal: number; percent: number }>; bundleProductIds?: string[] };
+  vendorId: string | null;
+  /** What returns have already held back for this coupon (GST incl., paise). */
+  takenPaise: number;
+  lines: Array<{
+    variantId: string;
+    productId: string;
+    vendorId: string | null;
+    /** Price of one piece with GST, before coupons. */
+    unitPaise: number;
+    quantity: number;
+    /** This coupon's discount on the line, GST incl. */
+    discountPaise: number;
+  }>;
+};
+
+/** One cashback coupon on an order. All amounts in paise. */
+export type CashbackBreakdownEntry = {
+  couponId: string;
+  code: string;
+  vendorId: string | null;
+  bearer: 'PLATFORM' | 'VENDOR';
+  amountPaise: number;
+  /** Null until credited; then what actually reached the wallet for this coupon. */
+  creditedPaise: number | null;
+  lines: Array<{ variantId: string; vendorId: string | null; basePaise: number; quantity: number }>;
+};
+
 export class Order extends Model<InferAttributes<Order>, InferCreationAttributes<Order>> {
   declare id: CreationOptional<string>;
   declare userId: string;
@@ -18,6 +54,10 @@ export class Order extends Model<InferAttributes<Order>, InferCreationAttributes
   declare walletAmountUsed: CreationOptional<number>;
   declare pendingCashbackAmount: CreationOptional<number>;
   declare cashbackCreditedAt: CreationOptional<Date | null>;
+  /** Per-coupon cashback (payer, amount, eligible lines). Null on older orders. */
+  declare cashbackBreakdown: CreationOptional<CashbackBreakdownEntry[] | null>;
+  /** Conditional coupons' terms and per-line discount, for re-checking on return. */
+  declare couponLineBreakdown: CreationOptional<CouponLineSnapshot[] | null>;
   declare cashbackDiscountBearer: CreationOptional<'PLATFORM' | 'VENDOR' | null>;
   /** Frozen checkout grand total (stable for refund payment-source splits). */
   declare originalTotalAmount: CreationOptional<number>;
@@ -88,6 +128,8 @@ export const initOrderModel = (sequelize: Sequelize) => {
       walletAmountUsed: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       pendingCashbackAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       cashbackCreditedAt: { type: DataTypes.DATE, allowNull: true },
+      cashbackBreakdown: { type: DataTypes.JSONB, allowNull: true },
+      couponLineBreakdown: { type: DataTypes.JSONB, allowNull: true },
       cashbackDiscountBearer: { type: DataTypes.ENUM('PLATFORM', 'VENDOR'), allowNull: true },
       originalTotalAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
       razorpayAmountPaid: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },

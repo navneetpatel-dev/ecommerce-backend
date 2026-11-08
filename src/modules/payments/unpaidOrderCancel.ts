@@ -12,6 +12,7 @@ import {
 } from '@core/constants/statuses';
 import { cartService } from '@modules/cart/cart.service';
 import { destroyCouponUsageForOrder } from '@modules/coupons/couponEngine';
+import { restoreOrderCouponsToCart } from '@modules/coupons/couponUsage';
 import { rollbackOrderWalletIfNeeded } from '@modules/wallet/walletOrderRollback';
 
 type OrderForRollback = Order & {
@@ -89,6 +90,7 @@ export const unpaidOrders = {
       await destroyCouponUsageForOrder(order.id, t);
 
       await cartService.restoreItemsToUserCart(order.userId, restoreLines, t);
+      await restoreOrderCouponsToCart(order, order.userId, t);
 
       await rollbackOrderWalletIfNeeded(order, order.userId, t);
 

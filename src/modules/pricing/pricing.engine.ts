@@ -1,6 +1,7 @@
 import { DISCOUNT_BEARER, type DiscountBearer, type ReturnReason } from '@core/constants/statuses';
 import { allocateProportionally, fromPaise, toPaise, type Paise } from './money';
 import { resolveShippingRefundPolicy } from './shippingRefundPolicy';
+import { resolveLineDiscounts } from './lineDiscounts';
 
 export type TaxBreakdownPaise = {
   cgst: Paise;
@@ -45,6 +46,9 @@ export type PricingLineInput = {
   gstPriceBand?: GstPriceBand | null;
   /** Per-line commission %; falls back to SubOrderPricingInput.commissionRatePercent. */
   commissionRatePercent?: number;
+  /** The line's own discount and its vendor-funded part (see `lineDiscounts.ts`). */
+  discountPaise?: Paise;
+  vendorBorneDiscountPaise?: Paise;
 };
 
 export type PricingLineBreakdown = {
@@ -269,21 +273,13 @@ export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderP
   });
 
   const subtotalPaise = lines.reduce((sum, line) => sum + line.lineSubtotalPaise, 0);
-  const merchandiseDiscountPaise = Math.min(
-    Math.max(0, Math.round(input.merchandiseDiscountPaise)),
-    subtotalPaise,
-  );
+  const { lineDiscounts, merchandiseDiscountPaise, vendorBorneOnLine } = resolveLineDiscounts(input, lines, subtotalPaise);
   const shippingCostPaise = Math.max(0, Math.round(input.shippingCostPaise));
   const shippingDiscountPaise = Math.min(
     Math.max(0, Math.round(input.shippingDiscountPaise)),
     shippingCostPaise,
   );
   const shippingChargedPaise = shippingCostPaise - shippingDiscountPaise;
-
-  const lineDiscounts = allocateProportionally(
-    merchandiseDiscountPaise,
-    lines.map((line) => line.lineSubtotalPaise),
-  );
 
   const vendorBorne = Math.min(
     merchandiseDiscountPaise,
@@ -299,10 +295,7 @@ export function computeSubOrderBreakdown(input: SubOrderPricingInput): SubOrderP
   const pricedLines: PricingLineBreakdown[] = lines.map((line, i) => {
     const discountPaise = lineDiscounts[i] ?? 0;
     const lineTaxable = Math.max(0, line.lineSubtotalPaise - discountPaise);
-    const lineVendorBorne =
-      merchandiseDiscountPaise > 0
-        ? Math.round((discountPaise * vendorBorne) / merchandiseDiscountPaise)
-        : 0;
+    const lineVendorBorne = vendorBorneOnLine(i, discountPaise, vendorBorne);
     const platformFunded = Math.max(0, discountPaise - lineVendorBorne);
     // The vendor's value of supply: the platform's coupon share is paid to the vendor,
     // so it stays in the value GST is charged on (s.15 CGST Act).

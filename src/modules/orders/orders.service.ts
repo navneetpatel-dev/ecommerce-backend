@@ -15,6 +15,7 @@ import { DeliveryAgent } from '@database/models/deliveryAgent.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { Product } from '@database/models/product.model';
 import { mapOrderResponse } from './orderDisplayMappers';
+import { appliedCouponsForOrder } from '@modules/coupons/couponUsage';
 import { cancelPaidOrder } from './ordersCancel.service';
 import type { CreateOrderRequest, GetOrdersQuery } from './orders.dto';
 import { ReturnRequest } from '@database/models/returnRequest.model';
@@ -130,7 +131,10 @@ export class OrdersService {
     if (userId && order.userId !== userId) {
       throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_ORDER);
     }
-    const mapped = mapOrderResponse(order as unknown as Record<string, unknown>);
+    const mapped = {
+      ...mapOrderResponse(order as unknown as Record<string, unknown>),
+      appliedCoupons: await appliedCouponsForOrder(id),
+    };
     const { linesWithReturns, ...summary } = await this.orderReturnSummary(
       mapped.subOrders as unknown as Array<{ id: string }>,
     );

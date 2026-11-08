@@ -1,3 +1,5 @@
+import { z } from 'zod';
+import { NotFoundError } from '@core/errors/NotFoundError';
 import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
@@ -21,6 +23,8 @@ export const getOrders = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const getOrderById = asyncHandler(async (req: Request, res: Response) => {
+  // Not an order id at all (e.g. /orders/undefined): a 404, not a database error.
+  if (!z.string().uuid().safeParse(req.params.id).success) throw new NotFoundError('Order');
   const isAdmin = await userHasPermission(req.user, PERMISSIONS.ORDER_MANAGE);
   const order = await ordersService.getOrderById(req.params.id!, isAdmin ? undefined : req.user!.id);
   res.json(ok(order));

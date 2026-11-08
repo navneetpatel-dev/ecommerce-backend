@@ -9,6 +9,7 @@ import {
   CreateCouponSchema,
   UpdateCouponSchema,
   ApplyCouponSchema,
+  BatchStatusSchema,
   BulkGenerateSchema,
   ListCouponsQuerySchema,
   StatusSchema,
@@ -16,6 +17,7 @@ import {
   PublicEligibleCouponsQuerySchema,
   RemoveCouponQuerySchema,
 } from './coupons.dto';
+import { CouponCustomerOptionsQuerySchema, listCouponCustomerOptions } from './couponCustomerOptions';
 
 function isVendorActor(req: Request): boolean {
   const role = req.user?.role?.name;
@@ -82,6 +84,18 @@ export const listBatches = asyncHandler(async (req: Request, res: Response) => {
   res.json(ok(batches));
 });
 
+export const customerOptions = asyncHandler(async (req: Request, res: Response) => {
+  const query = CouponCustomerOptionsQuerySchema.parse(req.query);
+  const result = await listCouponCustomerOptions(query);
+  res.json(ok(result.users, { pagination: result.pagination }));
+});
+
+export const setBatchStatus = asyncHandler(async (req: Request, res: Response) => {
+  const dto = BatchStatusSchema.parse(req.body);
+  const result = await couponsService.setBatchStatus(req.params.id!, dto.status, req.user!.id);
+  res.json(ok(result));
+});
+
 export const runCouponAlertJob = asyncHandler(async (_req: Request, res: Response) => {
   const result = await couponsService.notifyExpiringAndNearLimit();
   res.json(ok(result));
@@ -103,6 +117,7 @@ export const eligibleCoupons = asyncHandler(async (req: Request, res: Response) 
   const query = EligibleCouponsQuerySchema.parse(req.query);
   const result = await couponsService.eligibleCoupons(req.user!.id, {
     productId: query.productId,
+    variantId: query.variantId,
     limit: query.limit,
   });
   res.json(ok(result));
@@ -112,6 +127,7 @@ export const eligibleCouponsPublic = asyncHandler(async (req: Request, res: Resp
   const query = PublicEligibleCouponsQuerySchema.parse(req.query);
   const result = await couponsService.eligibleCoupons(null, {
     productId: query.productId,
+    variantId: query.variantId,
     limit: query.limit,
   });
   res.json(ok(result));

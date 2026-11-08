@@ -8,6 +8,7 @@ import { lineSubtotal } from '@modules/pricing/displayMoney';
 import { fromPaise, roundMoney, sumRupees } from '@modules/pricing/money';
 import { computeVendorShippingWeightsByVendor } from '@modules/shipping/shippingWeight';
 import { resolveShippingDisplayKey } from '@modules/checkout/checkoutOrderTotals';
+import type { LineDiscountShares } from '@modules/coupons/couponLineShares';
 import { cartRepository } from './cart.repository';
 import { MAX_CART_LINE_QUANTITY } from './cart.constants';
 import { Cart } from '@database/models/cart.model';
@@ -18,6 +19,7 @@ import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
 import type { AddToCartRequest, UpdateCartItemRequest } from './cart.dto';
 import { gstRuleResolver, priceWithRuleGst } from '@modules/tax/gstPricing';
+import { withActualSavings } from '@modules/checkout/actualCouponSavings';
 
 export type CartViewItem = {
   id: string;
@@ -101,6 +103,8 @@ export type CartView = {
   } | null;
   appliedCoupons?: Array<{ code: string; discount: number; cashbackAmount: number; type: string }>;
   removedCouponReason?: string | null;
+  /** Coupons on the cart that don't apply right now, and why. */
+  inactiveCoupons?: Array<{ code: string; name: string; reason: string; reasonCode: string | null }>;
   /** Diagnostic/read-only weights; shipping APIs always recompute them server-side. */
   vendorShippingWeights?: Record<string, number>;
 };
@@ -238,6 +242,8 @@ export class CartService {
     let vendorDiscountShares: Record<string, number> = {};
     let vendorShippingDiscountShares: Record<string, number> = {};
     let vendorBorneDiscountShares: Record<string, number> = {};
+    let lineDiscountShares: LineDiscountShares = {};
+    let inactiveCoupons: CartView['inactiveCoupons'] = [];
     if (userId) {
       const { couponsService } = await import('@modules/coupons/coupons.service');
       const revalidated = await couponsService.revalidateCartCoupon(userId);
@@ -247,14 +253,17 @@ export class CartService {
       vendorDiscountShares = revalidated.appliedCoupon?.vendorDiscountShares ?? {};
       vendorShippingDiscountShares = revalidated.appliedCoupon?.vendorShippingDiscountShares ?? {};
       vendorBorneDiscountShares = revalidated.appliedCoupon?.vendorBorneDiscountShares ?? {};
+      lineDiscountShares = revalidated.appliedCoupon?.lineDiscountShares ?? {};
+      inactiveCoupons = revalidated.inactiveCoupons;
     }
 
-    const { preview: pricingPreview, inclusiveLines } = await this.buildPricingPreview({
+    const { preview: pricingPreview, inclusiveLines, actualLineDiscountPaise } = await this.buildPricingPreview({
       userId,
       items: available,
       vendorDiscountShares,
       vendorShippingDiscountShares,
       vendorBorneDiscountShares,
+      lineDiscountShares,
       merchandiseDiscountTotal: appliedCoupon?.discount ?? 0,
     });
     // The priced lines' GST-inclusive totals come from the engine, so they add up to the bill.
@@ -267,10 +276,7 @@ export class CartService {
     }
 
     if (appliedCoupon && appliedCoupon.cashbackAmount > 0) {
-      appliedCoupon = {
-        ...appliedCoupon,
-        payNowGrandTotal: pricingPreview.grandTotal,
-      };
+      appliedCoupon = { ...appliedCoupon, payNowGrandTotal: pricingPreview.grandTotal };
     }
 
     const vendorShippingWeights = computeVendorShippingWeightsByVendor(
@@ -289,8 +295,9 @@ export class CartService {
       pricingPreview,
       vendorShippingWeights,
       appliedCoupon,
-      appliedCoupons,
+      appliedCoupons: withActualSavings(appliedCoupons ?? [], actualLineDiscountPaise ?? {}),
       removedCouponReason,
+      inactiveCoupons,
     };
   }
 
@@ -300,10 +307,12 @@ export class CartService {
     vendorDiscountShares: Record<string, number>;
     vendorShippingDiscountShares: Record<string, number>;
     vendorBorneDiscountShares: Record<string, number>;
+    lineDiscountShares: LineDiscountShares;
     merchandiseDiscountTotal: number;
   }): Promise<{
     preview: NonNullable<CartView['pricingPreview']>;
     inclusiveLines: Record<string, { lineTotal: number; unitPrice: number }>;
+    actualLineDiscountPaise?: Record<string, number>;
   }> {
     const merchandiseSubtotal = sumRupees(input.items.map((item) => item.lineSubtotal));
     if (input.items.length === 0) {
@@ -360,6 +369,7 @@ export class CartService {
     const plan = await buildVendorPricingRows({
       lines: input.items.map((item) => ({
         key: item.id,
+        variantId: item.variantId,
         vendorId: item.product.vendor.id || PLATFORM_VENDOR_ID,
         unitPrice: item.product.price,
         quantity: item.quantity,
@@ -373,12 +383,13 @@ export class CartService {
       onMissingRate: 'estimate',
     });
 
-    const { pricedByVendor, inclusiveByVendor } = priceVendorRows({
+    const { pricedByVendor, inclusiveByVendor, actualLineDiscountPaise } = priceVendorRows({
       rows: plan.rows,
       shares: {
         vendorDiscountShares: input.vendorDiscountShares,
         vendorShippingDiscountShares: input.vendorShippingDiscountShares,
         vendorBorneDiscountShares: input.vendorBorneDiscountShares,
+        lineDiscountShares: input.lineDiscountShares,
       },
       shippingStateCode: shippingAddress?.state ?? '',
       settings,
@@ -411,9 +422,7 @@ export class CartService {
       }
     }
     let discount = fromPaise(discountPaise);
-    const taxTotal = fromPaise(taxPaise);
-    const shippingTotal = fromPaise(shippingPaise);
-    const grandTotal = fromPaise(grandTotalPaise);
+    const [taxTotal, shippingTotal, grandTotal] = [fromPaise(taxPaise), fromPaise(shippingPaise), fromPaise(grandTotalPaise)];
 
     if (discount === 0 && input.merchandiseDiscountTotal > 0) {
       discount = input.merchandiseDiscountTotal;
@@ -434,6 +443,7 @@ export class CartService {
         basisKey: !shippingAddress ? 'NO_ADDRESS' : plan.hasEstimatedShipping ? 'NO_SHIPPING_RATE' : 'DEFAULT_ADDRESS',
       },
       inclusiveLines,
+      actualLineDiscountPaise,
     };
   }
 
@@ -579,6 +589,7 @@ export class CartService {
     if (!cart) return;
 
     await CartItem.destroy({ where: { cartId: cart.id } });
+    await cart.update({ couponCode: null, couponCodes: [] });
   }
 
   async mergeGuestCartIntoUserCart(sessionId: string, userId: string): Promise<{ merged: boolean }> {

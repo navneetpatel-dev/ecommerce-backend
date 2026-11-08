@@ -192,6 +192,7 @@ export async function runNotificationSchedulerTick(): Promise<void> {
     const { processPendingCashbackCredits } = await import('@modules/wallet/cashback.service');
     const { supportTicketsService } = await import('@modules/supportTickets/supportTickets.service');
     const { bugReportsService } = await import('@modules/bugReports/bugReports.service');
+    const { expireCoupons } = await import('@modules/coupons/couponAlerts');
     const [
       abandoned,
       lowStock,
@@ -204,6 +205,7 @@ export async function runNotificationSchedulerTick(): Promise<void> {
       bugsClosed,
       docsExpiring,
       docsExpired,
+      couponsExpired,
     ] = await Promise.all([
       processAbandonedCarts(),
       processLowStock(),
@@ -216,6 +218,7 @@ export async function runNotificationSchedulerTick(): Promise<void> {
       bugReportsService.markClosedIfDue(),
       processExpiringAgentDocuments(),
       processExpiredAgentDocuments(),
+      expireCoupons(),
     ]);
     const total =
       abandoned +
@@ -228,7 +231,8 @@ export async function runNotificationSchedulerTick(): Promise<void> {
       bugsVerified +
       bugsClosed +
       docsExpiring +
-      docsExpired;
+      docsExpired +
+      couponsExpired;
     if (total > 0) {
       logger.info('Notification scheduler tick', {
         abandoned,
@@ -242,6 +246,7 @@ export async function runNotificationSchedulerTick(): Promise<void> {
         bugsClosed,
         docsExpiring,
         docsExpired,
+        couponsExpired,
       });
     }
   } catch (error) {

@@ -272,7 +272,7 @@ module.exports = {
           id: uuidv4(), userId: customerId,
           line1: `${randomInt(1, 999)} ${randomElement(localities)}`,
           line2: j > 0 ? `Flat ${randomInt(1, 500)}` : null,
-          city: cities[cityIdx], state: states[cityIdx], pincode: `${randomInt(10, 99)}${String(randomInt(100, 999)).padStart(3, '0')}`, country: 'India',
+          city: cities[cityIdx], state: states[cityIdx], pincode: `${randomInt(10, 99)}${String(randomInt(1000, 9999))}`, country: 'India',
           isDefault: j === 0, createdAt: now, updatedAt: now,
         });
       }
@@ -635,12 +635,17 @@ module.exports = {
     for (const customer of customers.slice(0, 80)) {
       const cartId = uuidv4();
       carts.push({ id: cartId, userId: customer.id, createdAt: now, updatedAt: now });
+      // A cart holds each variant once (unique index on cartId + variantId).
+      const inCart = new Set();
       for (let j = 0; j < randomInt(1, 8); j++) {
         const product = randomElement(liveProducts);
         const variants = productVariantMap[product.id];
         if (!variants) continue;
+        const variantId = randomElement(variants).id;
+        if (inCart.has(variantId)) continue;
+        inCart.add(variantId);
         cartItems.push({
-          id: uuidv4(), cartId, variantId: randomElement(variants).id,
+          id: uuidv4(), cartId, variantId,
           quantity: randomInt(1, 3), createdAt: now, updatedAt: now,
         });
       }

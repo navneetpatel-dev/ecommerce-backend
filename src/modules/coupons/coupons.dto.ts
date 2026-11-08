@@ -1,22 +1,11 @@
 import { z } from 'zod';
-import { COUPON_STATUS_VALUES, DISCOUNT_BEARER_VALUES } from '@core/constants/statuses';
+import { ValidationError } from '@core/errors/ValidationError';
+import { refineCouponShape, type CouponShape } from './couponShape';
 
-const COUPON_TYPES = [
-  'PERCENTAGE',
-  'FLAT',
-  'FREE_SHIPPING',
-  'BOGO',
-  'TIERED',
-  'CASHBACK',
-  'BUNDLE',
-] as const;
+export type { CouponShape } from './couponShape';
+import { COUPON_STATUS_VALUES } from '@core/constants/statuses';
 
-const TYPES_REQUIRING_VALUE = new Set<(typeof COUPON_TYPES)[number]>([
-  'PERCENTAGE',
-  'FLAT',
-  'CASHBACK',
-  'BUNDLE',
-]);
+import { COUPON_TYPES } from './couponShape';
 
 const ScopeSchema = z.object({
   type: z.enum(['all', 'vendor', 'product', 'category']),
@@ -56,10 +45,11 @@ const couponObjectSchema = z.object({
     .string()
     .trim()
     .min(1, 'Code is required')
-    .max(64, 'Code must be 64 characters or fewer'),
+    .max(64, 'Code must be 64 characters or fewer')
+    .regex(/^[A-Za-z0-9_-]+$/, 'Use only letters, numbers, hyphens and underscores'),
   type: z.enum(COUPON_TYPES, { message: 'Type is required' }),
   value: z.number().nonnegative('Value cannot be negative').optional().nullable(),
-  maxDiscountCap: z.number().nonnegative('Max discount cannot be negative').optional().nullable(),
+  maxDiscountCap: z.number().positive('Max discount must be greater than zero').optional().nullable(),
   minOrderValue: z.number().nonnegative('Min order value cannot be negative').optional().nullable(),
   minQuantity: z.number().int().nonnegative().optional().nullable(),
   applicableScope: ScopeSchema.optional(),
@@ -79,91 +69,26 @@ const couponObjectSchema = z.object({
   stackable: z.boolean().optional(),
   priority: z.number().int().optional(),
   vendorId: z.string().uuid().optional().nullable(),
-  discountBearer: z.enum(DISCOUNT_BEARER_VALUES).optional(),
-  status: z.enum(COUPON_STATUS_VALUES).optional(),
+  showInOffers: z.boolean().optional(),
 });
 
-function refineCouponDatesAndValue(
-  data: {
-    type: (typeof COUPON_TYPES)[number];
-    value?: number | null;
-    startDate: string;
-    endDate: string;
-    config?: {
-      tiers?: Array<{ minSubtotal: number; percent: number }>;
-      bundleProductIds?: string[];
-    };
-  },
-  ctx: z.RefinementCtx,
-) {
-  if (TYPES_REQUIRING_VALUE.has(data.type) && (data.value == null || Number.isNaN(data.value))) {
-    ctx.addIssue({
-      code: 'custom',
-      path: ['value'],
-      message: 'Value is required for this coupon type',
-    });
-  }
+const refineNewCoupon = (data: CouponShape, ctx: z.RefinementCtx) => refineCouponShape(data, ctx);
 
-  if (data.type === 'PERCENTAGE' && data.value != null && data.value > 100) {
-    ctx.addIssue({
-      code: 'custom',
-      path: ['value'],
-      message: 'Percentage value cannot exceed 100',
-    });
-  }
+export const CreateCouponSchema = couponObjectSchema
+  .extend({ status: z.enum(['DRAFT', 'ACTIVE']).optional() })
+  .superRefine(refineNewCoupon);
 
-  if (data.type === 'TIERED') {
-    const tiers = data.config?.tiers ?? [];
-    const hasValue = data.value != null && !Number.isNaN(data.value) && data.value > 0;
-    if (tiers.length === 0 && !hasValue) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['config'],
-        message: 'Tiered coupons require tiers or a percentage value',
-      });
-    }
-  }
+/** Partial on purpose: the service checks the merged coupon with `assertValidCouponShape`. */
+export const UpdateCouponSchema = couponObjectSchema.partial();
 
-  if (data.type === 'BUNDLE') {
-    const ids = data.config?.bundleProductIds ?? [];
-    if (ids.length === 0) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['config', 'bundleProductIds'],
-        message: 'Bundle coupons require at least one product',
-      });
-    }
-  }
-
-  const start = Date.parse(data.startDate);
-  const end = Date.parse(data.endDate);
-  if (!Number.isNaN(start) && !Number.isNaN(end) && end <= start) {
-    ctx.addIssue({
-      code: 'custom',
-      path: ['endDate'],
-      message: 'End date must be after start date',
-    });
-  }
+/** Throws a validation error when an edit would leave the coupon invalid (see updateCoupon). */
+export function assertValidCouponShape(data: CouponShape, opts: { endMustBeFuture: boolean }): void {
+  const result = z
+    .custom<CouponShape>()
+    .superRefine((value, ctx) => refineCouponShape(value, ctx, opts))
+    .safeParse(data);
+  if (!result.success) throw new ValidationError(result.error.flatten());
 }
-
-export const CreateCouponSchema = couponObjectSchema.superRefine(refineCouponDatesAndValue);
-
-export const UpdateCouponSchema = couponObjectSchema
-  .partial()
-  .superRefine((data, ctx) => {
-    if (data.startDate && data.endDate && data.type) {
-      refineCouponDatesAndValue(
-        {
-          type: data.type,
-          value: data.value,
-          startDate: data.startDate,
-          endDate: data.endDate,
-          config: data.config,
-        },
-        ctx,
-      );
-    }
-  });
 
 export const ApplyCouponSchema = z.object({
   code: z.string().trim().min(1, 'Code is required'),
@@ -174,27 +99,49 @@ export const RemoveCouponQuerySchema = z.object({
   code: z.string().trim().min(1).optional(),
 });
 
-export const StatusSchema = z.object({
-  status: z.enum(['ACTIVE', 'PAUSED', 'ARCHIVED', 'DRAFT', 'REJECTED']),
+export const StatusSchema = z
+  .object({
+    status: z.enum(['ACTIVE', 'PAUSED', 'ARCHIVED', 'DRAFT', 'REJECTED', 'PENDING_APPROVAL']),
+    /** Why it was rejected: shown to the vendor. */
+    note: z.string().trim().max(1000).optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.status === 'REJECTED' && !data.note) {
+      ctx.addIssue({ code: 'custom', path: ['note'], message: 'Give a reason for rejecting this coupon' });
+    }
+  });
+
+export const BatchStatusSchema = z.object({
+  status: z.enum(['ACTIVE', 'PAUSED']),
 });
 
 export const EligibleCouponsQuerySchema = z.object({
   productId: z.string().uuid().optional(),
+  variantId: z.string().uuid().optional(),
   limit: z.coerce.number().int().positive().max(20).optional(),
 });
 
 export const PublicEligibleCouponsQuerySchema = z.object({
   productId: z.string().uuid(),
+  variantId: z.string().uuid().optional(),
   limit: z.coerce.number().int().positive().max(20).optional(),
 });
 
-const templateObjectSchema = couponObjectSchema.omit({ code: true });
+// Every bulk code is single-use, so the template has no total limit.
+const templateObjectSchema = couponObjectSchema
+  .omit({ code: true, usageLimitTotal: true, showInOffers: true })
+  .extend({ status: z.enum(['DRAFT', 'ACTIVE']).optional() });
 
 export const BulkGenerateSchema = z.object({
   name: z.string().trim().min(1).max(120),
   count: z.number().int().min(1).max(500),
-  prefix: z.string().trim().max(8).optional(),
-  template: templateObjectSchema.superRefine(refineCouponDatesAndValue),
+  prefix: z
+    .string()
+    .trim()
+    .max(8)
+    .regex(/^[A-Za-z0-9-]*$/, 'Use only letters, numbers and hyphens')
+    .optional(),
+  template: templateObjectSchema.superRefine(refineNewCoupon),
 });
 
 export const ListCouponsQuerySchema = z.object({
@@ -212,6 +159,13 @@ export const ListCouponsQuerySchema = z.object({
     }),
   type: z.enum(COUPON_TYPES).optional(),
   batchId: z.string().uuid().optional(),
+  /** Part of a coupon code, any case. */
+  search: z.string().trim().min(1).max(64).optional(),
+  /** Leave bulk-generated codes out of the list. */
+  excludeBatches: z
+    .union([z.literal('true'), z.literal('false'), z.boolean()])
+    .optional()
+    .transform((value) => value === true || value === 'true'),
 });
 
 export type CreateCouponRequest = z.infer<typeof CreateCouponSchema>;

@@ -40,7 +40,7 @@ import {
 } from '@modules/wallet/walletOrderRollback';
 import type { GetSubOrdersQuery } from './suborders.dto';
 import { issueTaxInvoicesOnDispatch } from '@modules/pricing/taxInvoiceIssue';
-import { destroyCouponUsageForOrder } from '@modules/coupons/couponEngine';
+import { destroyCouponUsageForOrder, destroyCouponUsageForVendorPart } from '@modules/coupons/couponEngine';
 import { isReversedPart } from '@modules/pricing/partReversal';
 
 /** Vendor/admin need to see who's delivering an order, not every internal column. */
@@ -341,6 +341,10 @@ export class SubordersService {
             }
             orderFullyCancelled = true;
           } else {
+            // That vendor's own coupon applied to nothing left on this order: its use comes back.
+            if (row.vendorId) {
+              await destroyCouponUsageForVendorPart(parentOrder.id, row.vendorId, transaction);
+            }
             // The rest may all be shipped or delivered already: the order follows them.
             await rollUpOrderStatus(parentOrder.id, transaction);
             // The other parcels may all be delivered and paid: with this, the last part

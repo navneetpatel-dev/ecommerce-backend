@@ -51,10 +51,11 @@ router.use(API_MOUNTS.admin, adminRoutes);
 router.use(API_MOUNTS.categories, categoriesRoutes);
 router.use(API_MOUNTS.products, productsRoutes);
 router.use(API_MOUNTS.cart, cartRoutes);
-// Coupon codes can be guessed through apply and the checkout quote: rate-limited here,
+// Coupon codes can be guessed through apply, the checkout quote and placing an order: rate-limited here,
 // with the other limiters, so the feature routers don't open a Redis connection.
 router.post(`${API_MOUNTS.coupons}/apply`, couponApplyRateLimiter);
 router.post(`${API_MOUNTS.checkout}/quote`, couponQuoteRateLimiter);
+router.post(API_MOUNTS.checkout, couponQuoteRateLimiter);
 router.use(API_MOUNTS.checkout, checkoutRoutes);
 router.use(API_MOUNTS.orders, ordersRoutes);
 router.use(API_MOUNTS.suborders, subordersRoutes);

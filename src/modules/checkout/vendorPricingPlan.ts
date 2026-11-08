@@ -9,10 +9,13 @@ import { taxService } from '@modules/tax/tax.service';
 import { categoriesService } from '@modules/categories/categories.service';
 import { pricingService } from '@modules/pricing/pricing.service';
 import { resolveVendorDiscountBearer } from '@modules/coupons/couponEngine';
+import type { LineDiscountShares } from '@modules/coupons/couponLineShares';
+import { resolveRowDiscounts } from './rowDiscounts';
+import { priceAtLeastAdvertised } from './discountAtLeast';
 import type { PlatformSettingsPayload } from '@modules/settings/settings.service';
 import type { GstPriceBand } from '@modules/pricing/pricing.engine';
 import { alignUnitAndLine, fromPaise, toPaise, type Paise } from '@modules/pricing/money';
-import { preGstDiscountPaise, priceWithRuleGst, type GstRatedLine } from '@modules/tax/gstPricing';
+import { priceWithRuleGst, type GstRatedLine } from '@modules/tax/gstPricing';
 
 /**
  * The single place a cart is grouped by vendor, priced, and run through PricingEngine.
@@ -29,6 +32,8 @@ export const PLATFORM_VENDOR_ID = 'platform';
 export type PricedLine = {
   /** Stable per-line key; PricingEngine echoes it back on each line breakdown. */
   key: string;
+  /** Matches the coupon lines, which know a line by its variant. */
+  variantId?: string;
   vendorId: string;
   unitPrice: number;
   quantity: number;
@@ -62,6 +67,8 @@ export type DiscountShares = {
   vendorDiscountShares: Record<string, number>;
   vendorShippingDiscountShares: Record<string, number>;
   vendorBorneDiscountShares: Record<string, number>;
+  /** Each line's part of the discount (GST included), so it stays on the lines it applies to. */
+  lineDiscountShares?: LineDiscountShares;
 };
 
 export function groupBy<T>(array: T[], keyFn: (item: T) => string): Record<string, T[]> {
@@ -249,11 +256,14 @@ export function priceVendorRows(input: {
   bearerByVendor: Record<string, DiscountBearer>;
   customerGrandTotalPaise: number;
   inclusiveByVendor: Record<string, GstInclusiveItems>;
+  /** Each variant's real GST-inclusive coupon saving (never less than promised). */
+  actualLineDiscountPaise: Record<string, Paise>;
 } {
   const pricedByVendor: Record<string, ReturnType<typeof pricingService.computeVendorBreakdown>> = {};
   const bearerByVendor: Record<string, DiscountBearer> = {};
   const inclusiveByVendor: Record<string, GstInclusiveItems> = {};
   let customerGrandTotalPaise = 0;
+  const actualLineDiscountPaise: Record<string, Paise> = {};
 
   for (const row of input.rows) {
     const ratedLines: GstRatedLine[] = row.lines.map((line) => ({
@@ -262,22 +272,9 @@ export function priceVendorRows(input: {
       gstPercentage: row.lineRates[line.key]?.gstPercentage ?? row.gstPercentage,
       gstPriceBand: row.lineRates[line.key]?.gstPriceBand ?? null,
     }));
-    const inclusiveDiscountPaise = toPaise(input.shares.vendorDiscountShares[row.vendorId] ?? 0);
-    const merchandiseDiscountPaise = preGstDiscountPaise(inclusiveDiscountPaise, ratedLines);
-    // The vendor-funded part keeps its share of the discount.
-    const vendorBornePaise =
-      inclusiveDiscountPaise > 0
-        ? Math.min(
-            merchandiseDiscountPaise,
-            Math.round(
-              (merchandiseDiscountPaise * toPaise(input.shares.vendorBorneDiscountShares[row.vendorId] ?? 0)) / inclusiveDiscountPaise,
-            ),
-          )
-        : 0;
-    const merchandiseDiscount = fromPaise(merchandiseDiscountPaise);
-    const vendorBorne = fromPaise(vendorBornePaise);
+    const resolved = resolveRowDiscounts(row.vendorId, row.lines, ratedLines, input.shares);
     const shippingDiscount = Math.min(row.shippingCost, input.shares.vendorShippingDiscountShares[row.vendorId] ?? 0);
-    const bearer = resolveVendorDiscountBearer(vendorBorne, merchandiseDiscount);
+    const bearer = resolveVendorDiscountBearer(fromPaise(resolved.vendorBornePaise), fromPaise(resolved.merchandiseDiscountPaise));
     bearerByVendor[row.vendorId] = bearer;
 
     const base = {
@@ -295,28 +292,29 @@ export function priceVendorRows(input: {
       commissionRatePercent: row.commissionRatePercent,
       tcsRatePercent: input.settings.tcsRatePercent,
     };
-    const priced = pricingService.computeVendorBreakdown({
-      ...base,
-      merchandiseDiscount,
-      vendorBorneMerchandiseDiscount: vendorBorne,
-      shippingDiscount,
-      shippingCost: row.shippingCost,
-      discountBearer: bearer,
-    });
-
     // The same items with no coupon, priced by the same engine, so the GST-inclusive
     // figures the customer sees add up exactly to what they pay.
-    const gross =
-      merchandiseDiscountPaise > 0
-        ? pricingService.computeVendorBreakdown({
-            ...base,
-            merchandiseDiscount: 0,
-            vendorBorneMerchandiseDiscount: 0,
-            shippingDiscount: 0,
-            shippingCost: 0,
-            discountBearer: bearer,
-          }).paise
-        : priced.paise;
+    const gross = pricingService.computeVendorBreakdown({
+      ...base, merchandiseDiscount: 0, vendorBorneMerchandiseDiscount: 0, shippingDiscount: 0, shippingCost: 0, discountBearer: bearer,
+    }).paise;
+    const { priced, actualByLine } = priceAtLeastAdvertised({
+      gross,
+      resolved: { ...resolved, lineDiscounts: resolved.hasLineDiscounts ? resolved.lineDiscounts : null },
+      promisedByLine: row.lines.map((line) => (line.variantId ? input.shares.lineDiscountShares?.[line.variantId]?.discountPaise ?? 0 : 0)),
+      promisedTotal: toPaise(input.shares.vendorDiscountShares[row.vendorId] ?? 0),
+      price: (discounts) => pricingService.computeVendorBreakdown({
+        ...base,
+        lines: discounts.lineDiscounts ? base.lines.map((line, index) => ({ ...line, ...discounts.lineDiscounts![index] })) : base.lines,
+        merchandiseDiscount: fromPaise(discounts.merchandiseDiscountPaise),
+        vendorBorneMerchandiseDiscount: fromPaise(discounts.vendorBornePaise),
+        shippingDiscount,
+        shippingCost: row.shippingCost,
+        discountBearer: bearer,
+      }),
+    });
+    row.lines.forEach((line, index) => {
+      if (line.variantId) actualLineDiscountPaise[line.variantId] = (actualLineDiscountPaise[line.variantId] ?? 0) + (actualByLine[index] ?? 0);
+    });
     const lines = Object.fromEntries(
       gross.lines.map((line, index) => {
         const aligned = alignUnitAndLine(
@@ -335,5 +333,5 @@ export function priceVendorRows(input: {
     customerGrandTotalPaise += priced.paise.customerTotalPaise;
   }
 
-  return { pricedByVendor, bearerByVendor, customerGrandTotalPaise, inclusiveByVendor };
+  return { pricedByVendor, bearerByVendor, customerGrandTotalPaise, inclusiveByVendor, actualLineDiscountPaise };
 }

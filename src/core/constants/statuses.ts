@@ -291,6 +291,10 @@ export type WalletPointSource =
 export const COMMISSION_REFERENCE_TYPE = {
   CASHBACK_COST: 'CashbackCost',
   CASHBACK_COST_REVERSAL: 'CashbackCostReversal',
+  /** A vendor's free-shipping coupon: the shipping it waived, taken from the vendor's payout. */
+  SHIPPING_COUPON_COST: 'ShippingCouponCost',
+  /** A return broke a vendor's offer: what the customer kept costs more, so the vendor gets it. */
+  OFFER_ADJUSTMENT: 'OfferAdjustment',
   /** A return approved after the sale was paid out: recovered from the vendor's next payout. */
   RETURN_CLAWBACK: 'ReturnClawback',
 } as const;
@@ -328,6 +332,7 @@ export const WARRANTY_TYPE_VALUES = Object.values(WARRANTY_TYPE) as [WarrantyTyp
 
 export const COUPON_STATUS = {
   DRAFT: 'DRAFT',
+  PENDING_APPROVAL: 'PENDING_APPROVAL',
   ACTIVE: 'ACTIVE',
   PAUSED: 'PAUSED',
   EXPIRED: 'EXPIRED',

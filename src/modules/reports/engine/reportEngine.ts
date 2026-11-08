@@ -17,6 +17,7 @@ import {
   resolveFiltersForActor,
 } from './reportEngine.helpers';
 import type { ReportActor } from './reportEngine.types';
+import { resolveReportColumnLabel } from '../reports.constants';
 
 export type { ReportActor } from './reportEngine.types';
 export type { DirectExportResult };
@@ -50,7 +51,8 @@ export class ReportEngine {
     const result = await def.query({ ...filters, page, limit });
     return {
       reportType: def.type,
-      columns: def.columns,
+      // Display names ride along, the same ones exports use, so a screen never shows a raw key.
+      columns: def.columns.map((column) => ({ ...column, label: resolveReportColumnLabel(column.labelKey) })),
       rows: result.rows,
       meta: result.meta ?? null,
       pagination: buildPaginationMeta(result.total, page, limit),

@@ -19,6 +19,7 @@ import {
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { cartService } from '@modules/cart/cart.service';
 import { destroyCouponUsageForOrder } from '@modules/coupons/couponEngine';
+import { restoreOrderCouponsToCart } from '@modules/coupons/couponUsage';
 import { paymentsService } from '@modules/payments/payments.service';
 import { fromPaise, toPaise } from '@modules/pricing/money';
 import { orderRazorpayPaidPaise } from '@modules/pricing/refundSplit';
@@ -37,8 +38,10 @@ export async function cancelPaidOrder(
   orderId: string,
   userId: string,
   isAdmin: boolean,
-): Promise<{ orderId: string; cancelled: boolean }> {
+): Promise<{ orderId: string; cancelled: boolean; restoredToCart?: { items: number; coupons: string[] } }> {
   let cancelledOrderId: string | null = null;
+  /** What went back into the customer's cart, so the page can say so. */
+  let restoredToCart: { items: number; coupons: string[] } | undefined;
   let razorpayDue = 0;
   let razorpayPaymentId: string | null = null;
   let alreadyCancelled = false;
@@ -144,6 +147,9 @@ export async function cancelPaidOrder(
 
     await destroyCouponUsageForOrder(order.id, t);
     await cartService.restoreItemsToUserCart(order.userId, restoreLines, t);
+    // The coupon goes back with its items, as when a payment is abandoned.
+    const coupons = await restoreOrderCouponsToCart(order, order.userId, t);
+    restoredToCart = { items: restoreLines.reduce((sum, line) => sum + line.quantity, 0), coupons };
     await rollbackOrderWalletIfNeeded(order, order.userId, t);
 
     await order.update(
@@ -216,5 +222,5 @@ export async function cancelPaidOrder(
     });
   }
 
-  return { orderId: cancelledOrderId!, cancelled: true };
+  return { orderId: cancelledOrderId!, cancelled: true, restoredToCart };
 }

@@ -30,6 +30,8 @@ export class ReturnRequest extends Model<InferAttributes<ReturnRequest>, InferCr
   declare refundMethod: CreationOptional<RefundMethod | null>;
   declare refundStatus: CreationOptional<RefundStatus>;
   declare refundAmount: number | null;
+  /** Held back from the refund because the items kept no longer qualify for the offer. */
+  declare offerAdjustmentPaise: CreationOptional<number | null>;
   declare refundTaxAmount: CreationOptional<number | null>;
   /** The supply value and GST the vendor's credit note reverses (null on older rows). */
   declare refundSupplyTaxablePaise: CreationOptional<number | null>;
@@ -112,6 +114,7 @@ export const initReturnRequestModel = (sequelize: Sequelize) => {
         defaultValue: REFUND_STATUS.NONE,
       },
       refundAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+      offerAdjustmentPaise: { type: DataTypes.BIGINT, allowNull: true },
       refundTaxAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       refundSupplyTaxablePaise: { type: DataTypes.BIGINT, allowNull: true },
       refundSupplyTaxPaise: { type: DataTypes.BIGINT, allowNull: true },
