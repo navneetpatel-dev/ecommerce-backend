@@ -2253,12 +2253,12 @@ Add `emailMarketingConsent: boolean` (default `false`, opt-in at signup or check
 
 ### 8.9 SMS / Phone OTP Channel
 
-Phone-based OTP (registration/login verification, or an OTP-only login option) is a separate channel from email, not a fallback — some events (order shipped, delivery OTP for high-value orders) genuinely warrant SMS in addition to or instead of email in the Indian market.
+Phone-based OTP (registration/login verification, or an OTP-only login option) is a separate channel from email, not a fallback — some events (order shipped, out for delivery) genuinely warrant SMS in addition to or instead of email in the Indian market.
 
 - **Provider:** any SMS gateway with an India DLT-registered sender ID (e.g. MSG91, Twilio's India routes require DLT registration too) — this is a compliance requirement for transactional SMS in India, not optional infra.
 - **`NotificationLog.channel`** (already `'EMAIL' | 'SMS' | 'PUSH'` in Section 8.2) covers this without a schema change — an OTP send just creates a `channel: 'SMS'` log row instead of `'EMAIL'`.
 - **Separate BullMQ queue** (`sms:transactional`) mirrors the email queue structure from 8.1 — same idempotency-via-`NotificationLog` pattern, same worker-based send-and-log flow, just calling the SMS provider's API instead of SES.
-- **What actually goes over SMS** (keep this list short — SMS costs money per message and OTP-fatigue is real): phone/login OTP, order-out-for-delivery with a delivery OTP (common pattern for COD/high-value orders in India), and optionally a shipped/delivered ping for customers who've opted into SMS updates. Everything else (order confirmation detail, review requests, marketing) stays email-only.
+- **What actually goes over SMS** (keep this list short — SMS costs money per message and OTP-fatigue is real): phone/login OTP, order-out-for-delivery, and optionally a shipped/delivered ping for customers who've opted into SMS updates. Everything else (order confirmation detail, review requests, marketing) stays email-only.
 
 ```ts
 // src/modules/notifications/sms.service.ts

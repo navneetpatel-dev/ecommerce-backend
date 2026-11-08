@@ -67,7 +67,7 @@ export const RescheduleDeliverySchema = z.object({
   slot: z.string().trim().min(3).max(64),
 });
 
-/** Statuses an admin can move a shipment to by hand (`shippingService.adminUpdateShipmentStatus`). */
+/** Statuses an admin can move a shipment to by hand (`adminShipmentStatusService.updateStatus`). */
 export const ADMIN_SHIPMENT_STATUSES = [
   'IN_TRANSIT',
   'OUT_FOR_DELIVERY',

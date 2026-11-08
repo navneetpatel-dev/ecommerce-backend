@@ -6,7 +6,7 @@ import { ORDER_STATUS, PAYMENT_METHOD, PAYMENT_STATUS } from '@core/constants/st
  * Transitions reachable through this manual, vendor/admin-facing endpoint.
  * DELIVERED is deliberately absent from every entry — a part is delivered when
  * its shipment is (the carrier's webhook, or an admin through
- * `shippingService.adminUpdateShipmentStatus`), never a plain status PATCH that
+ * `adminShipmentStatusService.updateStatus`), never a plain status PATCH that
  * would skip the shipment's own record and COD collection. RETURNED is likewise
  * not settable here — the returns module owns that lifecycle via
  * `ReturnRequest.status`.

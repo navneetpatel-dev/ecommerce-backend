@@ -6,6 +6,7 @@ import { ShipmentAttempt } from '@database/models/shipmentAttempt.model';
 import { AuditLog } from '@database/models/auditLog.model';
 import { ValidationError } from '@core/errors/ValidationError';
 import { shippingService } from '../shipping.service';
+import { adminShipmentStatusService } from '../adminShipmentStatus.service';
 
 type ShipmentStub = {
   id: string;
@@ -28,7 +29,7 @@ function stubShipment(fields: Partial<ShipmentStub>): ShipmentStub {
   return shipment;
 }
 
-describe('adminUpdateShipmentStatus', () => {
+describe('adminShipmentStatusService.updateStatus', () => {
   afterEach(() => mock.restoreAll());
 
   function stubTransactionAndAudit() {
@@ -43,7 +44,7 @@ describe('adminUpdateShipmentStatus', () => {
     stubShipment({ status: 'DELIVERED' });
     const apply = mock.method(shippingService, 'applyShipmentStatus', async (s: unknown) => s);
     await assert.rejects(
-      shippingService.adminUpdateShipmentStatus('shipment-1', 'admin-1', { status: 'FAILED', reason: 'Door locked' }),
+      adminShipmentStatusService.updateStatus('shipment-1', 'admin-1', { status: 'FAILED', reason: 'Door locked' }),
       ValidationError,
     );
     assert.equal(apply.mock.callCount(), 0);
@@ -54,12 +55,12 @@ describe('adminUpdateShipmentStatus', () => {
     stubShipment({ codAmount: 750 });
     const apply = mock.method(shippingService, 'applyShipmentStatus', async (s: unknown) => s);
     await assert.rejects(
-      shippingService.adminUpdateShipmentStatus('shipment-1', 'admin-1', { status: 'DELIVERED' }),
+      adminShipmentStatusService.updateStatus('shipment-1', 'admin-1', { status: 'DELIVERED' }),
       ValidationError,
     );
     assert.equal(apply.mock.callCount(), 0);
 
-    await shippingService.adminUpdateShipmentStatus('shipment-1', 'admin-1', { status: 'DELIVERED', codCollected: true });
+    await adminShipmentStatusService.updateStatus('shipment-1', 'admin-1', { status: 'DELIVERED', codCollected: true });
     assert.equal(apply.mock.callCount(), 1);
     const [, status, extra] = apply.mock.calls[0]!.arguments as [unknown, string, Record<string, unknown>];
     assert.equal(status, 'DELIVERED');
@@ -71,7 +72,7 @@ describe('adminUpdateShipmentStatus', () => {
     stubTransactionAndAudit();
     stubShipment({ codAmount: 750 });
     const apply = mock.method(shippingService, 'applyShipmentStatus', async (s: unknown) => s);
-    await shippingService.adminUpdateShipmentStatus('shipment-1', 'admin-1', { status: 'DELIVERED', codCollected: false });
+    await adminShipmentStatusService.updateStatus('shipment-1', 'admin-1', { status: 'DELIVERED', codCollected: false });
     const [, , extra] = apply.mock.calls[0]!.arguments as [unknown, string, Record<string, unknown>];
     assert.equal(extra.codCollected, false);
     assert.equal(extra.codCollectedAt, null);
@@ -84,12 +85,12 @@ describe('adminUpdateShipmentStatus', () => {
     const attempts = mock.method(ShipmentAttempt, 'create', async (values: unknown) => values);
 
     await assert.rejects(
-      shippingService.adminUpdateShipmentStatus('shipment-1', 'admin-1', { status: 'FAILED' }),
+      adminShipmentStatusService.updateStatus('shipment-1', 'admin-1', { status: 'FAILED' }),
       ValidationError,
     );
     assert.equal(apply.mock.callCount(), 0);
 
-    await shippingService.adminUpdateShipmentStatus('shipment-1', 'admin-1', {
+    await adminShipmentStatusService.updateStatus('shipment-1', 'admin-1', {
       status: 'FAILED',
       reason: 'Customer not at home',
     });
@@ -105,7 +106,7 @@ describe('adminUpdateShipmentStatus', () => {
     stubTransactionAndAudit();
     stubShipment({ status: 'RTO_INITIATED' });
     const apply = mock.method(shippingService, 'applyShipmentStatus', async (s: unknown) => s);
-    await shippingService.adminUpdateShipmentStatus('shipment-1', 'admin-1', { status: 'RTO_DELIVERED' });
+    await adminShipmentStatusService.updateStatus('shipment-1', 'admin-1', { status: 'RTO_DELIVERED' });
     const [, status, extra] = apply.mock.calls[0]!.arguments as [unknown, string, Record<string, unknown>];
     assert.equal(status, 'RTO_DELIVERED');
     assert.ok(extra.rtoConfirmedAt instanceof Date);

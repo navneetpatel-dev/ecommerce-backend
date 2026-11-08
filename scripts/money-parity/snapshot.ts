@@ -2,7 +2,7 @@
  * Money parity snapshot.
  *
  * Captures every money figure the read surfaces publish (all registered reports,
- * admin analytics, vendor dashboards, delivery shift summaries, commission ledgers)
+ * admin analytics, vendor dashboards, commission ledgers)
  * from the current database into one JSON file. Run it before and after a change to
  * money read paths, then diff the two files: any difference must be one the change
  * intended.
