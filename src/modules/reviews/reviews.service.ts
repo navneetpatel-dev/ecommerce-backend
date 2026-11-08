@@ -4,6 +4,8 @@ import { ValidationError } from '@core/errors/ValidationError';
 import { REVIEW_STATUS, ORDER_STATUS } from '@core/constants/statuses';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { reviewsRepository } from './reviews.repository';
+import type { CreateReviewRequest } from './reviews.dto';
+import { resolveReviewMedia } from './reviewMedia';
 import { Review } from '@database/models/review.model';
 import { ReviewVote } from '@database/models/reviewVote.model';
 import { OrderItem } from '@database/models/orderItem.model';
@@ -29,13 +31,9 @@ function serializePendingReview(row: Review) {
 }
 
 export class ReviewsService {
-  async createReview(userId: string, data: {
-    orderItemId: string;
-    productId: string;
-    rating: number;
-    title?: string;
-    body: string;
-  }) {
+  async createReview(userId: string, data: CreateReviewRequest) {
+    // Before the transaction: these checks read S3 (ownership, video duration and size).
+    const media = await resolveReviewMedia(userId, data.draftId, data.attachments);
     return sequelize.transaction(async (t) => {
       // Verify purchase
       const orderItemResult = await OrderItem.findByPk(data.orderItemId, {
@@ -70,6 +68,8 @@ export class ReviewsService {
 
       // Create review
       const review = await Review.create({
+        ...(media.length && data.draftId ? { id: data.draftId } : {}),
+        media,
         productId: data.productId,
         userId,
         orderItemId: data.orderItemId,

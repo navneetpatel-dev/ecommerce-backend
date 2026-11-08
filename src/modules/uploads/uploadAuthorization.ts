@@ -66,6 +66,14 @@ async function returnExists(returnId: string): Promise<boolean> {
   return Boolean(row);
 }
 
+async function reviewExists(reviewId: string): Promise<boolean> {
+  const [row] = await sequelize.query<{ id: string }>(
+    `SELECT id FROM reviews WHERE id = :reviewId LIMIT 1`,
+    { replacements: { reviewId }, type: QueryTypes.SELECT },
+  );
+  return Boolean(row);
+}
+
 async function ticketOwnedByCustomer(ticketId: string, customerId: string): Promise<boolean> {
   const [row] = await sequelize.query<{ id: string }>(
     `SELECT id FROM support_tickets
@@ -112,7 +120,7 @@ async function bugReportExists(bugReportId: string): Promise<boolean> {
 /** New draft ids one user may start uploading under in 24 hours. */
 export const MAX_NEW_UPLOAD_DRAFTS_PER_DAY = 50;
 
-async function draftOwner(entityType: S3EntityType, entityId: string): Promise<string | null> {
+export async function draftOwner(entityType: S3EntityType, entityId: string): Promise<string | null> {
   const [row] = await sequelize.query<{ userId: string }>(
     `SELECT "userId" FROM upload_drafts WHERE "entityType" = :entityType AND "entityId" = :entityId`,
     { replacements: { entityType, entityId }, type: QueryTypes.SELECT },
@@ -318,6 +326,16 @@ export async function assertUploadAllowed(
       }
 
       throw new ForbiddenError(ERROR_MESSAGES.UPLOAD_FORBIDDEN);
+    }
+
+    case S3_ENTITY_TYPES.REVIEWS: {
+      // A review's photos and video go up before it is posted, under the id it will
+      // take (see reviews.service createReview); a posted review takes no new media.
+      if (purpose !== S3_PURPOSES.ATTACHMENTS || (await reviewExists(entityId))) {
+        throw new ForbiddenError(ERROR_MESSAGES.UPLOAD_FORBIDDEN);
+      }
+      await claimUploadDraft(entityType, entityId, actor.id);
+      return;
     }
 
     case S3_ENTITY_TYPES.PAYOUTS: {

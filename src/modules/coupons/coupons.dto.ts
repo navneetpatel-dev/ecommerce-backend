@@ -148,6 +148,17 @@ function refineCouponDatesAndValue(
 
 export const CreateCouponSchema = couponObjectSchema.superRefine(refineCouponDatesAndValue);
 
+/** The value/date/config rules on a whole coupon: an edit is checked as stored values + the patch. */
+export const CouponRulesSchema = z
+  .object({
+    type: z.enum(COUPON_TYPES),
+    value: z.number().nullable().optional(),
+    startDate: z.string(),
+    endDate: z.string(),
+    config: CouponConfigSchema,
+  })
+  .superRefine(refineCouponDatesAndValue);
+
 export const UpdateCouponSchema = couponObjectSchema
   .partial()
   .superRefine((data, ctx) => {

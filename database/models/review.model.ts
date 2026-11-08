@@ -1,5 +1,11 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
 
+export type ReviewMediaItem = {
+  url: string;
+  type: 'IMAGE' | 'VIDEO';
+  durationSeconds: number | null;
+};
+
 export class Review extends Model<InferAttributes<Review>, InferCreationAttributes<Review>> {
   declare id: CreationOptional<string>;
   declare productId: string;
@@ -11,6 +17,8 @@ export class Review extends Model<InferAttributes<Review>, InferCreationAttribut
   declare status: 'PENDING' | 'APPROVED' | 'REJECTED';
   declare helpfulCount: CreationOptional<number>;
   declare unhelpfulCount: CreationOptional<number>;
+  /** Photos and at most one video, shown once the review is approved. */
+  declare media: CreationOptional<ReviewMediaItem[]>;
   declare vendorResponse: string | null;
   declare vendorRespondedAt: Date | null;
   declare createdBy: string | null;
@@ -41,6 +49,7 @@ export const initReviewModel = (sequelize: Sequelize) => {
       status: { type: DataTypes.ENUM('PENDING', 'APPROVED', 'REJECTED'), defaultValue: 'PENDING' },
       helpfulCount: { type: DataTypes.INTEGER, defaultValue: 0 },
       unhelpfulCount: { type: DataTypes.INTEGER, defaultValue: 0 },
+      media: { type: DataTypes.JSONB, allowNull: false, defaultValue: [] },
       vendorResponse: { type: DataTypes.TEXT, allowNull: true },
       vendorRespondedAt: { type: DataTypes.DATE, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },

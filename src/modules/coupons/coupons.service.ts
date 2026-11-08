@@ -40,6 +40,7 @@ import {
   type CartLineForCoupon,
 } from './couponEngine';
 import { customerCouponName, generateCouponCode } from './coupon.utils';
+import { assertCouponCodeFree, assertCouponEditAllowed } from './couponEditRules';
 import { sqlKeptCouponDiscountPaise } from './couponDiscountSql';
 import { listCouponBatchViews, type CouponBatchView } from './couponBatchViews';
 
@@ -336,6 +337,7 @@ export class CouponsService {
       }
     }
 
+    await assertCouponCodeFree(dto.code);
     const defaults = resolveCreateDefaults(dto, opts);
     if (opts.forceVendorId) {
       await assertVendorOwnsScopeProducts(opts.forceVendorId, defaults.applicableScope);
@@ -392,6 +394,7 @@ export class CouponsService {
     if (opts.forceVendorId && coupon.vendorId !== opts.forceVendorId) {
       throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_PRODUCT);
     }
+    await assertCouponEditAllowed(coupon, dto, { vendorScoped: Boolean(opts.forceVendorId) });
 
     const patch: Record<string, unknown> = { updatedBy: actorId };
     if (dto.code != null) patch.code = dto.code.toUpperCase();
