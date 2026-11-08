@@ -10,8 +10,6 @@ export const S3_ENTITY_TYPE_VALUES = [
   'tickets',
   'bug-reports',
   'payouts',
-  'shipments',
-  'delivery-agent-documents',
   'export',
 ] as const;
 
@@ -28,8 +26,6 @@ export const S3_ENTITY_TYPES = {
   TICKETS: 'tickets',
   BUG_REPORTS: 'bug-reports',
   PAYOUTS: 'payouts',
-  SHIPMENTS: 'shipments',
-  DELIVERY_AGENT_DOCUMENTS: 'delivery-agent-documents',
   EXPORT: 'export',
 } as const satisfies Record<string, S3EntityType>;
 
@@ -46,7 +42,6 @@ export const S3_PURPOSE_VALUES = [
   'attachments',
   'video',
   'size-chart',
-  'proof',
   'export-artifact',
 ] as const;
 
@@ -64,7 +59,6 @@ export const S3_PURPOSES = {
   ATTACHMENTS: 'attachments',
   VIDEO: 'video',
   SIZE_CHART: 'size-chart',
-  PROOF: 'proof',
   EXPORT_ARTIFACT: 'export-artifact',
 } as const satisfies Record<string, S3Purpose>;
 
@@ -80,8 +74,6 @@ export const S3_ENTITY_PURPOSES: Record<S3EntityType, readonly S3Purpose[]> = {
   [S3_ENTITY_TYPES.TICKETS]: [S3_PURPOSES.ATTACHMENTS],
   [S3_ENTITY_TYPES.BUG_REPORTS]: [S3_PURPOSES.ATTACHMENTS],
   [S3_ENTITY_TYPES.PAYOUTS]: [S3_PURPOSES.ATTACHMENTS],
-  [S3_ENTITY_TYPES.SHIPMENTS]: [S3_PURPOSES.PROOF],
-  [S3_ENTITY_TYPES.DELIVERY_AGENT_DOCUMENTS]: [S3_PURPOSES.KYC],
   [S3_ENTITY_TYPES.EXPORT]: [S3_PURPOSES.EXPORT_ARTIFACT],
 };
 

@@ -10,8 +10,6 @@ import { Order } from '@database/models/order.model';
 import { User } from '@database/models/user.model';
 import { Wishlist } from '@database/models/wishlist.model';
 import { WishlistItem } from '@database/models/wishlistItem.model';
-import { DeliveryAgentDocument } from '@database/models/deliveryAgentDocument.model';
-import { DeliveryAgent } from '@database/models/deliveryAgent.model';
 import { ORDER_STATUS } from '@core/constants/statuses';
 import { notificationsService } from '@modules/notifications/notifications.service';
 
@@ -124,69 +122,6 @@ async function processWishlistPriceDrops(): Promise<number> {
   return sent;
 }
 
-const DOCUMENT_EXPIRY_REMINDER_WINDOW_DAYS = 7;
-
-function humanizeDocumentType(type: string): string {
-  return type.replace(/_/g, ' ').toLowerCase();
-}
-
-/** Verified KYC docs expiring within the reminder window — remind once (tracked via expiryReminderSentAt). */
-async function processExpiringAgentDocuments(): Promise<number> {
-  const windowEnd = new Date(Date.now() + DOCUMENT_EXPIRY_REMINDER_WINDOW_DAYS * 24 * 60 * 60 * 1000);
-  const documents = await DeliveryAgentDocument.findAll({
-    where: {
-      verified: true,
-      expiryDate: { [Op.ne]: null, [Op.gte]: new Date(), [Op.lte]: windowEnd },
-      expiryReminderSentAt: null,
-    },
-    include: [{ model: DeliveryAgent, as: 'deliveryAgent', attributes: ['id', 'userId'] }],
-    limit: 100,
-  });
-
-  let sent = 0;
-  for (const document of documents) {
-    const agent = (document as DeliveryAgentDocument & { deliveryAgent?: DeliveryAgent }).deliveryAgent;
-    if (!agent?.userId) continue;
-    const log = await notificationsService.sendAgentDocumentExpiring(agent.userId, document.id, {
-      documentType: humanizeDocumentType(document.type),
-      expiryDate: document.expiryDate ?? '',
-    });
-    if (log) {
-      await document.update({ expiryReminderSentAt: new Date() });
-      sent += 1;
-    }
-  }
-  return sent;
-}
-
-/** Verified KYC docs already past expiry — un-verify, take the agent off duty, and notify. */
-async function processExpiredAgentDocuments(): Promise<number> {
-  const documents = await DeliveryAgentDocument.findAll({
-    where: {
-      verified: true,
-      expiryDate: { [Op.ne]: null, [Op.lt]: new Date() },
-    },
-    include: [{ model: DeliveryAgent, as: 'deliveryAgent', attributes: ['id', 'userId', 'availableForAssignment'] }],
-    limit: 100,
-  });
-
-  let sent = 0;
-  for (const document of documents) {
-    const agent = (document as DeliveryAgentDocument & { deliveryAgent?: DeliveryAgent }).deliveryAgent;
-    await document.update({ verified: false });
-    if (agent?.availableForAssignment) {
-      await agent.update({ availableForAssignment: false });
-    }
-    if (!agent?.userId) continue;
-    const log = await notificationsService.sendAgentDocumentExpired(agent.userId, document.id, {
-      documentType: humanizeDocumentType(document.type),
-      expiryDate: document.expiryDate ?? '',
-    });
-    if (log) sent += 1;
-  }
-  return sent;
-}
-
 export async function runNotificationSchedulerTick(): Promise<void> {
   try {
     const { processPendingCashbackCredits } = await import('@modules/wallet/cashback.service');
@@ -202,8 +137,6 @@ export async function runNotificationSchedulerTick(): Promise<void> {
       ticketsEscalated,
       bugsVerified,
       bugsClosed,
-      docsExpiring,
-      docsExpired,
     ] = await Promise.all([
       processAbandonedCarts(),
       processLowStock(),
@@ -214,8 +147,6 @@ export async function runNotificationSchedulerTick(): Promise<void> {
       supportTicketsService.escalateOverdueTickets(),
       bugReportsService.markVerifiedIfDue(),
       bugReportsService.markClosedIfDue(),
-      processExpiringAgentDocuments(),
-      processExpiredAgentDocuments(),
     ]);
     const total =
       abandoned +
@@ -226,9 +157,7 @@ export async function runNotificationSchedulerTick(): Promise<void> {
       ticketsClosed +
       ticketsEscalated +
       bugsVerified +
-      bugsClosed +
-      docsExpiring +
-      docsExpired;
+      bugsClosed;
     if (total > 0) {
       logger.info('Notification scheduler tick', {
         abandoned,
@@ -240,8 +169,6 @@ export async function runNotificationSchedulerTick(): Promise<void> {
         ticketsEscalated,
         bugsVerified,
         bugsClosed,
-        docsExpiring,
-        docsExpired,
       });
     }
   } catch (error) {

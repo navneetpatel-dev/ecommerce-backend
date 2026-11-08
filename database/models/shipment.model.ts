@@ -19,10 +19,6 @@ export class Shipment extends Model<InferAttributes<Shipment>, InferCreationAttr
   declare estimatedDeliveryDate: Date | null;
   declare shippedAt: Date | null;
   declare deliveredAt: Date | null;
-  declare deliveryAgentId: CreationOptional<string | null>;
-  declare assignedAt: CreationOptional<Date | null>;
-  declare proofOfDeliveryUrl: CreationOptional<string | null>;
-  declare deliveryOtpVerifiedAt: CreationOptional<Date | null>;
   /** Reason recorded on the most recent FAILED attempt. */
   declare failureReason: CreationOptional<string | null>;
   /** Count of FAILED attempts — 3rd auto-transitions to RTO_INITIATED. */
@@ -35,7 +31,6 @@ export class Shipment extends Model<InferAttributes<Shipment>, InferCreationAttr
   /** Customer-chosen redelivery window after a failed attempt. */
   declare preferredRedeliverySlot: CreationOptional<string | null>;
   /** Vendor's OTP-verified acknowledgment that they received an RTO parcel back. */
-  declare rtoHandoverOtpVerifiedAt: CreationOptional<Date | null>;
   declare rtoConfirmedAt: CreationOptional<Date | null>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
@@ -46,7 +41,6 @@ export class Shipment extends Model<InferAttributes<Shipment>, InferCreationAttr
 
   static associate(models: Record<string, any>) {
     Shipment.belongsTo(models.SubOrder, { foreignKey: 'subOrderId', as: 'subOrder' });
-    Shipment.belongsTo(models.DeliveryAgent, { foreignKey: 'deliveryAgentId', as: 'deliveryAgent' });
     Shipment.hasMany(models.ShipmentAttempt, { foreignKey: 'shipmentId', as: 'attempts' });
   }
 }
@@ -75,10 +69,6 @@ export const initShipmentModel = (sequelize: Sequelize) => {
       estimatedDeliveryDate: { type: DataTypes.DATE, allowNull: true },
       shippedAt: { type: DataTypes.DATE, allowNull: true },
       deliveredAt: { type: DataTypes.DATE, allowNull: true },
-      deliveryAgentId: { type: DataTypes.UUID, allowNull: true },
-      assignedAt: { type: DataTypes.DATE, allowNull: true },
-      proofOfDeliveryUrl: { type: DataTypes.STRING, allowNull: true },
-      deliveryOtpVerifiedAt: { type: DataTypes.DATE, allowNull: true },
       failureReason: { type: DataTypes.TEXT, allowNull: true },
       failedAttemptCount: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
       lastFailedAttemptAt: { type: DataTypes.DATE, allowNull: true },
@@ -86,7 +76,7 @@ export const initShipmentModel = (sequelize: Sequelize) => {
         type: DataTypes.DECIMAL(10, 2),
         allowNull: true,
         // Postgres DECIMAL arrives as a string via Sequelize — coerce at the model
-        // boundary so every caller (agent app, customer tracking, vendor view) gets
+        // boundary so every caller (admin, customer tracking, vendor view) gets
         // a real number instead of crashing on `.toFixed()`.
         get(this: Shipment) {
           const raw = this.getDataValue('codAmount');
@@ -96,7 +86,6 @@ export const initShipmentModel = (sequelize: Sequelize) => {
       codCollected: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
       codCollectedAt: { type: DataTypes.DATE, allowNull: true },
       preferredRedeliverySlot: { type: DataTypes.STRING(64), allowNull: true },
-      rtoHandoverOtpVerifiedAt: { type: DataTypes.DATE, allowNull: true },
       rtoConfirmedAt: { type: DataTypes.DATE, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },

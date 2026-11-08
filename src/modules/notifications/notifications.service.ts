@@ -574,26 +574,6 @@ export class NotificationsService {
     });
   }
 
-  sendDeliveryAssigned(userId: string, shipmentId: string, templateData: EmailTemplateData = {}) {
-    return this.enqueue({ userId, type: 'DELIVERY_ASSIGNED', referenceType: 'Shipment', referenceId: shipmentId, templateData });
-  }
-
-  sendPickupAssigned(userId: string, returnId: string, templateData: EmailTemplateData = {}) {
-    return this.enqueue({ userId, type: 'PICKUP_ASSIGNED', referenceType: 'ReturnRequest', referenceId: returnId, templateData });
-  }
-
-  sendDeliveryOtp(userId: string, otpId: string, templateData: EmailTemplateData = {}) {
-    return this.enqueue({ userId, type: 'DELIVERY_OTP', referenceType: 'OtpCode', referenceId: otpId, templateData });
-  }
-
-  sendReturnPickupOtp(userId: string, otpId: string, templateData: EmailTemplateData = {}) {
-    return this.enqueue({ userId, type: 'RETURN_PICKUP_OTP', referenceType: 'OtpCode', referenceId: otpId, templateData });
-  }
-
-  sendRtoHandoverOtp(userId: string, otpId: string, templateData: EmailTemplateData = {}) {
-    return this.enqueue({ userId, type: 'RTO_HANDOVER_OTP', referenceType: 'OtpCode', referenceId: otpId, templateData });
-  }
-
   sendDeliveryAttemptFailed(userId: string, shipmentId: string, templateData: EmailTemplateData = {}) {
     const attemptCount = String(templateData.failedAttemptCount ?? '1');
     return this.enqueue({
@@ -602,67 +582,6 @@ export class NotificationsService {
       referenceType: 'Shipment',
       // Unique per attempt so a 2nd/3rd failure still notifies.
       referenceId: `${shipmentId}:attempt:${attemptCount}`,
-      templateData,
-    });
-  }
-
-  sendPickupAttemptFailed(userId: string, returnId: string, templateData: EmailTemplateData = {}) {
-    return this.enqueue({
-      userId,
-      type: 'PICKUP_ATTEMPT_FAILED',
-      referenceType: 'ReturnRequest',
-      // Unique per attempt (bucketed by day) so a later re-attempt failure still notifies.
-      referenceId: `${returnId}:attempt:${todayBucket()}`,
-      templateData,
-    });
-  }
-
-  sendAgentDocumentExpiring(userId: string, documentId: string, templateData: EmailTemplateData = {}) {
-    return this.enqueue({
-      userId,
-      type: 'DELIVERY_AGENT_DOCUMENT_EXPIRING',
-      referenceType: 'DeliveryAgentDocument',
-      referenceId: `${documentId}:expiring`,
-      templateData,
-    });
-  }
-
-  sendAgentDocumentExpired(userId: string, documentId: string, templateData: EmailTemplateData = {}) {
-    return this.enqueue({
-      userId,
-      type: 'DELIVERY_AGENT_DOCUMENT_EXPIRED',
-      referenceType: 'DeliveryAgentDocument',
-      referenceId: `${documentId}:expired`,
-      templateData,
-    });
-  }
-
-  sendCashDepositVerified(userId: string, depositId: string, templateData: EmailTemplateData = {}) {
-    return this.enqueue({
-      userId,
-      type: 'CASH_DEPOSIT_VERIFIED',
-      referenceType: 'DeliveryCashDeposit',
-      referenceId: `${depositId}:verified`,
-      templateData,
-    });
-  }
-
-  sendCashDepositRejected(userId: string, depositId: string, templateData: EmailTemplateData = {}) {
-    return this.enqueue({
-      userId,
-      type: 'CASH_DEPOSIT_REJECTED',
-      referenceType: 'DeliveryCashDeposit',
-      referenceId: `${depositId}:rejected`,
-      templateData,
-    });
-  }
-
-  sendRtoHandoverConfirmed(userId: string, shipmentId: string, templateData: EmailTemplateData = {}) {
-    return this.enqueue({
-      userId,
-      type: 'RTO_HANDOVER_CONFIRMED',
-      referenceType: 'Shipment',
-      referenceId: `${shipmentId}:rto-confirmed`,
       templateData,
     });
   }

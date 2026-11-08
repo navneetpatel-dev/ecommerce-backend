@@ -1,7 +1,7 @@
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { PERMISSIONS, type PermissionKey } from '@core/permissions/permissionKeys';
-import { DELIVERY_ROLES, ROLES, VENDOR_ROLES } from '@core/constants/statuses';
+import { ROLES, VENDOR_ROLES } from '@core/constants/statuses';
 import { normalizeReportFilters } from './queryHelpers';
 import type { ReportDefinition, ReportFilters } from './types';
 import type { ReportActor } from './reportEngine.types';
@@ -17,13 +17,13 @@ export function actorCanAccess(
 }
 
 /** Roles that never see platform-wide (admin-audience) reports. */
-const NON_ADMIN_ROLES: readonly string[] = [...VENDOR_ROLES, ...DELIVERY_ROLES, ROLES.CUSTOMER];
+const NON_ADMIN_ROLES: readonly string[] = [...VENDOR_ROLES, ROLES.CUSTOMER];
 
 /**
  * Whether the actor may see a report of this audience at all, before permission keys.
  * Admin reports are platform-wide and not vendor-scoped, and vendor roles share some
  * permission keys with admins (payout.view, product.manage…), so the keys alone would
- * hand a vendor every agent's PAN or every vendor's settlement.
+ * hand a vendor every vendor's settlement.
  */
 export function actorCanSeeAudience(
   actor: Pick<ReportActor, 'roleName' | 'vendorId'>,

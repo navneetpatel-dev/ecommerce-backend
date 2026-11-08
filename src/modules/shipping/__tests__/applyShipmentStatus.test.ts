@@ -6,7 +6,6 @@ import { SubOrder } from '@database/models/subOrder.model';
 import { Order } from '@database/models/order.model';
 import { shippingService } from '../shipping.service';
 import { settleCodPaymentIfComplete } from '../codSettlement';
-import { deliveryAgentPayoutsService } from '@modules/deliveryAgents/deliveryAgentPayouts.service';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { PAYMENT_STATUS } from '@core/constants/statuses';
 
@@ -26,22 +25,16 @@ describe('applyShipmentStatus idempotency (F-17)', () => {
     stubTransaction();
     let updateCount = 0;
     let subOrderUpdateCount = 0;
-    let earningCount = 0;
 
     mock.method(SubOrder, 'update', async () => {
       subOrderUpdateCount += 1;
       return [1];
-    });
-    mock.method(deliveryAgentPayoutsService, 'recordEarning', async () => {
-      earningCount += 1;
-      return null;
     });
 
     const shipment = {
       id: 'shipment-1',
       subOrderId: 'sub-1',
       status: 'DELIVERED',
-      deliveryAgentId: 'agent-1',
       codAmount: 500,
       update: async () => {
         updateCount += 1;
@@ -53,7 +46,6 @@ describe('applyShipmentStatus idempotency (F-17)', () => {
 
     assert.equal(updateCount, 0);
     assert.equal(subOrderUpdateCount, 0);
-    assert.equal(earningCount, 0);
   });
 
   it('ignores an out-of-order OUT_FOR_DELIVERY webhook after DELIVERED', async () => {
@@ -78,16 +70,11 @@ describe('applyShipmentStatus idempotency (F-17)', () => {
     assert.equal(updateCount, 0);
   });
 
-  it('settles COD and records agent earning once on a webhook-only DELIVERED transition', async () => {
+  it('settles COD and notifies once on a webhook-only DELIVERED transition', async () => {
     stubTransaction();
-    let earningCount = 0;
     let orderPaid = false;
     let notifyCount = 0;
 
-    mock.method(deliveryAgentPayoutsService, 'recordEarning', async () => {
-      earningCount += 1;
-      return null;
-    });
     mock.method(notificationsService, 'sendSubOrderDelivered', () => {
       notifyCount += 1;
     });
@@ -119,7 +106,6 @@ describe('applyShipmentStatus idempotency (F-17)', () => {
       id: 'shipment-3',
       subOrderId: 'sub-3',
       status: 'OUT_FOR_DELIVERY',
-      deliveryAgentId: 'agent-3',
       codAmount: 750,
       codCollected: false,
       update: async function update(this: { status: string; codCollected: boolean }, fields: { status?: string; codCollected?: boolean }) {
@@ -136,12 +122,10 @@ describe('applyShipmentStatus idempotency (F-17)', () => {
     await shippingService.applyShipmentStatus(shipment as unknown as Shipment, 'DELIVERED');
 
     assert.equal(shipment.status, 'DELIVERED');
-    assert.equal(earningCount, 1);
     assert.equal(orderPaid, true);
     assert.equal(notifyCount, 1);
 
     await shippingService.applyShipmentStatus(shipment as unknown as Shipment, 'DELIVERED');
-    assert.equal(earningCount, 1);
     assert.equal(notifyCount, 1);
   });
 });

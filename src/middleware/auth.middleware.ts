@@ -54,7 +54,7 @@ export async function loadUserFromBearer(authHeader: string) {
     if (!roleName) {
       const user = await User.findByPk(decoded.sub, {
         include: [{ model: Role, as: 'role' }],
-        attributes: ['id', 'email', 'roleId', 'vendorId', 'deliveryAgentId', 'status'],
+        attributes: ['id', 'email', 'roleId', 'vendorId', 'status'],
       });
       if (!user) {
         return {
@@ -73,7 +73,6 @@ export async function loadUserFromBearer(authHeader: string) {
         email: decoded.email,
         roleId: decoded.roleId,
         vendorId: decoded.vendorId,
-        deliveryAgentId: decoded.deliveryAgentId ?? null,
         role: { name: roleName },
         impersonatedBy: decoded.impersonatedBy ?? null,
       },

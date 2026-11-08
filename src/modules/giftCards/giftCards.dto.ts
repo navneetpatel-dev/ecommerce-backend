@@ -3,7 +3,7 @@ import { GIFT_CARD_MIN_AMOUNT_INR, GIFT_CARD_MAX_AMOUNT_INR } from './giftCards.
 
 export const PurchaseGiftCardSchema = z.object({
   amount: z.coerce
-    .number({ invalid_type_error: 'Amount must be a number' })
+    .number({ error: (issue) => (issue.input === undefined ? undefined : 'Amount must be a number') })
     .finite('Amount must be a valid number')
     .min(GIFT_CARD_MIN_AMOUNT_INR, `Minimum gift card amount is ₹${GIFT_CARD_MIN_AMOUNT_INR}`)
     .max(GIFT_CARD_MAX_AMOUNT_INR, `Maximum gift card amount is ₹${GIFT_CARD_MAX_AMOUNT_INR}`),

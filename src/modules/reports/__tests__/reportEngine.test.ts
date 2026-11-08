@@ -111,13 +111,13 @@ describe('report engine', () => {
       id: randomUUID(),
       vendorId: randomUUID(),
       roleName: ROLES.VENDOR_OWNER,
-      // payout.view is also the gate on the platform-wide agent TDS (PAN) report.
+      // Vendor roles hold payout keys too; an admin payout report stays out of reach.
       permissions: [PERM_KEYS.PAYOUT_VIEW, PERM_KEYS.SUBORDER_MANAGE, PERM_KEYS.PRODUCT_UPDATE],
     };
     const catalog = reportEngine.catalog(owner);
     assert.ok(catalog.every((d) => !d.audience.startsWith('admin_')));
     await assert.rejects(
-      reportEngine.runJson(owner, 'delivery-agent-tds-194c', { from: '2026-09-01', to: '2026-09-30' } as never),
+      reportEngine.runJson(owner, 'vendor-payout-reconciliation', { from: '2026-09-01', to: '2026-09-30' } as never),
       (err: Error) => err.name === 'ForbiddenError' || /access to this report/.test(err.message),
     );
   });

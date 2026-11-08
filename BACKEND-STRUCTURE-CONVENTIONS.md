@@ -1,6 +1,6 @@
 # Backend structure conventions — authoritative reference
 
-**Purpose:** every backend file touched anywhere in this plan (files `02`–`07`) must strictly follow the rules below. Reverse-engineered from the real, live structure of `backend/` itself, using the same method as `../calculation-audit-remediation-plan/BACKEND-STRUCTURE-CONVENTIONS.md` and `../export-module-plan/BACKEND-STRUCTURE-CONVENTIONS.md`, but scoped to the much wider set of modules this plan touches: `users`, `suborders`, `returns`, `checkout`, `payouts`, `productQna`, `cart`, `wishlist`, `products`, `tax` (via `tcsLedger`/`tdsLedger` models), `shipping`, `deliveryAgents`, `payments`, `coupons`, `wallet`.
+**Purpose:** every backend file touched anywhere in this plan (files `02`–`07`) must strictly follow the rules below. Reverse-engineered from the real, live structure of `backend/` itself, using the same method as `../calculation-audit-remediation-plan/BACKEND-STRUCTURE-CONVENTIONS.md` and `../export-module-plan/BACKEND-STRUCTURE-CONVENTIONS.md`, but scoped to the much wider set of modules this plan touches: `users`, `suborders`, `returns`, `checkout`, `payouts`, `productQna`, `cart`, `wishlist`, `products`, `tax` (via `tcsLedger`/`tdsLedger` models), `shipping`, `payments`, `coupons`, `wallet`.
 
 **Compliance status of this plan:** every backend file specified in `02`–`07` was checked against every rule below — see "Compliance audit" at the bottom.
 
@@ -59,7 +59,7 @@ Every module this plan touches confirms the pattern — with these specific, con
 
 ## 3. Database models (`backend/database/models/`)
 
-One file per table, `<name>.model.ts`, exporting a class extending `Model<...>` plus an `init<Name>Model(sequelize)` factory function and a static `associate(models)` method. Confirmed shape for every model this plan touches (`ProductAnswer`, `TcsLedger`, `TdsLedger`, `Cart`, `Shipment`, `SubOrder`, `DeliveryAgent`, `DeliveryCashDeposit`). F-07's new `status` column on `ProductAnswer` follows the exact shape `ProductQuestion.status` already uses on its sibling model (`DataTypes.ENUM(...)`, `defaultValue: 'PENDING'`) — reuse that enum's value vocabulary (`PENDING`/`PUBLISHED`/`REJECTED`) rather than inventing a new one (`APPROVED`) for consistency with the sibling model, per `03-impl-phase2-high-priority.md`'s note.
+One file per table, `<name>.model.ts`, exporting a class extending `Model<...>` plus an `init<Name>Model(sequelize)` factory function and a static `associate(models)` method. Confirmed shape for every model this plan touches (`ProductAnswer`, `TcsLedger`, `TdsLedger`, `Cart`, `Shipment`, `SubOrder`). F-07's new `status` column on `ProductAnswer` follows the exact shape `ProductQuestion.status` already uses on its sibling model (`DataTypes.ENUM(...)`, `defaultValue: 'PENDING'`) — reuse that enum's value vocabulary (`PENDING`/`PUBLISHED`/`REJECTED`) rather than inventing a new one (`APPROVED`) for consistency with the sibling model, per `03-impl-phase2-high-priority.md`'s note.
 
 ## 4. Migrations (`backend/database/migrations/`)
 

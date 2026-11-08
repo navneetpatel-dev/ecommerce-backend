@@ -15,11 +15,7 @@ import { razorpayOrderPayments } from '@modules/payments/razorpayOrderPayments';
 import { walletService } from '@modules/wallet/wallet.service';
 import { settingsService } from '@modules/settings/settings.service';
 import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
-import {
-  GIFT_CARD_MIN_AMOUNT_INR,
-  GIFT_CARD_MAX_AMOUNT_INR,
-  GIFT_CARD_VALIDITY_DAYS,
-} from './giftCards.constants';
+import { GIFT_CARD_MIN_AMOUNT_INR, GIFT_CARD_MAX_AMOUNT_INR, GIFT_CARD_VALIDITY_DAYS } from './giftCards.constants';
 import { generateGiftCardCode } from './giftCardCode';
 import { sendGiftCardPurchasedEmail } from './giftCardEmail';
 import type { PurchaseGiftCardRequest } from './giftCards.dto';
@@ -93,9 +89,7 @@ export class GiftCardsService {
           giftCardId: giftCard.id,
           purchaserId: userId,
         },
-        ...(env.RAZORPAY_CHECKOUT_CONFIG_ID
-          ? { checkout_config_id: env.RAZORPAY_CHECKOUT_CONFIG_ID }
-          : {}),
+        ...(env.RAZORPAY_CHECKOUT_CONFIG_ID ? { checkout_config_id: env.RAZORPAY_CHECKOUT_CONFIG_ID } : {}),
       });
 
       await giftCard.update({ razorpayOrderId: rzpOrder.id, updatedBy: userId });
@@ -106,9 +100,7 @@ export class GiftCardsService {
         amount: Number(rzpOrder.amount),
         currency: rzpOrder.currency,
         keyId: env.RAZORPAY_KEY_ID,
-        ...(env.RAZORPAY_CHECKOUT_CONFIG_ID
-          ? { checkoutConfigId: env.RAZORPAY_CHECKOUT_CONFIG_ID }
-          : {}),
+        ...(env.RAZORPAY_CHECKOUT_CONFIG_ID ? { checkoutConfigId: env.RAZORPAY_CHECKOUT_CONFIG_ID } : {}),
       };
     } catch (err) {
       await giftCard.update({ status: GIFT_CARD_STATUS.FAILED, updatedBy: userId });
@@ -140,11 +132,7 @@ export class GiftCardsService {
         attributes: ['amount'],
       });
       if (pending && captured.amount !== toPaise(Number(pending.amount))) {
-        throw new AppError(
-          ERROR_MESSAGES.PAYMENT_AMOUNT_MISMATCH,
-          422,
-          ERROR_CODES.PAYMENT_AMOUNT_MISMATCH,
-        );
+        throw new AppError(ERROR_MESSAGES.PAYMENT_AMOUNT_MISMATCH, 422, ERROR_CODES.PAYMENT_AMOUNT_MISMATCH);
       }
     } else if (gateway) {
       throw new AppError(ERROR_MESSAGES.PAYMENT_NOT_CAPTURED, 409, ERROR_CODES.PAYMENT_NOT_CAPTURED);

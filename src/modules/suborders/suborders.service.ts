@@ -6,7 +6,6 @@ import { Vendor } from '@database/models/vendor.model';
 import { Order } from '@database/models/order.model';
 import { OrderItem } from '@database/models/orderItem.model';
 import { Shipment } from '@database/models/shipment.model';
-import { DeliveryAgent } from '@database/models/deliveryAgent.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
@@ -43,35 +42,20 @@ import { issueTaxInvoicesOnDispatch } from '@modules/pricing/taxInvoiceIssue';
 import { destroyCouponUsageForOrder } from '@modules/coupons/couponEngine';
 import { isReversedPart } from '@modules/pricing/partReversal';
 
-/** Vendor/admin need to see who's delivering an order, not every internal column. */
+/** A part's shipment: its carrier, tracking and delivery status. */
 const shipmentInclude = {
   model: Shipment,
   as: 'shipment' as const,
-  include: [
-    {
-      model: DeliveryAgent,
-      as: 'deliveryAgent' as const,
-      attributes: ['id', 'fullName', 'phone'],
-    },
-  ],
 };
 
 /**
- * Read-only visibility into a suborder's return/exchange requests: status and
- * the assigned pickup agent, mirroring `shipmentInclude` above. Vendors can't
- * change return/pickup status here — that lifecycle stays owned by the
+ * Read-only visibility into a suborder's return/exchange requests and their status.
+ * Vendors can't change return/pickup status here — that lifecycle stays owned by the
  * returns module.
  */
 const returnRequestInclude = {
   model: ReturnRequest,
   as: 'returnRequests' as const,
-  include: [
-    {
-      model: DeliveryAgent,
-      as: 'deliveryAgent' as const,
-      attributes: ['id', 'fullName', 'phone'],
-    },
-  ],
 };
 
 /**
@@ -359,11 +343,7 @@ export class SubordersService {
         include: [
           { model: Order, as: 'order' },
           { model: OrderItem, as: 'items' },
-          {
-            model: Shipment,
-            as: 'shipment',
-            include: [{ model: DeliveryAgent, as: 'deliveryAgent' }],
-          },
+          { model: Shipment, as: 'shipment' },
           returnRequestInclude,
         ],
         transaction,

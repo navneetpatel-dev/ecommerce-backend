@@ -1,10 +1,9 @@
-import { get, post, patch, loginAs } from '../lib/httpClient';
+import { get, patch, loginAs } from '../lib/httpClient';
 import { ensureAddress, clearCart, addToCart, checkout, getOrder } from '../lib/orderFlow';
 import { assertClose, assertEqual, assertTrue, check } from '../lib/assert';
 import { recomputeSubOrder } from '../lib/pricingRecompute';
 import { runReport, findRowBy } from '../lib/reportClient';
-import { pollDeliveryOtp } from '../lib/otpFromQueue';
-import { CREDENTIALS, CUSTOMERS, CUSTOMER_PASSWORD, PRODUCTS, VENDORS } from '../lib/testData';
+import { CUSTOMERS, CUSTOMER_PASSWORD, PRODUCTS, VENDORS } from '../lib/testData';
 import type { Preconditions } from './00-preconditions';
 
 const SCENARIO = '01-cod-sweep';
@@ -138,10 +137,7 @@ export async function runCodFullReportSweep(ctx: Preconditions) {
   );
   check(SCENARIO, 'customer order-history reachable', orderHistory.status === 200, `status=${orderHistory.status}`);
 
-  // ---- Delivery agent flow: ship -> assign -> out-for-delivery -> OTP -> confirm ----
-  const agent = CREDENTIALS.deliveryAgents[0]!;
-  const agentLogin = await loginAs(agent.email, agent.password);
-
+  // ---- Fulfilment: ship -> out for delivery -> delivered with COD collected (admin) ----
   const shipRes = await patch(
     `/api/suborders/${subOrder.id}/status`,
     { status: 'SHIPPED', trackingId: `E2E-${Date.now()}` },
@@ -151,22 +147,10 @@ export async function runCodFullReportSweep(ctx: Preconditions) {
   const shipmentId: string | undefined = shipRes.json?.data?.shipment?.id;
   assertTrue(SCENARIO, 'shipment created on ship', Boolean(shipmentId));
 
-  // Fetch the delivery agent's own id from the login response (already present in the JWT/user object).
-  const loginRes = await post('/api/auth/login', { email: agent.email, password: agent.password });
-  const deliveryAgentId: string = loginRes.json?.data?.user?.deliveryAgentId;
-  assertTrue(SCENARIO, 'delivery agent id resolved', Boolean(deliveryAgentId));
-
-  const assignRes = await post(
-    `/api/delivery-agents/shipments/${shipmentId}/assign`,
-    { deliveryAgentId },
-    ctx.adminToken,
-  );
-  check(SCENARIO, 'assign shipment to agent', assignRes.status === 200, `status=${assignRes.status} body=${JSON.stringify(assignRes.json).slice(0, 300)}`);
-
   const outForDeliveryRes = await patch(
-    `/api/delivery-agents/me/deliveries/${shipmentId}/status`,
+    `/api/shipping/admin/shipments/${shipmentId}/status`,
     { status: 'OUT_FOR_DELIVERY' },
-    agentLogin,
+    ctx.adminToken,
   );
   check(
     SCENARIO,
@@ -175,49 +159,25 @@ export async function runCodFullReportSweep(ctx: Preconditions) {
     `status=${outForDeliveryRes.status} body=${JSON.stringify(outForDeliveryRes.json).slice(0, 300)}`,
   );
 
-  const otpCode = await pollDeliveryOtp(order.userId);
-  assertTrue(SCENARIO, 'delivery OTP retrieved from queue', Boolean(otpCode), 'no DELIVERY_OTP job found for customer');
+  const deliveredRes = await patch(
+    `/api/shipping/admin/shipments/${shipmentId}/status`,
+    { status: 'DELIVERED', codCollected: true },
+    ctx.adminToken,
+  );
+  check(
+    SCENARIO,
+    'mark DELIVERED with COD collected',
+    deliveredRes.status === 200,
+    `status=${deliveredRes.status} body=${JSON.stringify(deliveredRes.json).slice(0, 300)}`,
+  );
 
-  // Shift summary before confirmation
-  const shiftBefore = await get('/api/delivery-agents/me/shift-summary', agentLogin);
-
-  if (otpCode) {
-    const confirmRes = await post(
-      `/api/delivery-agents/me/deliveries/${shipmentId}/confirm`,
-      { otpCode, codCollected: true },
-      agentLogin,
-    );
-    check(
-      SCENARIO,
-      'confirm delivery with OTP + codCollected',
-      confirmRes.status === 200,
-      `status=${confirmRes.status} body=${JSON.stringify(confirmRes.json).slice(0, 300)}`,
-    );
-
-    const { data: orderAfterDelivery } = await getOrder(customerToken, orderId);
-    assertEqual(
-      SCENARIO,
-      'order paymentStatus flips to PAID after COD delivery settlement',
-      orderAfterDelivery?.paymentStatus,
-      'PAID',
-    );
-
-    const shiftAfter = await get('/api/delivery-agents/me/shift-summary', agentLogin);
-    const before = shiftBefore.json?.data ?? {};
-    const after = shiftAfter.json?.data ?? {};
-    assertClose(
-      SCENARIO,
-      'agent earningsToday increased by exactly perTaskEarning',
-      Number(after.earningsToday ?? 0) - Number(before.earningsToday ?? 0),
-      ctx.deliveryAgentPerTaskEarning,
-    );
-    assertEqual(
-      SCENARIO,
-      'agent deliveredToday incremented by 1',
-      Number(after.deliveredToday ?? 0) - Number(before.deliveredToday ?? 0),
-      1,
-    );
-  }
+  const { data: orderAfterDelivery } = await getOrder(customerToken, orderId);
+  assertEqual(
+    SCENARIO,
+    'order paymentStatus flips to PAID after COD delivery settlement',
+    orderAfterDelivery?.paymentStatus,
+    'PAID',
+  );
 
   return { orderId, subOrderId: subOrder.id, customerToken, customerUserId: order.userId };
 }

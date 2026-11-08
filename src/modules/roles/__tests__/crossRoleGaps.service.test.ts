@@ -16,8 +16,6 @@ import { Product } from '@database/models/product.model';
 import { sequelize } from '@config/db';
 import { usersRepository } from '@modules/users/users.repository';
 import { authRepository } from '@modules/auth/auth.repository';
-import { deliveryAgentsService } from '@modules/deliveryAgents/deliveryAgents.service';
-import { DeliveryRating } from '@database/models/deliveryRating.model';
 import { supportTicketsService } from '@modules/supportTickets/supportTickets.service';
 import { SupportTicket } from '@database/models/supportTicket.model';
 import { ROLES, SUPPORT_TICKET_STATUS } from '@core/constants/statuses';
@@ -372,25 +370,6 @@ describe('Cross-Role & Dynamic RBAC Gap Fixes Verification', () => {
       assert.ok(updatedUser);
       assert.equal(updatedUser.roleId, validRoleId);
       assert.equal(updatedUser.vendorId, null);
-    });
-  });
-
-  describe('6. Delivery Agent Ratings Visibility', () => {
-    it('returns rating metrics and recent feedback for delivery agent', async () => {
-      mock.method(DeliveryRating, 'findAll', async (options: any) => {
-        if (options?.attributes?.length === 1 && options.attributes[0] === 'rating') {
-          return [{ rating: 5 }, { rating: 4 }, { rating: 5 }] as any;
-        }
-        return [
-          { id: 'rate-1', rating: 5, comment: 'Fast delivery!', createdAt: new Date() },
-          { id: 'rate-2', rating: 4, comment: 'Polite', createdAt: new Date() },
-        ] as any;
-      });
-
-      const result = await deliveryAgentsService.myRatings('agent-123');
-      assert.equal(result.averageRating, 4.7);
-      assert.equal(result.ratingCount, 3);
-      assert.equal(result.ratings.length, 2);
     });
   });
 

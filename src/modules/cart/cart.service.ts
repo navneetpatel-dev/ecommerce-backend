@@ -168,16 +168,9 @@ function cartHasCoupon(cart: Cart): boolean {
 }
 
 /** Copy guest coupons onto the user cart only when the user has none selected. */
-async function copyGuestCouponIfUserCartEmpty(
-  guestCart: Cart,
-  userCart: Cart,
-  transaction: Transaction,
-) {
+async function copyGuestCouponIfUserCartEmpty(guestCart: Cart, userCart: Cart, transaction: Transaction) {
   if (!cartHasCoupon(guestCart) || cartHasCoupon(userCart)) return;
-  await userCart.update(
-    { couponCode: guestCart.couponCode, couponCodes: guestCart.couponCodes ?? [] },
-    { transaction },
-  );
+  await userCart.update({ couponCode: guestCart.couponCode, couponCodes: guestCart.couponCodes ?? [] }, { transaction });
 }
 
 export class CartService {
@@ -512,11 +505,7 @@ export class CartService {
   }
 
   /** Resolves the caller's own cart id — never creates one, since a mutation implies it must already exist. */
-  private async resolveOwnCartId(
-    userId: string | null,
-    sessionId: string | null,
-    transaction: Transaction,
-  ): Promise<string> {
+  private async resolveOwnCartId(userId: string | null, sessionId: string | null, transaction: Transaction): Promise<string> {
     let cart;
     if (userId) {
       cart = await cartRepository.findByUserId(userId, transaction);

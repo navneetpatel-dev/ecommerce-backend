@@ -12,7 +12,7 @@ export class Address extends Model<InferAttributes<Address>, InferCreationAttrib
   /** Buyer GSTIN for B2B e-invoice (optional). */
   declare gstin: CreationOptional<string | null>;
   declare isDefault: CreationOptional<boolean>;
-  /** Free-text doorstep notes for delivery agents (e.g. "Leave at front desk"). */
+  /** Free-text doorstep notes for the courier (e.g. "Leave at front desk"). */
   declare deliveryInstructions: CreationOptional<string | null>;
   /** Device-captured GPS fix at save time — powers the live-ETA distance calc. */
   declare lat: CreationOptional<number | null>;

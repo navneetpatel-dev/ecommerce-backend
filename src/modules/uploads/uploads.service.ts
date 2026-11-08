@@ -40,7 +40,6 @@ export type BulkUploadFileResult =
 type UploadActor = {
   id: string;
   vendorId: string | null;
-  deliveryAgentId: string | null;
   role: { name: string };
   roleId: string;
 };

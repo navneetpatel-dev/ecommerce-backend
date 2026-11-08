@@ -16,7 +16,6 @@ import {
 type UploadActor = {
   id: string;
   vendorId: string | null;
-  deliveryAgentId: string | null;
   role: { name: string };
   roleId: string;
 };
@@ -63,24 +62,6 @@ async function returnExists(returnId: string): Promise<boolean> {
   const [row] = await sequelize.query<{ id: string }>(
     `SELECT id FROM return_requests WHERE id = :returnId AND "deletedAt" IS NULL LIMIT 1`,
     { replacements: { returnId }, type: QueryTypes.SELECT },
-  );
-  return Boolean(row);
-}
-
-async function returnAssignedToAgent(returnId: string, deliveryAgentId: string): Promise<boolean> {
-  const [row] = await sequelize.query<{ id: string }>(
-    `SELECT id FROM return_requests
-     WHERE id = :returnId AND "deliveryAgentId" = :deliveryAgentId AND "deletedAt" IS NULL LIMIT 1`,
-    { replacements: { returnId, deliveryAgentId }, type: QueryTypes.SELECT },
-  );
-  return Boolean(row);
-}
-
-async function shipmentAssignedToAgent(shipmentId: string, deliveryAgentId: string): Promise<boolean> {
-  const [row] = await sequelize.query<{ id: string }>(
-    `SELECT id FROM shipments
-     WHERE id = :shipmentId AND "deliveryAgentId" = :deliveryAgentId AND "deletedAt" IS NULL LIMIT 1`,
-    { replacements: { shipmentId, deliveryAgentId }, type: QueryTypes.SELECT },
   );
   return Boolean(row);
 }
@@ -274,10 +255,6 @@ export async function assertUploadAllowed(
       const canAdmin = await hasAnyPermission(actor, [PERMISSIONS.ORDER_REFUND]);
       if (canAdmin) return;
 
-      if (actor.deliveryAgentId && await returnAssignedToAgent(entityId, actor.deliveryAgentId)) {
-        return;
-      }
-
       const accessible = await returnAccessibleByUser(entityId, actor.id);
       if (accessible) return;
 
@@ -346,34 +323,11 @@ export async function assertUploadAllowed(
     case S3_ENTITY_TYPES.PAYOUTS: {
       if (
         purpose !== S3_PURPOSES.ATTACHMENTS ||
-        !(await hasAnyPermission(actor, [PERMISSIONS.PAYOUT_MANAGE, PERMISSIONS.DELIVERY_AGENT_MANAGE]))
+        !(await hasAnyPermission(actor, [PERMISSIONS.PAYOUT_MANAGE]))
       ) {
         throw new ForbiddenError(ERROR_MESSAGES.UPLOAD_FORBIDDEN);
       }
       return;
-    }
-
-    case S3_ENTITY_TYPES.DELIVERY_AGENT_DOCUMENTS: {
-      if (purpose !== S3_PURPOSES.KYC) {
-        throw new ForbiddenError(ERROR_MESSAGES.UPLOAD_FORBIDDEN);
-      }
-      if (await hasAnyPermission(actor, [PERMISSIONS.DELIVERY_AGENT_MANAGE])) return;
-      if (actor.deliveryAgentId && actor.deliveryAgentId === entityId) return;
-      throw new ForbiddenError(ERROR_MESSAGES.UPLOAD_FORBIDDEN);
-    }
-
-    case S3_ENTITY_TYPES.SHIPMENTS: {
-      if (purpose !== S3_PURPOSES.PROOF) {
-        throw new ForbiddenError(ERROR_MESSAGES.UPLOAD_FORBIDDEN);
-      }
-      if (await hasAnyPermission(actor, [PERMISSIONS.DELIVERY_AGENT_MANAGE])) return;
-      if (
-        actor.deliveryAgentId &&
-        await shipmentAssignedToAgent(entityId, actor.deliveryAgentId)
-      ) {
-        return;
-      }
-      throw new ForbiddenError(ERROR_MESSAGES.UPLOAD_FORBIDDEN);
     }
 
     default:

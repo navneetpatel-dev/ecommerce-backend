@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   priceWithGst,
-  cashDepositDiscrepancy,
   checkoutAmountDue,
   wishlistPriceDrop,
   inventoryValuation,
@@ -180,24 +179,6 @@ describe('inventoryValuation', () => {
   });
 });
 
-describe('cashDepositDiscrepancy', () => {
-  it('reports the declared-minus-expected gap in rupees', () => {
-    assert.deepEqual(cashDepositDiscrepancy('950.00', '1000.50'), {
-      discrepancyAmount: -50.5,
-      hasDiscrepancy: true,
-    });
-    assert.deepEqual(cashDepositDiscrepancy(1000.75, 1000), {
-      discrepancyAmount: 0.75,
-      hasDiscrepancy: true,
-    });
-  });
-
-  it('treats a gap within one paisa as matching', () => {
-    assert.equal(cashDepositDiscrepancy(0.3, 0.1 + 0.2).hasDiscrepancy, false);
-    assert.equal(cashDepositDiscrepancy(100.01, 100).hasDiscrepancy, false);
-    assert.equal(cashDepositDiscrepancy(100.02, 100).hasDiscrepancy, true);
-  });
-});
 
 describe('wishlistPriceDrop', () => {
   it('returns the fall since the item was saved', () => {

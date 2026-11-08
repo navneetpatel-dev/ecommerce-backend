@@ -5,13 +5,12 @@ import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { ordersRepository } from './orders.repository';
 import { assertPartPaidFor } from '@modules/suborders/subOrderTransitions';
 import { returnableOrderItemIds } from './orderReturnability';
-import { ORDER_DELIVERY_AGENT_ATTRIBUTES, ORDER_VENDOR_ATTRIBUTES } from './orderPublicAttributes';
+import { ORDER_VENDOR_ATTRIBUTES } from './orderPublicAttributes';
 import { sequelize } from '@database/models';
 import { OrderItem } from '@database/models/orderItem.model';
 import { Vendor } from '@database/models/vendor.model';
 import { Shipment } from '@database/models/shipment.model';
 import { ShipmentAttempt } from '@database/models/shipmentAttempt.model';
-import { DeliveryAgent } from '@database/models/deliveryAgent.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { Product } from '@database/models/product.model';
 import { mapOrderResponse } from './orderDisplayMappers';
@@ -76,11 +75,6 @@ const orderDetailInclude = [
         model: Shipment,
         as: 'shipment',
         include: [
-          {
-            model: DeliveryAgent,
-            as: 'deliveryAgent',
-            attributes: ORDER_DELIVERY_AGENT_ATTRIBUTES,
-          },
           {
             model: ShipmentAttempt,
             as: 'attempts',

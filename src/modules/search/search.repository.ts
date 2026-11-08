@@ -1,11 +1,6 @@
 import { sequelize } from '@database/models';
 import { QueryTypes } from 'sequelize';
-import {
-  CATEGORY_STATUS,
-  PRODUCT_STATUS,
-  REVIEW_STATUS,
-  VENDOR_STATUS,
-} from '@core/constants/statuses';
+import { CATEGORY_STATUS, PRODUCT_STATUS, REVIEW_STATUS, VENDOR_STATUS } from '@core/constants/statuses';
 import {
   SEARCH_AUTOCOMPLETE_CATEGORY_LIMIT,
   SEARCH_AUTOCOMPLETE_FUZZY_MIN_LENGTH,
@@ -497,10 +492,7 @@ export class SearchRepository {
     }));
   }
 
-  private searchReplacements(
-    params: Omit<SearchParams, 'limit' | 'offset'>,
-    prefixPattern: string,
-  ) {
+  private searchReplacements(params: Omit<SearchParams, 'limit' | 'offset'>, prefixPattern: string) {
     return {
       term: params.term,
       prefixPattern,

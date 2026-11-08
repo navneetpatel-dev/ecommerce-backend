@@ -55,15 +55,9 @@ export class ReturnRequest extends Model<InferAttributes<ReturnRequest>, InferCr
   /** When a vendor/admin put the returned units back into stock (never automatic). */
   declare restockedAt: CreationOptional<Date | null>;
   declare restockedBy: CreationOptional<string | null>;
-  declare deliveryAgentId: CreationOptional<string | null>;
-  declare pickupOtpVerifiedAt: CreationOptional<Date | null>;
-  declare pickupFailureReason: CreationOptional<string | null>;
   declare rejectionReason: CreationOptional<string | null>;
-  /** Customer-chosen repickup window after a failed attempt — mirrors Shipment.preferredRedeliverySlot. */
-  declare preferredRepickupSlot: CreationOptional<string | null>;
   declare type: CreationOptional<ReturnType>;
   declare replacementDeliveredAt: CreationOptional<Date | null>;
-  declare replacementProofUrl: CreationOptional<string | null>;
   declare resolvedById: string | null;
   declare resolvedAt: Date | null;
   declare createdBy: string | null;
@@ -77,7 +71,6 @@ export class ReturnRequest extends Model<InferAttributes<ReturnRequest>, InferCr
     ReturnRequest.belongsTo(models.SubOrder, { foreignKey: 'subOrderId', as: 'subOrder' });
     ReturnRequest.belongsTo(models.OrderItem, { foreignKey: 'orderItemId', as: 'orderItem' });
     ReturnRequest.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
-    ReturnRequest.belongsTo(models.DeliveryAgent, { foreignKey: 'deliveryAgentId', as: 'deliveryAgent' });
     ReturnRequest.hasOne(models.CreditNote, { foreignKey: 'returnRequestId', as: 'creditNote' });
     ReturnRequest.hasOne(models.DebitNote, { foreignKey: 'returnRequestId', as: 'debitNote' });
   }
@@ -132,14 +125,9 @@ export const initReturnRequestModel = (sequelize: Sequelize) => {
       receivedAt: { type: DataTypes.DATE, allowNull: true },
       restockedAt: { type: DataTypes.DATE, allowNull: true },
       restockedBy: { type: DataTypes.UUID, allowNull: true },
-      deliveryAgentId: { type: DataTypes.UUID, allowNull: true },
-      pickupOtpVerifiedAt: { type: DataTypes.DATE, allowNull: true },
-      pickupFailureReason: { type: DataTypes.TEXT, allowNull: true },
       rejectionReason: { type: DataTypes.TEXT, allowNull: true },
-      preferredRepickupSlot: { type: DataTypes.STRING(64), allowNull: true },
       type: { type: DataTypes.ENUM(...RETURN_TYPE_VALUES), allowNull: false, defaultValue: RETURN_TYPE.REFUND },
       replacementDeliveredAt: { type: DataTypes.DATE, allowNull: true },
-      replacementProofUrl: { type: DataTypes.STRING, allowNull: true },
       resolvedById: { type: DataTypes.UUID, allowNull: true },
       resolvedAt: { type: DataTypes.DATE, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },

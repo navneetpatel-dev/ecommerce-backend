@@ -1,13 +1,14 @@
 import { Vendor } from '@database/models/vendor.model';
 import type { CartLineForCoupon } from '@modules/coupons/coupon.utils';
-import { gstRuleResolver, priceWithRuleGst } from '@modules/tax/gstPricing';
+import { gstRuleResolver } from '@modules/tax/gstPricing';
+import { fromPaise } from '@modules/pricing/money';
 import { PLATFORM_VENDOR_ID, gstInclusiveLinePaise } from './vendorPricingPlan';
 
 /**
  * Coupon lines at the prices the customer sees (GST included): each piece's price with
- * GST, and each line valued exactly as the bill shows it (`lineAmountPaise`, the engine's
- * per-line GST), so a coupon's minimum order value and a free-shipping threshold agree
- * with the displayed items total to the paisa. `shippingStateCode` decides CGST+SGST vs
+ * GST, and each line valued exactly as the bill shows it (`lineAmountPaise`: the engine's
+ * per-line GST, aligned to unit × quantity), so a coupon's minimum order value and a
+ * free-shipping threshold agree with the displayed items total to the paisa. `shippingStateCode` decides CGST+SGST vs
  * IGST as the bill does ('' when there is no address: the seller's own state).
  */
 export async function withGstInclusiveLineValues<T extends CartLineForCoupon>(
@@ -40,9 +41,10 @@ export async function withGstInclusiveLineValues<T extends CartLineForCoupon>(
     });
   }
 
+  // The line is unit × quantity to the paisa, so its unit is exact.
   return lines.map((line, index) => ({
     ...line,
-    unitPrice: priceWithRuleGst(rules[index]!, line.unitPrice),
+    unitPrice: fromPaise(lineAmountPaise[index]! / Math.max(1, Math.trunc(line.quantity) || 1)),
     lineAmountPaise: lineAmountPaise[index],
   }));
 }

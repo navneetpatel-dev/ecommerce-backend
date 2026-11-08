@@ -635,12 +635,16 @@ module.exports = {
     for (const customer of customers.slice(0, 80)) {
       const cartId = uuidv4();
       carts.push({ id: cartId, userId: customer.id, createdAt: now, updatedAt: now });
+      const usedVariantIds = new Set();
       for (let j = 0; j < randomInt(1, 8); j++) {
         const product = randomElement(liveProducts);
         const variants = productVariantMap[product.id];
         if (!variants) continue;
+        const variantId = randomElement(variants).id;
+        if (usedVariantIds.has(variantId)) continue; // unique constraint on (cartId, variantId)
+        usedVariantIds.add(variantId);
         cartItems.push({
-          id: uuidv4(), cartId, variantId: randomElement(variants).id,
+          id: uuidv4(), cartId, variantId,
           quantity: randomInt(1, 3), createdAt: now, updatedAt: now,
         });
       }

@@ -8,7 +8,7 @@ where the screen changes).
 
 - **194-O catch-up (#16):** yes. Once a sole proprietor's sales for the year cross the
   exemption limit, the next payout deducts TDS on the year's sales less TDS already
-  taken (same rule as 194C for delivery agents).
+  taken.
 - **Platform-funded coupons (#18):** the vendor's GST is on the price before the
   platform's share of the coupon. The customer's total does not change; the platform
   pays the extra GST to the vendor with the coupon reimbursement. TCS and 194-O use
@@ -67,7 +67,6 @@ order-less 194-O catch-up rows).
 - [x] **#24** Returns after payout get a commission credit note, not netted into the
       next invoice.
 - [x] **#25** Commission credit-note PDF shows negative IGST.
-- [x] **#27** Delivery-agent 194C TDS report.
 
 ## Phase 4 — Pricing and refund policy
 

@@ -32,7 +32,6 @@ export type AuthUserPayload = {
   name: string;
   role: string;
   vendorId: string | null;
-  deliveryAgentId: string | null;
   permissions: string[];
   /** Set only when this session is an admin impersonating this user. */
   impersonatedBy?: string | null;
@@ -94,7 +93,6 @@ function toUserPayload(user: User): JwtPayload {
     email: user.email,
     roleId: user.roleId,
     vendorId: user.vendorId,
-    deliveryAgentId: user.deliveryAgentId,
     roleName: roleNameOf(user),
   };
 }
@@ -175,7 +173,6 @@ export class AuthService {
       phone: user.phone,
       role: roleName,
       vendorId: user.vendorId,
-      deliveryAgentId: user.deliveryAgentId,
       emailVerified: user.emailVerified,
       emailMarketingConsent: user.emailMarketingConsent,
       avatarUrl: user.avatarUrl,
@@ -341,7 +338,6 @@ export class AuthService {
         name: user.name,
         role: roleName,
         vendorId: user.vendorId,
-        deliveryAgentId: user.deliveryAgentId,
         permissions,
       },
       ...tokens,
@@ -598,7 +594,6 @@ export class AuthService {
       email: target.email,
       roleId: target.roleId,
       vendorId: target.vendorId,
-      deliveryAgentId: target.deliveryAgentId,
       roleName,
       impersonatedBy: actingAdminId,
     };
@@ -624,7 +619,6 @@ export class AuthService {
         name: target.name,
         role: roleName,
         vendorId: target.vendorId,
-        deliveryAgentId: target.deliveryAgentId,
         permissions,
         impersonatedBy: actingAdminId,
       },

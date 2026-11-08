@@ -2,8 +2,7 @@
 
 Proves a change to a money read path moves only the numbers it means to. `snapshot.ts` records
 every money figure the read surfaces publish: all registered reports (vendor-scoped ones once
-per vendor), admin analytics, vendor dashboards, delivery shift summaries and commission
-ledgers. `diff.ts` prints every value that differs between two snapshots.
+per vendor), admin analytics, vendor dashboards and commission ledgers. `diff.ts` prints every value that differs between two snapshots.
 
 ## Run
 

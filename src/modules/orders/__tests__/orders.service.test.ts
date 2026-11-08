@@ -106,22 +106,21 @@ function findIncludes(include: unknown, alias: string): AttributeInclude[] {
 }
 
 function assertNoPrivateFields(include: unknown) {
-  for (const alias of ['vendor', 'deliveryAgent']) {
+  for (const alias of ['vendor']) {
     for (const entry of findIncludes(include, alias)) {
       assert.ok(Array.isArray(entry.attributes), `${alias} include must list its attributes`);
       assert.equal(entry.attributes!.includes('bankDetails'), false);
-      assert.equal(entry.attributes!.includes('lastLat'), false);
       assert.equal(entry.attributes!.includes('gstNumber'), false);
     }
   }
 }
 
-describe('Order payloads never carry vendor or agent bank details', () => {
+describe('Order payloads never carry vendor bank details', () => {
   afterEach(() => {
     mock.restoreAll();
   });
 
-  it('limits vendor and delivery agent columns on the order detail', async () => {
+  it('limits vendor columns on the order detail', async () => {
     let capturedInclude: unknown;
     mock.method(ordersRepository, 'findById', async (_id: string, opts?: { include?: unknown }) => {
       capturedInclude = opts?.include;
@@ -129,7 +128,6 @@ describe('Order payloads never carry vendor or agent bank details', () => {
     });
     await ordersService.getOrderById('order-1', 'user-1').catch(() => undefined);
     assert.equal(findIncludes(capturedInclude, 'vendor').length, 1);
-    assert.equal(findIncludes(capturedInclude, 'deliveryAgent').length, 1);
     assertNoPrivateFields(capturedInclude);
   });
 

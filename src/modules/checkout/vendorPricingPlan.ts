@@ -145,7 +145,10 @@ export function gstInclusiveLinePaise(input: {
     discountBearer: null,
     tcsRatePercent: 0,
   }).paise;
-  return gross.lines.map((line) => line.taxablePaise + line.tax.total);
+  // Aligned to unit × quantity, as the bill shows the line (see `priceVendorRows`).
+  return gross.lines.map(
+    (line, index) => alignUnitAndLine(line.taxablePaise + line.tax.total, input.lines[index]!.quantity).lineTotalPaise,
+  );
 }
 
 /**

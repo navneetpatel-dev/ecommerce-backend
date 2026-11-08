@@ -12,7 +12,7 @@ module.exports = {
       },
       channel: { type: Sequelize.ENUM('EMAIL'), allowNull: false, defaultValue: 'EMAIL' },
       purpose: {
-        type: Sequelize.ENUM('LOGIN', 'DELIVERY_CONFIRMATION', 'RETURN_PICKUP_CONFIRMATION'),
+        type: Sequelize.ENUM('LOGIN'),
         allowNull: false,
       },
       codeHash: { type: Sequelize.STRING, allowNull: false },

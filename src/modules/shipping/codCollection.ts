@@ -11,7 +11,7 @@ import { codCashDuePaise, isReversedPart } from '@modules/pricing/partReversal';
 export type CodOrder = RefundSplitOrder & { id: string; giftWrapFeeAmount?: unknown };
 
 /**
- * Cash the delivery agent collects for one COD shipment, in paise.
+ * Cash the courier collects for one COD shipment, in paise.
  *
  * The customer owes, at the door, the parts they kept (every sub-order not cancelled or
  * back undelivered — RTO) plus the order-level gift-wrap fee, less the wallet money

@@ -3,12 +3,10 @@ import { env } from '@config/env';
 import { ShippingRate } from '@database/models/shippingRate.model';
 import { ShippingZone } from '@database/models/shippingZone.model';
 import { Shipment } from '@database/models/shipment.model';
-import { DeliveryAgent } from '@database/models/deliveryAgent.model';
 import { Product } from '@database/models/product.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { Order } from '@database/models/order.model';
-import { Address } from '@database/models/address.model';
 import { WebhookEvent } from '@database/models/webhookEvent.model';
 import { OrderItem } from '@database/models/orderItem.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
@@ -31,7 +29,6 @@ import { notificationsService } from '@modules/notifications/notifications.servi
 import { DEFAULT_VARIANT_WEIGHT_GRAMS, resolveCartVendorWeightGrams } from './shippingWeight';
 import { resolveShippingDisplayKey } from '@modules/checkout/checkoutOrderTotals';
 import { WebhookPayloadSchema } from './shipping.dto';
-import { deliveryAgentPayoutsService } from '@modules/deliveryAgents/deliveryAgentPayouts.service';
 import { issueTaxInvoicesOnDispatch } from '@modules/pricing/taxInvoiceIssue';
 import { issueRtoCreditNotes, refundReturnedUndeliveredPart } from './rtoSettlement';
 import { reverseTcsForReturnedPart } from '@modules/pricing/tcsLedger';
@@ -81,7 +78,7 @@ const WEBHOOK_STATUS_MAP: Record<string, string> = {
   CANCELLED: 'FAILED',
   CANCELED: 'FAILED',
   // The carrier sends a parcel back (RTO) and hands it to the seller: without these a
-  // carrier-only parcel never settled — no refund, no restock — as only an agent could.
+  // carrier-only parcel never settled — no refund, no restock — unless an admin moved it by hand.
   RTO: 'RTO_INITIATED',
   RTO_INITIATED: 'RTO_INITIATED',
   RTOINITIATED: 'RTO_INITIATED',
@@ -92,11 +89,11 @@ const WEBHOOK_STATUS_MAP: Record<string, string> = {
 
 /**
  * Canonical forward transitions for every caller of `applyShipmentStatus`
- * (agent update, OTP confirm, carrier webhook). Skips are allowed so a
+ * (admin update, carrier webhook). Skips are allowed so a
  * webhook can jump e.g. IN_TRANSIT → DELIVERED. Terminal statuses have no
  * outbound edges — duplicates and regressions no-op instead of throwing.
  */
-const SHIPMENT_STATUS_TRANSITIONS: Record<string, readonly string[]> = {
+export const SHIPMENT_STATUS_TRANSITIONS: Record<string, readonly string[]> = {
   PENDING: ['PICKED_UP', 'IN_TRANSIT', 'OUT_FOR_DELIVERY', 'DELIVERED', 'FAILED'],
   PICKED_UP: ['IN_TRANSIT', 'OUT_FOR_DELIVERY', 'DELIVERED', 'FAILED', 'RTO_INITIATED'],
   IN_TRANSIT: ['OUT_FOR_DELIVERY', 'DELIVERED', 'FAILED', 'RTO_INITIATED'],
@@ -596,15 +593,9 @@ export const shippingService = {
               model: Order,
               as: 'order',
               attributes: ['userId'],
-              include: [{ model: Address, as: 'shippingAddress', attributes: ['lat', 'lng'] }],
             },
           ],
           attributes: ['vendorId'],
-        },
-        {
-          model: DeliveryAgent,
-          as: 'deliveryAgent',
-          attributes: ['id', 'fullName', 'lastLat', 'lastLng', 'locationUpdatedAt'],
         },
       ],
     });
@@ -623,23 +614,12 @@ export const shippingService = {
       };
     }
 
-    const shipmentWithOrder = shipment as Shipment & {
-      subOrder?: SubOrder & { order?: Order & { shippingAddress?: Address | null } };
-    };
-    const subOrder = shipmentWithOrder.subOrder;
+    const shipmentWithOrder = shipment as Shipment & { subOrder?: SubOrder & { order?: Order } };
     if (!(await canSeeShipmentDetails(actor, shipmentWithOrder))) {
       throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_ORDER);
     }
     const plain = shipment.get({ plain: true }) as Record<string, unknown>;
-    const destinationAddress = subOrder?.order?.shippingAddress as { lat: number | null; lng: number | null } | undefined;
-    return {
-      ...plain,
-      lastUpdate: shipment.updatedAt,
-      destination:
-        destinationAddress?.lat != null && destinationAddress?.lng != null
-          ? { lat: Number(destinationAddress.lat), lng: Number(destinationAddress.lng) }
-          : null,
-    };
+    return { ...plain, lastUpdate: shipment.updatedAt };
   },
 
   /** Customer picks a redelivery window after a FAILED attempt (tracking page CTA). */
@@ -784,9 +764,6 @@ export const shippingService = {
         );
         await cascadeOrderDeliveredAndNotify(shipment.subOrderId, transaction);
         await settleCodPaymentIfComplete(shipment.subOrderId, transaction);
-        if (shipment.deliveryAgentId) {
-          await deliveryAgentPayoutsService.recordEarning(shipment.deliveryAgentId, 'DELIVERY', shipment.id, transaction);
-        }
       }
       if (status === 'RTO_DELIVERED') {
         await cascadeRtoDeliveredAndSettle(shipment.subOrderId, transaction);

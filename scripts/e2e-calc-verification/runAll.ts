@@ -6,7 +6,6 @@ import { runHybridWalletRazorpay } from './scenarios/04-hybrid-wallet-razorpay';
 import { runMultiVendorIntraInterState } from './scenarios/05-multi-vendor-intra-inter-state';
 import { runCouponDiscount } from './scenarios/06-coupon-discount';
 import { printSummary } from './lib/assert';
-import { closeOtpQueue } from './lib/otpFromQueue';
 
 async function main() {
   console.log('E2E Calculation Verification — starting\n');
@@ -32,7 +31,6 @@ async function main() {
   }
 
   const failures = printSummary();
-  await closeOtpQueue();
   process.exit(failures > 0 ? 1 : 0);
 }
 

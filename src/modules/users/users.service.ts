@@ -18,9 +18,6 @@ import { Wishlist } from '@database/models/wishlist.model';
 import { WishlistItem } from '@database/models/wishlistItem.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
-import { DeliveryAgent } from '@database/models/deliveryAgent.model';
-import { Shipment } from '@database/models/shipment.model';
-import { DeliveryCashDeposit } from '@database/models/deliveryCashDeposit.model';
 import { sequelize } from '@database/models';
 import type { Transaction } from 'sequelize';
 import { QueryTypes, Op } from 'sequelize';
@@ -29,14 +26,12 @@ import {
   USER_STATUS,
   ORDER_STATUS,
   COMMISSION_STATUS,
-  RETURN_STATUS,
 } from '@core/constants/statuses';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { PERMISSIONS, type PermissionKey } from '@core/permissions/permissionKeys';
 import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { ValidationError } from '@core/errors/ValidationError';
 import { logAudit } from '@modules/audit/audit.service';
-import { sumRupees, toPaise } from '@modules/pricing/money';
 import type {
   UpdateUserProfileRequest,
   UpdateUserStatusRequest,
@@ -54,8 +49,6 @@ const ACTIVE_FULFILLMENT_STATUSES = [
   ORDER_STATUS.CONFIRMED,
   ORDER_STATUS.SHIPPED,
 ] as const;
-
-const TERMINAL_SHIPMENT_STATUSES = ['DELIVERED', 'FAILED', 'RTO_DELIVERED'] as const;
 
 async function countOtherActiveSuperAdmins(userId: string, transaction: Transaction): Promise<number> {
   const countRows = await sequelize.query<{ count: string }>(
@@ -116,61 +109,6 @@ async function assertSelfDeletionAllowed(
     if (pendingCommission > 0) {
       throw new ForbiddenError(
         `You have ${pendingCommission} pending commission ledger entries — settle these before deleting your account`,
-      );
-    }
-    return;
-  }
-
-  if (roleName === ROLES.DELIVERY_AGENT) {
-    const agent = await DeliveryAgent.findOne({
-      where: { userId: user.id },
-      transaction,
-    });
-    if (!agent) return;
-
-    const [activeShipments, activePickups, collectedRows, verifiedDeposits] = await Promise.all([
-      Shipment.count({
-        where: {
-          deliveryAgentId: agent.id,
-          status: { [Op.notIn]: [...TERMINAL_SHIPMENT_STATUSES] },
-        },
-        transaction,
-      }),
-      ReturnRequest.count({
-        where: {
-          deliveryAgentId: agent.id,
-          status: RETURN_STATUS.PICKUP_SCHEDULED,
-        },
-        transaction,
-      }),
-      Shipment.findAll({
-        where: { deliveryAgentId: agent.id, codCollected: true },
-        attributes: ['codAmount'],
-        transaction,
-      }),
-      DeliveryCashDeposit.findAll({
-        where: { deliveryAgentId: agent.id, status: 'VERIFIED' },
-        attributes: ['amount'],
-        transaction,
-      }),
-    ]);
-    if (activeShipments > 0) {
-      throw new ForbiddenError(
-        `You have ${activeShipments} active shipments in progress — settle these before deleting your account`,
-      );
-    }
-    if (activePickups > 0) {
-      throw new ForbiddenError(
-        `You have ${activePickups} scheduled return pickups — settle these before deleting your account`,
-      );
-    }
-    // Compared in paise: a float difference of rupee sums can be a hair above 0
-    // (0.1 + 0.2 − 0.3) and would block an agent who owes nothing.
-    const collectedPaise = toPaise(sumRupees(collectedRows.map((row) => row.codAmount)));
-    const depositedPaise = toPaise(sumRupees(verifiedDeposits.map((row) => row.amount)));
-    if (collectedPaise > depositedPaise) {
-      throw new ForbiddenError(
-        'You have outstanding undeposited COD cash — settle this before deleting your account',
       );
     }
     return;

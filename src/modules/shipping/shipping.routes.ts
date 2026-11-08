@@ -11,7 +11,7 @@ import {
   CreateRateSchema,
   UpdateRateSchema,
   RescheduleDeliverySchema,
-  SubmitDeliveryRatingSchema,
+  AdminShipmentStatusSchema,
 } from './shipping.dto';
 import * as shippingController from './shipping.controller';
 
@@ -28,8 +28,6 @@ router.post(
   validate(RescheduleDeliverySchema),
   shippingController.rescheduleDelivery,
 );
-router.get('/shipments/:shipmentId/rating', authenticate, shippingController.getDeliveryRating);
-router.post('/shipments/:shipmentId/rating', authenticate, validate(SubmitDeliveryRatingSchema), shippingController.submitDeliveryRating);
 
 router.get('/zones', authenticate, authorize(PERMISSIONS.SHIPPING_MANAGE), shippingController.listZones);
 router.post('/zones', authenticate, authorize(PERMISSIONS.SHIPPING_MANAGE), validate(CreateZoneSchema), shippingController.createZone);
@@ -40,6 +38,16 @@ router.get(['/rates/admin', '/admin/rates'], authenticate, authorize(PERMISSIONS
 router.post('/rates', authenticate, authorize(PERMISSIONS.SHIPPING_MANAGE), validate(CreateRateSchema), shippingController.createRate);
 router.patch('/rates/:id', authenticate, authorize(PERMISSIONS.SHIPPING_MANAGE), validate(UpdateRateSchema), shippingController.updateRate);
 router.delete('/rates/:id', authenticate, authorize(PERMISSIONS.SHIPPING_MANAGE), shippingController.deleteRate);
+
+// Admin: move a shipment on by hand (delivered, failed attempt, RTO) and the RTO queue.
+router.get('/admin/rto-shipments', authenticate, authorize(PERMISSIONS.ORDER_MANAGE), shippingController.adminRtoQueue);
+router.patch(
+  '/admin/shipments/:shipmentId/status',
+  authenticate,
+  authorize(PERMISSIONS.ORDER_MANAGE),
+  validate(AdminShipmentStatusSchema),
+  shippingController.adminUpdateShipmentStatus,
+);
 
 router.post('/webhooks/:carrier', shippingController.processWebhook);
 

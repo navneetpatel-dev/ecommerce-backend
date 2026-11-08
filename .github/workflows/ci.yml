@@ -56,6 +56,9 @@ jobs:
       JWT_SECRET: ci-only-jwt-secret-not-for-production
       JWT_REFRESH_SECRET: ci-only-refresh-secret-not-for-production
       RAZORPAY_WEBHOOK_SECRET: ci-only-webhook-secret
+      # Builds the Razorpay client so tests can stub it; no request leaves CI.
+      RAZORPAY_KEY_ID: rzp_test_ci_only
+      RAZORPAY_KEY_SECRET: ci-only-key-secret
       START_WORKERS_IN_API: 'false'
       LOG_LEVEL: warn
 

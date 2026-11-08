@@ -28,23 +28,11 @@ import {
 } from '@modules/coupons/couponEngine';
 import { fromPaise, roundMoney, sumRupees, toPaise } from '@modules/pricing/money';
 import { checkoutAmountDue, combinedDiscount, lineTotal } from '@modules/pricing/displayMoney';
-import {
-  buildVendorPricingRows,
-  priceVendorRows,
-  PLATFORM_VENDOR_ID,
-  type PricedLine,
-} from './vendorPricingPlan';
-import {
-  clampWalletApply,
-  settleSubMinRazorpayRemainder,
-} from './razorpayWalletRemainder';
+import { buildVendorPricingRows, priceVendorRows, PLATFORM_VENDOR_ID, type PricedLine } from './vendorPricingPlan';
+import { clampWalletApply, settleSubMinRazorpayRemainder } from './razorpayWalletRemainder';
 import { RAZORPAY_MIN_AMOUNT_PAISE } from '@core/constants/http';
 import { resolveItemAvailability } from '@core/catalog/customerVisibility';
-import type {
-  CancelCheckoutRequest,
-  CreateCheckoutRequest,
-  CheckoutQuoteRequest,
-} from './checkout.dto';
+import type { CancelCheckoutRequest, CreateCheckoutRequest, CheckoutQuoteRequest } from './checkout.dto';
 import type { Coupon } from '@database/models/coupon.model';
 import { walletService } from '@modules/wallet/wallet.service';
 import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
@@ -67,12 +55,9 @@ import { notificationsService } from '@modules/notifications/notifications.servi
 import { buildCheckoutOrderTotals, resolveShippingDisplayKey, resolveTaxDisplayKey } from './checkoutOrderTotals';
 import { lockCartVariantsAndAssertStock } from './lockCartStock';
 import { assertExpectedGrandTotal } from './checkoutTotalCheck';
-import { razorpayOrderPayments } from '@modules/payments/razorpayOrderPayments';
+import { confirmIfPaidAtGateway, paidCannotCancel } from './pendingPaymentGuard';
 import { unpaidOrders } from '@modules/payments/unpaidOrderCancel';
-import {
-  taxInvoiceSnapshotLine,
-  type TaxInvoiceSnapshotLine,
-} from '@modules/pricing/taxInvoiceSnapshot';
+import { taxInvoiceSnapshotLine, type TaxInvoiceSnapshotLine } from '@modules/pricing/taxInvoiceSnapshot';
 import {
   giftWrapInvoiceLine,
   platformInvoiceLineTotalPaise,
@@ -107,18 +92,24 @@ type OrderForRollback = Order & {
 async function loadUserCart(userId: string, transaction?: any): Promise<CartWithItems> {
   const cartResult = await Cart.findOne({
     where: { userId },
-    include: [{
-      model: CartItem,
-      as: 'items',
-      include: [{
-        model: ProductVariant,
-        as: 'variant',
-        include: [{
-          association: 'product',
-          include: [{ model: Vendor, as: 'vendor' }],
-        }],
-      }],
-    }],
+    include: [
+      {
+        model: CartItem,
+        as: 'items',
+        include: [
+          {
+            model: ProductVariant,
+            as: 'variant',
+            include: [
+              {
+                association: 'product',
+                include: [{ model: Vendor, as: 'vendor' }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
     transaction,
   });
 
@@ -168,9 +159,7 @@ function assertCartItemsAvailable(cart: CartWithItems) {
   }
 }
 
-function catalogItemsForCod(
-  items: (CartItem & { variant: ProductVariant & { product: any } })[],
-) {
+function catalogItemsForCod(items: (CartItem & { variant: ProductVariant & { product: any } })[]) {
   return items.map((item) => {
     const product = item.variant?.product;
     return {
@@ -216,9 +205,7 @@ function resolveCheckoutCouponCodes(
 }
 
 /** Map cart rows into the normalized shape `vendorPricingPlan` prices. */
-function toPricedLines(
-  items: (CartItem & { variant: ProductVariant & { product: any } })[],
-): PricedLine[] {
+function toPricedLines(items: (CartItem & { variant: ProductVariant & { product: any } })[]): PricedLine[] {
   return items.map((item) => ({
     key: String(item.id),
     vendorId: item.variant.product.vendorId || PLATFORM_VENDOR_ID,
@@ -229,32 +216,11 @@ function toPricedLines(
   }));
 }
 
-function paidCannotCancel() {
-  return new AppError(
-    ERROR_MESSAGES.CHECKOUT_PAID_CANNOT_CANCEL,
-    409,
-    ERROR_CODES.CHECKOUT_PAID_CANNOT_CANCEL,
-  );
-}
-
-/**
- * Before a closed checkout is cancelled: Razorpay may already hold its payment (a UPI
- * approval landing as the customer closes the window, its webhook not in yet). A captured
- * one confirms the order; either way it is paid, not cancelled.
- */
-async function confirmIfPaidAtGateway(orderId: string, userId: string): Promise<void> {
-  const order = await Order.findByPk(orderId, {
-    attributes: ['id', 'userId', 'paymentStatus', 'razorpayOrderId'],
-  });
-  if (!order || order.userId !== userId || !order.razorpayOrderId) return;
-  if (order.paymentStatus === PAYMENT_STATUS.PAID) return;
-  const gateway = await razorpayOrderPayments.fetch(order.razorpayOrderId);
-  if (gateway?.captured) await paymentsService.confirmCapturedPayment(gateway.captured);
-  if (gateway?.captured || gateway?.authorized) throw paidCannotCancel();
-}
-
 export class CheckoutService {
-  async getQuote(userId: string, data: CheckoutQuoteRequest): Promise<{
+  async getQuote(
+    userId: string,
+    data: CheckoutQuoteRequest,
+  ): Promise<{
     vendorBreakdowns: Array<{
       vendorId: string;
       vendor: { id: string; businessName: string; slug: string; logoUrl: string | null };
@@ -423,9 +389,7 @@ export class CheckoutService {
         /** The vendor's items as the customer sees them, GST included, before coupons. */
         itemsTotal: fromPaise(inclusive?.itemsPaise ?? 0),
         /** What coupons take off those items, GST included. */
-        couponSavings: fromPaise(
-          Math.max(0, (inclusive?.itemsPaise ?? 0) - toPaise(r.taxableAmount) - toPaise(r.tax.total)),
-        ),
+        couponSavings: fromPaise(Math.max(0, (inclusive?.itemsPaise ?? 0) - toPaise(r.taxableAmount) - toPaise(r.tax.total))),
         /** Net of shipping discount — `shippingCharged`, not the gross rate. */
         shippingCost: r.shippingCharged,
         shippingDisplayKey: resolveShippingDisplayKey(r.shippingCharged),
@@ -451,27 +415,16 @@ export class CheckoutService {
     const giftWrapFeeAmount = resolveGiftWrapFee(data.giftWrap);
     const grandTotal = roundMoney(merchandiseGrandTotal + giftWrapFeeAmount);
     const walletBalance = await walletService.getBalance(userId);
-    let walletAmountToUse = clampWalletApply(
-      Number(data.walletAmountToUse ?? 0),
-      walletBalance,
-      grandTotal,
-    );
+    let walletAmountToUse = clampWalletApply(Number(data.walletAmountToUse ?? 0), walletBalance, grandTotal);
     let amountDue = checkoutAmountDue(grandTotal, walletAmountToUse);
     // Mirror place-order sub-min absorb so checkout UI matches settlement.
-    const quoteSettled = settleSubMinRazorpayRemainder(
-      grandTotal,
-      walletAmountToUse,
-      walletBalance,
-    );
+    const quoteSettled = settleSubMinRazorpayRemainder(grandTotal, walletAmountToUse, walletBalance);
     if (!('reject' in quoteSettled)) {
       walletAmountToUse = quoteSettled.walletAmountUsed;
       amountDue = quoteSettled.amountDue;
     }
     const maxWalletApplicable = Math.min(walletBalance, grandTotal);
-    const codAvailable = await resolveCodForCatalogItems(
-      catalogItemsForCod(quoteCart.items),
-      grandTotal,
-    );
+    const codAvailable = await resolveCodForCatalogItems(catalogItemsForCod(quoteCart.items), grandTotal);
 
     return {
       vendorBreakdowns,
@@ -528,10 +481,7 @@ export class CheckoutService {
       });
       const { shippingByVendor, shippingTotal } = plan;
       const vendorPrep = Object.fromEntries(
-        plan.rows.map((row) => [
-          row.vendorId,
-          { row, items: row.lines.map((line) => itemById.get(line.key)!) },
-        ]),
+        plan.rows.map((row) => [row.vendorId, { row, items: row.lines.map((line) => itemById.get(line.key)!) }]),
       );
 
       const couponCodes = resolveCheckoutCouponCodes(data, cart);
@@ -568,9 +518,7 @@ export class CheckoutService {
         const cashbackCoupon = coupons.find((c) => c.type === 'CASHBACK');
         if (cashbackCoupon) {
           cashbackDiscountBearer =
-            cashbackCoupon.discountBearer === DISCOUNT_BEARER.VENDOR
-              ? DISCOUNT_BEARER.VENDOR
-              : DISCOUNT_BEARER.PLATFORM;
+            cashbackCoupon.discountBearer === DISCOUNT_BEARER.VENDOR ? DISCOUNT_BEARER.VENDOR : DISCOUNT_BEARER.PLATFORM;
           cashbackVendorId = cashbackCoupon.vendorId ?? null;
         }
       }
@@ -615,10 +563,7 @@ export class CheckoutService {
       const orderTotalRupees = roundMoney(fromPaise(customerGrandTotalPaise) + giftWrapFeeAmount);
       assertExpectedGrandTotal(data.expectedGrandTotal, orderTotalRupees);
       if (data.paymentMethod === PAYMENT_METHOD.COD) {
-        const codAvailable = await resolveCodForCatalogItems(
-          catalogItemsForCod(cart.items),
-          orderTotalRupees,
-        );
+        const codAvailable = await resolveCodForCatalogItems(catalogItemsForCod(cart.items), orderTotalRupees);
         if (!codAvailable) {
           throw new ValidationError(ERROR_MESSAGES.COD_NOT_AVAILABLE);
         }
@@ -631,11 +576,7 @@ export class CheckoutService {
           throw new ValidationError(ERROR_MESSAGES.WALLET_INVALID_AMOUNT);
         }
         walletBalance = await walletService.getBalance(userId, t);
-        walletAmountUsed = clampWalletApply(
-          requestedWallet,
-          walletBalance,
-          orderTotalRupees,
-        );
+        walletAmountUsed = clampWalletApply(requestedWallet, walletBalance, orderTotalRupees);
       }
       let amountDue = checkoutAmountDue(orderTotalRupees, walletAmountUsed);
 
@@ -647,11 +588,7 @@ export class CheckoutService {
           if (walletBalance == null) {
             walletBalance = await walletService.getBalance(userId, t);
           }
-          const settled = settleSubMinRazorpayRemainder(
-            orderTotalRupees,
-            walletAmountUsed,
-            walletBalance,
-          );
+          const settled = settleSubMinRazorpayRemainder(orderTotalRupees, walletAmountUsed, walletBalance);
           if ('reject' in settled) {
             throw new ValidationError(ERROR_MESSAGES.ORDER_AMOUNT_BELOW_RAZORPAY_MIN);
           }
@@ -677,36 +614,38 @@ export class CheckoutService {
         };
       }
 
-      const orderRow = await Order.create({
-        userId,
-        shippingAddressId: data.shippingAddressId,
-        couponId: primaryCoupon?.id ?? null,
-        appliedCouponIds: coupons.map((c) => c.id),
-        appliedCouponBreakdown,
-        totalAmount: orderTotalRupees,
-        discountTotal,
-        merchandiseSubtotal,
-        taxTotal: orderTaxTotal,
-        shippingTotal: orderShippingTotal,
-        amountDue,
-        giftWrap: data.giftWrap ?? false,
-        giftMessage: data.giftWrap ? (data.giftMessage ?? null) : null,
-        giftWrapFeeAmount: data.giftWrap ? giftWrapFeeAmount : null,
-        platformInvoiceSnapshot,
-        status: ORDER_STATUS.PENDING,
-        paymentStatus: PAYMENT_STATUS.PENDING,
-        paymentMethod: data.paymentMethod,
-        walletAmountUsed,
-        pendingCashbackAmount: cashbackAmount,
-        cashbackCreditedAt: null,
-        cashbackDiscountBearer,
-        cashbackVendorId,
-        originalTotalAmount: orderTotalRupees,
-        razorpayAmountPaid:
-          data.paymentMethod === PAYMENT_METHOD.COD ? 0 : Math.max(0, amountDue),
-        razorpayOrderId: null,
-        razorpayPaymentId: null,
-      }, { transaction: t });
+      const orderRow = await Order.create(
+        {
+          userId,
+          shippingAddressId: data.shippingAddressId,
+          couponId: primaryCoupon?.id ?? null,
+          appliedCouponIds: coupons.map((c) => c.id),
+          appliedCouponBreakdown,
+          totalAmount: orderTotalRupees,
+          discountTotal,
+          merchandiseSubtotal,
+          taxTotal: orderTaxTotal,
+          shippingTotal: orderShippingTotal,
+          amountDue,
+          giftWrap: data.giftWrap ?? false,
+          giftMessage: data.giftWrap ? (data.giftMessage ?? null) : null,
+          giftWrapFeeAmount: data.giftWrap ? giftWrapFeeAmount : null,
+          platformInvoiceSnapshot,
+          status: ORDER_STATUS.PENDING,
+          paymentStatus: PAYMENT_STATUS.PENDING,
+          paymentMethod: data.paymentMethod,
+          walletAmountUsed,
+          pendingCashbackAmount: cashbackAmount,
+          cashbackCreditedAt: null,
+          cashbackDiscountBearer,
+          cashbackVendorId,
+          originalTotalAmount: orderTotalRupees,
+          razorpayAmountPaid: data.paymentMethod === PAYMENT_METHOD.COD ? 0 : Math.max(0, amountDue),
+          razorpayOrderId: null,
+          razorpayPaymentId: null,
+        },
+        { transaction: t },
+      );
 
       if (walletAmountUsed > 0) {
         await walletService.debit(
@@ -741,71 +680,70 @@ export class CheckoutService {
         const bearer = bearerByVendor[vendorId] ?? DISCOUNT_BEARER.PLATFORM;
         const resolvedVendorId = vendorId === 'platform' ? null : vendorId;
 
-        const subOrder = await SubOrder.create({
-          orderId: orderRow.id,
-          vendorId: resolvedVendorId,
-          status: ORDER_STATUS.PENDING,
-          shippingCharged: r.shippingCharged,
-          customerTotal: r.customerTotal,
-          taxBreakdown: r.tax,
-          subtotalPaise: p.subtotalPaise,
-          shippingCostPaise: p.shippingCostPaise,
-          shippingDiscountAmountPaise: p.shippingDiscountPaise,
-          taxAmountPaise: p.tax.total,
-          taxableAmountPaise: p.taxablePaise,
-          supplyTaxablePaise: p.supplyTaxablePaise,
-          supplyTaxPaise: p.supplyTax.total,
-          discountAmountPaise: p.merchandiseDiscountPaise,
-          commissionAmountPaise: p.commissionPaise,
-          tcsAmountPaise: p.tcsPaise,
-          netPayoutAmountPaise: p.netPayoutPaise,
-          roundingAdjustmentPaise: p.roundingAdjustmentPaise,
-          // Section 52 TCS rate the sale was priced with; its TCS is recorded at dispatch.
-          tcsRatePercent: Number(settings.tcsRatePercent ?? 0),
-          // Shipping is the platform's own service: 18% GST included in the fee, on the
-          // platform's invoice for this part (numbered at its dispatch), not the vendor's.
-          shippingInvoiceSnapshot:
-            p.shippingChargedPaise > 0
-              ? unissuedPlatformInvoice(
-                  [shippingInvoiceLine(p.shippingChargedPaise, platformIntraState)],
-                  platformIntraState,
-                )
-              : null,
-          // The tax invoice number is issued at dispatch (pricing/taxInvoiceIssue).
-          taxInvoiceNumber: null,
-          taxInvoiceIssuedAt: null,
-          trackingId: null,
-        }, { transaction: t });
+        const subOrder = await SubOrder.create(
+          {
+            orderId: orderRow.id,
+            vendorId: resolvedVendorId,
+            status: ORDER_STATUS.PENDING,
+            shippingCharged: r.shippingCharged,
+            customerTotal: r.customerTotal,
+            taxBreakdown: r.tax,
+            subtotalPaise: p.subtotalPaise,
+            shippingCostPaise: p.shippingCostPaise,
+            shippingDiscountAmountPaise: p.shippingDiscountPaise,
+            taxAmountPaise: p.tax.total,
+            taxableAmountPaise: p.taxablePaise,
+            supplyTaxablePaise: p.supplyTaxablePaise,
+            supplyTaxPaise: p.supplyTax.total,
+            discountAmountPaise: p.merchandiseDiscountPaise,
+            commissionAmountPaise: p.commissionPaise,
+            tcsAmountPaise: p.tcsPaise,
+            netPayoutAmountPaise: p.netPayoutPaise,
+            roundingAdjustmentPaise: p.roundingAdjustmentPaise,
+            // Section 52 TCS rate the sale was priced with; its TCS is recorded at dispatch.
+            tcsRatePercent: Number(settings.tcsRatePercent ?? 0),
+            // Shipping is the platform's own service: 18% GST included in the fee, on the
+            // platform's invoice for this part (numbered at its dispatch), not the vendor's.
+            shippingInvoiceSnapshot:
+              p.shippingChargedPaise > 0
+                ? unissuedPlatformInvoice([shippingInvoiceLine(p.shippingChargedPaise, platformIntraState)], platformIntraState)
+                : null,
+            // The tax invoice number is issued at dispatch (pricing/taxInvoiceIssue).
+            taxInvoiceNumber: null,
+            taxInvoiceIssuedAt: null,
+            trackingId: null,
+          },
+          { transaction: t },
+        );
 
-        const lineByKey = Object.fromEntries(
-          priced.paise.lines.map((row) => [row.key, row]),
-        );
-        const lineRupeesByKey = Object.fromEntries(
-          priced.rupees.lines.map((row) => [row.key, row]),
-        );
+        const lineByKey = Object.fromEntries(priced.paise.lines.map((row) => [row.key, row]));
+        const lineRupeesByKey = Object.fromEntries(priced.rupees.lines.map((row) => [row.key, row]));
 
         const invoiceLines: TaxInvoiceSnapshotLine[] = [];
         for (const item of prep.items) {
           const linePaise = lineByKey[item.id]!;
           const lineRupees = lineRupeesByKey[item.id]!;
-          const orderItem = await OrderItem.create({
-            subOrderId: subOrder.id,
-            variantId: item.variantId,
-            productName: item.variant.product.name,
-            quantity: item.quantity,
-            lineSubtotal: lineRupees.lineSubtotal,
-            lineTotal: lineTotal(lineRupees.taxableAmount, lineRupees.tax.total),
-            taxBreakdown: lineRupees.tax,
-            unitPricePaise: linePaise.unitPricePaise,
-            discountAmountPaise: linePaise.discountPaise,
-            taxableAmountPaise: linePaise.taxablePaise,
-            taxAmountPaise: linePaise.tax.total,
-            supplyTaxablePaise: linePaise.supplyTaxablePaise,
-            supplyTaxPaise: linePaise.supplyTax.total,
-            commissionAmountPaise: linePaise.commissionPaise,
-            tcsAmountPaise: linePaise.tcsPaise,
-            netPayoutAmountPaise: linePaise.netPayoutPaise,
-          }, { transaction: t });
+          const orderItem = await OrderItem.create(
+            {
+              subOrderId: subOrder.id,
+              variantId: item.variantId,
+              productName: item.variant.product.name,
+              quantity: item.quantity,
+              lineSubtotal: lineRupees.lineSubtotal,
+              lineTotal: lineTotal(lineRupees.taxableAmount, lineRupees.tax.total),
+              taxBreakdown: lineRupees.tax,
+              unitPricePaise: linePaise.unitPricePaise,
+              discountAmountPaise: linePaise.discountPaise,
+              taxableAmountPaise: linePaise.taxablePaise,
+              taxAmountPaise: linePaise.tax.total,
+              supplyTaxablePaise: linePaise.supplyTaxablePaise,
+              supplyTaxPaise: linePaise.supplyTax.total,
+              commissionAmountPaise: linePaise.commissionPaise,
+              tcsAmountPaise: linePaise.tcsPaise,
+              netPayoutAmountPaise: linePaise.netPayoutPaise,
+            },
+            { transaction: t },
+          );
           // HSN frozen with the amounts: the product's own code, else its category rule's.
           const hsnCode = await taxService.resolveHsnCode(item.variant.product);
           invoiceLines.push(taxInvoiceSnapshotLine(orderItem.id, linePaise, hsnCode));
@@ -842,26 +780,29 @@ export class CheckoutService {
             settings,
             transaction: t,
           });
-          await CommissionLedger.create({
-            vendorId,
-            subOrderId: subOrder.id,
-            commissionRate:
-              p.commissionBasePaise > 0
-                ? Math.round((p.commissionPaise / p.commissionBasePaise) * 10000) / 100
-                : prep.row.commissionRatePercent,
-            discountBearer: bearer,
-            saleAmountPaise: p.commissionBasePaise,
-            commissionAmountPaise: p.commissionPaise,
-            taxableAmountPaise: p.taxablePaise,
-            supplyTaxablePaise: p.supplyTaxablePaise,
-            discountAmountPaise: p.merchandiseDiscountPaise,
-            taxAmountPaise: p.tax.total,
-            tcsAmountPaise: p.tcsPaise,
-            netPayoutAmountPaise: p.netPayoutPaise,
-            shippingCollectedPaise: p.shippingChargedPaise,
-            tdsRatePercent,
-            status: COMMISSION_STATUS.PENDING,
-          }, { transaction: t });
+          await CommissionLedger.create(
+            {
+              vendorId,
+              subOrderId: subOrder.id,
+              commissionRate:
+                p.commissionBasePaise > 0
+                  ? Math.round((p.commissionPaise / p.commissionBasePaise) * 10000) / 100
+                  : prep.row.commissionRatePercent,
+              discountBearer: bearer,
+              saleAmountPaise: p.commissionBasePaise,
+              commissionAmountPaise: p.commissionPaise,
+              taxableAmountPaise: p.taxablePaise,
+              supplyTaxablePaise: p.supplyTaxablePaise,
+              discountAmountPaise: p.merchandiseDiscountPaise,
+              taxAmountPaise: p.tax.total,
+              tcsAmountPaise: p.tcsPaise,
+              netPayoutAmountPaise: p.netPayoutPaise,
+              shippingCollectedPaise: p.shippingChargedPaise,
+              tdsRatePercent,
+              status: COMMISSION_STATUS.PENDING,
+            },
+            { transaction: t },
+          );
 
           // TCS is recorded when the part is dispatched and invoiced (pricing/tcsLedger),
           // at the rate frozen on the sub-order here.
@@ -951,17 +892,10 @@ export class CheckoutService {
       throw new ValidationError(ERROR_MESSAGES.CHECKOUT_PAYMENT_NOT_OPEN);
     }
     if (!env.RAZORPAY_KEY_ID) {
-      throw new AppError(
-        ERROR_MESSAGES.RAZORPAY_NOT_CONFIGURED,
-        503,
-        ERROR_CODES.RAZORPAY_NOT_CONFIGURED,
-      );
+      throw new AppError(ERROR_MESSAGES.RAZORPAY_NOT_CONFIGURED, 503, ERROR_CODES.RAZORPAY_NOT_CONFIGURED);
     }
     const storedDue = Number(order.razorpayAmountPaid ?? 0);
-    const amountRupees =
-      storedDue > 0
-        ? storedDue
-        : checkoutAmountDue(Number(order.totalAmount), Number(order.walletAmountUsed ?? 0));
+    const amountRupees = storedDue > 0 ? storedDue : checkoutAmountDue(Number(order.totalAmount), Number(order.walletAmountUsed ?? 0));
     const amount = toPaise(amountRupees);
     if (amount < RAZORPAY_MIN_AMOUNT_PAISE) {
       throw new ValidationError(ERROR_MESSAGES.ORDER_AMOUNT_BELOW_RAZORPAY_MIN);
@@ -972,16 +906,11 @@ export class CheckoutService {
       amount,
       currency: 'INR',
       keyId: env.RAZORPAY_KEY_ID,
-      ...(env.RAZORPAY_CHECKOUT_CONFIG_ID
-        ? { checkoutConfigId: env.RAZORPAY_CHECKOUT_CONFIG_ID }
-        : {}),
+      ...(env.RAZORPAY_CHECKOUT_CONFIG_ID ? { checkoutConfigId: env.RAZORPAY_CHECKOUT_CONFIG_ID } : {}),
     };
   }
 
-  async cancelPendingCheckout(
-    userId: string,
-    data: CancelCheckoutRequest,
-  ): Promise<{ restored: boolean; orderId: string }> {
+  async cancelPendingCheckout(userId: string, data: CancelCheckoutRequest): Promise<{ restored: boolean; orderId: string }> {
     await confirmIfPaidAtGateway(data.orderId, userId);
     const orderResult = await sequelize.transaction(async (t) => {
       const locked = await Order.findByPk(data.orderId, {

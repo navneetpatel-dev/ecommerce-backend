@@ -4,12 +4,12 @@ import { ORDER_STATUS, PAYMENT_METHOD, PAYMENT_STATUS } from '@core/constants/st
 
 /**
  * Transitions reachable through this manual, vendor/admin-facing endpoint.
- * DELIVERED is deliberately absent from every entry — that transition is
- * only reachable through the delivery agent's OTP-gated confirmation
- * (`deliveryAgents.service.ts`'s `confirmDelivery`), never a plain status
- * PATCH, so an order can't be marked delivered without proof the customer
- * actually received it. RETURNED is likewise not settable here — the
- * returns module owns that lifecycle via `ReturnRequest.status`.
+ * DELIVERED is deliberately absent from every entry — a part is delivered when
+ * its shipment is (the carrier's webhook, or an admin through
+ * `adminShipmentStatusService.updateStatus`), never a plain status PATCH that
+ * would skip the shipment's own record and COD collection. RETURNED is likewise
+ * not settable here — the returns module owns that lifecycle via
+ * `ReturnRequest.status`.
  */
 export const SUBORDER_MANUAL_TRANSITIONS: Record<string, readonly string[]> = {
   [ORDER_STATUS.PENDING]: [ORDER_STATUS.CONFIRMED, ORDER_STATUS.SHIPPED, ORDER_STATUS.CANCELLED],

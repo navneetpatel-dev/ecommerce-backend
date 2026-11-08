@@ -68,12 +68,6 @@ import { initBugReportCommentModel, BugReportComment } from './bugReportComment.
 import { initNewsletterSubscriberModel, NewsletterSubscriber } from './newsletterSubscriber.model';
 import { initOtpCodeModel, OtpCode } from './otpCode.model';
 import { initPushSubscriptionModel, PushSubscription } from './pushSubscription.model';
-import { initDeliveryAgentModel, DeliveryAgent } from './deliveryAgent.model';
-import { initDeliveryCashDepositModel, DeliveryCashDeposit } from './deliveryCashDeposit.model';
-import { initDeliveryAgentEarningModel, DeliveryAgentEarning } from './deliveryAgentEarning.model';
-import { initDeliveryAgentPayoutModel, DeliveryAgentPayout } from './deliveryAgentPayout.model';
-import { initDeliveryAgentDocumentModel, DeliveryAgentDocument } from './deliveryAgentDocument.model';
-import { initDeliveryRatingModel, DeliveryRating } from './deliveryRating.model';
 import { initWebVitalModel, WebVital } from './webVital.model';
 import { initRecentlyViewedItemModel, RecentlyViewedItem } from './recentlyViewedItem.model';
 import { initSavedPaymentMethodModel, SavedPaymentMethod } from './savedPaymentMethod.model';
@@ -88,12 +82,6 @@ const models = {
   Role: initRoleModel(sequelize),
   Permission: initPermissionModel(sequelize),
   Vendor: initVendorModel(sequelize),
-  DeliveryAgent: initDeliveryAgentModel(sequelize),
-  DeliveryCashDeposit: initDeliveryCashDepositModel(sequelize),
-  DeliveryAgentPayout: initDeliveryAgentPayoutModel(sequelize),
-  DeliveryAgentDocument: initDeliveryAgentDocumentModel(sequelize),
-  DeliveryRating: initDeliveryRatingModel(sequelize),
-  DeliveryAgentEarning: initDeliveryAgentEarningModel(sequelize),
   User: initUserModel(sequelize),
   RefreshToken: initRefreshTokenModel(sequelize),
   Address: initAddressModel(sequelize),
@@ -170,7 +158,7 @@ Object.values(models).forEach((model: any) => {
 
 export { sequelize };
 export {
-  Role, Permission, Vendor, DeliveryAgent, DeliveryCashDeposit, DeliveryAgentPayout, DeliveryAgentEarning, DeliveryAgentDocument, DeliveryRating, User, RefreshToken, Address,
+  Role, Permission, Vendor, User, RefreshToken, Address,
   VendorDocument, VendorCategory, DocumentRequirement, Category, CategoryAttribute, Product, ProductCategory, ProductVariant, ProductImage,
   Cart, CartItem, Order, SubOrder, OrderItem,
   Coupon, CouponBatch, CouponUsage, CommissionLedger, Payout,

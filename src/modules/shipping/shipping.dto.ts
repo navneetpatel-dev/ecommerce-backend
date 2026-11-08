@@ -67,10 +67,24 @@ export const RescheduleDeliverySchema = z.object({
   slot: z.string().trim().min(3).max(64),
 });
 
-export const SubmitDeliveryRatingSchema = z.object({
-  rating: z.number().int().min(1).max(5),
-  comment: z.string().trim().max(500).optional(),
-});
+/** Statuses an admin can move a shipment to by hand (`adminShipmentStatusService.updateStatus`). */
+export const ADMIN_SHIPMENT_STATUSES = [
+  'IN_TRANSIT',
+  'OUT_FOR_DELIVERY',
+  'DELIVERED',
+  'FAILED',
+  'RTO_INITIATED',
+  'RTO_DELIVERED',
+] as const;
+export type AdminShipmentStatus = (typeof ADMIN_SHIPMENT_STATUSES)[number];
+
+export const AdminShipmentStatusSchema = z
+  .object({
+    status: z.enum(ADMIN_SHIPMENT_STATUSES),
+    reason: z.string().trim().max(500).optional(),
+    codCollected: z.boolean().optional(),
+  })
+  .strict();
 
 export const WebhookPayloadSchema = z.object({
   trackingNumber: z.string().min(1),
@@ -84,4 +98,4 @@ export type CreateRateRequest = z.infer<typeof CreateRateSchema>;
 export type UpdateRateRequest = z.infer<typeof UpdateRateSchema>;
 export type WebhookPayload = z.infer<typeof WebhookPayloadSchema>;
 export type RescheduleDeliveryRequest = z.infer<typeof RescheduleDeliverySchema>;
-export type SubmitDeliveryRatingRequest = z.infer<typeof SubmitDeliveryRatingSchema>;
+export type AdminShipmentStatusRequest = z.infer<typeof AdminShipmentStatusSchema>;

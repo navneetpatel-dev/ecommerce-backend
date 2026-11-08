@@ -2,7 +2,7 @@
  * Money parity snapshot.
  *
  * Captures every money figure the read surfaces publish (all registered reports,
- * admin analytics, vendor dashboards, delivery shift summaries, commission ledgers)
+ * admin analytics, vendor dashboards, commission ledgers)
  * from the current database into one JSON file. Run it before and after a change to
  * money read paths, then diff the two files: any difference must be one the change
  * intended.
@@ -15,11 +15,9 @@
 import fs from 'node:fs';
 import { sequelize } from '@database/models';
 import { Vendor } from '@database/models/vendor.model';
-import { DeliveryAgent } from '@database/models/deliveryAgent.model';
 import { ALL_REPORT_DEFINITIONS } from '@modules/reports/definitions';
 import { adminService } from '@modules/admin/admin.service';
 import { vendorsService } from '@modules/vendors/vendors.service';
-import { deliveryAgentsService } from '@modules/deliveryAgents/deliveryAgents.service';
 import { commissionsService } from '@modules/commissions/commissions.service';
 
 /** Trailing year up to tomorrow — the widest window reports accept (REPORT_MAX_RANGE_DAYS = 366). */
@@ -67,7 +65,6 @@ async function main(): Promise<void> {
   await sequelize.authenticate();
 
   const vendors = await Vendor.findAll({ attributes: ['id'], order: [['id', 'ASC']] });
-  const agents = await DeliveryAgent.findAll({ attributes: ['id'], order: [['id', 'ASC']] });
   const snapshot: Record<string, unknown> = {};
 
   for (const def of [...ALL_REPORT_DEFINITIONS].sort((a, b) => a.type.localeCompare(b.type))) {
@@ -98,12 +95,6 @@ async function main(): Promise<void> {
     );
     snapshot[`vendor:${vendor.id}:commissions`] = await capture('commissions', () =>
       commissionsService.list(PAGE, vendor.id),
-    );
-  }
-
-  for (const agent of agents) {
-    snapshot[`agent:${agent.id}:shiftSummary`] = await capture('shift summary', () =>
-      deliveryAgentsService.shiftSummary(agent.id),
     );
   }
 

@@ -5,7 +5,6 @@ import { assertTrue, assertEqual } from '../lib/assert';
 export type Preconditions = {
   adminToken: string;
   tcsRatePercent: number;
-  deliveryAgentPerTaskEarning: number;
   testRunStartedAt: string;
 };
 
@@ -22,13 +21,11 @@ export async function runPreconditions(): Promise<Preconditions> {
   assertEqual(scenario, 'settings fetch', settingsRes.status, 200);
   const settings = settingsRes.json?.data ?? {};
   const tcsRatePercent = Number(settings.tcsRatePercent ?? 1);
-  const deliveryAgentPerTaskEarning = Number(settings.deliveryAgentPerTaskEarning ?? 20);
-  console.log(`  settings: tcsRatePercent=${tcsRatePercent} deliveryAgentPerTaskEarning=${deliveryAgentPerTaskEarning}`);
+  console.log(`  settings: tcsRatePercent=${tcsRatePercent}`);
 
   return {
     adminToken,
     tcsRatePercent,
-    deliveryAgentPerTaskEarning,
     testRunStartedAt: new Date(Date.now() - 5000).toISOString(),
   };
 }
