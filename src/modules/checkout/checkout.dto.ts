@@ -14,7 +14,7 @@ export const CreateCheckoutSchema = z
     couponCodes: z.array(z.string()).optional(),
     paymentMethod: PaymentMethodInput.default('RAZORPAY'),
     walletAmountToUse: z.coerce.number().min(0).optional().default(0),
-    shippingMethodByVendor: z.record(z.string()).optional(),
+    shippingMethodByVendor: z.record(z.string(), z.string()).optional(),
     giftWrap: z.boolean().optional().default(false),
     giftMessage: z.string().trim().max(500).optional(),
     /** The grand total the customer saw on the last quote (see assertExpectedGrandTotal). */
@@ -46,7 +46,7 @@ export const CheckoutQuoteSchema = z
     couponCode: z.string().optional().nullable(),
     couponCodes: z.array(z.string()).optional(),
     walletAmountToUse: z.coerce.number().min(0).optional().default(0),
-    shippingMethodByVendor: z.record(z.string()).optional(),
+    shippingMethodByVendor: z.record(z.string(), z.string()).optional(),
     giftWrap: z.boolean().optional().default(false),
     giftMessage: z.string().trim().max(500).optional(),
   })

@@ -12,7 +12,7 @@ export type WalletRechargeSchemaLimits = {
 export function buildCreateWalletRechargeSchema(limits: WalletRechargeSchemaLimits) {
   return z.object({
     amountInr: z.coerce
-      .number({ invalid_type_error: 'Recharge amount must be a number' })
+      .number({ error: (issue) => (issue.input === undefined ? undefined : 'Recharge amount must be a number') })
       .finite('Recharge amount must be a valid number')
       .positive('Recharge amount must be greater than zero')
       .superRefine((value, ctx) => {
@@ -60,6 +60,6 @@ export type CreateWalletRechargeRequest = z.infer<typeof CreateWalletRechargeSch
 
 export const WalletRechargePreviewSchema = z.object({
   amountInr: z.coerce
-    .number({ invalid_type_error: 'Recharge amount must be a number' })
+    .number({ error: (issue) => (issue.input === undefined ? undefined : 'Recharge amount must be a number') })
     .finite('Recharge amount must be a valid number'),
 });

@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import '@core/http/zodMessages';
 import { ZodSchema } from 'zod';
 import { ValidationError } from '@core/errors/ValidationError';
 

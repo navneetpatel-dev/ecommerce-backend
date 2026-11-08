@@ -13,7 +13,7 @@ export const RegisterVendorSchema = z.object({
   categoryIds: z.array(z.string().uuid()).min(1),
   gstNumber: z.string().optional(),
   state: z.string().min(2).optional(),
-  bankDetails: z.record(z.unknown()).default({}),
+  bankDetails: z.record(z.string(), z.unknown()).default({}),
   description: z.string().optional(),
   /** Optional soft-check fields (not stored separately; mirrored into bankDetails when present). */
   panHolderName: z.string().optional(),
@@ -29,7 +29,7 @@ export const UpdateVendorSchema = z.object({
   addressLine1: z.string().max(255).optional().nullable(),
   city: z.string().max(100).optional().nullable(),
   pincode: z.string().max(12).optional().nullable(),
-  bankDetails: z.record(z.unknown()).optional(),
+  bankDetails: z.record(z.string(), z.unknown()).optional(),
   description: z.string().optional(),
   logoUrl: z.string().url().optional(),
   bannerUrl: z.string().url().optional(),

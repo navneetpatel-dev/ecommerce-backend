@@ -21,7 +21,7 @@ const stringList = (itemMax: number, listMax: number, required: boolean) => {
 
 const specsSchema = (required: boolean) => {
   const record = z
-    .record(z.string().trim().min(1).max(PRODUCT_FIELD_LIMITS.SPEC_VALUE_MAX))
+    .record(z.string(), z.string().trim().min(1).max(PRODUCT_FIELD_LIMITS.SPEC_VALUE_MAX))
     .superRefine((value, ctx) => {
       const keys = Object.keys(value);
       if (keys.length > PRODUCT_FIELD_LIMITS.SPECS_MAX) {
@@ -154,7 +154,7 @@ export const RejectProductSchema = z.object({
 
 export const AddVariantSchema = z.object({
   sku: z.string().min(1),
-  attributes: z.record(z.string()).default({}),
+  attributes: z.record(z.string(), z.string()).default({}),
   price: z.number().positive(),
   stock: z.number().int().nonnegative().default(0),
   lowStockAt: z.number().int().nonnegative().default(5),
@@ -162,7 +162,7 @@ export const AddVariantSchema = z.object({
 });
 
 export const UpdateVariantSchema = z.object({
-  attributes: z.record(z.string()).optional(),
+  attributes: z.record(z.string(), z.string()).optional(),
   price: z.number().positive().optional(),
   stock: z.number().int().nonnegative().optional(),
   lowStockAt: z.number().int().nonnegative().optional(),
