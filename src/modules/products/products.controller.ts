@@ -6,9 +6,7 @@ import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { BULK_IMPORT_LIMITS } from '@core/constants/product';
 import { productsService } from './products.service';
-import { ADMIN_ROLES, ROLES } from '@core/constants/statuses';
-import { PERMISSIONS } from '@core/constants/permissions';
-import { userHasPermission } from '@middleware/rbac.middleware';
+import { isCatalogModerator, listsUnpublished } from './productVisibility';
 import { parseProductsCsv } from './products.csv';
 import {
   CreateProductSchema,
@@ -22,17 +20,6 @@ import {
   TrackRecentlyViewedSchema,
   GstPreviewQuerySchema,
 } from './products.dto';
-
-/** Admin/vendor dashboards stay unscoped; shoppers use customerVisible. */
-async function isCatalogModerator(req: Request): Promise<boolean> {
-  const role = req.user?.role?.name;
-  if (!role) return false;
-  if (role === ROLES.VENDOR_OWNER || role === ROLES.VENDOR_STAFF) return true;
-  return (
-    (ADMIN_ROLES as readonly string[]).includes(role) ||
-    await userHasPermission(req.user, PERMISSIONS.PRODUCT_MANAGE)
-  );
-}
 
 /** The GST rate and GST-inclusive price customers see for a pre-GST price (vendor form). */
 export const getGstPreview = asyncHandler(async (req: Request, res: Response) => {
@@ -102,7 +89,7 @@ function extractAttributeFilters(query: Request['query']): Record<string, string
 export const getProducts = asyncHandler(async (req: Request, res: Response) => {
   const query = GetProductsQuerySchema.parse(req.query);
   const result = await productsService.getProducts(query, {
-    customerFacing: !(await isCatalogModerator(req)),
+    customerFacing: !(await listsUnpublished(req.user, query.vendorId ?? undefined)),
     includeDescendants: Boolean(query.includeDescendants),
     attributeFilters: extractAttributeFilters(req.query),
   });
@@ -111,7 +98,7 @@ export const getProducts = asyncHandler(async (req: Request, res: Response) => {
 
 export const getProductById = asyncHandler(async (req: Request, res: Response) => {
   const product = await productsService.getProductById(req.params.id!, {
-    customerFacing: !(await isCatalogModerator(req)),
+    customerFacing: !(await isCatalogModerator(req.user)),
   });
   res.json(ok(product));
 });
@@ -134,7 +121,7 @@ export const getFrequentlyBoughtTogether = asyncHandler(async (req: Request, res
 
 export const getProductBySlug = asyncHandler(async (req: Request, res: Response) => {
   const product = await productsService.getProductBySlug(req.params.slug!, {
-    customerFacing: !(await isCatalogModerator(req)),
+    customerFacing: !(await isCatalogModerator(req.user)),
   });
   res.json(ok(product));
 });

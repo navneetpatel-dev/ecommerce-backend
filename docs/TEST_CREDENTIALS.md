@@ -1,5 +1,35 @@
 # Test Credentials for E-Commerce Application
 
+## Demo dataset (`npm run db:seed:demo`)
+
+After `npm run db:migrate && npm run db:seed && npm run seed:orders:money`, the demo seed
+(about 25 minutes) gives every account 100+ rows on each page it owns: 300 customers,
+120 vendors (110 trading), 10 admin staff, two years of orders. It prints a coverage
+report at the end. `DEMO_SEED_SIZE=small npm run db:seed:demo` builds a quick miniature.
+
+Every password is **Test@123**, except `admin@ecommerce.com` (**Admin@123**).
+
+| Role | Login | What to look at |
+|---|---|---|
+| Super admin | admin@ecommerce.com | Everything: analytics, finance, payouts, gift cards, cashback offers, audit |
+| Super admin (second) | admin2@ecommerce.com | Same access, another actor in the audit log |
+| Order manager | ordermanager@ecommerce.com (also ordermanager2, ordermanager3) | Orders, returns, RTO queue, gift cards |
+| Catalog manager | catalogmanager@ecommerce.com (also catalogmanager2, catalogmanager3) | Products awaiting approval, categories, reviews |
+| Support agent (custom role) | support.agent@ecommerce.com | Support tickets and bug reports only |
+| Finance analyst (custom role) | finance.analyst@ecommerce.com | Analytics, commissions, payouts |
+| Vendor owner | owner@techworld.com | Vendor dashboard: orders, payouts, returns, Q&A, coupons, reports |
+| Vendor staff | staff@techworld.com | The same shop as staff |
+| Vendor awaiting KYC | owner@activelife.com | Onboarding / KYC screens |
+| Vendor rejected | owner@prime-footwear-studio.com | Rejected application |
+| Vendor suspended | owner@bright-gadgets-bazaar.com | Suspended shop with past trading history |
+| Customer | amit.gupta54@example.com | Orders, returns, wallet, cashback, gift cards, reviews, tickets |
+| Customer (blocked) | divya.mehta.232@example.com | Blocked account |
+
+Any other vendor works the same way: `owner@<shop-slug>.com` / `staff@<shop-slug>.com`.
+Every customer has the full history too.
+
+---
+
 ## Default Admin Account (Created by existing seeder)
 
 - **Email**: admin@ecommerce.com
@@ -13,7 +43,7 @@
 
 ### 1. Order Manager Admin
 
-- **Email**: orderadmin@ecommerce.com
+- **Email**: ordermanager@ecommerce.com
 - **Password**: Test@123
 - **Role**: ADMIN_ORDER_MANAGER
 - **Permissions**: Manage orders, process refunds, view analytics
@@ -21,7 +51,7 @@
 
 ### 2. Catalog Manager Admin
 
-- **Email**: catalogadmin@ecommerce.com
+- **Email**: catalogmanager@ecommerce.com
 - **Password**: Test@123
 - **Role**: ADMIN_CATALOG_MANAGER
 - **Permissions**: Manage products, approve vendor products, manage categories, moderate reviews

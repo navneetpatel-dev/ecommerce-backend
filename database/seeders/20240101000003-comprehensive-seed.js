@@ -248,6 +248,8 @@ module.exports = {
     const lastNames = ['Sharma', 'Patel', 'Kumar', 'Singh', 'Verma', 'Gupta', 'Reddy', 'Nair', 'Das', 'Joshi'];
     const cities = ['Mumbai', 'Delhi', 'Bangalore', 'Hyderabad', 'Chennai', 'Kolkata', 'Pune', 'Ahmedabad', 'Jaipur', 'Lucknow'];
     const states = ['Maharashtra', 'Delhi', 'Karnataka', 'Telangana', 'Tamil Nadu', 'West Bengal', 'Maharashtra', 'Gujarat', 'Rajasthan', 'Uttar Pradesh'];
+    // A real 6-digit PIN in each city's range: checkout rejects anything else.
+    const cityPincodePrefixes = ['400', '110', '560', '500', '600', '700', '411', '380', '302', '226'];
     const localities = ['Main Road', 'Church Street', 'MG Road', 'Park Avenue', 'Lake View', 'Gandhi Nagar', 'Patel Colony', 'Market Road', 'Station Road', 'Jubilee Hills'];
 
     for (let i = 0; i < 100; i++) {
@@ -272,7 +274,7 @@ module.exports = {
           id: uuidv4(), userId: customerId,
           line1: `${randomInt(1, 999)} ${randomElement(localities)}`,
           line2: j > 0 ? `Flat ${randomInt(1, 500)}` : null,
-          city: cities[cityIdx], state: states[cityIdx], pincode: `${randomInt(10, 99)}${String(randomInt(100, 999)).padStart(3, '0')}`, country: 'India',
+          city: cities[cityIdx], state: states[cityIdx], pincode: `${cityPincodePrefixes[cityIdx]}${String(randomInt(1, 999)).padStart(3, '0')}`, country: 'India',
           isDefault: j === 0, createdAt: now, updatedAt: now,
         });
       }
