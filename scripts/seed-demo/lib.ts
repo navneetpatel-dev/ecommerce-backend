@@ -6,6 +6,19 @@ import { randomUUID } from 'node:crypto';
 import { QueryTypes } from 'sequelize';
 import { sequelize } from '../../database/models';
 
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { PRODUCT_GALLERY_IMAGES } = require('../../database/seeders/lib/product-gallery-images');
+
+/** Every stock photo the catalogue uses: hosts the web app's image loader allows. */
+export const PHOTO_URLS: string[] = Object.values(PRODUCT_GALLERY_IMAGES as Record<string, string[]>).flat();
+
+/** A stock photo chosen by key, so the same row gets the same picture on every run. */
+export function photo(key: string): string {
+  let hash = 0;
+  for (const char of key) hash = (Math.imul(hash, 31) + char.charCodeAt(0)) >>> 0;
+  return PHOTO_URLS[hash % PHOTO_URLS.length]!;
+}
+
 /** Rows per INSERT: big enough to be fast, small enough for Postgres's parameter limit. */
 const CHUNK = 500;
 

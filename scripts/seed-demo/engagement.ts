@@ -5,7 +5,7 @@
  * products, wishlists, carts, recently viewed products, back-in-stock alerts, saved
  * payment methods, and "frequently bought together" from what was ordered together.
  */
-import { NOW, addDays, between, chance, exec, id, insert, int, json, minDate, pick, sample, select, weighted } from './lib';
+import { NOW, addDays, between, chance, exec, id, insert, int, json, minDate, pick, sample, select, weighted, photo } from './lib';
 import { scaled } from './scale';
 import type { Accounts } from './accounts';
 import type { Catalog } from './catalog';
@@ -41,7 +41,7 @@ async function seedReviews(accounts: Accounts) {
       const at = minDate(addDays(line.at, int(2, 20)), NOW);
       const media = status !== 'REJECTED' && chance(0.18)
         ? [
-            ...Array.from({ length: int(1, 5) }, (_, n) => ({ url: `https://picsum.photos/seed/rv-${line.itemId.slice(0, 8)}-${n}/900/900`, type: 'IMAGE', durationSeconds: null })),
+            ...Array.from({ length: int(1, 5) }, (_, n) => ({ url: photo(`rv-${line.itemId.slice(0, 8)}-${n}`), type: 'IMAGE', durationSeconds: null })),
             ...(chance(0.3) ? [{ url: 'https://samplelib.com/lib/preview/mp4/sample-5s.mp4', type: 'VIDEO', durationSeconds: 5 }] : []),
           ]
         : [];

@@ -14,6 +14,7 @@ import { SMALL } from './scale';
 import { seedAccounts } from './accounts';
 import { seedCatalog } from './catalog';
 import { seedPromotions } from './promotions';
+import { seedShipping } from './shipping';
 import { seedOrders } from './orders';
 import { priceOrders } from './pricing';
 import { seedAfterSales } from './afterSales';
@@ -44,6 +45,7 @@ async function main() {
   console.log(`Seeding ${SMALL ? 'a small' : 'the full'} demo dataset…`);
   const accounts = await phase('Accounts', seedAccounts);
   const catalog = await phase('Catalog', () => seedCatalog(accounts));
+  await phase('Shipping zones and rates', seedShipping);
   const coupons = await phase('Promotions', () => seedPromotions(accounts, catalog));
   await phase('Orders', () => seedOrders(accounts, catalog, coupons));
   await phase('Pricing (checkout engine)', priceOrders);

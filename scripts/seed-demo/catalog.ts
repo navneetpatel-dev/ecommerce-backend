@@ -6,7 +6,7 @@
  * Prices are even whole rupees, so GST (5/12/18/28%) and its CGST/SGST halves are exact
  * paise: the bills the pricing engine produces then add up to the paisa on every page.
  */
-import { between, chance, pgArray, daysAgo, exec, id, insert, int, json, pick, sample, select, slugify, weighted, HISTORY_DAYS } from './lib';
+import { between, chance, pgArray, daysAgo, exec, id, insert, int, json, pick, sample, select, slugify, weighted, HISTORY_DAYS, photo } from './lib';
 import { scaled } from './scale';
 import type { Accounts, VendorRow } from './accounts';
 
@@ -65,7 +65,7 @@ async function seedCategories(now: Date) {
       const slug = `${root.slug}-${slugify(name)}`;
       if (slugs.has(slug)) continue;
       rows.push({
-        id: id(), name, slug, parentId: root.id, imageUrl: `https://picsum.photos/seed/cat-${slug}/400/400`,
+        id: id(), name, slug, parentId: root.id, imageUrl: photo(`cat-${slug}`),
         status: 'ACTIVE', displayOrder: 20 + index, seoTitle: `Buy ${name} online`, seoDescription: `Shop ${name.toLowerCase()} from trusted sellers.`,
         commissionRate: pick([null, 8, 10, 12]), returnWindowDays: pick([7, 10, 15, 30]), codEnabled: true,
         defaultWarrantyMonths: root.slug === 'electronics' ? 12 : null, defaultWarrantyType: root.slug === 'electronics' ? 'MANUFACTURER' : null,
@@ -165,7 +165,7 @@ async function seedProducts(accounts: Accounts, leaves: Array<{ id: string; root
         warrantyMonths: root === 'electronics' ? pick([6, 12, 24]) : null, warrantyType: root === 'electronics' ? pick(['MANUFACTURER', 'SELLER']) : null,
         hsnCode: String(int(1000, 9999)), seoTitle: `${name} | ${vendor.businessName}`, seoDescription: `Buy ${name} online.`,
         videoUrl: chance(0.1) ? 'https://samplelib.com/lib/preview/mp4/sample-5s.mp4' : null,
-        sizeChartUrl: root === 'fashion' ? `https://picsum.photos/seed/size-${productId.slice(0, 6)}/800/600` : null,
+        sizeChartUrl: root === 'fashion' ? photo(`size-${productId.slice(0, 6)}`) : null,
         codEnabled: chance(0.85), createdAt, updatedAt: createdAt,
       });
       const variantCount = int(1, 3);

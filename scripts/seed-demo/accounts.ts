@@ -6,8 +6,7 @@
 import bcrypt from 'bcrypt';
 import {
   FIRST_NAMES, HISTORY_DAYS, LAST_NAMES, LOCALITIES, PLACES, addDays, chance, daysAgo, exec, id, insert, int,
-  json, phone, pick, pincodeFor, select, slugify, weighted,
-} from './lib';
+  json, phone, pick, pincodeFor, select, slugify, weighted, photo } from './lib';
 import { scaled } from './scale';
 
 export type Customer = { id: string; email: string; name: string; status: string; createdAt: Date };
@@ -146,7 +145,7 @@ async function seedVendors(roleIds: Record<string, string>, passwordHash: string
     vendors.push({
       id: vendorId, businessName, slug, gstNumber: gstin(place.state, i + 100), state: place.state,
       bankDetails: json({ accountNumber: `5010${String(100000000 + i)}`, ifscCode: `HDFC000${String(1000 + i).slice(-4)}`, accountHolderName: businessName, bankName: pick(['HDFC Bank', 'ICICI Bank', 'State Bank of India', 'Axis Bank']) }),
-      logoUrl: `https://picsum.photos/seed/${slug}-logo/200/200`, bannerUrl: `https://picsum.photos/seed/${slug}-banner/1200/300`,
+      logoUrl: photo(`${slug}-logo`), bannerUrl: photo(`${slug}-banner`),
       description: `${businessName} brings carefully sourced products from ${place.city}, packed with care and shipped fast.`,
       status, commissionRate: pick([8, 10, 12, 12, 15, 18]), performanceScore: (3 + int(0, 200) / 100).toFixed(2),
       rejectionReason: status === 'REJECTED' ? 'GST certificate does not match the registered business name.' : null,
@@ -193,7 +192,7 @@ async function seedVendorKyc(vendors: Array<{ id: string; status: string; create
       const outcome = approved ? 'VERIFIED' : weighted([['PENDING', 5], ['VERIFIED', 3], ['REJECTED', 2]] as const);
       const at = addDays(vendor.createdAt, int(1, 5));
       rows.push({
-        id: id(), vendorId: vendor.id, type, url: `https://picsum.photos/seed/kyc-${vendor.id.slice(0, 8)}-${type}/800/1000`,
+        id: id(), vendorId: vendor.id, type, url: photo(`kyc-${vendor.id.slice(0, 8)}-${type}`),
         verified: outcome === 'VERIFIED', verifiedById: outcome === 'VERIFIED' ? adminId : null,
         rejectionReason: outcome === 'REJECTED' ? 'The document is blurred; please upload a clearer scan.' : null,
         rejectedAt: outcome === 'REJECTED' ? at : null, createdAt: at, updatedAt: at,

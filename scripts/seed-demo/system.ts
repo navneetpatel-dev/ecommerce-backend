@@ -52,21 +52,22 @@ async function seedPerAccount(everyone: Person[]) {
         error: status === 'FAILED' || status === 'BOUNCED' ? 'Mailbox unavailable (550)' : null, sentAt: status === 'SENT' ? at : null,
         createdAt: at, updatedAt: at,
       });
-      // Exports: finished ones have expired (their files are gone), plus failed and cancelled runs.
-      const exportStatus = n < 3 ? pick(['QUEUED', 'PROCESSING']) : weighted([['COMPLETED', 80], ['FAILED', 12], ['CANCELLED', 8]] as const);
+      // Exports: finished ones have expired (their files are gone), plus failed and cancelled
+      // runs. Every one has been seen, so the downloads tray starts empty.
+      const exportStatus = weighted([['COMPLETED', 80], ['FAILED', 12], ['CANCELLED', 8]] as const);
       const started = between(addDays(NOW, -300), addDays(NOW, -1));
       const type = pick(reports);
       const rows = int(50, 20_000);
       exports.push({
         id: id(), ownerId: person.id, domain: 'report', exportType: type, format: pick(['csv', 'xlsx', 'pdf']), status: exportStatus,
         filters: json({ from: addDays(started, -30).toISOString().slice(0, 10), to: started.toISOString().slice(0, 10) }),
-        progressPercent: exportStatus === 'COMPLETED' ? 100 : exportStatus === 'PROCESSING' ? int(10, 90) : 0,
+        progressPercent: exportStatus === 'COMPLETED' ? 100 : 0,
         rowsProcessed: exportStatus === 'COMPLETED' ? rows : 0, totalRowsEstimate: rows,
         resultKey: exportStatus === 'COMPLETED' ? `exports/${person.id}/${type}-${n}.csv` : null,
         filename: exportStatus === 'COMPLETED' ? `${type}-${started.toISOString().slice(0, 10)}.csv` : null, byteSize: exportStatus === 'COMPLETED' ? rows * 120 : null,
         errorMessage: exportStatus === 'FAILED' ? 'The report timed out; try a shorter date range.' : null, errorCode: exportStatus === 'FAILED' ? 'EXPORT_TIMEOUT' : null,
-        startedAt: exportStatus === 'QUEUED' ? null : started, completedAt: ['COMPLETED', 'FAILED', 'CANCELLED'].includes(exportStatus) ? addHours(started, 0.1) : null,
-        expiresAt: exportStatus === 'COMPLETED' ? addHours(started, 24) : null, acknowledgedAt: exportStatus === 'COMPLETED' && chance(0.8) ? addHours(started, 1) : null,
+        startedAt: started, completedAt: addHours(started, 0.1),
+        expiresAt: exportStatus === 'COMPLETED' ? addHours(started, 24) : null, acknowledgedAt: addHours(started, 1),
         createdAt: started, updatedAt: started,
       });
       // Signed-in devices: active sessions on phones, laptops and tablets.

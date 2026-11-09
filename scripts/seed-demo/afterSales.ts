@@ -9,7 +9,7 @@ import { sequelize } from '../../database/models';
 import { nextVendorDocumentNumber, VENDOR_DOCUMENT_KIND } from '../../src/modules/pricing/vendorInvoiceSequence';
 import { splitTaxAmount } from '../../src/modules/pricing/pricing.engine';
 import { recordTcsReturnAdjustmentForCreditNote } from '../../src/modules/returns/returns.service';
-import { NOW, addDays, chance, id, insert, int, json, minDate, pick, select, weighted } from './lib';
+import { NOW, addDays, chance, id, insert, int, json, minDate, pick, select, weighted, photo } from './lib';
 import { scaled } from './scale';
 import type { Accounts } from './accounts';
 
@@ -88,7 +88,7 @@ export async function seedAfterSales(accounts: Accounts): Promise<void> {
         refundFailureReason: null as string | null, refundAttemptCount: isRefund ? 1 : 0,
         walletRefundAmount: isRefund && toWallet ? refundAmount : 0, razorpayRefundAmount: isRefund && !toWallet ? refundAmount : 0,
         razorpayRefundId: isRefund && !toWallet ? `rfnd_${line.itemId.replace(/-/g, '').slice(0, 14)}` : null,
-        photoUrls: json(reasonCode === 'DAMAGED' || reasonCode === 'WRONG_ITEM' ? [1, 2].map((n) => `https://picsum.photos/seed/ret-${line.itemId.slice(0, 6)}-${n}/600/600`) : []),
+        photoUrls: json(reasonCode === 'DAMAGED' || reasonCode === 'WRONG_ITEM' ? [1, 2].map((n) => photo(`ret-${line.itemId.slice(0, 6)}-${n}`)) : []),
         receivedAt, resolvedAt, resolvedById: resolvedAt ? pick(accounts.adminIds) : null,
         rejectionReason: status === 'REJECTED' ? 'The item shows signs of use, so it is not eligible for return.' : null,
         restockedAt: receivedAt && chance(0.7) ? receivedAt : null, restockedBy: null as string | null,

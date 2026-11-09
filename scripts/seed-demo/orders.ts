@@ -8,7 +8,7 @@
  * Lines carry only the pre-GST unit price; `scripts/backfill-seeded-order-money.ts` then
  * prices every order with the checkout engine (GST, commission, TCS, invoices).
  */
-import { HISTORY_DAYS, addDays, addHours, chance, daysAgo, id, insert, int, json, pick, random, sample, weighted } from './lib';
+import { HISTORY_DAYS, addDays, addHours, chance, daysAgo, id, insert, int, json, pick, random, sample, weighted, photo } from './lib';
 import { scaled } from './scale';
 import type { Accounts } from './accounts';
 import type { Catalog, SellableVariant } from './catalog';
@@ -162,7 +162,7 @@ export async function seedOrders(accounts: Accounts, catalog: Catalog, coupons: 
           });
           for (let a = 1; a <= failedTries; a += 1) {
             const at = addDays(shippedAt, a);
-            attempts.push({ id: id(), shipmentId, attemptNumber: a, note: pick(FAILED_NOTES), photoUrl: chance(0.4) ? `https://picsum.photos/seed/pod-${shipmentId.slice(0, 6)}-${a}/600/800` : null, attemptedAt: at, createdAt: at, updatedAt: at });
+            attempts.push({ id: id(), shipmentId, attemptNumber: a, note: pick(FAILED_NOTES), photoUrl: chance(0.4) ? photo(`pod-${shipmentId.slice(0, 6)}-${a}`) : null, attemptedAt: at, createdAt: at, updatedAt: at });
           }
         }
       }

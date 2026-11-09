@@ -4,7 +4,7 @@
  * receipts, assignment and timings that match its status. Numbers continue the app's
  * TKT-/BUG- series.
  */
-import { NOW, addDays, addHours, between, chance, exec, id, insert, int, minDate, pick, select, weighted } from './lib';
+import { NOW, addDays, addHours, between, chance, exec, id, insert, int, minDate, pick, select, weighted, photo } from './lib';
 import { scaled } from './scale';
 import type { Accounts } from './accounts';
 
@@ -87,7 +87,7 @@ async function seedTickets(accounts: Accounts, people: Author[], staff: Array<{ 
         });
         if (!fromAgent && chance(0.15)) {
           const video = chance(0.2);
-          attachments.push({ id: id(), ticketId, messageId, url: video ? 'https://samplelib.com/lib/preview/mp4/sample-5s.mp4' : `https://picsum.photos/seed/tk-${messageId.slice(0, 8)}/900/700`, type: video ? 'VIDEO' : 'IMAGE', durationSeconds: video ? 5 : null, createdAt: sentAt, updatedAt: sentAt });
+          attachments.push({ id: id(), ticketId, messageId, url: video ? 'https://samplelib.com/lib/preview/mp4/sample-5s.mp4' : photo(`tk-${messageId.slice(0, 8)}`), type: video ? 'VIDEO' : 'IMAGE', durationSeconds: video ? 5 : null, createdAt: sentAt, updatedAt: sentAt });
         }
       }
       reads.push({ id: id(), ticketId, userId: person.id, lastReadAt: chance(0.8) ? NOW : at, createdAt: at, updatedAt: at });
@@ -144,7 +144,7 @@ async function seedBugs(people: Author[], staff: Array<{ id: string; role: strin
       }
       if (chance(0.25)) {
         const video = chance(0.25);
-        attachments.push({ id: id(), bugReportId: bugId, url: video ? 'https://samplelib.com/lib/preview/mp4/sample-5s.mp4' : `https://picsum.photos/seed/bug-${bugId.slice(0, 8)}/1280/800`, type: video ? 'SCREEN_RECORDING' : 'SCREENSHOT', durationSeconds: video ? 5 : null, createdAt: at, updatedAt: at });
+        attachments.push({ id: id(), bugReportId: bugId, url: video ? 'https://samplelib.com/lib/preview/mp4/sample-5s.mp4' : photo(`bug-${bugId.slice(0, 8)}`), type: video ? 'SCREEN_RECORDING' : 'SCREENSHOT', durationSeconds: video ? 5 : null, createdAt: at, updatedAt: at });
       }
     }
     if (index % 25 === 24) await flush();

@@ -3,7 +3,7 @@
  * for every selling vendor, 100 platform cashback offers in every state, and 100 home
  * promo banners. Every coupon type and status appears.
  */
-import { HISTORY_DAYS, addDays, between, chance, daysAgo, id, insert, int, json, pgArray, pick, sample, select, weighted } from './lib';
+import { HISTORY_DAYS, addDays, between, chance, daysAgo, id, insert, int, json, pgArray, pick, sample, select, weighted, photo } from './lib';
 import { scaled } from './scale';
 import type { Accounts } from './accounts';
 import type { Catalog } from './catalog';
@@ -163,7 +163,7 @@ async function seedBanners(accounts: Accounts, catalog: Catalog) {
     const target = linkType === 'PRODUCT' ? pick(catalog.liveProductIds) : linkType === 'CATEGORY' ? pick(catalog.leaves).id : linkType === 'VENDOR' ? pick(accounts.sellingVendors).id : null;
     const startDate = status === 'ARCHIVED' ? daysAgo(int(60, HISTORY_DAYS)) : daysAgo(int(0, 30));
     rows.push({
-      id: id(), title: `${pick(titles)} ${i + 1}`, imageUrl: `https://picsum.photos/seed/banner-${i}/1600/500`,
+      id: id(), title: `${pick(titles)} ${i + 1}`, imageUrl: photo(`banner-${i}`),
       linkType, linkTargetId: target, linkUrl: linkType === 'URL' ? '/products?sort=newest' : null,
       startDate, endDate: status === 'ARCHIVED' ? addDays(startDate, int(5, 30)) : chance(0.5) ? daysAgo(-int(10, 90)) : null,
       status, priority: int(0, 100), createdAt: between(addDays(startDate, -10), startDate), updatedAt: startDate,

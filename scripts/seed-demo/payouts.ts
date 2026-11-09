@@ -9,7 +9,7 @@
 import { payoutsService } from '../../src/modules/payouts/payouts.service';
 import { notificationsService } from '../../src/modules/notifications/notifications.service';
 import { gstPeriodOf } from '../../src/modules/pricing/gstPeriod';
-import { HISTORY_DAYS, NOW, addDays, chance, daysAgo, exec, pick, select } from './lib';
+import { HISTORY_DAYS, NOW, PHOTO_URLS, addDays, chance, daysAgo, exec, pgArray, pick, select } from './lib';
 import { SMALL } from './scale';
 import type { Accounts } from './accounts';
 
@@ -68,10 +68,10 @@ export async function seedPayouts(accounts: Accounts): Promise<void> {
           `UPDATE payouts SET status = 'PAID', "paidAt" = "createdAt" + interval '2 days', "updatedAt" = "createdAt" + interval '2 days',
              "paymentMethod" = (ARRAY['NEFT','IMPS','UPI','RTGS'])[1 + mod(abs(hashtext(id::text)), 4)]::"enum_payouts_paymentMethod",
              "paymentReferenceNumber" = 'UTR' || upper(substr(replace(id::text, '-', ''), 1, 12)),
-             "paidByAdminId" = :admin, "proofOfPaymentUrl" = 'https://picsum.photos/seed/utr-' || substr(id::text, 1, 8) || '/800/600',
+             "paidByAdminId" = :admin, "proofOfPaymentUrl" = (:photos::text[])[1 + mod(abs(hashtext(id::text)), :photoCount)],
              remarks = 'Settled to the registered bank account'
            WHERE id IN (:ids)`,
-          { ids: chunk, admin: actor },
+          { ids: chunk, admin: actor, photos: pgArray(PHOTO_URLS), photoCount: PHOTO_URLS.length },
         );
       } else if (status === 'FAILED') {
         await exec(`UPDATE payouts SET status = 'FAILED', "failureReason" = 'Beneficiary account inactive; vendor asked to update bank details', "updatedAt" = "createdAt" + interval '1 day' WHERE id IN (:ids)`, { ids: chunk });
