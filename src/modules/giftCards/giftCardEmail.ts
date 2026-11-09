@@ -18,7 +18,8 @@ function formatInr(amount: number): string {
  * pipeline) because the recipient is an arbitrary email address, not
  * necessarily a registered User — enqueue() requires a User row.
  */
-export async function sendGiftCardPurchasedEmail(giftCard: GiftCard): Promise<void> {
+/** Resolves true once the email is handed to the mail provider; failures are logged, not thrown. */
+export async function sendGiftCardPurchasedEmail(giftCard: GiftCard): Promise<boolean> {
   const purchaser = await User.findByPk(giftCard.purchaserId, { attributes: ['name', 'email'] });
   const purchaserLabel = escapeHtml(purchaser?.name || purchaser?.email || 'Someone');
   const amount = formatInr(Number(giftCard.amount));
@@ -47,10 +48,12 @@ export async function sendGiftCardPurchasedEmail(giftCard: GiftCard): Promise<vo
       html: rendered.html,
       text: rendered.text,
     });
+    return true;
   } catch (error) {
     logger.error('Failed to send gift card email', {
       giftCardId: giftCard.id,
       error: error instanceof Error ? error.message : error,
     });
+    return false;
   }
 }

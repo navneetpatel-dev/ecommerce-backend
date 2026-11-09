@@ -42,6 +42,8 @@ export class Order extends Model<InferAttributes<Order>, InferCreationAttributes
   declare taxInvoiceNumber: CreationOptional<string | null>;
   /** Vendor that bears VENDOR cashback (coupon.vendorId). */
   declare cashbackVendorId: CreationOptional<string | null>;
+  /** Platform cashback offer applied at checkout, if any (its cashback is in pendingCashbackAmount). */
+  declare cashbackOfferId: CreationOptional<string | null>;
   declare shippingAddressId: string;
   declare razorpayOrderId: string | null;
   declare razorpayPaymentId: string | null;
@@ -101,6 +103,7 @@ export const initOrderModel = (sequelize: Sequelize) => {
       platformInvoiceSnapshot: { type: DataTypes.JSONB, allowNull: true },
       taxInvoiceNumber: { type: DataTypes.STRING(32), allowNull: true, unique: true },
       cashbackVendorId: { type: DataTypes.UUID, allowNull: true },
+      cashbackOfferId: { type: DataTypes.UUID, allowNull: true },
       shippingAddressId: { type: DataTypes.UUID, allowNull: false },
       razorpayOrderId: { type: DataTypes.STRING, allowNull: true },
       razorpayPaymentId: { type: DataTypes.STRING, allowNull: true },

@@ -40,6 +40,7 @@ export type CartViewItem = {
     name: string;
     slug: string;
     imageUrl: string;
+    categoryId: string | null;
     /** Price per piece before GST. */
     price: number;
     /** Price per piece as the customer sees it, GST included. */
@@ -135,6 +136,7 @@ function mapCartItem(item: CartItem & { variant?: ProductVariant & { product?: a
       name: product?.name ?? 'Unknown product',
       slug: product?.slug ?? '',
       imageUrl: primaryImage,
+      categoryId: product?.categoryId ?? null,
       price,
       displayPrice: price,
       vendor: vendor

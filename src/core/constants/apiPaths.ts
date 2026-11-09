@@ -37,6 +37,7 @@ export const API_MOUNTS = {
   bugReports: '/bug-reports',
   productQna: '/product-qna',
   giftCards: '/gift-cards',
+  cashbackOffers: '/cashback-offers',
   payments: '/payments',
   roles: '/roles',
   exports: '/exports',

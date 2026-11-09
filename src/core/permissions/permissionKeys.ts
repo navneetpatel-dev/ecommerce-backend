@@ -28,6 +28,8 @@ export const PERMISSIONS = {
   TICKET_MANAGE: 'ticket.manage',
   BUG_REPORT_MANAGE: 'bug_report.manage',
   WALLET_ADJUST: 'wallet.adjust',
+  /** See every gift card, its liability, and deactivate one. */
+  GIFT_CARD_MANAGE: 'gift_card.manage',
   /** Create/edit custom roles and their permission sets. SUPER_ADMIN only by default. */
   ROLE_MANAGE: 'role.manage',
   /** Start a support "log in as user" session. SUPER_ADMIN only by default. */
@@ -50,6 +52,7 @@ export const ROLE_PERMISSIONS: Record<string, readonly PermissionKey[]> = {
     PERMISSIONS.TICKET_MANAGE,
     PERMISSIONS.BUG_REPORT_MANAGE,
     PERMISSIONS.WALLET_ADJUST,
+    PERMISSIONS.GIFT_CARD_MANAGE,
   ],
   [ROLES.ADMIN_CATALOG_MANAGER]: [
     PERMISSIONS.PRODUCT_MANAGE,

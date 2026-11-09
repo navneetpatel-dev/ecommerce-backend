@@ -39,3 +39,17 @@ export const RedeemGiftCardSchema = z.object({
   code: z.string().trim().min(4).max(24),
 });
 export type RedeemGiftCardRequest = z.infer<typeof RedeemGiftCardSchema>;
+
+export const AdminGiftCardListQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  status: z.enum(['PENDING', 'ACTIVE', 'REDEEMED', 'EXPIRED', 'CANCELLED', 'FAILED']).optional(),
+  /** Code, recipient email or buyer email. */
+  search: z.string().trim().max(120).optional(),
+});
+export type AdminGiftCardListQuery = z.infer<typeof AdminGiftCardListQuerySchema>;
+
+export const CancelGiftCardSchema = z.object({
+  reason: z.string().trim().min(3, 'Give a reason (at least 3 characters)').max(500),
+});
+export type CancelGiftCardRequest = z.infer<typeof CancelGiftCardSchema>;

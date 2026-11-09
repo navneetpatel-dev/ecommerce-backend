@@ -27,7 +27,7 @@ const PERMISSION_KEYS = [
   'banner.manage',
   'audit.view', 'analytics.view', 'product.create', 'product.update', 'product.delete',
   'suborder.manage', 'payout.view', 'review.respond',
-  'ticket.manage', 'bug_report.manage', 'wallet.adjust',
+  'ticket.manage', 'bug_report.manage', 'wallet.adjust', 'gift_card.manage',
   'role.manage', 'user.impersonate',
 ];
 
@@ -35,7 +35,7 @@ const ROLE_PERMISSIONS = {
   SUPER_ADMIN: PERMISSION_KEYS,
   ADMIN_ORDER_MANAGER: [
     'order.manage', 'suborder.manage', 'order.refund', 'shipping.manage', 'analytics.view', 'audit.view',
-    'ticket.manage', 'bug_report.manage', 'wallet.adjust',
+    'ticket.manage', 'bug_report.manage', 'wallet.adjust', 'gift_card.manage',
   ],
   ADMIN_CATALOG_MANAGER: [
     'product.manage', 'product.create', 'product.approve', 'category.manage', 'coupon.manage', 'banner.manage',
