@@ -13,7 +13,7 @@
     "build": "tsc -p tsconfig.json && tsc-alias -p tsconfig.json",
     "start": "node dist/src/server.js",
     "start:worker": "node dist/src/worker.js",
-    "lint": "node -r ./scripts/resolve-typescript6.cjs ./node_modules/eslint/bin/eslint.js . --ext .ts --max-warnings 255 && node scripts/check-line-limits.mjs",
+    "lint": "node -r ./scripts/resolve-typescript6.cjs ./node_modules/eslint/bin/eslint.js . --ext .ts --max-warnings 232 && node scripts/check-line-limits.mjs",
     "typecheck": "tsc --noEmit",
     "limits": "node scripts/check-line-limits.mjs",
     "db:migrate": "sequelize-cli db:migrate",

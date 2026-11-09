@@ -20,15 +20,15 @@ import { settingsService } from '@modules/settings/settings.service';
 import { customerCouponName } from '@modules/coupons/coupon.utils';
 import {
   validateCouponSet,
-  resolveCartCouponCodes,
   recordCouponUsagesForOrder,
   destroyCouponUsageForOrder,
   type AppliedCouponBreakdownEntry,
-  type CartLineForCoupon,
 } from '@modules/coupons/couponEngine';
 import { fromPaise, roundMoney, sumRupees, toPaise } from '@modules/pricing/money';
 import { checkoutAmountDue, combinedDiscount, lineTotal } from '@modules/pricing/displayMoney';
-import { buildVendorPricingRows, priceVendorRows, PLATFORM_VENDOR_ID, type PricedLine } from './vendorPricingPlan';
+import { buildVendorPricingRows, priceVendorRows } from './vendorPricingPlan';
+import { catalogItemsForCod, resolveCheckoutCouponCodes, toCouponLines, toPricedLines } from './checkoutCartLines';
+import { checkoutCashbackOffer, type CheckoutCashbackOffer } from '@modules/cashbackOffers/checkoutCashbackOffer';
 import { clampWalletApply, settleSubMinRazorpayRemainder } from './razorpayWalletRemainder';
 import { RAZORPAY_MIN_AMOUNT_PAISE } from '@core/constants/http';
 import { resolveItemAvailability } from '@core/catalog/customerVisibility';
@@ -68,7 +68,6 @@ import {
 import { isIntraStateSupply } from '@modules/pricing/gstPlaceOfSupply';
 import { tdsRateForSale } from '@modules/pricing/tds194o';
 import { preGstCouponBreakdown } from './couponUsageAmounts';
-import { withGstInclusiveLineValues } from './gstInclusiveLines';
 import { taxService } from '@modules/tax/tax.service';
 
 /** Flat platform fee for checkout-time gift wrapping (v1: hardcoded, not vendor-specific). */
@@ -159,63 +158,6 @@ function assertCartItemsAvailable(cart: CartWithItems) {
   }
 }
 
-function catalogItemsForCod(items: (CartItem & { variant: ProductVariant & { product: any } })[]) {
-  return items.map((item) => {
-    const product = item.variant?.product;
-    return {
-      categoryId: product?.categoryId ?? null,
-      codEnabled: product?.codEnabled ?? null,
-      vendor: product?.vendor ?? product?.Vendor ?? null,
-    };
-  });
-}
-
-/** Coupon lines at the prices the customer sees (GST included): coupons are set in those terms. */
-function toCouponLines(
-  items: (CartItem & { variant: ProductVariant & { product: any } })[],
-  shippingStateCode: string,
-): Promise<CartLineForCoupon[]> {
-  const lines = items.map((item) => {
-    const product = item.variant.product;
-    return {
-      productId: String(product.id),
-      variantId: String(item.variantId),
-      categoryId: product.categoryId ? String(product.categoryId) : null,
-      vendorId: product.vendorId ? String(product.vendorId) : null,
-      unitPrice: Number(item.variant.price),
-      quantity: Number(item.quantity),
-      weightGrams: Number(item.variant.weightGrams ?? 500),
-      isCustomerVisible: true,
-    };
-  });
-  return withGstInclusiveLineValues(lines, shippingStateCode);
-}
-
-function resolveCheckoutCouponCodes(
-  data: { couponCode?: string | null; couponCodes?: string[] },
-  cart: { couponCode?: string | null; couponCodes?: string[] | null },
-): string[] {
-  if (data.couponCodes && data.couponCodes.length > 0) {
-    return [...new Set(data.couponCodes.map((c) => c.trim().toUpperCase()).filter(Boolean))];
-  }
-  if (data.couponCode?.trim()) {
-    return [data.couponCode.trim().toUpperCase()];
-  }
-  return resolveCartCouponCodes(cart);
-}
-
-/** Map cart rows into the normalized shape `vendorPricingPlan` prices. */
-function toPricedLines(items: (CartItem & { variant: ProductVariant & { product: any } })[]): PricedLine[] {
-  return items.map((item) => ({
-    key: String(item.id),
-    vendorId: item.variant.product.vendorId || PLATFORM_VENDOR_ID,
-    unitPrice: Number(item.variant.price),
-    quantity: Number(item.quantity),
-    categoryId: item.variant.product.categoryId ?? null,
-    weightGrams: item.variant.weightGrams ?? null,
-  }));
-}
-
 export class CheckoutService {
   async getQuote(
     userId: string,
@@ -245,6 +187,8 @@ export class CheckoutService {
     grandTotal: number;
     giftWrapFeeAmount: number;
     cashbackAmount: number;
+    /** Platform cashback offer included in cashbackAmount, if the order qualifies. */
+    cashbackOffer: CheckoutCashbackOffer | null;
     walletBalance: number;
     walletAmountToUse: number;
     amountDue: number;
@@ -305,6 +249,7 @@ export class CheckoutService {
     let vendorDiscountShares: Record<string, number> = {};
     let vendorShippingDiscountShares: Record<string, number> = {};
     let vendorBorneDiscountShares: Record<string, number> = {};
+    let quoteCoupons: Coupon[] = [];
 
     if (couponCodes.length > 0) {
       const result = await validateCouponSet({
@@ -319,6 +264,7 @@ export class CheckoutService {
       }
       discount = result.discount;
       cashbackAmount = result.cashbackAmount;
+      quoteCoupons = result.coupons;
       vendorDiscountShares = result.vendorDiscountShares;
       vendorShippingDiscountShares = result.vendorShippingDiscountShares;
       vendorBorneDiscountShares = result.vendorBorneDiscountShares;
@@ -352,6 +298,13 @@ export class CheckoutService {
       shippingStateCode: shippingAddress.state,
       settings,
     });
+    const cashbackOffer = await checkoutCashbackOffer({
+      pricedByVendor,
+      categoryOf: (key) => itemById.get(key)?.variant.product.categoryId ?? null,
+      paymentMethod: data.paymentMethod,
+      coupons: quoteCoupons,
+    });
+    cashbackAmount = roundMoney(cashbackAmount + (cashbackOffer?.amount ?? 0));
 
     const vendorBreakdowns = baseVendorRows.map((row) => {
       const vendor = row.vendor;
@@ -432,6 +385,7 @@ export class CheckoutService {
       giftWrapFeeAmount,
       orderTotals: buildCheckoutOrderTotals(vendorBreakdowns, giftWrapFeeAmount),
       cashbackAmount,
+      cashbackOffer,
       walletBalance,
       walletAmountToUse,
       amountDue,
@@ -533,6 +487,14 @@ export class CheckoutService {
         shippingStateCode: shippingAddress.state,
         settings,
       });
+      const cashbackOffer = await checkoutCashbackOffer({
+        pricedByVendor,
+        categoryOf: (key) => itemById.get(key)?.variant.product.categoryId ?? null,
+        paymentMethod: data.paymentMethod,
+        coupons,
+        transaction: t,
+      });
+      cashbackAmount = roundMoney(cashbackAmount + (cashbackOffer?.amount ?? 0));
 
       // Summed from the engine's paise breakdown, so the order totals are exact.
       let merchandisePaise = 0;
@@ -639,6 +601,7 @@ export class CheckoutService {
           cashbackCreditedAt: null,
           cashbackDiscountBearer,
           cashbackVendorId,
+          cashbackOfferId: cashbackOffer?.offerId ?? null,
           originalTotalAmount: orderTotalRupees,
           razorpayAmountPaid: data.paymentMethod === PAYMENT_METHOD.COD ? 0 : Math.max(0, amountDue),
           razorpayOrderId: null,

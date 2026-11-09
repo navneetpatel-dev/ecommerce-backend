@@ -12,6 +12,7 @@ import {
 import { exportWalletStatementDirect } from './walletStatement.service';
 import { WalletStatementSchema } from './walletStatement.dto';
 import { ListTransactionsSchema } from './wallet.dto';
+import { listCashbackHistory } from './cashbackHistory.service';
 
 export const getBalance = asyncHandler(async (req: Request, res: Response) => {
   const view = await walletRechargeService.getBalanceView(req.user!.id);
@@ -78,4 +79,9 @@ export const exportStatement = asyncHandler(async (req: Request, res: Response) 
     format: query.format,
   });
   sendDownload(res, result);
+});
+
+export const listCashback = asyncHandler(async (req: Request, res: Response) => {
+  const query = ListTransactionsSchema.parse(req.query);
+  res.json(ok(await listCashbackHistory(req.user!.id, query)));
 });

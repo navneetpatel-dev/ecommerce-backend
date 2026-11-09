@@ -192,6 +192,8 @@ export const ERROR_MESSAGES = {
   GIFT_CARD_AMOUNT_RANGE: 'Gift card amount is outside the allowed range',
   GIFT_CARD_NOT_CANCELLABLE: 'Only an active, unredeemed gift card can be deactivated',
   GIFT_CARD_NOT_RESENDABLE: 'Only an active, unredeemed gift card can be sent again',
+  CASHBACK_OFFER_CATEGORY_INVALID: 'One or more of the chosen categories does not exist',
+  CASHBACK_OFFER_INVALID: 'This cashback offer is not valid',
   GIFT_CARD_EMAIL_FAILED: 'The gift card email could not be sent. Please try again shortly',
   EXPORT_JOB_NOT_FOUND: 'Export job not found',
   EXPORT_JOB_NOT_CANCELLABLE: 'This export can no longer be cancelled',

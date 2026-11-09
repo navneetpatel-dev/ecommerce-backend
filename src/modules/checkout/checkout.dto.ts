@@ -49,9 +49,12 @@ export const CheckoutQuoteSchema = z
     shippingMethodByVendor: z.record(z.string(), z.string()).optional(),
     giftWrap: z.boolean().optional().default(false),
     giftMessage: z.string().trim().max(500).optional(),
+    /** The method the customer picked, so offers limited to a payment method can show. */
+    paymentMethod: PaymentMethodInput.optional(),
   })
   .transform((body) => ({
     shippingAddressId: (body.shippingAddressId ?? body.addressId) as string,
+    paymentMethod: body.paymentMethod,
     couponCode: body.couponCode ?? undefined,
     couponCodes: body.couponCodes,
     walletAmountToUse: body.walletAmountToUse ?? 0,

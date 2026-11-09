@@ -39,6 +39,7 @@ import { initAuditLogModel, AuditLog } from './auditLog.model';
 import { initWebhookEventModel, WebhookEvent } from './webhookEvent.model';
 import { initPlatformSettingModel, PlatformSetting } from './platformSetting.model';
 import { initPromoBannerModel, PromoBanner } from './promoBanner.model';
+import { initCashbackOfferModel, CashbackOffer } from './cashbackOffer.model';
 import { initTcsLedgerModel, TcsLedger } from './tcsLedger.model';
 import { initTdsLedgerModel, TdsLedger } from './tdsLedger.model';
 import { initCreditNoteModel, CreditNote } from './creditNote.model';
@@ -119,6 +120,7 @@ const models = {
   WebhookEvent: initWebhookEventModel(sequelize),
   PlatformSetting: initPlatformSettingModel(sequelize),
   PromoBanner: initPromoBannerModel(sequelize),
+  CashbackOffer: initCashbackOfferModel(sequelize),
   TcsLedger: initTcsLedgerModel(sequelize),
   TdsLedger: initTdsLedgerModel(sequelize),
   CreditNote: initCreditNoteModel(sequelize),
@@ -165,7 +167,7 @@ export {
   Review, ReviewVote, Wishlist, WishlistItem,
   ShippingZone, ShippingRate, Shipment, ShipmentAttempt, ReturnRequest,
   TaxRule, NotificationLog, AuditLog, WebhookEvent,
-  PlatformSetting, PromoBanner,
+  PlatformSetting, PromoBanner, CashbackOffer,
   TcsLedger, TdsLedger, CreditNote, DebitNote, DocumentSequence,
   VendorInvoiceSequence, CommissionInvoice,
   WalletLedger, WalletWriteOff, WalletRechargeOrder,

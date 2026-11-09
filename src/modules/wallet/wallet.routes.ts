@@ -44,6 +44,9 @@ router.get(
   walletController.listTransactions,
 );
 
+// Order by order: what cashback is pending, credited or cancelled, and when it lands.
+router.get('/cashback', authenticate, validate(ListTransactionsSchema, 'query'), walletController.listCashback);
+
 router.get(
   '/statement',
   authenticate,
