@@ -41,6 +41,13 @@
  *   npx tsx scripts/backfill-seeded-order-money.ts --apply --limit 5
  *   npx tsx scripts/backfill-seeded-order-money.ts --apply --force --order-id <uuid>[,<uuid>...]
  *   npx tsx scripts/backfill-seeded-order-money.ts --apply --force --order-id <uuid> --discount-paise 24000
+ *
+ * Large seeds (`npm run db:seed:demo`) add:
+ *   --shard <i>/<n>   only orders whose id hashes to shard i of n, so n processes can run at once
+ *   --tcs-rate <pct>  price section 52 TCS at this rate (default 0, see the deviations above);
+ *                     dispatch then records the GSTR-8 collection row as it does for a sale
+ *   --quiet           no per-order lines, only the totals and failures
+ * Orders are read in pages, so memory stays flat however many there are.
  */
 import { Op, type WhereOptions } from 'sequelize';
 import {
@@ -73,10 +80,25 @@ interface Args {
   /** Override the order-level pre-GST discount, in paise (a re-align of a coupon order). */
   discountPaise: number | null;
   limit: number | null;
+  shard: { index: number; count: number } | null;
+  tcsRatePercent: number;
+  quiet: boolean;
 }
 
+/** Section 52 TCS rate the parts are priced at in this run (0: fixtures record none). */
+let runTcsRatePercent = 0;
+
 function parseArgs(argv: string[]): Args {
-  const args: Args = { apply: false, force: false, orderIds: [], discountPaise: null, limit: null };
+  const args: Args = {
+    apply: false,
+    force: false,
+    orderIds: [],
+    discountPaise: null,
+    limit: null,
+    shard: null,
+    tcsRatePercent: 0,
+    quiet: false,
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     if (flag === '--apply') args.apply = true;
@@ -92,6 +114,16 @@ function parseArgs(argv: string[]): Args {
           .filter(Boolean),
       );
     } else if (flag === '--limit') args.limit = Number(argv[i + 1] ?? '') || null;
+    else if (flag === '--quiet') args.quiet = true;
+    else if (flag === '--tcs-rate') args.tcsRatePercent = Math.max(0, Number(argv[i + 1] ?? '') || 0);
+    else if (flag === '--shard') {
+      const [index, count] = String(argv[i + 1] ?? '')
+        .split('/')
+        .map((part) => Number(part));
+      if (index !== undefined && count !== undefined && Number.isInteger(index) && Number.isInteger(count) && count > 0 && index >= 0 && index < count) {
+        args.shard = { index, count };
+      }
+    }
   }
   return args;
 }
@@ -192,8 +224,8 @@ async function pricePart(input: {
     shippingStateCode: destinationState,
     commissionRatePercent,
     discountBearer: DISCOUNT_BEARER.PLATFORM as DiscountBearer,
-    // Fixtures: no TCS recorded (see the header note).
-    tcsRatePercent: 0,
+    // Fixtures: no TCS recorded (see the header note) unless the run asks for it.
+    tcsRatePercent: runTcsRatePercent,
   };
 
   const priced = pricingService.computeVendorBreakdown({
@@ -257,6 +289,7 @@ async function pricePart(input: {
       tcsAmountPaise: p.tcsPaise,
       netPayoutAmountPaise: p.netPayoutPaise,
       roundingAdjustmentPaise: p.roundingAdjustmentPaise,
+      tcsRatePercent: runTcsRatePercent > 0 ? runTcsRatePercent : null,
       taxInvoiceSnapshot: {
         totalPaise: invoiceValuePaise,
         lines: invoiceLines,
@@ -532,68 +565,122 @@ async function verifyOrder(orderId: string): Promise<string[]> {
   return problems;
 }
 
+/** The order rows the repair reads: parts, vendors, lines with their products, the address. */
+const REPAIR_INCLUDE = [
+  {
+    association: 'subOrders',
+    include: [
+      { model: Vendor, as: 'vendor' },
+      {
+        model: OrderItem,
+        as: 'items',
+        include: [
+          {
+            model: ProductVariant,
+            as: 'variant',
+            required: false,
+            include: [{ model: Product, as: 'product', required: false, paranoid: false }],
+          },
+        ],
+      },
+    ],
+  },
+  { association: 'shippingAddress' },
+];
+
+const PAGE_SIZE = 200;
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  runTcsRatePercent = args.tcsRatePercent;
   await sequelize.authenticate();
 
   // Without explicit ids: only orders checkout never priced (it always writes taxTotal), so
   // a normal run can never touch a real sale. With explicit ids the caller has named the
   // orders (a re-align), and `--force` is still required to touch parts that already carry
-  // money.
-  const orders = (await Order.findAll({
-    // A real order always has taxTotal; the null filter is why the cast is needed.
-    where: (args.orderIds.length ? { id: { [Op.in]: args.orderIds } } : { taxTotal: null }) as WhereOptions,
-    include: [
-      {
-        association: 'subOrders',
-        include: [
-          { model: Vendor, as: 'vendor' },
-          {
-            model: OrderItem,
-            as: 'items',
-            include: [
-              {
-                model: ProductVariant,
-                as: 'variant',
-                required: false,
-                include: [{ model: Product, as: 'product', required: false, paranoid: false }],
-              },
-            ],
-          },
-        ],
-      },
-      { association: 'shippingAddress' },
-    ] as never,
-    order: [['createdAt', 'ASC']],
-    ...(args.limit ? { limit: args.limit } : {}),
-  })) as unknown as Array<OrderRow & { shippingAddress?: Address | null }>;
-
-  console.log(`${args.apply ? 'APPLYING' : 'DRY RUN'} — ${orders.length} order(s) with no checkout money`);
-
-  const outcomes: OrderOutcome[] = [];
-  for (const order of orders) {
-    const outcome = await repairOrder({
-      order,
-      destinationState: String(order.shippingAddress?.state ?? '').trim(),
-      apply: args.apply,
-      force: args.force,
-      discountPaise: args.discountPaise,
-    });
-    outcomes.push(outcome);
-    const itemCount = (order.subOrders ?? []).reduce((sum, part) => sum + (part.items ?? []).length, 0);
-    console.log(
-      `  ${summariseOrder(order)} | ${itemCount} item(s) | ${fromPaise(outcome.beforePaise)} -> ` +
-        `${fromPaise(outcome.afterPaise)} | re-price ${outcome.pricedParts} part(s), ` +
-        `${outcome.invoicedParts} invoice(s)${args.apply ? '' : ' (planned)'}`,
+  // money. A shard takes only the orders whose id hashes to it.
+  const baseWhere: WhereOptions[] = [
+    // A real order always has taxTotal; the null filter is why the casts are needed.
+    (args.orderIds.length ? { id: { [Op.in]: args.orderIds } } : { taxTotal: null }) as WhereOptions,
+  ];
+  if (args.shard) {
+    baseWhere.push(
+      sequelize.literal(
+        `mod(abs(hashtext("Order"."id"::text)), ${args.shard.count}) = ${args.shard.index}`,
+      ) as unknown as WhereOptions,
     );
-    for (const note of outcome.skipped) console.log(`      skipped: ${note}`);
   }
 
-  const pricedParts = outcomes.reduce((sum, row) => sum + row.pricedParts, 0);
-  const invoicedParts = outcomes.reduce((sum, row) => sum + row.invoicedParts, 0);
-  const skippedParts = outcomes.reduce((sum, row) => sum + row.skipped.length, 0);
+  // Read in pages of (createdAt, id) so memory stays flat on large seeds.
+  let cursor: { createdAt: Date; id: string } | null = null;
+  let seen = 0;
+  let pricedParts = 0;
+  let invoicedParts = 0;
+  let skippedParts = 0;
+  let failures = 0;
+  console.log(`${args.apply ? 'APPLYING' : 'DRY RUN'} — orders with no checkout money${args.shard ? ` (shard ${args.shard.index}/${args.shard.count})` : ''}`);
+
+  for (;;) {
+    const remaining = args.limit ? args.limit - seen : PAGE_SIZE;
+    if (remaining <= 0) break;
+    const pageWhere: WhereOptions[] = [...baseWhere];
+    if (cursor) {
+      pageWhere.push({
+        [Op.or]: [
+          { createdAt: { [Op.gt]: cursor.createdAt } },
+          { createdAt: cursor.createdAt, id: { [Op.gt]: cursor.id } },
+        ],
+      } as WhereOptions);
+    }
+    const orders = (await Order.findAll({
+      where: { [Op.and]: pageWhere } as WhereOptions,
+      include: REPAIR_INCLUDE as never,
+      order: [
+        ['createdAt', 'ASC'],
+        ['id', 'ASC'],
+      ],
+      limit: Math.min(PAGE_SIZE, remaining),
+    })) as unknown as Array<OrderRow & { shippingAddress?: Address | null }>;
+    if (orders.length === 0) break;
+    const last = orders[orders.length - 1]!;
+    cursor = { createdAt: last.createdAt, id: last.id };
+    seen += orders.length;
+
+    for (const order of orders) {
+      const outcome = await repairOrder({
+        order,
+        destinationState: String(order.shippingAddress?.state ?? '').trim(),
+        apply: args.apply,
+        force: args.force,
+        discountPaise: args.discountPaise,
+      });
+      pricedParts += outcome.pricedParts;
+      invoicedParts += outcome.invoicedParts;
+      skippedParts += outcome.skipped.length;
+      if (!args.quiet) {
+        const itemCount = (order.subOrders ?? []).reduce((sum, part) => sum + (part.items ?? []).length, 0);
+        console.log(
+          `  ${summariseOrder(order)} | ${itemCount} item(s) | ${fromPaise(outcome.beforePaise)} -> ` +
+            `${fromPaise(outcome.afterPaise)} | re-price ${outcome.pricedParts} part(s), ` +
+            `${outcome.invoicedParts} invoice(s)${args.apply ? '' : ' (planned)'}`,
+        );
+        for (const note of outcome.skipped) console.log(`      skipped: ${note}`);
+      }
+      // Read the repaired order back through the display mapper (what the order page runs):
+      // zero items, a phantom return fee or a missing number on a shipped part all fail here.
+      if (args.apply && outcome.pricedParts > 0) {
+        const problems = await verifyOrder(order.id);
+        if (problems.length > 0) {
+          failures += 1;
+          console.error(`  FAIL ${order.id}: ${problems.join('; ')}`);
+        }
+      }
+    }
+    if (args.quiet) console.log(`  ${seen} order(s) done`);
+  }
+
   console.log(
-    `\n${pricedParts} part(s) re-priced, ${invoicedParts} tax invoice(s) ` +
+    `\n${seen} order(s): ${pricedParts} part(s) re-priced, ${invoicedParts} tax invoice(s) ` +
       `${args.apply ? 'issued' : 'to issue'}, ${skippedParts} part(s) skipped.`,
   );
 
@@ -601,18 +688,6 @@ async function main() {
     console.log('Dry run: nothing written. Re-run with --apply to repair the rows.');
     await sequelize.close();
     return;
-  }
-
-  // Read the repaired orders back through the display mapper (what the order page runs):
-  // zero items, a phantom return fee or a missing number on a shipped part all fail here.
-  let failures = 0;
-  for (const outcome of outcomes) {
-    if (outcome.pricedParts === 0) continue;
-    const problems = await verifyOrder(outcome.order.id);
-    if (problems.length > 0) {
-      failures += 1;
-      console.error(`  FAIL ${outcome.order.id}: ${problems.join('; ')}`);
-    }
   }
   console.log(
     failures === 0

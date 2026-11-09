@@ -18,6 +18,7 @@
     "limits": "node scripts/check-line-limits.mjs",
     "db:migrate": "sequelize-cli db:migrate",
     "db:seed": "sequelize-cli db:seed:all",
+    "db:seed:demo": "tsx scripts/seed-demo/index.ts",
     "db:seed:tickets": "sequelize-cli db:seed --seed 20240101000080-seed-support-tickets.js",
     "db:seed:bugs": "sequelize-cli db:seed --seed 20240101000081-seed-bug-reports.js",
     "db:seed:gallery": "sequelize-cli db:seed --seed 20240101000095-seed-product-gallery-images.js",
