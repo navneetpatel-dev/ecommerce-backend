@@ -14,7 +14,7 @@ import { NOW, addDays, addHours, between, chance, exec, id, insert, int, json, m
 import { scaled } from './scale';
 import type { Accounts } from './accounts';
 
-export const GIFT_CARDS_PER_CUSTOMER = scaled(140, 4);
+export const GIFT_CARDS_PER_CUSTOMER = scaled(145, 4);
 const RECHARGES_PER_CUSTOMER = scaled(8, 2);
 
 type OrderRow = {
@@ -62,8 +62,9 @@ async function seedGiftCards(accounts: Accounts): Promise<Event[][]> {
       const paidAt = paid ? addHours(createdAt, 1) : null;
       // EXPIRED cards are a year old; the rest expire a year after they were bought.
       const issued = status === 'EXPIRED' ? addDays(NOW, -int(370, 500)) : createdAt;
-      let redeemer = customers[redeemerCursor++ % customers.length]!;
-      if (redeemer.id === buyer.id) redeemer = customers[(index + 1) % customers.length]!;
+      // Redeemers are dealt round-robin over redeemed cards only, so everyone redeems as many.
+      let redeemer = status === 'REDEEMED' ? customers[redeemerCursor++ % customers.length]! : buyer;
+      if (status === 'REDEEMED' && redeemer.id === buyer.id) redeemer = customers[redeemerCursor++ % customers.length]!;
       const redeemedAt = status === 'REDEEMED' ? minDate(between(addDays(createdAt, 1), addDays(createdAt, 60)), NOW) : null;
       const cardId = id();
       const code = giftCode();

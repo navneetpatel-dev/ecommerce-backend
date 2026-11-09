@@ -104,6 +104,14 @@ async function seedAttributesAndTax(leaves: Array<{ id: string; root: string }>,
       priceBandThreshold: band ? 1000 : null, gstPercentageAbove: band ? 12 : null, createdAt: now, updatedAt: now,
     };
   });
+  // Top-level categories get a rule too (their leaves keep their own, nearer rule).
+  const roots = await select<{ id: string; slug: string }>(
+    `SELECT c.id, c.slug FROM categories c WHERE c."parentId" IS NULL
+       AND NOT EXISTS (SELECT 1 FROM tax_rules t WHERE t."categoryId" = c.id)`,
+  );
+  for (const root of roots) {
+    rules.push({ id: id(), categoryId: root.id, hsnCode: String(int(1000, 9999)), gstPercentage: rates[root.slug] ?? 18, priceBandThreshold: null, gstPercentageAbove: null, createdAt: now, updatedAt: now });
+  }
   await insert('tax_rules', rules);
 }
 
