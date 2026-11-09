@@ -647,13 +647,22 @@ async function main() {
     seen += orders.length;
 
     for (const order of orders) {
-      const outcome = await repairOrder({
-        order,
-        destinationState: String(order.shippingAddress?.state ?? '').trim(),
-        apply: args.apply,
-        force: args.force,
-        discountPaise: args.discountPaise,
-      });
+      let outcome: OrderOutcome;
+      try {
+        outcome = await repairOrder({
+          order,
+          destinationState: String(order.shippingAddress?.state ?? '').trim(),
+          apply: args.apply,
+          force: args.force,
+          discountPaise: args.discountPaise,
+        });
+      } catch (error) {
+        // One order's failure (e.g. a lock conflict with a parallel shard) rolls back only
+        // that order; it stays unpriced for the next run and the rest carry on.
+        failures += 1;
+        console.error(`  FAIL ${order.id}: ${error instanceof Error ? error.message : String(error)}`);
+        continue;
+      }
       pricedParts += outcome.pricedParts;
       invoicedParts += outcome.invoicedParts;
       skippedParts += outcome.skipped.length;

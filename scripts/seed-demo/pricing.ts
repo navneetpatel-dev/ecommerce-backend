@@ -16,19 +16,21 @@ const SHARDS = 4;
 /** Section 52 TCS the marketplace collects, as the platform settings default it. */
 const TCS_RATE_PERCENT = 0.5;
 
-function runShard(index: number): Promise<number> {
+/** Runs the backfill: one shard of n, or (index null) a single pass over whatever is left. */
+function runShard(index: number | null): Promise<number> {
   const script = path.resolve(__dirname, '..', 'backfill-seeded-order-money.ts');
+  const shard = index == null ? [] : ['--shard', `${index}/${SHARDS}`];
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
-      [...process.execArgv, script, '--apply', '--quiet', '--shard', `${index}/${SHARDS}`, '--tcs-rate', String(TCS_RATE_PERCENT)],
+      [...process.execArgv, script, '--apply', '--quiet', ...shard, '--tcs-rate', String(TCS_RATE_PERCENT)],
       { stdio: ['ignore', 'pipe', 'pipe'], env: process.env },
     );
     let failures = 0;
     const relay = (chunk: Buffer, toError: boolean) => {
       for (const line of chunk.toString().split('\n').filter(Boolean)) {
         if (line.includes('FAIL ')) failures += 1;
-        if (toError || /order\(s\)|Verified|still fail/.test(line)) console.log(`  [shard ${index}] ${line.trim()}`);
+        if (toError || /order\(s\)|Verified|still fail/.test(line)) console.log(`  [${index == null ? 'final pass' : `shard ${index}`}] ${line.trim()}`);
       }
     };
     child.stdout.on('data', (chunk: Buffer) => relay(chunk, false));
@@ -39,9 +41,12 @@ function runShard(index: number): Promise<number> {
 }
 
 export async function priceOrders(): Promise<void> {
-  const failures = await Promise.all(Array.from({ length: SHARDS }, (_, index) => runShard(index)));
-  const total = failures.reduce((sum, n) => sum + n, 0);
-  console.log(total === 0 ? '  every order passed the display check' : `  ${total} order(s) failed the display check (see above)`);
+  await Promise.all(Array.from({ length: SHARDS }, (_, index) => runShard(index)));
+  // Shards can trip over each other numbering invoices for the same vendor; whatever was
+  // rolled back is priced now, alone, where nothing competes for the locks.
+  const total = await runShard(null);
+  const [left] = await select<{ c: string }>('SELECT count(*)::text AS c FROM orders WHERE "taxTotal" IS NULL');
+  console.log(total === 0 && left!.c === '0' ? '  every order priced and passed the display check' : `  ${total} order(s) failed the display check; ${left!.c} unpriced`);
 
   // Ledgers book exactly what the part was priced at.
   await exec(`
