@@ -14,6 +14,9 @@ export class Address extends Model<InferAttributes<Address>, InferCreationAttrib
   declare isDefault: CreationOptional<boolean>;
   /** Free-text doorstep notes for the courier (e.g. "Leave at front desk"). */
   declare deliveryInstructions: CreationOptional<string | null>;
+  /** Who receives the parcel and the number the courier calls. */
+  declare recipientName: CreationOptional<string | null>;
+  declare recipientPhone: CreationOptional<string | null>;
   /** Device-captured GPS fix at save time — powers the live-ETA distance calc. */
   declare lat: CreationOptional<number | null>;
   declare lng: CreationOptional<number | null>;
@@ -43,6 +46,8 @@ export const initAddressModel = (sequelize: Sequelize) => {
       gstin: { type: DataTypes.STRING(20), allowNull: true },
       isDefault: { type: DataTypes.BOOLEAN, defaultValue: false },
       deliveryInstructions: { type: DataTypes.TEXT, allowNull: true },
+      recipientName: { type: DataTypes.STRING(100), allowNull: true },
+      recipientPhone: { type: DataTypes.STRING(20), allowNull: true },
       lat: { type: DataTypes.DECIMAL(9, 6), allowNull: true },
       lng: { type: DataTypes.DECIMAL(9, 6), allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },

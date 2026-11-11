@@ -64,6 +64,7 @@ function bodyFor(type: NotificationType, data: EmailTemplateData): string {
     paymentMethod: str(data, 'paymentMethod'),
     paymentReferenceNumber: str(data, 'paymentReferenceNumber'),
     status: str(data, 'status'),
+    statusText: str(data, 'statusText', `updated (${str(data, 'status')})`),
     reason: str(data, 'reason', '—'),
     businessName: str(data, 'businessName'),
     businessNameSuffix: str(data, 'businessName')

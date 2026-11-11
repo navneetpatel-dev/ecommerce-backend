@@ -98,8 +98,9 @@ export class ReviewsService {
   }
 
   /** Own reviews on account page — personal history, deliberately unscoped. */
-  async getUserReviews(userId: string) {
-    return reviewsRepository.findByUser(userId);
+  async getUserReviews(userId: string, query: { page: number; limit: number }) {
+    const { rows, count } = await reviewsRepository.findByUser(userId, { limit: query.limit, offset: paginationOffset(query.page, query.limit) });
+    return { reviews: rows, pagination: buildPaginationMeta(count, query.page, query.limit) };
   }
 
   /** Vendor-scoped reviews across all vendor products. */

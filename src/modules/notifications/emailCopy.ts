@@ -91,7 +91,7 @@ export const EMAIL_COPY = {
     ORDER_CANCELLED: 'Order #{orderNumber} has been cancelled.',
     SUBORDER_CANCELLED:
       'Some items in order #{orderNumber} were cancelled and anything you paid for them is refunded. The rest of your order goes ahead.',
-    ORDER_RETURNED: 'Your return for order #{orderNumber} has been updated ({status}).',
+    ORDER_RETURNED: 'Your return for order #{orderNumber}: {statusText}.',
     REFUND_PROCESSED: 'A refund of ₹{amount} for order #{orderNumber} has been processed.',
     REFUND_INITIATED:
       'Your refund of ₹{amount} for order #{orderNumber} has been initiated. Bank posting may take {slaDays} business days.',

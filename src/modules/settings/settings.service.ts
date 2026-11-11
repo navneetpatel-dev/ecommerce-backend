@@ -57,6 +57,11 @@ export type PlatformSettingsPayload = {
   /** 0=Sunday..6=Saturday. */
   scheduledReportsDayOfWeek: number;
   scheduledReportsHourUtc: number;
+  /** Maintenance mode (B-11): while on, the storefront sends shoppers to /maintenance. */
+  maintenanceEnabled: boolean;
+  maintenanceMessage: string;
+  /** When the store expects to be back (ISO time), shown on the maintenance page. */
+  maintenanceUntil: string | null;
 };
 
 const SETTINGS_KEY = 'platform';
@@ -96,6 +101,9 @@ const DEFAULTS: PlatformSettingsPayload = {
   scheduledReportsRecipients: [],
   scheduledReportsDayOfWeek: 1,
   scheduledReportsHourUtc: 6,
+  maintenanceEnabled: false,
+  maintenanceMessage: '',
+  maintenanceUntil: null,
 };
 
 /** Presets outside the stored cap are a broken config; raise the cap so they can be paid. */

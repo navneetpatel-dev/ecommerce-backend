@@ -13,6 +13,7 @@ import { AUTH_COOKIE_PATH } from '@core/constants/apiPaths';
 import { AppError } from '@core/errors';
 import { sendApiError } from '@core/http/sendApiError';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
+import { buildPaginationMeta, pageLimitQuerySchema } from '@core/http/pagination';
 import { env } from '@config/env';
 
 const OAUTH_STATE_COOKIE = 'oauth_state';
@@ -220,8 +221,11 @@ export const changePassword = asyncHandler(async (req: Request, res: Response) =
 
 export const listSessions = asyncHandler(async (req: Request, res: Response) => {
   const current = req.cookies?.[COOKIES.REFRESH_TOKEN] ?? null;
-  const sessions = await authService.listSessions(req.user!.id, current);
-  res.json(ok(sessions));
+  // This device first, so it is always on page 1.
+  const sessions = (await authService.listSessions(req.user!.id, current)).sort((a, b) => Number(b.isCurrent) - Number(a.isCurrent));
+  const { page, limit } = pageLimitQuerySchema.parse(req.query);
+  const start = (page - 1) * limit;
+  res.json(ok(sessions.slice(start, start + limit), { pagination: buildPaginationMeta(sessions.length, page, limit) }));
 });
 
 export const revokeSession = asyncHandler(async (req: Request, res: Response) => {

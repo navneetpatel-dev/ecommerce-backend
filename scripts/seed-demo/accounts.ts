@@ -247,6 +247,7 @@ async function seedAddresses(customers: Customer[]) {
         city: place.city, state: place.state, country: 'India', pincode: pincodeFor(place.prefix),
         isDefault: i === 0, gstin: chance(0.05) ? gstin(place.state, i) : null,
         deliveryInstructions: chance(0.2) ? pick(['Leave with the security guard', 'Call before delivery', 'Ring the bell twice']) : null,
+        recipientName: customer.name,
         createdAt: at, updatedAt: at,
       });
     }

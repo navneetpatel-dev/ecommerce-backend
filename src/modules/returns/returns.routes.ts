@@ -18,6 +18,8 @@ router.get(
   returnsController.listVendor,
 );
 router.get('/:id', authenticate, returnsController.getById);
+// The shopper withdraws their own return while it is still only requested.
+router.post('/:id/cancel', authenticate, returnsController.cancelByCustomer);
 router.get('/:id/credit-note', authenticate, returnsController.downloadCreditNote);
 router.get(
   '/:id/debit-note',

@@ -25,8 +25,8 @@ export const getByProduct = asyncHandler(async (req: Request, res: Response) => 
 });
 
 export const getMyReviews = asyncHandler(async (req: Request, res: Response) => {
-  const reviews = await reviewsService.getUserReviews(req.user!.id);
-  res.json(ok(reviews));
+  const result = await reviewsService.getUserReviews(req.user!.id, pageLimitQuerySchema.parse(req.query));
+  res.json(ok(result.reviews, { pagination: result.pagination }));
 });
 
 export const getVendorReviews = asyncHandler(async (req: Request, res: Response) => {

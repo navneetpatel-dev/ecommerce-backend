@@ -41,6 +41,9 @@ export const ListAssigneesQuerySchema = z.object({
 });
 
 export const CreateAddressSchema = z.object({
+  /** Who receives the parcel; the account holder's name when left out. */
+  recipientName: z.string().trim().min(1).max(100).optional(),
+  recipientPhone: optionalPhoneSchema.optional(),
   line1: z.string().min(1).max(255),
   line2: z.string().max(255).optional().nullable(),
   city: z.string().min(1).max(100),
