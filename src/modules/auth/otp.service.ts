@@ -5,9 +5,10 @@ import { sequelize } from '@database/models';
 import { OtpCode } from '@database/models/otpCode.model';
 import type { OtpPurpose } from '@database/models/otpCode.model';
 import { USER_STATUS } from '@core/constants/statuses';
-import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
-import { AppError, ValidationError } from '@core/errors';
+import { ERROR_MESSAGES } from '@core/constants/errors';
+import { ValidationError } from '@core/errors';
 import { notificationsService } from '@modules/notifications/notifications.service';
+import { emailVerifyActionUrl } from './emailVerifyLink';
 import { authRepository } from './auth.repository';
 
 export const OTP_CODE_LENGTH = 6;
@@ -71,12 +72,14 @@ export class OtpService {
   }
 
   async requestLoginCode(email: string): Promise<void> {
+    // Same reply whether or not the email has an account, so the form cannot be
+    // used to find out who shops here. An unverified account gets its
+    // verification link instead of a code.
     const user = await authRepository.findByEmail(email);
-    if (!user || user.status === USER_STATUS.BLOCKED) {
-      throw new ValidationError({ email: [ERROR_MESSAGES.OTP_EMAIL_NOT_REGISTERED] });
-    }
+    if (!user || user.status === USER_STATUS.BLOCKED) return;
     if (!user.emailVerified) {
-      throw new AppError(ERROR_MESSAGES.EMAIL_NOT_VERIFIED, 403, ERROR_CODES.EMAIL_NOT_VERIFIED);
+      await notificationsService.sendEmailVerification(user.id, { actionUrl: emailVerifyActionUrl(user.id) });
+      return;
     }
 
     const otp = await sequelize.transaction((transaction) =>

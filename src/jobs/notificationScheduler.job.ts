@@ -1,17 +1,16 @@
-import { Op, Sequelize } from 'sequelize';
+import { Op } from 'sequelize';
 import { env } from '@config/env';
 import { logger } from '@core/logger';
 import { Cart } from '@database/models/cart.model';
 import { CartItem } from '@database/models/cartItem.model';
-import { ProductVariant } from '@database/models/productVariant.model';
 import { Product } from '@database/models/product.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { Order } from '@database/models/order.model';
-import { User } from '@database/models/user.model';
 import { Wishlist } from '@database/models/wishlist.model';
 import { WishlistItem } from '@database/models/wishlistItem.model';
 import { ORDER_STATUS } from '@core/constants/statuses';
 import { notificationsService } from '@modules/notifications/notifications.service';
+import { processLowStock } from './lowStockDigest';
 
 const SCHEDULER_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -39,32 +38,6 @@ async function processAbandonedCarts(): Promise<number> {
   return sent;
 }
 
-async function processLowStock(): Promise<number> {
-  const variants = await ProductVariant.findAll({
-    where: Sequelize.where(Sequelize.col('stock'), Op.lte, Sequelize.col('lowStockAt')),
-    include: [{ model: Product, as: 'product', required: true }],
-    limit: 100,
-  });
-
-  let sent = 0;
-  for (const variant of variants) {
-    const product = (variant as ProductVariant & { product?: Product }).product;
-    if (!product?.vendorId) continue;
-    const owner = await User.findOne({
-      where: { vendorId: product.vendorId },
-      attributes: ['id'],
-    });
-    if (!owner) continue;
-    const log = await notificationsService.sendLowStockAlert(owner.id, variant.id, {
-      productName: product.name,
-      sku: variant.sku,
-      stock: Number(variant.stock ?? 0),
-    });
-    if (log) sent += 1;
-  }
-  return sent;
-}
-
 async function processReviewRequests(): Promise<number> {
   const delayMs = env.REVIEW_REQUEST_DELAY_DAYS * 24 * 60 * 60 * 1000;
   const windowEnd = new Date(Date.now() - delayMs);
@@ -79,11 +52,16 @@ async function processReviewRequests(): Promise<number> {
     limit: 100,
   });
 
-  let sent = 0;
+  // One email per order, not one per seller part (one shopper got four in nine
+  // seconds); the sender also caps it at one per shopper per day.
+  const orders = new Map<string, Order>();
   for (const sub of suborders) {
     const order = (sub as SubOrder & { order?: Order }).order;
-    if (!order?.userId) continue;
-    const log = await notificationsService.sendReviewRequest(order.userId, sub.id, {
+    if (order?.userId) orders.set(order.id, order);
+  }
+  let sent = 0;
+  for (const order of orders.values()) {
+    const log = await notificationsService.sendReviewRequest(order.userId, order.id, {
       orderId: order.id,
       orderNumber: order.id.slice(0, 8).toUpperCase(),
     });

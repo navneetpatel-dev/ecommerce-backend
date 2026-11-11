@@ -376,6 +376,7 @@ module.exports = {
     const coupons = [];
     const couponCodes = ['WELCOME10', 'SAVE20', 'SUMMER25', 'FLASH50', 'FIRST100', 'LOYALTY15', 'MEGA30', 'CLEAR40', 'VIP25', 'SPECIAL35', 'NEWUSER20', 'RETURN10', 'BULK15', 'HOLIDAY50', 'WEEKEND20', 'FLASH30', 'SUPER25', 'DEAL40', 'PROMO15', 'EXTRA10', 'LAUNCH50', 'REPUBLIC25', 'DIWALI50', 'NOVEMBER30', 'YEAREND40'];
     const couponTypes = ['PERCENTAGE', 'FLAT', 'FREE_SHIPPING'];
+    const FIRST_ORDER_CODES = new Set(['FIRST100', 'NEWUSER20', 'WELCOME10']);
     for (let i = 0; i < 25; i++) {
       const type = couponTypes[i % 3];
       const startDate = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000);
@@ -388,8 +389,10 @@ module.exports = {
         minOrderValue: randomInt(50, 500), minQuantity: null,
         applicableScope: JSON.stringify({ type: 'all', ids: [] }),
         excludedItems: JSON.stringify({ productIds: [], categoryIds: [] }),
-        userRestriction: JSON.stringify({ type: 'all' }),
-        usageLimitTotal: randomInt(100, 2000), usageLimitPerUser: randomInt(1, 5),
+        // Codes named for a first order are first-order only, once per shopper.
+        userRestriction: JSON.stringify({ type: FIRST_ORDER_CODES.has(couponCodes[i]) ? 'firstOrder' : 'all' }),
+        usageLimitTotal: randomInt(100, 2000),
+        usageLimitPerUser: FIRST_ORDER_CODES.has(couponCodes[i]) ? 1 : randomInt(1, 5),
         usedCount: randomInt(0, 80), startDate, endDate, stackable: i % 4 === 0, priority: randomInt(0, 10),
         status, createdById: adminIds[0], vendorId: null, createdAt: now, updatedAt: now,
       });

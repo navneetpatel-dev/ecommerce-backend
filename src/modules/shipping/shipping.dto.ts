@@ -63,9 +63,7 @@ export const CreateRateSchema = z.object({
 
 export const UpdateRateSchema = CreateRateSchema.partial();
 
-export const RescheduleDeliverySchema = z.object({
-  slot: z.string().trim().min(3).max(64),
-});
+export { RescheduleDeliverySchema } from './redeliverySlot';
 
 /** Statuses an admin can move a shipment to by hand (`adminShipmentStatusService.updateStatus`). */
 export const ADMIN_SHIPMENT_STATUSES = [
@@ -97,5 +95,5 @@ export type UpdateZoneRequest = z.infer<typeof UpdateZoneSchema>;
 export type CreateRateRequest = z.infer<typeof CreateRateSchema>;
 export type UpdateRateRequest = z.infer<typeof UpdateRateSchema>;
 export type WebhookPayload = z.infer<typeof WebhookPayloadSchema>;
-export type RescheduleDeliveryRequest = z.infer<typeof RescheduleDeliverySchema>;
+export type { RescheduleDeliveryRequest } from './redeliverySlot';
 export type AdminShipmentStatusRequest = z.infer<typeof AdminShipmentStatusSchema>;

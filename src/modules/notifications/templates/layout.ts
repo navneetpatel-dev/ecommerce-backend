@@ -16,6 +16,8 @@ export function renderEmailLayout(params: {
   ctaLabel?: string;
   ctaUrl?: string;
   footerNote?: string;
+  /** A link under the footer note (the unsubscribe link on marketing mail). */
+  footerLink?: { label: string; url: string };
 }): { html: string; text: string } {
   const brand = escapeHtml(EMAIL_COPY.brandName);
   const preview = escapeHtml(params.preview);
@@ -24,7 +26,10 @@ export function renderEmailLayout(params: {
     params.ctaLabel && params.ctaUrl
       ? `<p style="margin:24px 0"><a href="${escapeHtml(params.ctaUrl)}" style="background:#111;color:#fff;padding:12px 18px;text-decoration:none;border-radius:4px;display:inline-block">${escapeHtml(params.ctaLabel)}</a></p>`
       : '';
-  const footer = escapeHtml(params.footerNote ?? EMAIL_COPY.footerHelp);
+  const footerLink = params.footerLink
+    ? ` <a href="${escapeHtml(params.footerLink.url)}" style="color:#52525b">${escapeHtml(params.footerLink.label)}</a>`
+    : '';
+  const footer = escapeHtml(params.footerNote ?? EMAIL_COPY.footerHelp) + footerLink;
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -57,6 +62,7 @@ export function renderEmailLayout(params: {
     params.preview,
     params.ctaUrl ? `${params.ctaLabel ?? ''}: ${params.ctaUrl}` : '',
     params.footerNote ?? EMAIL_COPY.footerHelp,
+    params.footerLink ? `${params.footerLink.label}: ${params.footerLink.url}` : '',
   ].filter(Boolean);
 
   return { html, text: textParts.join('\n\n') };

@@ -28,7 +28,8 @@ export const TICKET_ALLOWED_TRANSITIONS: Record<SupportTicketStatus, SupportTick
     SUPPORT_TICKET_STATUS.RESOLVED,
     SUPPORT_TICKET_STATUS.CLOSED,
   ],
-  [SUPPORT_TICKET_STATUS.CLOSED]: [],
+  // A shopper who closed a ticket by mistake can reopen it within the reopen window.
+  [SUPPORT_TICKET_STATUS.CLOSED]: [SUPPORT_TICKET_STATUS.REOPENED],
 };
 
 export function canTransitionTicketStatus(

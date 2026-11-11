@@ -376,12 +376,13 @@ export class NotificationsService {
     });
   }
 
-  sendReviewRequest(userId: string, subOrderId: string, templateData: EmailTemplateData = {}) {
+  /** At most one review request per shopper per day, covering one order (not one per seller part). */
+  sendReviewRequest(userId: string, _orderId: string, templateData: EmailTemplateData = {}) {
     return this.enqueue({
       userId,
       type: 'REVIEW_REQUEST',
-      referenceType: 'SubOrder',
-      referenceId: subOrderId,
+      referenceType: 'ReviewRequestDay',
+      referenceId: `${userId}:${todayBucket()}`,
       templateData,
       urgency: 'marketing',
     });
@@ -544,12 +545,13 @@ export class NotificationsService {
     });
   }
 
-  sendLowStockAlert(userId: string, variantId: string, templateData: EmailTemplateData = {}) {
+  /** One digest per seller per day (see jobs/lowStockDigest). */
+  sendLowStockAlert(userId: string, vendorId: string, templateData: EmailTemplateData = {}) {
     return this.enqueue({
       userId,
       type: 'LOW_STOCK_ALERT',
-      referenceType: 'ProductVariant',
-      referenceId: `${variantId}:${todayBucket()}`,
+      referenceType: 'Vendor',
+      referenceId: `low-stock:${vendorId}:${todayBucket()}`,
       templateData,
     });
   }

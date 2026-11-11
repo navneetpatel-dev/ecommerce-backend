@@ -5,10 +5,12 @@ import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { pageLimitQuerySchema } from '@core/http/pagination';
 import { productQnaService } from './productQna.service';
+import { assertNotDuplicateSubmission } from '@core/http/duplicateSubmitGuard';
 import { AskQuestionSchema, AnswerQuestionSchema, ModerateQuestionSchema } from './productQna.dto';
 
 export const ask = asyncHandler(async (req: Request, res: Response) => {
   const dto = AskQuestionSchema.parse(req.body);
+  await assertNotDuplicateSubmission('question', req.user!.id, dto);
   const question = await productQnaService.askQuestion(req.user!.id, dto);
   res.status(201).json(ok(question));
 });

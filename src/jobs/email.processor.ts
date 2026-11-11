@@ -6,6 +6,7 @@ import { logger } from '@core/logger';
 import { env } from '@config/env';
 import { getQueueConnection } from '@config/queue';
 import { sendEmail } from '@config/mail';
+import { unsubscribeHeaders, unsubscribeLinks } from '@modules/notifications/unsubscribe';
 import { EMAIL_JOB_NAME, type EmailJobPayload } from '@modules/notifications/notifications.service';
 import {
   isMarketingNotification,
@@ -63,10 +64,13 @@ async function processEmailJob(job: Job<EmailJobPayload>): Promise<void> {
   }
 
   try {
+    // Marketing mail carries a one-click unsubscribe: a footer link and the List-Unsubscribe headers.
+    const unsubscribe = marketing ? unsubscribeLinks(user.id) : null;
     const rendered = renderNotificationEmail(type, {
       ...templateData,
       customerName: templateData.customerName ?? user.name,
       name: templateData.name ?? user.name,
+      ...(unsubscribe ? { unsubscribeUrl: unsubscribe.pageUrl } : {}),
     });
 
     const result = await sendEmail({
@@ -74,6 +78,7 @@ async function processEmailJob(job: Job<EmailJobPayload>): Promise<void> {
       subject: rendered.subject,
       html: rendered.html,
       text: rendered.text,
+      ...(unsubscribe ? { headers: unsubscribeHeaders(unsubscribe.oneClickUrl) } : {}),
     });
 
     await log.update({

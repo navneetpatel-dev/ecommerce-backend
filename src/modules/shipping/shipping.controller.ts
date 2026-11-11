@@ -5,6 +5,7 @@ import { pageLimitQuerySchema } from '@core/http/pagination';
 import { COOKIES } from '@core/constants/http';
 import { shippingService } from './shipping.service';
 import { adminShipmentStatusService } from './adminShipmentStatus.service';
+import { RescheduleDeliverySchema, resolveRedeliverySlot } from './redeliverySlot';
 import { GetShippingRatesSchema, GetServiceabilitySchema, UpdateRateSchema } from './shipping.dto';
 
 export const getRates = asyncHandler(async (req: Request, res: Response) => {
@@ -26,7 +27,8 @@ export const getShipmentByTracking = asyncHandler(async (req: Request, res: Resp
 });
 
 export const rescheduleDelivery = asyncHandler(async (req: Request, res: Response) => {
-  const shipment = await shippingService.rescheduleDelivery(req.params.trackingNumber!, req.user!.id, req.body.slot);
+  const slot = resolveRedeliverySlot(RescheduleDeliverySchema.parse(req.body));
+  const shipment = await shippingService.rescheduleDelivery(req.params.trackingNumber!, req.user!.id, slot);
   res.json(ok(shipment));
 });
 

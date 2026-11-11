@@ -3,6 +3,7 @@ import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { keysetQuerySchema } from '@core/http/keysetPagination';
 import { supportTicketsService } from './supportTickets.service';
+import { assertNotDuplicateSubmission } from '@core/http/duplicateSubmitGuard';
 import { AdminTicketListQuerySchema, CustomerTicketListQuerySchema, VendorTicketListQuerySchema } from './supportTickets.dto';
 
 function actorFromReq(req: Request) {
@@ -15,6 +16,7 @@ function actorFromReq(req: Request) {
 }
 
 export const create = asyncHandler(async (req: Request, res: Response) => {
+  await assertNotDuplicateSubmission('ticket', req.user!.id, req.body);
   const created = await supportTicketsService.create(actorFromReq(req), req.body);
   res.status(201).json(ok(created));
 });

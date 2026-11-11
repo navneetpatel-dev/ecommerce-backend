@@ -156,7 +156,7 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
 
 export const requestOtp = asyncHandler(async (req: Request, res: Response) => {
   await authService.requestLoginOtp(req.body.email);
-  res.status(200).json(ok({ message: 'A sign-in code has been sent to your email' }));
+  res.status(200).json(ok({ message: 'If an account uses this email, a sign-in code is on its way.' }));
 });
 
 export const verifyOtp = asyncHandler(async (req: Request, res: Response) => {

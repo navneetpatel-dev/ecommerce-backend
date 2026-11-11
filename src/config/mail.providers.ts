@@ -43,6 +43,7 @@ export function createConsoleMailProvider(): MailProvider {
         to: message.to,
         subject: message.subject,
         textPreview: message.text.slice(0, 240),
+        headers: message.headers ? Object.keys(message.headers) : undefined,
         attachments: message.attachments?.map((a) => ({
           filename: a.filename,
           bytes: a.content.length,
@@ -66,7 +67,8 @@ export function createSesMailProvider(): MailProvider {
         throw new Error('SES mail provider is not configured (set AWS keys or AWS_USE_DEFAULT_CREDENTIALS=true)');
       }
 
-      if (message.attachments?.length) {
+      // Attachments and custom headers need the raw-MIME path; SendEmail cannot carry them.
+      if (message.attachments?.length || message.headers) {
         const transporter = nodemailer.createTransport({ streamTransport: true, newline: 'unix' });
         const info = await transporter.sendMail({
           from: formatMailFrom(message),
@@ -75,7 +77,8 @@ export function createSesMailProvider(): MailProvider {
           text: message.text,
           html: message.html,
           ...(message.replyTo ? { replyTo: message.replyTo } : {}),
-          attachments: message.attachments.map((a) => ({
+          ...(message.headers ? { headers: message.headers } : {}),
+          attachments: (message.attachments ?? []).map((a) => ({
             filename: a.filename,
             content: a.content,
             contentType: a.contentType,
@@ -149,6 +152,7 @@ export function createSmtpMailProvider(): MailProvider {
         text: message.text,
         html: message.html,
         ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+        ...(message.headers ? { headers: message.headers } : {}),
         ...(message.attachments?.length
           ? {
               attachments: message.attachments.map((a) => ({

@@ -113,36 +113,27 @@ export class ReviewsService {
         transaction: t,
         lock: t.LOCK.UPDATE,
       });
-      if (!review) throw new NotFoundError('Review');
+      // Only published reviews can be voted on; a pending one does not exist for shoppers.
+      if (!review || review.status !== REVIEW_STATUS.APPROVED) throw new NotFoundError('Review');
+      if (review.userId === userId) {
+        throw new ForbiddenError(ERROR_MESSAGES.REVIEW_VOTE_OWN);
+      }
 
-      // Upsert vote
       const [reviewVote, created] = await ReviewVote.findOrCreate({
         where: { reviewId, userId },
         defaults: { reviewId, userId, vote },
         transaction: t,
       });
+      // Read the old vote before changing it: comparing after the update made a
+      // switch decrement the old counter but never increment the new one.
+      const previous = created ? null : reviewVote.vote;
+      if (previous === vote) return review.reload({ transaction: t });
 
-      if (!created && reviewVote.vote !== vote) {
-        // Change vote
-        const oldVote = reviewVote.vote;
+      if (previous) {
         await reviewVote.update({ vote }, { transaction: t });
-
-        // Update counters
-        if (oldVote === 'HELPFUL') {
-          await review.decrement('helpfulCount', { transaction: t });
-        } else {
-          await review.decrement('unhelpfulCount', { transaction: t });
-        }
+        await review.decrement(previous === 'HELPFUL' ? 'helpfulCount' : 'unhelpfulCount', { transaction: t });
       }
-
-      if (created || reviewVote.vote !== vote) {
-        // Increment new vote counter
-        if (vote === 'HELPFUL') {
-          await review.increment('helpfulCount', { transaction: t });
-        } else {
-          await review.increment('unhelpfulCount', { transaction: t });
-        }
-      }
+      await review.increment(vote === 'HELPFUL' ? 'helpfulCount' : 'unhelpfulCount', { transaction: t });
 
       return review.reload({ transaction: t });
     });
