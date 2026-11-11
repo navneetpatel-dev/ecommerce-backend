@@ -36,7 +36,7 @@ export class VendorsRepository extends BaseRepository<Vendor> {
       where,
       limit: filters.limit,
       offset: filters.offset,
-      order: [['createdAt', 'DESC']],
+      order: [['createdAt', 'DESC'], ['id', 'ASC']],
     });
   }
 

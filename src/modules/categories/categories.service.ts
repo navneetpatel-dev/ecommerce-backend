@@ -241,10 +241,7 @@ export class CategoriesService {
           required: false,
         },
       ],
-      order: [
-        ['displayOrder', 'ASC'],
-        ['name', 'ASC'],
-      ],
+      order: [['displayOrder', 'ASC'], ['name', 'ASC'], ['id', 'ASC']],
       limit: query.limit,
       offset,
       distinct: true,

@@ -218,7 +218,7 @@ export class SearchRepository {
         AND (:vendorId::uuid IS NULL OR p."vendorId" = :vendorId::uuid)
         AND (:minPrice::numeric IS NULL OR ${displayPriceSql} >= :minPrice::numeric)
         AND (:maxPrice::numeric IS NULL OR ${displayPriceSql} <= :maxPrice::numeric)
-      ORDER BY rank DESC, p.name ASC
+      ORDER BY rank DESC, p.name ASC, p.id ASC
       LIMIT :limit OFFSET :offset
       `,
       {
@@ -310,7 +310,7 @@ export class SearchRepository {
           )
           OR ${skuMatchExists}
         )
-      ORDER BY match_tier ASC, score DESC, char_length(p.name) ASC, p.name ASC
+      ORDER BY match_tier ASC, score DESC, char_length(p.name) ASC, p.name ASC, p.id ASC
       LIMIT :limit
       `,
       {
@@ -376,7 +376,7 @@ export class SearchRepository {
             AND v."businessName" % :term
           )
         )
-      ORDER BY match_tier ASC, score DESC, char_length(v."businessName") ASC, v."businessName" ASC
+      ORDER BY match_tier ASC, score DESC, char_length(v."businessName") ASC, v."businessName" ASC, v.id ASC
       LIMIT :limit
       `,
       {
@@ -465,7 +465,7 @@ export class SearchRepository {
             AND ct.name % :term
           )
         )
-      ORDER BY match_tier ASC, score DESC, char_length(ct.name) ASC, ct.name ASC
+      ORDER BY match_tier ASC, score DESC, char_length(ct.name) ASC, ct.name ASC, ct.id ASC
       LIMIT :limit
       `,
       {
