@@ -12,6 +12,8 @@ import {
   BUG_ATTACHMENT_TYPE,
   TICKET_ATTACHMENT_TYPE,
 } from '@core/constants/statuses';
+import { assertAttachmentsUploaded } from '@core/s3/ownStorageUrl';
+import { S3_ENTITY_TYPES, S3_PURPOSES, type S3EntityType } from '@core/s3/constants';
 import {
   BUG_MAX_RECORDING_SECONDS,
   MAX_VIDEO_BYTES,
@@ -158,7 +160,11 @@ async function downloadObjectBuffer(key: string, maxBytes: number): Promise<Buff
 export async function assertRemoteVideoBackstop(
   attachments: Array<TicketAttachmentInput | BugAttachmentInput>,
   kind: 'ticket' | 'bug',
+  /** The storage folder the files must come from (reviews use ticket limits but their own folder). */
+  uploadedFor: S3EntityType = kind === 'ticket' ? S3_ENTITY_TYPES.TICKETS : S3_ENTITY_TYPES.BUG_REPORTS,
 ): Promise<void> {
+  // Only files uploaded for this kind of record: never another site's link or another folder's file.
+  assertAttachmentsUploaded(attachments, uploadedFor, S3_PURPOSES.ATTACHMENTS);
   const videoTypes =
     kind === 'ticket'
       ? new Set<string>([TICKET_ATTACHMENT_TYPE.VIDEO])

@@ -150,6 +150,7 @@ export const ERROR_MESSAGES = {
   ORDER_USE_CHECKOUT: 'Complete checkout to place your order',
   REVIEW_ITEM_NOT_DELIVERED: 'Item must be delivered before you can review it',
   REVIEW_ALREADY_EXISTS: 'You have already reviewed this item',
+  REVIEW_PRODUCT_MISMATCH: 'This order item is not this product, so it cannot be reviewed here',
   WISHLIST_ALREADY_HAS_PRODUCT: 'Product is already in your wishlist',
   WISHLIST_NO_VARIANTS: 'This product has no variants to save',
   CHECKOUT_PAID_CANNOT_CANCEL: 'Paid orders cannot be cancelled from checkout',

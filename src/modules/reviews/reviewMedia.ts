@@ -39,7 +39,7 @@ export async function resolveReviewMedia(
   }
 
   assertAttachmentLimits(attachments, 'ticket');
-  await assertRemoteVideoBackstop(attachments, 'ticket');
+  await assertRemoteVideoBackstop(attachments, 'ticket', S3_ENTITY_TYPES.REVIEWS);
   return attachments.map((attachment) => ({
     url: attachment.url,
     type: attachment.type,

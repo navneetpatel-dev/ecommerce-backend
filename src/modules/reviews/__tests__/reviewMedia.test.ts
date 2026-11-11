@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it, mock } from 'node:test';
 import { env } from '@config/env';
+import { publicObjectUrl } from '@config/s3';
 import { sequelize } from '@database/models';
 import { AppError } from '@core/errors/AppError';
 import { ERROR_CODES } from '@core/constants/errors';
@@ -8,8 +9,9 @@ import { resolveReviewMedia } from '../reviewMedia';
 
 const DRAFT = '0b8f8e3e-3c55-4b52-9d65-1f3c2a6b7d10';
 const OTHER = '6d1b7c39-1d2a-4c0e-8f7a-2b9e5d4c3a21';
+// Built the way the app builds them: on this store's own bucket.
 const url = (entityId: string, file: string, entity = 'reviews') =>
-  `https://shop-media.s3.ap-south-1.amazonaws.com/${env.NODE_ENV}/${entity}/${entityId}/attachments/${file}`;
+  publicObjectUrl(`${env.NODE_ENV}/${entity}/${entityId}/attachments/${file}`);
 
 function draftOwnedBy(userId: string | null) {
   mock.method(sequelize, 'query', async () => (userId ? [{ userId }] : []) as never);

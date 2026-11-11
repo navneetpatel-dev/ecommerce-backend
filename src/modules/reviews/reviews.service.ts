@@ -37,11 +37,10 @@ export class ReviewsService {
     return sequelize.transaction(async (t) => {
       // Verify purchase
       const orderItemResult = await OrderItem.findByPk(data.orderItemId, {
-        include: [{
-          model: SubOrder,
-          as: 'subOrder',
-          include: ['order'],
-        }],
+        include: [
+          { model: SubOrder, as: 'subOrder', include: ['order'] },
+          { association: 'variant', attributes: ['id', 'productId'], paranoid: false },
+        ],
         transaction: t,
       });
 
@@ -55,6 +54,11 @@ export class ReviewsService {
       }
       if (orderItem.subOrder.status !== ORDER_STATUS.DELIVERED) {
         throw new ForbiddenError(ERROR_MESSAGES.REVIEW_ITEM_NOT_DELIVERED);
+      }
+      // The review lands on the product that was bought, never another one.
+      const boughtProductId = (orderItem as OrderItem & { variant?: { productId?: string } }).variant?.productId;
+      if (!boughtProductId || boughtProductId !== data.productId) {
+        throw new ValidationError({ productId: [ERROR_MESSAGES.REVIEW_PRODUCT_MISMATCH] });
       }
 
       // Check if already reviewed

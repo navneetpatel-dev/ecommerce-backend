@@ -1,0 +1,41 @@
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+import { QueryTypes } from 'sequelize';
+import { sequelize } from '@database/models';
+import { reviewsService } from '../reviews.service';
+
+describe('purchase reviews stay on the product bought (B-40)', () => {
+  it('refuses an order item from one product with the id of another', async (t) => {
+    try {
+      await sequelize.authenticate();
+    } catch {
+      return t.skip('database unavailable');
+    }
+    // A delivered, not yet reviewed line, and some other product.
+    const [line] = await sequelize.query<{ orderItemId: string; userId: string; productId: string }>(
+      `SELECT oi.id AS "orderItemId", o."userId", pv."productId"
+       FROM order_items oi
+       JOIN sub_orders so ON so.id = oi."subOrderId" AND so.status = 'DELIVERED'
+       JOIN orders o ON o.id = so."orderId"
+       JOIN product_variants pv ON pv.id = oi."variantId"
+       WHERE NOT EXISTS (SELECT 1 FROM reviews r WHERE r."orderItemId" = oi.id)
+       LIMIT 1`,
+      { type: QueryTypes.SELECT },
+    );
+    if (!line) return t.skip('no delivered, unreviewed order line');
+    const [other] = await sequelize.query<{ id: string }>(
+      `SELECT id FROM products WHERE id <> :id LIMIT 1`,
+      { type: QueryTypes.SELECT, replacements: { id: line.productId } },
+    );
+    await assert.rejects(
+      reviewsService.createReview(line.userId, {
+        orderItemId: line.orderItemId,
+        productId: other.id,
+        rating: 5,
+        body: 'Great product, would buy again.',
+      } as never),
+      (err: { statusCode?: number; validationDetails?: { fieldErrors: Record<string, string[]> } }) =>
+        err.statusCode === 422 && Boolean(err.validationDetails?.fieldErrors.productId?.length),
+    );
+  });
+});

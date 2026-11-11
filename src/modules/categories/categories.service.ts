@@ -19,6 +19,7 @@ import type {
   UpdateCategoryAttributeRequest,
   UpdateCategoryRequest,
 } from './categories.dto';
+import { facetOptionValues } from './facetOptions';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 
 const MAX_CATEGORY_DEPTH = 3;
@@ -523,10 +524,7 @@ export class CategoriesService {
     const facets = [];
     for (const attr of attributes) {
       const filterKey = attributeFilterKey(attr.name);
-      const optionValues =
-        attr.type === 'BOOLEAN'
-          ? ['true', 'false']
-          : (attr.options ?? []).map((opt) => String(opt));
+      const optionValues = facetOptionValues(attr);
 
       const options = [];
       for (const value of optionValues) {

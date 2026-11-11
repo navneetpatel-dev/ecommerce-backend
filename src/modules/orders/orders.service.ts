@@ -14,6 +14,7 @@ import { ShipmentAttempt } from '@database/models/shipmentAttempt.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { Product } from '@database/models/product.model';
 import { mapOrderResponse } from './orderDisplayMappers';
+import { withoutSellerFigures } from './sellerFigures';
 import { cancelPaidOrder } from './ordersCancel.service';
 import type { CreateOrderRequest, GetOrdersQuery } from './orders.dto';
 import { ReturnRequest } from '@database/models/returnRequest.model';
@@ -106,7 +107,10 @@ export class OrdersService {
     });
 
     return {
-      orders: rows.map((row) => mapOrderResponse(row as unknown as Record<string, unknown>)),
+      orders: rows.map((row) => {
+        const mapped = mapOrderResponse(row as unknown as Record<string, unknown>);
+        return userId ? withoutSellerFigures(mapped) : mapped;
+      }),
       pagination: buildPaginationMeta(count, query.page, query.limit),
     };
   }
@@ -132,7 +136,7 @@ export class OrdersService {
       ((order as unknown as { subOrders?: unknown[] }).subOrders ?? []) as Parameters<typeof returnableOrderItemIds>[0],
       linesWithReturns,
     );
-    return {
+    const detail = {
       ...mapped,
       subOrders: mapped.subOrders.map((part) => ({
         ...part,
@@ -144,6 +148,8 @@ export class OrdersService {
       })),
       ...summary,
     };
+    // A shopper reading their own order never sees the seller's figures.
+    return userId ? withoutSellerFigures(detail) : detail;
   }
 
   async cancelPaidOrder(orderId: string, userId: string, isAdmin: boolean) {

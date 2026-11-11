@@ -7,7 +7,7 @@ import { PLATFORM_VENDOR_ID, gstInclusiveLinePaise } from './vendorPricingPlan';
 /**
  * Coupon lines at the prices the customer sees (GST included): each piece's price with
  * GST, and each line valued exactly as the bill shows it (`lineAmountPaise`: the engine's
- * per-line GST, aligned to unit × quantity), so a coupon's minimum order value and a
+ * per-line amount with GST, as charged), so a coupon's minimum order value and a
  * free-shipping threshold agree with the displayed items total to the paisa. `shippingStateCode` decides CGST+SGST vs
  * IGST as the bill does ('' when there is no address: the seller's own state).
  */
@@ -41,7 +41,7 @@ export async function withGstInclusiveLineValues<T extends CartLineForCoupon>(
     });
   }
 
-  // The line is unit × quantity to the paisa, so its unit is exact.
+  // Coupon maths reads lineAmountPaise; the unit is the line shared over its pieces.
   return lines.map((line, index) => ({
     ...line,
     unitPrice: fromPaise(lineAmountPaise[index]! / Math.max(1, Math.trunc(line.quantity) || 1)),

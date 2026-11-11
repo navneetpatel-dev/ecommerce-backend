@@ -29,8 +29,10 @@ export class OrdersRepository extends BaseRepository<Order> {
     if (filters.search?.trim()) {
       const q = `%${filters.search.trim()}%`;
       (where as any)[Op.and] = [
+        // EXISTS on users, not the "user" join: with a limit and the sub-orders
+        // include, Order is read in a subquery that does not have that join.
         sequelize.literal(
-          `("Order"."id"::text ILIKE ${sequelize.escape(q)} OR "user"."name" ILIKE ${sequelize.escape(q)} OR "user"."email" ILIKE ${sequelize.escape(q)})`,
+          `("Order"."id"::text ILIKE ${sequelize.escape(q)} OR EXISTS (SELECT 1 FROM users u WHERE u.id = "Order"."userId" AND (u.name ILIKE ${sequelize.escape(q)} OR u.email ILIKE ${sequelize.escape(q)})))`,
         ),
       ];
     }

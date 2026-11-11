@@ -32,6 +32,7 @@ import { PERMISSIONS, type PermissionKey } from '@core/permissions/permissionKey
 import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { ValidationError } from '@core/errors/ValidationError';
 import { logAudit } from '@modules/audit/audit.service';
+import { AVATAR_URL_NOT_OURS, isOwnAvatarUrl } from './avatarUrl';
 import type {
   UpdateUserProfileRequest,
   UpdateUserStatusRequest,
@@ -211,6 +212,9 @@ export class UsersService {
         patch.emailMarketingConsent = data.emailMarketingConsent;
       }
       if (data.avatarUrl !== undefined) {
+        if (data.avatarUrl !== null && !isOwnAvatarUrl(data.avatarUrl, userId)) {
+          throw new ValidationError({ avatarUrl: [AVATAR_URL_NOT_OURS] });
+        }
         patch.avatarUrl = data.avatarUrl;
       }
 
