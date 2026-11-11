@@ -100,13 +100,19 @@ function buildListWhere(filters: ProductListFilters) {
   return where;
 }
 
-function buildListOrder(sort?: string) {
+/**
+ * Every sort ends on the primary key. Rows that tie on the sort columns (same rating,
+ * same createdAt, same price) otherwise come back in a different order per OFFSET
+ * query, so pages overlap and some products never appear.
+ */
+export function buildListOrder(sort?: string): Array<[unknown, 'ASC' | 'DESC']> {
+  const tiebreak: [string, 'ASC'] = ['id', 'ASC'];
   if (sort === 'trending' || sort === 'popular' || sort === 'rating') {
-    return [['avgRating', 'DESC'], ['createdAt', 'DESC']];
+    return [['avgRating', 'DESC'], ['createdAt', 'DESC'], tiebreak];
   }
-  if (sort === 'price_asc') return [[displayPriceColumn, 'ASC']];
-  if (sort === 'price_desc') return [[displayPriceColumn, 'DESC']];
-  return [['createdAt', 'DESC']];
+  if (sort === 'price_asc') return [[displayPriceColumn, 'ASC'], tiebreak];
+  if (sort === 'price_desc') return [[displayPriceColumn, 'DESC'], tiebreak];
+  return [['createdAt', 'DESC'], tiebreak];
 }
 
 export class ProductsRepository extends BaseRepository<Product> {

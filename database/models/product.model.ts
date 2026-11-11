@@ -59,11 +59,11 @@ export class Product extends Model<InferAttributes<Product>, InferCreationAttrib
       where: {
         status: PRODUCT_STATUS.LIVE,
         name: { [Op.notILike]: 'Seed %' },
-        [Op.and]: [
-          Sequelize.literal(
-            `"Product"."categoryId" IN (SELECT id FROM categories WHERE status = 'ACTIVE' AND "deletedAt" IS NULL)`,
-          ),
-        ],
+        // A column condition, not raw SQL on "Product": Sequelize qualifies it with
+        // whatever alias the query uses (reviews include products as "product").
+        categoryId: {
+          [Op.in]: Sequelize.literal(`(SELECT id FROM categories WHERE status = 'ACTIVE' AND "deletedAt" IS NULL)`),
+        },
       },
       include: [
         {
