@@ -2,7 +2,7 @@ import { User } from '@database/models/user.model';
 import { Role } from '@database/models/role.model';
 import { Order } from '@database/models/order.model';
 import { SubOrder } from '@database/models/subOrder.model';
-import { ROLES } from '@core/constants/statuses';
+import { PAYMENT_STATUS, ROLES } from '@core/constants/statuses';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { logger } from '@core/logger';
 
@@ -75,11 +75,15 @@ export async function notifyOrderConfirmed(orderId: string): Promise<void> {
       orderNumber,
       total,
     });
-    await notificationsService.sendPaymentReceipt(order.userId, order.id, {
-      orderId: order.id,
-      orderNumber,
-      total,
-    });
+    // A receipt says money was received, so only for orders that are paid (online
+    // or wallet). Cash on delivery has taken nothing yet.
+    if (order.paymentStatus === PAYMENT_STATUS.PAID) {
+      await notificationsService.sendPaymentReceipt(order.userId, order.id, {
+        orderId: order.id,
+        orderNumber,
+        total,
+      });
+    }
 
     const subOrders =
       ((order as Order & { subOrders?: SubOrder[] }).subOrders ??

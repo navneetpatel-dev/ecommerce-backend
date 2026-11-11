@@ -81,6 +81,7 @@ import {
 import { isReversedPart } from '@modules/pricing/partReversal';
 import { retryReturnCardRefund, sendReturnCardRefund, type PendingReturnCardRefund } from './returnCardRefund';
 import { serializeReturn } from './returnSerializer';
+import { withoutSellerFigures } from '@modules/orders/sellerFigures';
 import { isWithinReturnWindow, returnWindowFor } from './returnWindow';
 import {
   getCreditNotePdfForActor,
@@ -513,7 +514,7 @@ export class ReturnsService {
     if (!row) throw new NotFoundError('ReturnRequest');
 
     if (row.userId === requester.id) {
-      return serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }, slaDays);
+      return withoutSellerFigures(serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }, slaDays));
     }
 
     const subOrder = (row as ReturnRequest & { subOrder?: { vendorId?: string } }).subOrder;

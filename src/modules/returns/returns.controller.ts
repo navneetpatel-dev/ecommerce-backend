@@ -6,15 +6,16 @@ import { sendPdfDownload } from '@core/http/sendDownload';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { returnsService } from './returns.service';
+import { withoutSellerFigures } from '@modules/orders/sellerFigures';
 
 export const create = asyncHandler(async (req: Request, res: Response) => {
   const created = await returnsService.create(req.user!.id, req.body);
-  res.status(201).json(ok(created));
+  res.status(201).json(ok(withoutSellerFigures(created)));
 });
 
 export const list = asyncHandler(async (req: Request, res: Response) => {
   const items = await returnsService.listForUser(req.user!.id);
-  res.json(ok(items));
+  res.json(ok(withoutSellerFigures(items)));
 });
 
 export const listAdmin = asyncHandler(async (req: Request, res: Response) => {

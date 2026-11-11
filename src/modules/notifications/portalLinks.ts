@@ -16,6 +16,36 @@ function groupForRoleName(roleName: string): PortalGroup {
   return 'customer';
 }
 
+/**
+ * Where an email's button leads when the caller passes no link. Every path here is
+ * a real web page (a test checks them against the web routes): the customer order
+ * page is /orders/:id, the seller home is /vendor/dashboard/overview.
+ */
+export function customerOrderUrl(orderId: string): string {
+  const base = clientBase();
+  return orderId ? `${base}/orders/${encodeURIComponent(orderId)}` : `${base}/orders`;
+}
+
+const VENDOR_PAGE_BY_TYPE: Record<string, string> = {
+  VENDOR_NEW_ORDER: 'orders',
+  LOW_STOCK_ALERT: 'products',
+  PRODUCT_APPROVED: 'products',
+  PRODUCT_REJECTED: 'products',
+  PAYOUT_PROCESSED: 'payouts',
+  PAYOUT_PAID: 'payouts',
+  PAYOUT_FAILED: 'payouts',
+  COUPON_USAGE_LIMIT: 'coupons',
+  COUPON_EXPIRING: 'coupons',
+};
+
+export function vendorDashboardUrl(notificationType: string): string {
+  return `${clientBase()}/vendor/dashboard/${VENDOR_PAGE_BY_TYPE[notificationType] ?? 'overview'}`;
+}
+
+export function walletUrl(): string {
+  return `${clientBase()}/wallet`;
+}
+
 /** Reporter-facing bug report URL — vendor dashboard for vendor reporters, support portal otherwise. */
 export function bugReportPortalUrl(bugReportId: string, reporterRole: string): string {
   const base = clientBase();

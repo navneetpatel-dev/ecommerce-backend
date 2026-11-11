@@ -12,12 +12,13 @@ import { AppError, NotFoundError, ValidationError, ForbiddenError } from '@core/
 import { logger } from '@core/logger';
 import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { redisClient, withRedis } from '@config/redis';
-import { EMAIL_VERIFY_EXPIRY, PASSWORD_RESET_EXPIRY, REFRESH_TOKEN_TTL_MS } from '@core/constants/http';
+import { EMAIL_VERIFY_EXPIRY, REFRESH_TOKEN_TTL_MS } from '@core/constants/http';
 import { ADMIN_ROLES, ROLES, USER_STATUS } from '@core/constants/statuses';
 import { ERROR_MESSAGES, ERROR_CODES } from '@core/constants/errors';
 import { roleNameOf } from '@utils/userRole';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { otpService } from './otp.service';
+import { assertResetTokenCurrent, readPasswordResetToken, signPasswordResetToken } from './passwordResetToken';
 import { logAudit } from '@modules/audit/audit.service';
 
 export type SessionDeviceMeta = {
@@ -427,11 +428,7 @@ export class AuthService {
       return;
     }
 
-    const token = jwt.sign(
-      { sub: user.id, purpose: 'password-reset' },
-      env.JWT_SECRET,
-      { expiresIn: PASSWORD_RESET_EXPIRY },
-    );
+    const token = signPasswordResetToken(user);
     const actionUrl = `${env.CLIENT_URL.replace(/\/$/, '')}/reset-password?token=${encodeURIComponent(token)}`;
     void notificationsService.sendPasswordReset(user.id, { actionUrl });
     logger.info('Password reset requested', { email: user.email, role: roleNameOf(user) });
@@ -502,21 +499,12 @@ export class AuthService {
   }
 
   async resetPassword(resetToken: string, newPassword: string) {
-    let decoded: { sub: string; purpose: string };
-    try {
-      decoded = jwt.verify(resetToken, env.JWT_SECRET, { algorithms: ['HS256'] }) as { sub: string; purpose: string };
-    } catch {
-      throw new ValidationError({ token: ['Invalid or expired reset token'] });
-    }
-
-    if (decoded.purpose !== 'password-reset') {
-      throw new ValidationError({ token: ['Invalid token purpose'] });
-    }
-
-    const user = await repo.findById(decoded.sub);
+    const { userId, fingerprint } = readPasswordResetToken(resetToken);
+    const user = await repo.findById(userId);
     if (!user) {
       throw new NotFoundError('User');
     }
+    assertResetTokenCurrent(fingerprint, user.passwordHash);
 
     const passwordHash = await bcrypt.hash(newPassword, 12);
     await repo.update(user.id, { passwordHash } as any);

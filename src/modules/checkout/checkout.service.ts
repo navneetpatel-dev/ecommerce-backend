@@ -179,9 +179,6 @@ export class CheckoutService {
       shippingCost: number;
       tax: { cgst: number; sgst: number; igst: number; total: number };
       discount: number;
-      tcsAmount: number;
-      commissionAmount: number;
-      netPayout: number;
       total: number;
     }>;
     grandTotal: number;
@@ -354,9 +351,7 @@ export class CheckoutService {
         },
         taxDisplayKey: resolveTaxDisplayKey(r.tax),
         discount: combinedDiscount(r.merchandiseDiscount, r.shippingDiscount),
-        tcsAmount: r.tcsAmount,
-        commissionAmount: r.commissionAmount,
-        netPayout: r.netPayout,
+        // Commission, TCS and payout are the seller's figures; the shopper never sees them.
         total: r.customerTotal,
       };
     });

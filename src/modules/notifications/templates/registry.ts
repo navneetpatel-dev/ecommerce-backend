@@ -1,7 +1,7 @@
 import type { NotificationType } from '@database/models/notificationLog.model';
 import { env } from '@config/env';
 import { EMAIL_COPY, formatEmailCopy } from '../emailCopy';
-import { bugReportPortalUrl, ticketPortalUrlForGroup } from '../portalLinks';
+import { bugReportPortalUrl, customerOrderUrl, ticketPortalUrlForGroup, vendorDashboardUrl, walletUrl } from '../portalLinks';
 import { escapeHtml, renderEmailLayout } from './layout';
 
 export type EmailTemplateData = Record<string, unknown>;
@@ -16,6 +16,15 @@ function str(data: EmailTemplateData, key: string, fallback = ''): string {
   const value = data[key];
   if (value == null) return fallback;
   return String(value);
+}
+
+/** Rupee amounts as shoppers read them: Indian grouping, two decimals (3,863.21). */
+function money(data: EmailTemplateData, key: string): string {
+  const raw = data[key];
+  if (raw == null || raw === '') return '';
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return String(raw);
+  return value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function greeting(data: EmailTemplateData): string {
@@ -48,9 +57,10 @@ function bodyFor(type: NotificationType, data: EmailTemplateData): string {
   return formatEmailCopy(template, {
     brand: EMAIL_COPY.brandName,
     orderNumber: str(data, 'orderNumber', str(data, 'orderId')),
-    total: str(data, 'total'),
-    subtotal: str(data, 'subtotal'),
-    amount: str(data, 'amount'),
+    total: money(data, 'total'),
+    subtotal: money(data, 'subtotal'),
+    amount: money(data, 'amount'),
+    expiresInMinutes: str(data, 'expiresInMinutes', '5'),
     paymentMethod: str(data, 'paymentMethod'),
     paymentReferenceNumber: str(data, 'paymentReferenceNumber'),
     status: str(data, 'status'),
@@ -62,7 +72,7 @@ function bodyFor(type: NotificationType, data: EmailTemplateData): string {
     productName: str(data, 'productName'),
     sku: str(data, 'sku'),
     stock: str(data, 'stock'),
-    price: str(data, 'price'),
+    price: money(data, 'price'),
     code: str(data, 'code'),
     usedCount: str(data, 'usedCount'),
     usageLimit: str(data, 'usageLimit'),
@@ -111,17 +121,17 @@ function defaultCta(type: NotificationType, data: EmailTemplateData): { label?: 
     case 'SUBORDER_DELIVERED':
       return {
         label: EMAIL_COPY.ctaViewOrder,
-        url: str(data, 'actionUrl', `${base}/account/orders`),
+        url: str(data, 'actionUrl', customerOrderUrl(str(data, 'orderId'))),
       };
     case 'REVIEW_REQUEST':
       return {
         label: EMAIL_COPY.ctaLeaveReview,
-        url: str(data, 'actionUrl', `${base}/account/orders`),
+        url: str(data, 'actionUrl', customerOrderUrl(str(data, 'orderId'))),
       };
     case 'ABANDONED_CART':
       return { label: EMAIL_COPY.ctaViewCart, url: str(data, 'actionUrl', `${base}/cart`) };
     case 'WALLET_RECHARGE_FAILED':
-      return { label: 'View wallet', url: str(data, 'actionUrl', `${base}/account/wallet`) };
+      return { label: 'View wallet', url: str(data, 'actionUrl', walletUrl()) };
     case 'VENDOR_APPROVED':
     case 'VENDOR_NEW_ORDER':
     case 'LOW_STOCK_ALERT':
@@ -134,7 +144,7 @@ function defaultCta(type: NotificationType, data: EmailTemplateData): { label?: 
     case 'COUPON_EXPIRING':
       return {
         label: EMAIL_COPY.ctaVendorDashboard,
-        url: str(data, 'actionUrl', `${base}/vendor/dashboard`),
+        url: str(data, 'actionUrl', vendorDashboardUrl(type)),
       };
     case 'COUPON_OFFER_EXPIRING':
       return { label: EMAIL_COPY.ctaViewCart, url: str(data, 'actionUrl', `${base}/cart`) };

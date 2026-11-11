@@ -30,11 +30,12 @@ describe('pricing money', () => {
     assert.equal(sumRupees(['-5.05', 5.05]), 0);
   });
 
-  it('aligns unit and line so quantity times unit equals the line', () => {
+  it('keeps the line as charged and rounds only the price per piece (B-33)', () => {
     const even = alignUnitAndLine(651248, 4);
     assert.equal(even.unitPricePaise * 4, even.lineTotalPaise);
     const odd = alignUnitAndLine(651247, 4);
-    assert.equal(odd.unitPricePaise * 4, odd.lineTotalPaise);
+    assert.equal(odd.lineTotalPaise, 651247);
+    assert.equal(odd.unitPricePaise, 162812);
     const single = alignUnitAndLine(351943, 1);
     assert.equal(single.unitPricePaise, 351943);
     assert.equal(single.lineTotalPaise, 351943);

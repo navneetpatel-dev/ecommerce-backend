@@ -36,9 +36,11 @@ export function roundMoney(value: unknown): number {
 }
 
 /**
- * Unit and extended price from one paise total, so quantity × unit equals the line
- * at two decimal places. The line moves by less than one paise per unit when the
- * total does not divide evenly.
+ * Unit and extended price from one paise total. The line is kept exactly as
+ * charged, so the lines always add up to the bill; only the price per piece is
+ * rounded when the total does not divide evenly by the quantity. (Moving the line
+ * to unit × quantity instead made the items total drift a paisa from the amount
+ * paid and showed a phantom one-paisa coupon saving.)
  */
 export function alignUnitAndLine(
   lineTotalPaise: Paise,
@@ -46,8 +48,7 @@ export function alignUnitAndLine(
 ): { unitPricePaise: Paise; lineTotalPaise: Paise } {
   const qty = Math.max(1, Math.trunc(quantity) || 1);
   const line = Math.round(lineTotalPaise);
-  const unitPricePaise = Math.round(line / qty);
-  return { unitPricePaise, lineTotalPaise: unitPricePaise * qty };
+  return { unitPricePaise: Math.round(line / qty), lineTotalPaise: line };
 }
 
 /** Distribute `total` across weights; remainder goes to the largest weight index. */
