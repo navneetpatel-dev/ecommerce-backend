@@ -52,6 +52,7 @@ const ADJECTIVES = ['Classic', 'Premium', 'Essential', 'Pro', 'Ultra', 'Smart', 
 const BRANDS = ['Aurelia', 'Northwind', 'Kalash', 'Vistara', 'Mithila', 'Zephyr', 'Saffron', 'Banyan', 'Indigo', 'Tanvi', 'Orbit', 'Kairo'];
 const COLORS = ['Black', 'White', 'Navy', 'Olive', 'Maroon', 'Grey', 'Teal', 'Mustard'];
 const SIZES = ['S', 'M', 'L', 'XL', 'XXL'];
+const FINISHES = ['Matte', 'Glossy', 'Textured'];
 
 async function seedCategories(now: Date) {
   const roots = await select<{ id: string; slug: string }>(
@@ -88,8 +89,12 @@ async function seedAttributesAndTax(leaves: Array<{ id: string; root: string }>,
   for (const leaf of leaves.filter((row) => !withAttrs.has(row.id))) {
     attributes.push(
       { id: id(), categoryId: leaf.id, name: 'Color', type: 'ENUM', options: json(COLORS), displayOrder: 1, createdAt: now, updatedAt: now },
-      { id: id(), categoryId: leaf.id, name: 'Price', type: 'RANGE', options: json({ min: 0, max: 10000, step: 100 }), displayOrder: 2, createdAt: now, updatedAt: now },
-      { id: id(), categoryId: leaf.id, name: 'Assured', type: 'BOOLEAN', options: json(null), displayOrder: 3, createdAt: now, updatedAt: now },
+      // Options are always a list (the facet builder maps over them), and the second
+      // attribute is one every variant carries, so its filter values match real products.
+      leaf.root === 'fashion'
+        ? { id: id(), categoryId: leaf.id, name: 'Size', type: 'ENUM', options: json(SIZES), displayOrder: 2, createdAt: now, updatedAt: now }
+        : { id: id(), categoryId: leaf.id, name: 'Finish', type: 'ENUM', options: json(FINISHES), displayOrder: 2, createdAt: now, updatedAt: now },
+      { id: id(), categoryId: leaf.id, name: 'Assured', type: 'BOOLEAN', options: json([]), displayOrder: 3, createdAt: now, updatedAt: now },
     );
   }
   await insert('category_attributes', attributes);
@@ -169,12 +174,14 @@ async function seedProducts(accounts: Accounts, leaves: Array<{ id: string; root
         codEnabled: chance(0.85), createdAt, updatedAt: createdAt,
       });
       const variantCount = int(1, 3);
+      // One finish per product, so colour stays the only choice between its variants.
+      const finish = pick(FINISHES);
       for (let v = 0; v < variantCount; v += 1) {
         // Stock covers every badge: plenty, low (≤ 5) and sold out.
         const stock = weighted([[int(20, 400), 80], [int(1, 5), 12], [0, 8]] as const);
         variants.push({
           id: id(), productId, sku: `SKU-${serial}-${v + 1}`,
-          attributes: json(root === 'fashion' ? { Size: SIZES[v % SIZES.length], Color: pick(COLORS) } : { Color: COLORS[v % COLORS.length] }),
+          attributes: json(root === 'fashion' ? { Size: SIZES[v % SIZES.length], Color: pick(COLORS) } : { Color: COLORS[v % COLORS.length], Finish: finish }),
           price: basePrice + 2 * v * int(10, 100), stock, lowStockAt: 5, weightGrams: int(150, 2500), createdAt, updatedAt: createdAt,
         });
       }
