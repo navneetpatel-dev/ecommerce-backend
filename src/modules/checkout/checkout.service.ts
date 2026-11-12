@@ -149,6 +149,7 @@ function assertCartItemsAvailable(cart: CartWithItems) {
         variantId: item.variantId,
         productName: product?.name ?? null,
         unavailableReason: availability.unavailableReason,
+        availableQuantity: Math.max(0, Number(item.variant?.stock ?? 0)),
       };
     })
     .filter(Boolean);

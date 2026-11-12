@@ -31,3 +31,22 @@ describe('isVendorSellable', () => {
     );
   });
 });
+
+describe('resolveItemAvailability stock reasons (B-66)', () => {
+  const product = { status: PRODUCT_STATUS.LIVE };
+  const vendor = { status: VENDOR_STATUS.APPROVED, kycVerified: true };
+
+  it('calls a line LOW_STOCK when some stock is left but less than the quantity', () => {
+    assert.deepEqual(resolveItemAvailability({ product, vendor, stock: 58, quantity: 61 }), {
+      isAvailable: false,
+      unavailableReason: UNAVAILABLE_REASON.LOW_STOCK,
+    });
+  });
+
+  it('keeps OUT_OF_STOCK for a sold-out variant', () => {
+    assert.equal(
+      resolveItemAvailability({ product, vendor, stock: 0, quantity: 1 }).unavailableReason,
+      UNAVAILABLE_REASON.OUT_OF_STOCK,
+    );
+  });
+});

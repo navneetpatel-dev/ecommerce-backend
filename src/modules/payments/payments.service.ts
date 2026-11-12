@@ -24,6 +24,7 @@ import { checkoutAmountDue } from '@modules/pricing/displayMoney';
 import { notifyOrderConfirmed } from '@modules/notifications/orderNotifications';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { markPartCardRefundProcessed } from './partCardRefund';
+import { notifyCancelRefund } from './cancelRefundNotices';
 import { failedOrderRefundAttempt } from './orderCancelRefund';
 import { refundIfSupersededRechargePayment } from '@modules/wallet/supersededRechargePayment';
 
@@ -410,7 +411,9 @@ export class PaymentsService {
     if (!razorpayConfigured) {
       throw new AppError(ERROR_MESSAGES.RAZORPAY_NOT_CONFIGURED, 503, ERROR_CODES.RAZORPAY_NOT_CONFIGURED);
     }
-    return createIdempotentRazorpayRefund(paymentId, amountPaise, notes);
+    const refundId = await createIdempotentRazorpayRefund(paymentId, amountPaise, notes);
+    void notifyCancelRefund('started', notes, amountPaise);
+    return refundId;
   }
 
   /**
@@ -608,6 +611,7 @@ export class PaymentsService {
         },
         { where: { id: orderId } },
       );
+      void notifyCancelRefund('processed', notes, Number(refund.amount ?? 0));
       return;
     }
 
@@ -618,6 +622,7 @@ export class PaymentsService {
       const subOrderId = typeof notes.subOrderId === 'string' ? notes.subOrderId : null;
       if (subOrderId) {
         await markPartCardRefundProcessed({ orderId, subOrderId, refundId: refund.id });
+        void notifyCancelRefund('processed', notes, Number(refund.amount ?? 0));
       }
       return;
     }

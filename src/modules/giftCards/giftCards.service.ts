@@ -21,6 +21,7 @@ import { GIFT_CARD_MIN_AMOUNT_INR, GIFT_CARD_MAX_AMOUNT_INR, GIFT_CARD_VALIDITY_
 import { generateGiftCardCode } from './giftCardCode';
 import { sendGiftCardPurchasedEmail } from './giftCardEmail';
 import type { PurchaseGiftCardRequest } from './giftCards.dto';
+import { toPaymentsUnavailable } from '@modules/checkout/paymentProviderErrors';
 
 /** Ledger reference type for gift-card wallet credits — a plain string (WalletRef.type is untyped) to avoid touching the shared statuses.ts WALLET_REFERENCE_TYPE object. */
 const GIFT_CARD_WALLET_REFERENCE_TYPE = 'GIFT_CARD';
@@ -86,11 +87,7 @@ export class GiftCardsService {
         currency: 'INR',
         receipt: giftCard.id.slice(0, 40),
         payment_capture: true,
-        notes: {
-          type: 'gift_card',
-          giftCardId: giftCard.id,
-          purchaserId: userId,
-        },
+        notes: { type: 'gift_card', giftCardId: giftCard.id, purchaserId: userId },
         ...(env.RAZORPAY_CHECKOUT_CONFIG_ID ? { checkout_config_id: env.RAZORPAY_CHECKOUT_CONFIG_ID } : {}),
       });
 
@@ -106,7 +103,7 @@ export class GiftCardsService {
       };
     } catch (err) {
       await giftCard.update({ status: GIFT_CARD_STATUS.FAILED, updatedBy: userId });
-      throw err;
+      throw toPaymentsUnavailable(err, { giftCardId: giftCard.id });
     }
   }
 

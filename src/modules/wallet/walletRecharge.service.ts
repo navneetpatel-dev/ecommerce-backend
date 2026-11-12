@@ -1,4 +1,5 @@
 import { env } from '@config/env';
+import { toPaymentsUnavailable } from '@modules/checkout/paymentProviderErrors';
 import { razorpay, razorpayConfigured } from '@config/razorpay';
 import { AppError } from '@core/errors/AppError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
@@ -309,10 +310,7 @@ export class WalletRechargeService {
           : {}),
       });
 
-      await recharge.update({
-        razorpayOrderId: rzpOrder.id,
-        updatedBy: userId,
-      });
+      await recharge.update({ razorpayOrderId: rzpOrder.id, updatedBy: userId });
 
       return {
         rechargeId: recharge.id,
@@ -327,7 +325,7 @@ export class WalletRechargeService {
       };
     } catch (err) {
       await recharge.update({ status: 'FAILED', updatedBy: userId });
-      throw err;
+      throw toPaymentsUnavailable(err, { rechargeId: recharge.id });
     }
   }
 

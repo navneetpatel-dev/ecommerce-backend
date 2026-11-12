@@ -46,11 +46,13 @@ export async function lockCartVariantsAndAssertStock(cart: LockableCart, transac
     .map((item) => {
       const locked = lockedById.get(String(item.variantId));
       if (!locked || Number(locked.stock) < (quantityByVariant.get(String(item.variantId)) ?? 0)) {
+        const availableQuantity = Math.max(0, Number(locked?.stock ?? 0));
         return {
           cartItemId: item.id,
           variantId: item.variantId,
           productName: item.variant?.product?.name ?? null,
-          unavailableReason: UNAVAILABLE_REASON.OUT_OF_STOCK,
+          unavailableReason: availableQuantity > 0 ? UNAVAILABLE_REASON.LOW_STOCK : UNAVAILABLE_REASON.OUT_OF_STOCK,
+          availableQuantity,
         };
       }
       return null;
