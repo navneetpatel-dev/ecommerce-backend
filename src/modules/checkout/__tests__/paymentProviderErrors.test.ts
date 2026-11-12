@@ -33,3 +33,13 @@ describe('payment provider unreachable at checkout (B-38)', () => {
     }
   });
 });
+
+describe('toPaymentsUnavailable (wallet top-up and gift card purchase)', () => {
+  it('turns a provider refusal into the same 503 and keeps our own errors', async () => {
+    const { toPaymentsUnavailable } = await import('../paymentProviderErrors');
+    const err = toPaymentsUnavailable({ statusCode: 401, error: { description: 'Authentication failed' } }, { rechargeId: 'w1' }) as { statusCode: number };
+    assert.equal(err.statusCode, 503);
+    const ours = new AppError('Amount too low', 422, 'VALIDATION_ERROR');
+    assert.equal(toPaymentsUnavailable(ours, {}), ours);
+  });
+});

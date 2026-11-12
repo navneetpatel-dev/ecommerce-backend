@@ -431,14 +431,15 @@ export class NotificationsService {
 
   sendRefundInitiated(
     userId: string,
-    returnId: string,
+    referenceId: string,
     templateData: EmailTemplateData = {},
+    referenceType = 'ReturnRequest',
   ) {
     return this.enqueue({
       userId,
       type: 'REFUND_INITIATED',
-      referenceType: 'ReturnRequest',
-      referenceId: returnId,
+      referenceType,
+      referenceId,
       templateData,
     });
   }

@@ -33,10 +33,19 @@ export function isProviderUnreachable(error: unknown): boolean {
  */
 export async function discardUnreachedOrder(orderId: string, error: unknown): Promise<unknown> {
   await Order.destroy({ where: { id: orderId, razorpayOrderId: null } });
+  return toPaymentsUnavailable(error, { orderId });
+}
+
+/**
+ * The error to throw when creating a provider order failed (checkout, wallet top-up,
+ * gift card purchase). Our own AppErrors pass through; anything else is logged with
+ * its real cause and becomes the same clear 503 for the shopper.
+ */
+export function toPaymentsUnavailable(error: unknown, context: Record<string, unknown>): unknown {
   if (error instanceof AppError) return error;
-  const meta = { orderId, error: describeProviderError(error) };
-  if (isProviderUnreachable(error)) logger.warn('Payment provider unreachable at checkout', meta);
-  else logger.error('Payment provider refused the checkout order', meta);
+  const meta = { ...context, error: describeProviderError(error) };
+  if (isProviderUnreachable(error)) logger.warn('Payment provider unreachable', meta);
+  else logger.error('Payment provider refused the order', meta);
   return new AppError(PAYMENTS_UNAVAILABLE, 503, 'PAYMENT_PROVIDER_UNAVAILABLE');
 }
 
