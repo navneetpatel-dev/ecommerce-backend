@@ -16,8 +16,8 @@ export interface SearchParams {
   term: string;
   categoryId?: string;
   vendorId?: string;
-  minPrice?: number;
-  maxPrice?: number;
+  minPrice?: number; maxPrice?: number;
+  inStock?: boolean;
   limit: number;
   offset: number;
 }
@@ -148,7 +148,7 @@ export class SearchRepository {
         AND (:categoryId::uuid IS NULL OR p."categoryId" = :categoryId::uuid)
         AND (:vendorId::uuid IS NULL OR p."vendorId" = :vendorId::uuid)
         AND (:minPrice::numeric IS NULL OR ${displayPriceSql} >= :minPrice::numeric)
-        AND (:maxPrice::numeric IS NULL OR ${displayPriceSql} <= :maxPrice::numeric)
+        AND (:maxPrice::numeric IS NULL OR ${displayPriceSql} <= :maxPrice::numeric) AND (:inStock::boolean IS NOT TRUE OR EXISTS (SELECT 1 FROM product_variants iv WHERE iv."productId" = p.id AND iv."deletedAt" IS NULL AND iv.stock > 0))
       `,
       {
         replacements: this.searchReplacements(params, prefixPattern),
@@ -217,7 +217,7 @@ export class SearchRepository {
         AND (:categoryId::uuid IS NULL OR p."categoryId" = :categoryId::uuid)
         AND (:vendorId::uuid IS NULL OR p."vendorId" = :vendorId::uuid)
         AND (:minPrice::numeric IS NULL OR ${displayPriceSql} >= :minPrice::numeric)
-        AND (:maxPrice::numeric IS NULL OR ${displayPriceSql} <= :maxPrice::numeric)
+        AND (:maxPrice::numeric IS NULL OR ${displayPriceSql} <= :maxPrice::numeric) AND (:inStock::boolean IS NOT TRUE OR EXISTS (SELECT 1 FROM product_variants iv WHERE iv."productId" = p.id AND iv."deletedAt" IS NULL AND iv.stock > 0))
       ORDER BY rank DESC, p.name ASC, p.id ASC
       LIMIT :limit OFFSET :offset
       `,
@@ -500,8 +500,8 @@ export class SearchRepository {
       approvedStatus: VENDOR_STATUS.APPROVED,
       categoryId: params.categoryId ?? null,
       vendorId: params.vendorId ?? null,
-      minPrice: params.minPrice ?? null,
-      maxPrice: params.maxPrice ?? null,
+      minPrice: params.minPrice ?? null, maxPrice: params.maxPrice ?? null,
+      inStock: params.inStock ?? false,
     };
   }
 }

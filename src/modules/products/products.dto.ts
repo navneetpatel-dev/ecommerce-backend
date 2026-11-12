@@ -124,8 +124,13 @@ export const GetProductsQuerySchema = z
     vendorId: z.string().uuid().optional(),
     status: z.enum(PRODUCT_STATUS_VALUES).optional(),
     search: z.string().optional(),
-    minPrice: z.coerce.number().optional(),
-    maxPrice: z.coerce.number().optional(),
+    minPrice: z.coerce.number().min(0).optional(),
+    maxPrice: z.coerce.number().min(0).optional(),
+    /** Only products with at least one variant in stock (B-23). */
+    inStock: z
+      .union([z.literal('true'), z.literal('false'), z.boolean()])
+      .optional()
+      .transform((value) => value === true || value === 'true'),
     rating: z.coerce.number().min(1).max(5).optional(),
     sort: z.enum(['trending', 'price_asc', 'price_desc', 'newest', 'rating', 'popular']).optional(),
     includeDescendants: z
@@ -134,7 +139,12 @@ export const GetProductsQuerySchema = z
       .transform((value) => value === true || value === 'true'),
     excludeProductId: z.string().uuid().optional(),
   })
-  .passthrough();
+  .passthrough()
+  // B-19: a reversed range used to return an empty page instead of an error.
+  .refine((query) => query.minPrice === undefined || query.maxPrice === undefined || query.minPrice <= query.maxPrice, {
+    message: 'The minimum price cannot be more than the maximum price',
+    path: ['minPrice'],
+  });
 
 export const TrackRecentlyViewedSchema = z.object({
   productId: z.string().uuid(),
