@@ -191,6 +191,7 @@ export const ERROR_MESSAGES = {
   PAYOUT_INVALID_TRANSITION: 'This payout status transition is not allowed',
   GIFT_CARD_INVALID: 'This gift card is not valid',
   GIFT_CARD_EXPIRED: 'This gift card has expired',
+  GIFT_CARD_CANCELLED: 'This gift card was cancelled',
   GIFT_CARD_ALREADY_REDEEMED: 'This gift card has already been redeemed',
   GIFT_CARD_AMOUNT_RANGE: 'Gift card amount is outside the allowed range',
   GIFT_CARD_NOT_CANCELLABLE: 'Only an active, unredeemed gift card can be deactivated',

@@ -5,6 +5,7 @@ import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { pageLimitQuerySchema } from '@core/http/pagination';
 import { productQnaService } from './productQna.service';
+import { canAnswerForProduct } from './buyerCheck';
 import { assertNotDuplicateSubmission } from '@core/http/duplicateSubmitGuard';
 import { AskQuestionSchema, AnswerQuestionSchema, ModerateQuestionSchema } from './productQna.dto';
 
@@ -23,6 +24,12 @@ export const getByProduct = asyncHandler(async (req: Request, res: Response) => 
     req.user?.id,
   );
   res.json(ok(result.questions, { pagination: result.pagination }));
+});
+
+/** Whether the signed-in shopper may answer this product's questions (C-01): the web shows Answer only then. */
+export const canAnswer = asyncHandler(async (req: Request, res: Response) => {
+  const productId = req.params.productId!;
+  res.json(ok({ canAnswer: await canAnswerForProduct(req.user!.id, req.user!.vendorId ?? null, productId) }));
 });
 
 export const getVendorQuestions = asyncHandler(async (req: Request, res: Response) => {

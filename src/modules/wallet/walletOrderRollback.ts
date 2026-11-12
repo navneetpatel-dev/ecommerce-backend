@@ -10,10 +10,13 @@ import { walletService } from './wallet.service';
 import { WALLET_DESCRIPTIONS } from './wallet.constants';
 import { fromPaise, toPaise } from '@modules/pricing/money';
 
-const ROLLBACK_SUFFIX = ' rollback';
+/** Rows written before B-39 end with this; they still count as the order's refund. */
+const LEGACY_ROLLBACK_SUFFIX = ' rollback';
+const ROLLBACK_PREFIX = 'Refund for cancelled order #';
 
-export function walletRollbackDescription(): string {
-  return `${WALLET_DESCRIPTIONS.CHECKOUT_SPEND}${ROLLBACK_SUFFIX}`;
+/** "Refund for cancelled order #1a2b3c4d" in the shopper's wallet history (B-39). */
+export function walletRollbackDescription(orderId: string): string {
+  return `${ROLLBACK_PREFIX}${orderId.slice(0, 8)}`;
 }
 
 /** True when checkout wallet spend was already credited back for this order. */
@@ -26,7 +29,10 @@ export async function hasWalletRollbackCredit(
       referenceType: WALLET_REFERENCE_TYPE.ORDER,
       referenceId: orderId,
       type: WALLET_LEDGER_TYPE.CREDIT,
-      description: { [Op.like]: `%${ROLLBACK_SUFFIX}` },
+      [Op.or]: [
+        { description: { [Op.like]: `%${LEGACY_ROLLBACK_SUFFIX}` } },
+        { description: { [Op.like]: `${ROLLBACK_PREFIX}%` } },
+      ],
     },
     transaction,
   });
@@ -186,7 +192,7 @@ export async function rollbackOrderWalletIfNeeded(
   if (await hasWalletRollbackCredit(order.id, transaction)) return false;
 
   const ref = { type: WALLET_REFERENCE_TYPE.ORDER, id: order.id };
-  const description = walletRollbackDescription();
+  const description = walletRollbackDescription(order.id);
   const debit = await findCheckoutDebit(order.id, transaction);
   const breakdown = debit?.pointSourceBreakdown;
   const returned = await returnedForCancelledParts(order.id, transaction);

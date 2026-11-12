@@ -16,7 +16,7 @@ import { Product } from '@database/models/product.model';
 import { mapOrderResponse } from './orderDisplayMappers';
 import { withoutSellerFigures } from './sellerFigures';
 import { cancelPaidOrder } from './ordersCancel.service';
-import type { CreateOrderRequest, GetOrdersQuery } from './orders.dto';
+import type { GetOrdersQuery } from './orders.dto';
 import { ReturnRequest } from '@database/models/returnRequest.model';
 import { Op } from 'sequelize';
 import { ERROR_MESSAGES } from '@core/constants/errors';
@@ -90,12 +90,6 @@ const orderDetailInclude = [
 ];
 
 export class OrdersService {
-  async createOrder(userId: string, data: CreateOrderRequest) {
-    void userId;
-    void data;
-    throw new ValidationError(ERROR_MESSAGES.ORDER_USE_CHECKOUT);
-  }
-
   async getOrders(userId: string | null, query: GetOrdersQuery) {
     const offset = paginationOffset(query.page, query.limit);
     const { rows, count } = await ordersRepository.findWithFilters({

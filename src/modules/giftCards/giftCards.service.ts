@@ -9,6 +9,8 @@ import { RAZORPAY_MIN_AMOUNT_PAISE } from '@core/constants/http';
 import { GIFT_CARD_STATUS, WALLET_POINT_SOURCE } from '@core/constants/statuses';
 import { sequelize } from '@database/models';
 import { GiftCard } from '@database/models/giftCard.model';
+import { User } from '@database/models/user.model';
+import { effectiveGiftCardStatus } from './giftCardViews';
 import { roundMoney, toPaise } from '@modules/pricing/money';
 import { paymentsService } from '@modules/payments/payments.service';
 import { razorpayOrderPayments } from '@modules/payments/razorpayOrderPayments';
@@ -232,6 +234,9 @@ export class GiftCardsService {
       if (row.status === GIFT_CARD_STATUS.REDEEMED) {
         throw new ValidationError(ERROR_MESSAGES.GIFT_CARD_ALREADY_REDEEMED);
       }
+      // Say why (B-39): expired and cancelled cards used to share "not valid".
+      if (row.status === GIFT_CARD_STATUS.EXPIRED) throw new ValidationError(ERROR_MESSAGES.GIFT_CARD_EXPIRED);
+      if (row.status === GIFT_CARD_STATUS.CANCELLED) throw new ValidationError(ERROR_MESSAGES.GIFT_CARD_CANCELLED);
       if (row.status !== GIFT_CARD_STATUS.ACTIVE) {
         throw new ValidationError(ERROR_MESSAGES.GIFT_CARD_INVALID);
       }
@@ -275,16 +280,19 @@ export class GiftCardsService {
     return { amount: Number(giftCard.amount), balance, code: giftCard.code };
   }
 
-  /** Public — landing page preview before login. No purchaser/recipient PII. */
-  async getPublicByCode(code: string): Promise<{ amount: number; status: string; expiresAt: Date }> {
+  /** Public page for the code holder: what the email shows (C-13), sender by name only, no emails. */
+  async getPublicByCode(code: string): Promise<{ amount: number; status: string; expiresAt: Date; fromName: string | null; message: string | null }> {
     const giftCard = await GiftCard.findOne({ where: { code: code.trim().toUpperCase() } });
     if (!giftCard) {
       throw new NotFoundError('Gift card');
     }
+    const purchaser = await User.findByPk(giftCard.purchaserId, { attributes: ['name'] });
     return {
       amount: Number(giftCard.amount),
-      status: giftCard.status,
+      status: effectiveGiftCardStatus(giftCard),
       expiresAt: giftCard.expiresAt,
+      fromName: purchaser?.name ?? null,
+      message: giftCard.message,
     };
   }
 }

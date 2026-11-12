@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { OTP_RESEND_COOLDOWN_SECONDS } from './otpCooldown';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { authService, type SessionDeviceMeta } from './auth.service';
@@ -157,7 +158,8 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
 
 export const requestOtp = asyncHandler(async (req: Request, res: Response) => {
   await authService.requestLoginOtp(req.body.email);
-  res.status(200).json(ok({ message: 'If an account uses this email, a sign-in code is on its way.' }));
+  // resendAfterSeconds is the same for every email, so it reveals nothing (C-07).
+  res.status(200).json(ok({ message: 'If an account uses this email, a sign-in code is on its way.', resendAfterSeconds: OTP_RESEND_COOLDOWN_SECONDS }));
 });
 
 export const verifyOtp = asyncHandler(async (req: Request, res: Response) => {

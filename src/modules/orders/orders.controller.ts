@@ -5,13 +5,7 @@ import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { userHasPermission } from '@middleware/rbac.middleware';
 import { ordersService } from './orders.service';
 import { retryOrderCancelRefund } from '@modules/payments/orderCancelRefund';
-import { CreateOrderSchema, GetOrdersQuerySchema, UpdateOrderStatusSchema } from './orders.dto';
-
-export const createOrder = asyncHandler(async (req: Request, res: Response) => {
-  const dto = CreateOrderSchema.parse(req.body);
-  const order = await ordersService.createOrder(req.user!.id, dto);
-  res.status(201).json(ok(order));
-});
+import { GetOrdersQuerySchema, UpdateOrderStatusSchema } from './orders.dto';
 
 export const getOrders = asyncHandler(async (req: Request, res: Response) => {
   const query = GetOrdersQuerySchema.parse(req.query);

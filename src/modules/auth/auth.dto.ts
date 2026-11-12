@@ -41,10 +41,16 @@ export const ResetPasswordSchema = z.object({
   newPassword: z.string().min(8),
 });
 
-export const ChangePasswordSchema = z.object({
-  currentPassword: z.string(),
-  newPassword: z.string().min(8),
-});
+export const ChangePasswordSchema = z
+  .object({
+    currentPassword: z.string(),
+    newPassword: z.string().min(8),
+  })
+  // B-52: "changing" to the same password used to succeed silently.
+  .refine((body) => body.newPassword !== body.currentPassword, {
+    message: 'Choose a different password from your current one',
+    path: ['newPassword'],
+  });
 
 export const VerifyEmailSchema = z.object({
   token: z.string().min(1),

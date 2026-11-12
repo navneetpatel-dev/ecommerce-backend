@@ -4,11 +4,10 @@ import { authenticate } from '@middleware/auth.middleware';
 import { authorize } from '@middleware/rbac.middleware';
 import { validate } from '@middleware/validate.middleware';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
-import { CreateOrderSchema, GetOrdersQuerySchema, UpdateOrderStatusSchema } from './orders.dto';
+import { GetOrdersQuerySchema, UpdateOrderStatusSchema } from './orders.dto';
 
 const router = Router();
 
-router.post('/', authenticate, validate(CreateOrderSchema), ordersController.createOrder);
 router.get('/', authenticate, validate(GetOrdersQuerySchema, 'query'), ordersController.getOrders);
 router.get('/:id', authenticate, ordersController.getOrderById);
 router.post('/:id/cancel', authenticate, ordersController.cancelOrder);

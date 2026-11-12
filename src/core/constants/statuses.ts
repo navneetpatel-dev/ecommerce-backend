@@ -300,6 +300,8 @@ export const PAYMENT_METHOD = {
 } as const;
 export type PaymentMethod = (typeof PAYMENT_METHOD)[keyof typeof PAYMENT_METHOD];
 export const PAYMENT_METHOD_VALUES = Object.values(PAYMENT_METHOD) as [PaymentMethod, ...PaymentMethod[]];
+/** Stored on an order the wallet paid in full (B-39). Never a checkout input. */
+export const WALLET_PAYMENT_METHOD = 'WALLET' as const;
 
 export const WARRANTY_TYPE = {
   MANUFACTURER: 'MANUFACTURER',

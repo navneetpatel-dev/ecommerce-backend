@@ -1,4 +1,5 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
+import { assertBuyerMayAnswer } from './buyerCheck';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
@@ -97,11 +98,8 @@ export class ProductQnaService {
   }
 
   /**
-   * Either the product's owning vendor or any authenticated customer may
-   * answer — there is no ownership gate here, only classification: the
-   * answering user is tagged VENDOR when their vendorId matches the
-   * question's product, otherwise CUSTOMER (same ownership check pattern as
-   * `products.service.updateProduct`).
+   * The product's own vendor answers as VENDOR. Anyone else answers as CUSTOMER,
+   * and only once that product has been delivered to them (C-01).
    */
   async answerQuestion(questionId: string, userId: string, vendorId: string | null, answer: string) {
     return sequelize.transaction(async (t) => {
@@ -121,6 +119,9 @@ export class ProductQnaService {
         vendorId && product?.vendorId === vendorId
           ? PRODUCT_ANSWER_AUTHOR_TYPE.VENDOR
           : PRODUCT_ANSWER_AUTHOR_TYPE.CUSTOMER;
+      if (authorType === PRODUCT_ANSWER_AUTHOR_TYPE.CUSTOMER) {
+        await assertBuyerMayAnswer(userId, question.productId, t);
+      }
 
       return ProductAnswer.create(
         {

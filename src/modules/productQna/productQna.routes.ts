@@ -16,6 +16,7 @@ router.get(
   optionalAuthenticate,
   productQnaController.getByProduct,
 );
+router.get('/products/:productId/can-answer', authenticate, productQnaController.canAnswer);
 router.post('/questions/:id/answers', authenticate, validate(AnswerQuestionSchema), productQnaController.answer);
 router.delete('/answers/:answerId', authenticate, productQnaController.deleteAnswer);
 router.patch(

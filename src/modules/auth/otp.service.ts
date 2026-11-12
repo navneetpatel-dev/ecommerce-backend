@@ -10,6 +10,7 @@ import { ValidationError } from '@core/errors';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { emailVerifyActionUrl } from './emailVerifyLink';
 import { authRepository } from './auth.repository';
+import { otpCooldown } from './otpCooldown';
 
 export const OTP_CODE_LENGTH = 6;
 const OTP_TTL_MINUTES = 5;
@@ -74,7 +75,8 @@ export class OtpService {
   async requestLoginCode(email: string): Promise<void> {
     // Same reply whether or not the email has an account, so the form cannot be
     // used to find out who shops here. An unverified account gets its
-    // verification link instead of a code.
+    // verification link instead of a code. Within a minute of the last one, nothing is sent (C-07).
+    if (!(await otpCooldown.claim(email))) return;
     const user = await authRepository.findByEmail(email);
     if (!user || user.status === USER_STATUS.BLOCKED) return;
     if (!user.emailVerified) {
