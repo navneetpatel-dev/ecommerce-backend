@@ -41,6 +41,7 @@ import {
   ORDER_STATUS,
   PAYMENT_STATUS,
   PAYMENT_METHOD,
+  WALLET_PAYMENT_METHOD,
   COMMISSION_STATUS,
   DISCOUNT_BEARER,
   WALLET_REFERENCE_TYPE,
@@ -616,12 +617,13 @@ export class CheckoutService {
         );
       }
 
-      // Wallet covers full amount — mark paid inside the same transaction.
+      // Wallet covers full amount — mark paid (and paid by wallet, B-39) inside the same transaction.
       if (data.paymentMethod === PAYMENT_METHOD.RAZORPAY && amountDue <= 0) {
         await orderRow.update(
           {
             paymentStatus: PAYMENT_STATUS.PAID,
             status: ORDER_STATUS.CONFIRMED,
+            paymentMethod: WALLET_PAYMENT_METHOD,
           },
           { transaction: t },
         );

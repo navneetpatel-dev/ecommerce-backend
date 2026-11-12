@@ -2,12 +2,12 @@ import { z } from 'zod';
 import { pageLimitQuerySchema } from '@core/http/pagination';
 import {
   SEARCH_AUTOCOMPLETE_MAX_QUERY_LENGTH,
-  SEARCH_AUTOCOMPLETE_MIN_QUERY_LENGTH,
   SEARCH_SUGGESTION_TYPE_VALUES,
   type SearchSuggestionType,
 } from '@core/constants/search';
 
 export const SearchProductsQuerySchema = pageLimitQuerySchema.extend({
+  // C-17: punctuation-only queries are answered with no results instead of 422 (search.service).
   q: z.string().trim().min(1).max(SEARCH_AUTOCOMPLETE_MAX_QUERY_LENGTH),
   categoryId: z.string().uuid().optional(),
   vendorId: z.string().uuid().optional(),
@@ -24,11 +24,8 @@ export const SearchProductsQuerySchema = pageLimitQuerySchema.extend({
 });
 
 export const AutocompleteQuerySchema = z.object({
-  q: z
-    .string()
-    .trim()
-    .min(SEARCH_AUTOCOMPLETE_MIN_QUERY_LENGTH)
-    .max(SEARCH_AUTOCOMPLETE_MAX_QUERY_LENGTH),
+  // Too short or punctuation only → an empty list from the service, not 422 (C-17).
+  q: z.string().trim().max(SEARCH_AUTOCOMPLETE_MAX_QUERY_LENGTH),
 });
 
 export type SearchProductsQuery = z.infer<typeof SearchProductsQuerySchema>;

@@ -64,10 +64,50 @@ describe('ProductQnaService moderation', () => {
       created = fields;
       return fields as never;
     });
+    // The shopper has received the product (C-01).
+    mock.method(sequelize, 'query', async () => [{ found: 1 }]);
 
     await productQnaService.answerQuestion('q-1', 'u-1', null, 'An answer');
     assert.equal(created?.status, PRODUCT_ANSWER_STATUS.PENDING);
     assert.equal(created?.answer, 'An answer');
+  });
+
+  it('refuses a shopper answer from someone who has not received the product (C-01)', async () => {
+    stubTransaction();
+    mock.method(ProductQuestion, 'findByPk', async () => ({
+      id: 'q-1',
+      productId: 'p-1',
+      status: PRODUCT_QUESTION_STATUS.PUBLISHED,
+      product: { vendorId: 'v-1' },
+    }) as unknown as ProductQuestion);
+    const create = mock.method(ProductAnswer, 'create', async (fields: Record<string, unknown>) => fields as never);
+    mock.method(sequelize, 'query', async () => []);
+
+    await assert.rejects(
+      () => productQnaService.answerQuestion('q-1', 'u-1', null, 'An answer'),
+      (err: unknown) => err instanceof ForbiddenError,
+    );
+    assert.equal(create.mock.callCount(), 0);
+  });
+
+  it('lets the product\'s own vendor answer without a purchase', async () => {
+    stubTransaction();
+    mock.method(ProductQuestion, 'findByPk', async () => ({
+      id: 'q-1',
+      productId: 'p-1',
+      status: PRODUCT_QUESTION_STATUS.PUBLISHED,
+      product: { vendorId: 'v-1' },
+    }) as unknown as ProductQuestion);
+    let created: Record<string, unknown> | null = null;
+    mock.method(ProductAnswer, 'create', async (fields: Record<string, unknown>) => {
+      created = fields;
+      return fields as never;
+    });
+    const query = mock.method(sequelize, 'query', async () => []);
+
+    await productQnaService.answerQuestion('q-1', 'u-2', 'v-1', 'Seller answer');
+    assert.equal(created?.authorType, 'VENDOR');
+    assert.equal(query.mock.callCount(), 0);
   });
 
   it('public read only includes PUBLISHED answers', async () => {

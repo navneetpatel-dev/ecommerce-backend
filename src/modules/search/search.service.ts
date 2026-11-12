@@ -3,9 +3,14 @@ import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { roundMoney } from '@modules/pricing/money';
 import { productDiscountPercent, productShowMrp } from '@modules/pricing/displayMoney';
 import type { SearchProductsQuery } from './search.dto';
+import { searchableLength } from './search.utils';
+import { SEARCH_AUTOCOMPLETE_MIN_QUERY_LENGTH } from '@core/constants/search';
 
 export class SearchService {
   async searchProducts(query: SearchProductsQuery) {
+    if (searchableLength(query.q) === 0) {
+      return { items: [], pagination: buildPaginationMeta(0, query.page, query.limit) };
+    }
     const offset = paginationOffset(query.page, query.limit);
     const filters = {
       term: query.q,
@@ -62,7 +67,8 @@ export class SearchService {
     };
   }
 
-  autocomplete(term: string) {
+  async autocomplete(term: string) {
+    if (searchableLength(term) < SEARCH_AUTOCOMPLETE_MIN_QUERY_LENGTH) return [];
     return searchRepository.autocomplete(term);
   }
 }

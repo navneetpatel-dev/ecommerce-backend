@@ -10,3 +10,8 @@ export function buildAutocompleteLikePatterns(term: string) {
     infixPattern: `%${escaped}%`,
   };
 }
+
+/** Letters and digits in a query; punctuation alone ("%", "!!") is not something to search for (C-17). */
+export function searchableLength(term: string): number {
+  return term.replace(/[^\p{L}\p{M}\p{N}]+/gu, '').length;
+}

@@ -252,11 +252,11 @@ function buildProductEnrichment(product) {
   const markup = 0.12 + seededUnit(seed + 41) * 0.28;
   const compareAtPrice = Math.round(basePrice * (1 + markup));
 
+  // Only descriptive tags. Claims such as "Bestseller" or "Top rated" were picked at
+  // random and showed on products with no sales or reviews (B-29).
   const tags = [
     clip(brand, PRODUCT_FIELD_LIMITS.TAG_MAX),
     clip(product.category_name, PRODUCT_FIELD_LIMITS.TAG_MAX),
-    seededUnit(seed + 7) > 0.55 ? 'Bestseller' : 'Featured',
-    seededUnit(seed + 13) > 0.7 ? 'New arrival' : 'Top rated',
   ].filter(Boolean);
 
   const rawSpecs = profile.specs(product.name, product.category_name);
