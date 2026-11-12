@@ -2,11 +2,12 @@ import { z } from 'zod';
 import { USER_STATUS_VALUES } from '@core/constants/statuses';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { PINCODE_PATTERN } from '@core/constants/pincode';
+import { optionalPhoneSchema } from '@core/validation/phone';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 
 export const UpdateUserProfileSchema = z.object({
   name: z.string().min(1).max(120).optional(),
-  phone: z.string().max(20).optional().nullable(),
+  phone: optionalPhoneSchema.optional().nullable(),
   emailMarketingConsent: z.boolean().optional(),
   /** Phase 2 attach — URL from POST /api/uploads (users/avatar). */
   avatarUrl: z.string().url().optional().nullable(),
@@ -40,6 +41,9 @@ export const ListAssigneesQuerySchema = z.object({
 });
 
 export const CreateAddressSchema = z.object({
+  /** Who receives the parcel; the account holder's name when left out. */
+  recipientName: z.string().trim().min(1).max(100).optional(),
+  recipientPhone: optionalPhoneSchema.optional(),
   line1: z.string().min(1).max(255),
   line2: z.string().max(255).optional().nullable(),
   city: z.string().min(1).max(100),

@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { settingsService } from './settings.service';
+import { isGoogleOAuthConfigured } from '@modules/auth/googleOAuth.service';
 import { UpdateSettingsSchema } from './settings.dto';
 
 export const getPublicSettings = asyncHandler(async (_req: Request, res: Response) => {
@@ -23,6 +24,11 @@ export const getPublicSettings = asyncHandler(async (_req: Request, res: Respons
     walletMaxRechargeInr: settings.walletMaxRechargeInr,
     walletRechargePresetsInr: settings.walletRechargePresetsInr,
     walletMaxBalancePoints: settings.walletMaxBalancePoints,
+    maintenanceEnabled: settings.maintenanceEnabled,
+    maintenanceMessage: settings.maintenanceMessage,
+    maintenanceUntil: settings.maintenanceUntil,
+    // Lets the web hide "Continue with Google" when it is not set up (C-03).
+    googleSignInEnabled: isGoogleOAuthConfigured(),
   }));
 });
 

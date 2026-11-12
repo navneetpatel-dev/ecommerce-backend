@@ -68,6 +68,7 @@ import {
 import { isIntraStateSupply } from '@modules/pricing/gstPlaceOfSupply';
 import { tdsRateForSale } from '@modules/pricing/tds194o';
 import { preGstCouponBreakdown } from './couponUsageAmounts';
+import { discardUnreachedOrder } from './paymentProviderErrors';
 import { taxService } from '@modules/tax/tax.service';
 
 /** Flat platform fee for checkout-time gift wrapping (v1: hardcoded, not vendor-specific). */
@@ -808,7 +809,7 @@ export class CheckoutService {
         // Nothing can pay this order: undo it now — cart, stock, wallet and coupon back —
         // instead of holding them until the expiry job, with the customer's cart empty.
         await unpaidOrders.cancel({ id: order.id });
-        throw error;
+        throw await discardUnreachedOrder(order.id, error);
       }
       return {
         orderId: order.id,

@@ -1,5 +1,6 @@
 import type { Transaction } from 'sequelize';
 import { NotFoundError } from '@core/errors/NotFoundError';
+import { assertStockFor } from './cartStock';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { type UnavailableReason } from '@core/constants/statuses';
@@ -455,15 +456,12 @@ export class CartService {
 
       const product = (variant as any).product;
       const vendor = product?.vendor ?? product?.Vendor ?? null;
-      const availability = resolveItemAvailability({
-        product,
-        vendor,
-        stock: Number(variant.stock),
-        quantity: data.quantity,
-      });
-      if (!availability.isAvailable) {
+      // Hidden product → 404; stock gets its own answer (see assertStockFor).
+      const stock = Number(variant.stock);
+      if (!resolveItemAvailability({ product, vendor, stock: Math.max(stock, 1), quantity: 1 }).isAvailable) {
         throw new NotFoundError('Product');
       }
+      assertStockFor(data.quantity, stock);
 
       const quantity = clampQuantity(data.quantity, variant.stock);
       if (quantity < 1) {

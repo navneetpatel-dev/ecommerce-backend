@@ -4,6 +4,7 @@ import { ok } from '@core/http/ApiResponse';
 import { giftCardsService } from './giftCards.service';
 import { giftCardAccountsService } from './giftCardAccounts.service';
 import { giftCardsAdminService } from './giftCardsAdmin.service';
+import { pageLimitQuerySchema } from '@core/http/pagination';
 import {
   PurchaseGiftCardSchema,
   VerifyGiftCardPurchaseSchema,
@@ -41,7 +42,13 @@ export const getGiftCardByCode = asyncHandler(async (req: Request, res: Response
 });
 
 export const myGiftCards = asyncHandler(async (req: Request, res: Response) => {
-  res.json(ok(await giftCardAccountsService.mine(req.user!.id)));
+  const { page, limit } = pageLimitQuerySchema.parse({ limit: req.query.limit });
+  const pageOf = (value: unknown) => Math.max(1, Math.trunc(Number(value)) || page);
+  res.json(ok(await giftCardAccountsService.mine(req.user!.id, {
+    purchasedPage: pageOf(req.query.purchasedPage),
+    redeemedPage: pageOf(req.query.redeemedPage),
+    limit,
+  })));
 });
 
 export const resendGiftCard = asyncHandler(async (req: Request, res: Response) => {

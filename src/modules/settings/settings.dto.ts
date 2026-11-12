@@ -39,6 +39,9 @@ export const UpdateSettingsSchema = z.object({
   /** 0=Sunday..6=Saturday. Checked by the job body against the fixed hourly trigger. */
   scheduledReportsDayOfWeek: z.number().int().min(0).max(6).default(1),
   scheduledReportsHourUtc: z.number().int().min(0).max(23).default(6),
+  maintenanceEnabled: z.boolean().default(false),
+  maintenanceMessage: z.string().trim().max(500).default(''),
+  maintenanceUntil: z.string().datetime({ offset: true }).nullable().default(null),
 });
 
 export type UpdateSettingsRequest = z.infer<typeof UpdateSettingsSchema>;

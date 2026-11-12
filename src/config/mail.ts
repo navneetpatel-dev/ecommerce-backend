@@ -21,6 +21,8 @@ export type MailMessage = {
   from?: string;
   replyTo?: string;
   attachments?: MailAttachment[];
+  /** Extra MIME headers (List-Unsubscribe on marketing mail). */
+  headers?: Record<string, string>;
   /** Provider-specific options (e.g. `{ configurationSet }` for SES). */
   meta?: Record<string, unknown>;
 };

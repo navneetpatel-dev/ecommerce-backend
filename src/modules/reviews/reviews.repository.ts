@@ -41,11 +41,13 @@ export class ReviewsRepository extends BaseRepository<Review> {
   }
 
   /** Personal history — unscoped; customer's own reviews stay visible after catalog changes. */
-  async findByUser(userId: string) {
-    return this.model.findAll({
+  async findByUser(userId: string, page: { limit: number; offset: number }) {
+    return this.model.findAndCountAll({
       where: { userId },
       include: [{ association: 'product', attributes: ['id', 'name', 'slug'] }],
-      order: [['createdAt', 'DESC']],
+      order: [['createdAt', 'DESC'], ['id', 'ASC']],
+      limit: page.limit,
+      offset: page.offset,
     });
   }
 

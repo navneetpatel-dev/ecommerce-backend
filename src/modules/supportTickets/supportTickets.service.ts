@@ -771,8 +771,8 @@ export class SupportTicketsService {
         throw new AppError(ERROR_MESSAGES.TICKET_NOT_FOUND, 404, ERROR_CODES.TICKET_NOT_FOUND);
       }
 
-      await assertTicketAccess(locked, actor);
-      if (!(await isAdminActor(actor)) && !isVendorActor(actor)) {
+      await assertTicketAccess(locked, actor); // The shopper may also mark their own ticket resolved.
+      if (locked.customerId !== actor.id && !(await isAdminActor(actor)) && !isVendorActor(actor)) {
         throw new AppError(ERROR_MESSAGES.TICKET_FORBIDDEN, 403, ERROR_CODES.TICKET_FORBIDDEN);
       }
 
@@ -826,7 +826,7 @@ export class SupportTicketsService {
 
       const settings = await settingsService.getPlatformSettings();
       const windowDays = settings.ticketReopenWindowDays;
-      const resolvedAt = locked.resolvedAt ? new Date(locked.resolvedAt).getTime() : 0;
+      const resolvedAt = new Date(locked.resolvedAt ?? locked.closedAt ?? 0).getTime(); // closed counts too
       const maxMs = windowDays * 24 * 60 * 60 * 1000;
       if (!resolvedAt || Date.now() - resolvedAt > maxMs) {
         throw new AppError(

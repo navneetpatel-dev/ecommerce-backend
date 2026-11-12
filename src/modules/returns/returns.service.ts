@@ -474,16 +474,15 @@ export class ReturnsService {
     });
   }
 
-  async listForUser(userId: string) {
+  /** A shopper's returns, a page at a time (106 came back in one response before). */
+  async listForUser(userId: string, query: { page: number; limit: number }) {
     const slaDays = await refundSlaDays();
-    const rows = await ReturnRequest.findAll({
-      where: { userId },
-      include: returnListInclude,
-      order: [['createdAt', 'DESC']],
+    const { rows, count } = await ReturnRequest.findAndCountAll({
+      where: { userId }, include: returnListInclude, order: [['createdAt', 'DESC'], ['id', 'ASC']],
+      limit: query.limit, offset: (query.page - 1) * query.limit, distinct: true,
     });
-    return rows.map((row) =>
-      serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }, slaDays),
-    );
+    const returns = rows.map((row) => serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }, slaDays));
+    return { returns, pagination: buildPaginationMeta(count, query.page, query.limit) };
   }
 
   async listAll(query: { page: number; limit: number }) {

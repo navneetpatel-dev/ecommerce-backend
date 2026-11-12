@@ -5,7 +5,8 @@ export const EMAIL_COPY = {
   brandName: 'Ecommerce',
   footerHelp: 'If you did not expect this email, you can ignore it.',
   footerUnsubscribe:
-    'You received this because you opted in to marketing emails. Manage preferences in your account settings.',
+    'You received this because you opted in to marketing emails. Manage preferences in your account settings, or unsubscribe in one click.',
+  unsubscribeLink: 'Unsubscribe',
   ctaOpenStore: 'Visit store',
   ctaResetPassword: 'Reset password',
   ctaVerifyEmail: 'Verify email',
@@ -90,7 +91,7 @@ export const EMAIL_COPY = {
     ORDER_CANCELLED: 'Order #{orderNumber} has been cancelled.',
     SUBORDER_CANCELLED:
       'Some items in order #{orderNumber} were cancelled and anything you paid for them is refunded. The rest of your order goes ahead.',
-    ORDER_RETURNED: 'Your return for order #{orderNumber} has been updated ({status}).',
+    ORDER_RETURNED: 'Your return for order #{orderNumber}: {statusText}.',
     REFUND_PROCESSED: 'A refund of ₹{amount} for order #{orderNumber} has been processed.',
     REFUND_INITIATED:
       'Your refund of ₹{amount} for order #{orderNumber} has been initiated. Bank posting may take {slaDays} business days.',
@@ -104,7 +105,7 @@ export const EMAIL_COPY = {
     PRODUCT_APPROVED: 'Your product "{productName}" is now live.',
     PRODUCT_REJECTED: 'Your product "{productName}" was rejected. Note: {reason}',
     KYC_DOCUMENT_REJECTED: 'A KYC document was rejected. Reason: {reason}',
-    LOW_STOCK_ALERT: 'Stock for "{productName}" ({sku}) is low: {stock} remaining.',
+    LOW_STOCK_ALERT: 'These items are running low: {stockList}. Restock them from your products page.',
     PAYOUT_PROCESSED: 'A payout of ₹{amount} has been prepared and is awaiting transfer.',
     PAYOUT_PAID: 'Your payout of ₹{amount} was paid by {paymentMethod}. Reference: {paymentReferenceNumber}.',
     DELIVERY_ATTEMPT_FAILED: 'We tried to deliver your order (tracking {trackingNumber}) but were unable to. Reason: {reason}. Pick a new delivery window and we will try again.',

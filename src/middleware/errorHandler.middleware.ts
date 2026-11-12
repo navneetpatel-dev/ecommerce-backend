@@ -36,6 +36,16 @@ export const errorHandlerMiddleware: ErrorRequestHandler = (
     return;
   }
 
+  if (isMalformedValue(err)) {
+    // A non-UUID id (or other badly typed value) reached Postgres: the caller's
+    // mistake, not a server fault.
+    res.status(400).json({
+      success: false,
+      error: { code: 'INVALID_ID', message: 'That id is not valid.' },
+    });
+    return;
+  }
+
   logError('Unhandled error', err, {
     requestId: req.requestId,
     path: req.path,
@@ -50,3 +60,14 @@ export const errorHandlerMiddleware: ErrorRequestHandler = (
     },
   });
 };
+
+/** Postgres 22P02 (invalid_text_representation), e.g. `GET /api/orders/abc`. */
+function isMalformedValue(err: unknown): boolean {
+  let current: unknown = err;
+  for (let depth = 0; current && depth < 4; depth += 1) {
+    const candidate = current as { code?: unknown; parent?: unknown; original?: unknown; cause?: unknown };
+    if (candidate.code === '22P02') return true;
+    current = candidate.parent ?? candidate.original ?? candidate.cause;
+  }
+  return false;
+}

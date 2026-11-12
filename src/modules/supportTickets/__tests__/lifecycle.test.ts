@@ -44,8 +44,8 @@ describe('support ticket lifecycle', () => {
     );
   });
 
-  it('keeps CLOSED terminal', () => {
-    assert.deepEqual(TICKET_ALLOWED_TRANSITIONS[SUPPORT_TICKET_STATUS.CLOSED], []);
+  it('lets a CLOSED ticket only be reopened (the reopen window still applies)', () => {
+    assert.deepEqual(TICKET_ALLOWED_TRANSITIONS[SUPPORT_TICKET_STATUS.CLOSED], [SUPPORT_TICKET_STATUS.REOPENED]);
   });
 
   it('allows RESOLVED → REOPENED', () => {

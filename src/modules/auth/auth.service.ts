@@ -12,13 +12,14 @@ import { AppError, NotFoundError, ValidationError, ForbiddenError } from '@core/
 import { logger } from '@core/logger';
 import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { redisClient, withRedis } from '@config/redis';
-import { EMAIL_VERIFY_EXPIRY, REFRESH_TOKEN_TTL_MS } from '@core/constants/http';
+import { REFRESH_TOKEN_TTL_MS } from '@core/constants/http';
 import { ADMIN_ROLES, ROLES, USER_STATUS } from '@core/constants/statuses';
 import { ERROR_MESSAGES, ERROR_CODES } from '@core/constants/errors';
 import { roleNameOf } from '@utils/userRole';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { otpService } from './otp.service';
 import { assertResetTokenCurrent, readPasswordResetToken, signPasswordResetToken } from './passwordResetToken';
+import { emailVerifyActionUrl } from './emailVerifyLink';
 import { logAudit } from '@modules/audit/audit.service';
 
 export type SessionDeviceMeta = {
@@ -123,15 +124,6 @@ async function generateTokens(user: User, meta: SessionDeviceMeta = {}): Promise
   const accessToken = generateAccessToken(toUserPayload(user));
   const refreshToken = await generateRefreshToken(user.id, meta);
   return { accessToken, refreshToken };
-}
-
-function emailVerifyActionUrl(userId: string): string {
-  const verifyToken = jwt.sign(
-    { sub: userId, purpose: 'email-verify' },
-    env.JWT_SECRET,
-    { expiresIn: EMAIL_VERIFY_EXPIRY },
-  );
-  return `${env.CLIENT_URL.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verifyToken)}`;
 }
 
 function serializeSession(
@@ -483,14 +475,9 @@ export class AuthService {
    * fresh link.
    */
   async resendEmailVerificationByEmail(email: string): Promise<{ sent: boolean; alreadyVerified: boolean }> {
+    // One reply for every email: it must not reveal whether an account exists or is verified.
     const user = await repo.findByEmail(email);
-    if (!user || user.status === USER_STATUS.BLOCKED) {
-      throw new ValidationError({ email: [ERROR_MESSAGES.OTP_EMAIL_NOT_REGISTERED] });
-    }
-
-    if (user.emailVerified) {
-      return { sent: false, alreadyVerified: true };
-    }
+    if (!user || user.status === USER_STATUS.BLOCKED || user.emailVerified) return { sent: true, alreadyVerified: false };
 
     void notificationsService.sendEmailVerification(user.id, {
       actionUrl: emailVerifyActionUrl(user.id),

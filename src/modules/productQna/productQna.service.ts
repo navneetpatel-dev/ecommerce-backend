@@ -49,7 +49,8 @@ export class ProductQnaService {
    * their own pending question on the product page.
    */
   async askQuestion(userId: string, data: { productId: string; question: string }) {
-    const product = await Product.findByPk(data.productId);
+    // Only products shoppers can see take questions (not drafts, pending or archived).
+    const product = await Product.scope('customerVisible').findByPk(data.productId);
     if (!product) throw new NotFoundError('Product');
 
     return ProductQuestion.create({

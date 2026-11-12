@@ -64,6 +64,7 @@ function bodyFor(type: NotificationType, data: EmailTemplateData): string {
     paymentMethod: str(data, 'paymentMethod'),
     paymentReferenceNumber: str(data, 'paymentReferenceNumber'),
     status: str(data, 'status'),
+    statusText: str(data, 'statusText', `updated (${str(data, 'status')})`),
     reason: str(data, 'reason', '—'),
     businessName: str(data, 'businessName'),
     businessNameSuffix: str(data, 'businessName')
@@ -72,6 +73,7 @@ function bodyFor(type: NotificationType, data: EmailTemplateData): string {
     productName: str(data, 'productName'),
     sku: str(data, 'sku'),
     stock: str(data, 'stock'),
+    stockList: str(data, 'stockList', `${str(data, 'productName')} (${str(data, 'sku')}): ${str(data, 'stock')} left`),
     price: money(data, 'price'),
     code: str(data, 'code'),
     usedCount: str(data, 'usedCount'),
@@ -215,6 +217,10 @@ export function renderNotificationEmail(
     footerNote: isMarketingNotification(type)
       ? EMAIL_COPY.footerUnsubscribe
       : EMAIL_COPY.footerHelp,
+    footerLink:
+      isMarketingNotification(type) && str(data, 'unsubscribeUrl')
+        ? { label: EMAIL_COPY.unsubscribeLink, url: str(data, 'unsubscribeUrl') }
+        : undefined,
   });
   return { subject, ...rendered };
 }

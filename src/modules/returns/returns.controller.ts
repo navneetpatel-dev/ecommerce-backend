@@ -6,16 +6,22 @@ import { sendPdfDownload } from '@core/http/sendDownload';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { returnsService } from './returns.service';
+import { cancelReturnByCustomer, notifyReturnRequested } from './returnCustomerActions';
 import { withoutSellerFigures } from '@modules/orders/sellerFigures';
 
 export const create = asyncHandler(async (req: Request, res: Response) => {
   const created = await returnsService.create(req.user!.id, req.body);
+  await notifyReturnRequested(req.user!.id, created as { id: string; subOrderId?: string | null });
   res.status(201).json(ok(withoutSellerFigures(created)));
 });
 
+export const cancelByCustomer = asyncHandler(async (req: Request, res: Response) => {
+  res.json(ok(await cancelReturnByCustomer(req.params.id!, req.user!.id)));
+});
+
 export const list = asyncHandler(async (req: Request, res: Response) => {
-  const items = await returnsService.listForUser(req.user!.id);
-  res.json(ok(withoutSellerFigures(items)));
+  const result = await returnsService.listForUser(req.user!.id, pageLimitQuerySchema.parse(req.query));
+  res.json(ok(withoutSellerFigures(result.returns), { pagination: result.pagination }));
 });
 
 export const listAdmin = asyncHandler(async (req: Request, res: Response) => {

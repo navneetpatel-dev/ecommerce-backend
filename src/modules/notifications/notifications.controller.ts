@@ -5,6 +5,7 @@ import { notificationsService } from './notifications.service';
 import { pushService } from './push.service';
 import { AppError } from '@core/errors';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
+import { unsubscribeByToken } from './unsubscribe';
 import type { ListNotificationLogsQuery, BroadcastNotificationRequest } from './notifications.dto';
 
 export const listLogs = asyncHandler(async (req: Request, res: Response) => {
@@ -41,4 +42,9 @@ export const subscribePush = asyncHandler(async (req: Request, res: Response) =>
 export const unsubscribePush = asyncHandler(async (req: Request, res: Response) => {
   await pushService.unsubscribe(req.user!.id, String(req.query.endpoint));
   res.status(204).send();
+});
+
+export const unsubscribe = asyncHandler(async (req: Request, res: Response) => {
+  const token = String(req.query.token ?? (req.body as { token?: unknown } | undefined)?.token ?? '');
+  res.json(ok(await unsubscribeByToken(token)));
 });

@@ -33,6 +33,8 @@ import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { ValidationError } from '@core/errors/ValidationError';
 import { logAudit } from '@modules/audit/audit.service';
 import { AVATAR_URL_NOT_OURS, isOwnAvatarUrl } from './avatarUrl';
+import { accountExportExtras } from './accountExportExtras';
+import { recipientFor } from './addressRecipient';
 import type {
   UpdateUserProfileRequest,
   UpdateUserStatusRequest,
@@ -149,6 +151,8 @@ function serializeAddress(address: {
   gstin?: string | null;
   isDefault: boolean;
   deliveryInstructions?: string | null;
+  recipientName?: string | null;
+  recipientPhone?: string | null;
   lat?: number | null;
   lng?: number | null;
 }) {
@@ -164,6 +168,8 @@ function serializeAddress(address: {
     gstin: address.gstin ?? null,
     isDefault: Boolean(address.isDefault),
     deliveryInstructions: address.deliveryInstructions ?? null,
+    recipientName: address.recipientName ?? null,
+    recipientPhone: address.recipientPhone ?? null,
     lat: address.lat != null ? Number(address.lat) : null,
     lng: address.lng != null ? Number(address.lng) : null,
   };
@@ -236,7 +242,7 @@ export class UsersService {
     const user = await usersRepository.findById(userId, { include: profileInclude });
     if (!user) throw new NotFoundError('User');
 
-    const [addresses, orders, reviews, returns, wishlists] = await Promise.all([
+    const [addresses, orders, reviews, returns, wishlists, extras] = await Promise.all([
       addressesRepository.findByUserId(userId),
       Order.findAll({
         where: { userId },
@@ -249,6 +255,7 @@ export class UsersService {
         where: { userId },
         include: [{ model: WishlistItem, as: 'items' }],
       }),
+      accountExportExtras(userId, user.email),
     ]);
 
     return {
@@ -259,6 +266,7 @@ export class UsersService {
       reviews,
       returns,
       wishlists,
+      ...extras,
     };
   }
 
@@ -288,6 +296,7 @@ export class UsersService {
           gstin: data.gstin ?? null,
           isDefault: makeDefault,
           deliveryInstructions: data.deliveryInstructions ?? null,
+          ...(await recipientFor(userId, data)),
           lat: data.lat,
           lng: data.lng,
         } as any,
@@ -320,6 +329,8 @@ export class UsersService {
           ...(data.country !== undefined ? { country: data.country } : {}),
           ...(data.pincode !== undefined ? { pincode: data.pincode } : {}),
           ...(data.gstin !== undefined ? { gstin: data.gstin } : {}),
+          ...(data.recipientName !== undefined ? { recipientName: data.recipientName } : {}),
+          ...(data.recipientPhone !== undefined ? { recipientPhone: data.recipientPhone || null } : {}),
           ...(data.deliveryInstructions !== undefined
             ? { deliveryInstructions: data.deliveryInstructions }
             : {}),

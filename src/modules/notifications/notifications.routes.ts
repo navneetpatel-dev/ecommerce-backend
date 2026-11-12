@@ -24,6 +24,8 @@ router.post(
   validate(BroadcastNotificationSchema),
   notificationsController.broadcast,
 );
+// Public: the link in marketing emails and the one-click POST mail apps send (RFC 8058).
+router.post('/unsubscribe', notificationsController.unsubscribe);
 router.get('/push/public-key', authenticate, notificationsController.pushPublicKey);
 router.post('/push/subscribe', authenticate, validate(PushSubscriptionSchema), notificationsController.subscribePush);
 router.delete('/push/subscribe', authenticate, validate(RemovePushSubscriptionSchema, 'query'), notificationsController.unsubscribePush);

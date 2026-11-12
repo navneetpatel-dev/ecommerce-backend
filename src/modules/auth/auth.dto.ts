@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { optionalPhoneSchema } from '@core/validation/phone';
 
 /**
  * Emails are stored and looked up lowercase everywhere (see `User` model's
@@ -11,7 +12,7 @@ export const RegisterSchema = z.object({
   email: emailSchema,
   password: z.string().min(8),
   name: z.string().min(1),
-  phone: z.string().optional(),
+  phone: optionalPhoneSchema.optional(),
 });
 
 export const LoginSchema = z.object({
