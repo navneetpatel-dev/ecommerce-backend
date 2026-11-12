@@ -59,7 +59,14 @@ export const initReviewModel = (sequelize: Sequelize) => {
       updatedAt: DataTypes.DATE,
       deletedAt: DataTypes.DATE,
     },
-    { sequelize, tableName: 'reviews', timestamps: true, paranoid: true },
+    {
+      sequelize,
+      tableName: 'reviews',
+      timestamps: true,
+      paranoid: true,
+      // Product lists count approved reviews per product (migration 20261112000002).
+      indexes: [{ name: 'reviews_product_id_status_live', fields: ['productId', 'status'], where: { deletedAt: null } }],
+    },
   );
   return Review;
 };
