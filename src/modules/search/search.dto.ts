@@ -11,8 +11,16 @@ export const SearchProductsQuerySchema = pageLimitQuerySchema.extend({
   q: z.string().trim().min(1).max(SEARCH_AUTOCOMPLETE_MAX_QUERY_LENGTH),
   categoryId: z.string().uuid().optional(),
   vendorId: z.string().uuid().optional(),
-  minPrice: z.coerce.number().optional(),
-  maxPrice: z.coerce.number().optional(),
+  minPrice: z.coerce.number().min(0).optional(),
+  maxPrice: z.coerce.number().min(0).optional(),
+  /** Only products with a variant in stock (B-23). */
+  inStock: z
+    .union([z.literal('true'), z.literal('false'), z.boolean()])
+    .optional()
+    .transform((value) => value === true || value === 'true'),
+}).refine((query) => query.minPrice === undefined || query.maxPrice === undefined || query.minPrice <= query.maxPrice, {
+  message: 'The minimum price cannot be more than the maximum price',
+  path: ['minPrice'],
 });
 
 export const AutocompleteQuerySchema = z.object({

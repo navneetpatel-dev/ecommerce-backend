@@ -13,6 +13,7 @@ export class SearchService {
       vendorId: query.vendorId,
       minPrice: query.minPrice,
       maxPrice: query.maxPrice,
+      inStock: query.inStock,
     };
 
     const [rows, total] = await Promise.all([

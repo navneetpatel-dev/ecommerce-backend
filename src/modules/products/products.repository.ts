@@ -29,6 +29,7 @@ type ProductListFilters = {
   search?: string;
   minPrice?: number;
   maxPrice?: number;
+  inStock?: boolean;
   rating?: number;
   sort?: string;
   excludeProductId?: string;
@@ -95,6 +96,15 @@ function buildListWhere(filters: ProductListFilters) {
 
   if (filters.rating !== undefined) {
     where.avgRating = { [Op.gte]: filters.rating };
+  }
+
+  if (filters.inStock) {
+    where[Op.and] = [
+      ...(where[Op.and] ?? []),
+      sequelize.literal(
+        'EXISTS (SELECT 1 FROM product_variants pv WHERE pv."productId" = "Product"."id" AND pv."deletedAt" IS NULL AND pv.stock > 0)',
+      ),
+    ];
   }
 
   return where;

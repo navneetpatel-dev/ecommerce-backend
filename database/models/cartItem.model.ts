@@ -5,6 +5,8 @@ export class CartItem extends Model<InferAttributes<CartItem>, InferCreationAttr
   declare cartId: string;
   declare variantId: string;
   declare quantity: CreationOptional<number>;
+  /** Pre-GST price per piece when the line was added (B-55); set by the create hook. */
+  declare unitPriceAtAdd: CreationOptional<number | null>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -25,6 +27,7 @@ export const initCartItemModel = (sequelize: Sequelize) => {
       cartId: { type: DataTypes.UUID, allowNull: false },
       variantId: { type: DataTypes.UUID, allowNull: false },
       quantity: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1 },
+      unitPriceAtAdd: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },
@@ -32,7 +35,23 @@ export const initCartItemModel = (sequelize: Sequelize) => {
       updatedAt: DataTypes.DATE,
       deletedAt: DataTypes.DATE,
     },
-    { sequelize, tableName: 'cart_items', timestamps: true, paranoid: true },
+    {
+      sequelize,
+      tableName: 'cart_items',
+      timestamps: true,
+      paranoid: true,
+      hooks: {
+        // Every way a line is created (add, guest merge, undo) records the price it went in at.
+        async beforeCreate(item, options) {
+          if (item.unitPriceAtAdd != null) return;
+          const variant = await sequelize.models.ProductVariant?.findByPk(item.variantId, {
+            attributes: ['price'],
+            transaction: options.transaction,
+          });
+          item.unitPriceAtAdd = (variant?.get('price') as number | undefined) ?? null;
+        },
+      },
+    },
   );
   return CartItem;
 };

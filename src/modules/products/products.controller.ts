@@ -64,6 +64,7 @@ const PRODUCT_LIST_QUERY_KEYS = new Set([
   'search',
   'minPrice',
   'maxPrice',
+  'inStock',
   'rating',
   'sort',
   'includeDescendants',

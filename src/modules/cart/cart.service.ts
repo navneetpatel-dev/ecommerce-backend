@@ -19,17 +19,16 @@ import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
 import type { AddToCartRequest, UpdateCartItemRequest } from './cart.dto';
 import { gstRuleResolver, priceWithRuleGst } from '@modules/tax/gstPricing';
+import { priceChangeFor, type CartPriceChange } from './cartPriceChange';
 
 export type CartViewItem = {
   id: string;
   variantId: string;
   quantity: number;
-  /**
-   * Server-decided cap for this line (stock vs the cart policy cap).
-   * The API silently clamps to it, so the client must not offer more —
-   * otherwise the stepper counts past stock and snaps back on the response.
-   */
+  /** Server cap for this line (stock vs cart policy); the API clamps to it, so the client must not offer more. */
   maxQuantity: number;
+  /** Set when the price moved since the line was added (B-55). */
+  priceChange?: CartPriceChange | null;
   /** Before GST (what the pricing engine works on). */
   lineSubtotal: number;
   /** The line as the customer sees it: price per piece with GST × quantity, before any coupon. */
@@ -217,9 +216,10 @@ export class CartService {
     const mappedItems = await Promise.all(
       items.map(async (item) => {
         const mapped = mapCartItem(item);
-        const displayPrice = priceWithRuleGst(await ruleFor(item.variant?.product?.categoryId), mapped.product.price);
+        const rule = await ruleFor(item.variant?.product?.categoryId);
+        const displayPrice = priceWithRuleGst(rule, mapped.product.price);
         return {
-          ...mapped,
+          ...mapped, priceChange: priceChangeFor(item.unitPriceAtAdd, mapped.product.price, (price) => priceWithRuleGst(rule, price)),
           lineDisplaySubtotal: lineSubtotal(displayPrice, mapped.quantity),
           product: { ...mapped.product, displayPrice },
         };
