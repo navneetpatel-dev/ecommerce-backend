@@ -9,6 +9,7 @@ import {
 } from '@config/s3';
 import { logger } from '@core/logger';
 import { buildS3EntityPrefix, buildS3Key } from './buildS3Key';
+import { bestEffortCleanup } from './bestEffortCleanup';
 import type { S3EntityType } from './constants';
 
 /** Deletes the S3 object pointed to by a public URL (no-op if not our key). */
@@ -95,19 +96,14 @@ export async function cascadeDeleteEntityMedia(
   if (!isS3Configured()) return 0;
 
   const prefix = buildS3EntityPrefix(entityType, entityId);
-  const fromPrefix = await deleteByPrefix(prefix);
-  const fromUrls = await deleteS3ObjectsByUrls(referencedUrls);
-  const deleted = fromPrefix + fromUrls;
-
-  if (deleted > 0) {
-    logger.info('Cascaded S3 delete for entity', {
-      entityType,
-      entityId,
-      prefix,
-      fromPrefix,
-      fromUrls,
-      deleted,
-    });
-  }
-  return deleted;
+  // Callers delete their rows first, so a storage error must not fail their request.
+  return bestEffortCleanup('Cascaded S3 delete', { entityType, entityId, prefix }, async () => {
+    const fromPrefix = await deleteByPrefix(prefix);
+    const fromUrls = await deleteS3ObjectsByUrls(referencedUrls);
+    const deleted = fromPrefix + fromUrls;
+    if (deleted > 0) {
+      logger.info('Cascaded S3 delete for entity', { entityType, entityId, prefix, fromPrefix, fromUrls, deleted });
+    }
+    return deleted;
+  });
 }

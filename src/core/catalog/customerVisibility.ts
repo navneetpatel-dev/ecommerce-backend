@@ -38,7 +38,7 @@ export function resolveUnavailableReason(args: {
     return UNAVAILABLE_REASON.PRODUCT_UNPUBLISHED;
   }
   if (args.stock < args.quantity) {
-    return UNAVAILABLE_REASON.OUT_OF_STOCK;
+    return args.stock > 0 ? UNAVAILABLE_REASON.LOW_STOCK : UNAVAILABLE_REASON.OUT_OF_STOCK;
   }
   return null;
 }

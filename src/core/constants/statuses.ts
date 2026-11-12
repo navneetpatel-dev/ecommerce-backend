@@ -81,6 +81,8 @@ export const VENDOR_DOCUMENT_CHECKLIST_STATUS_VALUES = Object.values(
 /** Why a cart/wishlist line is not purchaseable (live catalog gate). */
 export const UNAVAILABLE_REASON = {
   OUT_OF_STOCK: 'OUT_OF_STOCK',
+  /** Some stock is left, but less than the line's quantity (B-66). */
+  LOW_STOCK: 'LOW_STOCK',
   PRODUCT_UNPUBLISHED: 'PRODUCT_UNPUBLISHED',
   VENDOR_UNAVAILABLE: 'VENDOR_UNAVAILABLE',
 } as const;

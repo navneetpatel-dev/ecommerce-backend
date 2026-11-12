@@ -473,11 +473,14 @@ module.exports = {
           // Return requests for ~10% of DELIVERED items
           if (orderStatus === 'DELIVERED' && Math.random() > 0.9) {
             const returnReasons = ['DAMAGED', 'WRONG_ITEM', 'NOT_AS_DESCRIBED', 'NO_LONGER_NEEDED'];
+            const returnStatus = randomElement(['REQUESTED', 'APPROVED', 'REJECTED', 'REFUNDED']);
             returnRequests.push({
               id: uuidv4(), subOrderId, orderItemId, userId: customer.id,
               reason: `Item did not meet expectations`, reasonCode: randomElement(returnReasons),
-              status: randomElement(['REQUESTED', 'APPROVED', 'REJECTED', 'REFUNDED']),
-              refundAmount: itemTotal, resolvedById: null, resolvedAt: null,
+              status: returnStatus,
+              // Like real requests: no refund amount until the return is approved.
+              refundAmount: returnStatus === 'APPROVED' || returnStatus === 'REFUNDED' ? itemTotal : null,
+              resolvedById: null, resolvedAt: null,
               createdAt: new Date(orderDate.getTime() + randomInt(5, 15) * 24 * 60 * 60 * 1000),
               updatedAt: new Date(orderDate.getTime() + randomInt(5, 15) * 24 * 60 * 60 * 1000),
             });

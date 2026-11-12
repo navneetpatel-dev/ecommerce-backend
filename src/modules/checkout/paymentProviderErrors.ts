@@ -1,5 +1,6 @@
 import { AppError } from '@core/errors/AppError';
 import { Order } from '@database/models/order.model';
+import { logger } from '@core/logger';
 
 export const PAYMENTS_UNAVAILABLE =
   'Payments are unavailable right now. Your cart is saved, so please try again in a few minutes.';
@@ -24,9 +25,22 @@ export function isProviderUnreachable(error: unknown): boolean {
  * After an order that never reached the provider was cancelled (stock, wallet and
  * coupon already given back), take it out of the shopper's order history: each
  * failed try used to leave a CANCELLED / FAILED order behind. The row is soft-deleted.
- * Returns the error to throw: a clear 503 for an outage, the original otherwise.
+ *
+ * Returns the error to throw. Our own errors (AppError) pass through. Anything else
+ * came from the provider call itself (outage, 5xx, or a refusal such as 401/403/429
+ * from the provider or an egress proxy). The shopper can fix none of these, so they
+ * all get the same clear 503 instead of a generic 500; the real cause goes to the log.
  */
 export async function discardUnreachedOrder(orderId: string, error: unknown): Promise<unknown> {
   await Order.destroy({ where: { id: orderId, razorpayOrderId: null } });
-  return isProviderUnreachable(error) ? new AppError(PAYMENTS_UNAVAILABLE, 503, 'PAYMENT_PROVIDER_UNAVAILABLE') : error;
+  if (error instanceof AppError) return error;
+  const meta = { orderId, error: describeProviderError(error) };
+  if (isProviderUnreachable(error)) logger.warn('Payment provider unreachable at checkout', meta);
+  else logger.error('Payment provider refused the checkout order', meta);
+  return new AppError(PAYMENTS_UNAVAILABLE, 503, 'PAYMENT_PROVIDER_UNAVAILABLE');
+}
+
+function describeProviderError(error: unknown): Record<string, unknown> {
+  const e = (error ?? {}) as { message?: unknown; code?: unknown; statusCode?: unknown; error?: unknown };
+  return { message: e.message, code: e.code, statusCode: e.statusCode, detail: e.error };
 }
