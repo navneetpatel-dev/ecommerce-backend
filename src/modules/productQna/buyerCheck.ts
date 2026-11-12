@@ -2,6 +2,7 @@ import { QueryTypes, type Transaction } from 'sequelize';
 import { sequelize } from '@database/models';
 import { ORDER_STATUS } from '@core/constants/statuses';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
+import { Product } from '@database/models/product.model';
 
 export const BUYERS_ONLY_ANSWER = 'Only shoppers who have received this product can answer questions about it.';
 
@@ -27,4 +28,13 @@ export async function hasReceivedProduct(userId: string, productId: string, tran
 /** C-01: a shopper's answer must come from someone who bought the product. */
 export async function assertBuyerMayAnswer(userId: string, productId: string, transaction?: Transaction): Promise<void> {
   if (!(await hasReceivedProduct(userId, productId, transaction))) throw new ForbiddenError(BUYERS_ONLY_ANSWER);
+}
+
+/** The product's own seller, or a shopper who has received it (C-01). */
+export async function canAnswerForProduct(userId: string, vendorId: string | null, productId: string): Promise<boolean> {
+  if (vendorId) {
+    const product = await Product.findByPk(productId, { attributes: ['vendorId'] });
+    if (product?.vendorId === vendorId) return true;
+  }
+  return hasReceivedProduct(userId, productId);
 }
