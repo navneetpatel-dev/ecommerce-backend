@@ -48,6 +48,11 @@ export const vote = asyncHandler(async (req: Request, res: Response) => {
   res.json(ok(review));
 });
 
+/** Takes back the caller's Helpful / Not helpful vote. */
+export const clearVote = asyncHandler(async (req: Request, res: Response) => {
+  res.json(ok(await reviewsService.clearReviewVote(req.params.id!, req.user!.id)));
+});
+
 export const approve = asyncHandler(async (req: Request, res: Response) => {
   const review = await reviewsService.approveReview(req.params.id!);
   res.json(ok(review));

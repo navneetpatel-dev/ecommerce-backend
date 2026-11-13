@@ -35,8 +35,17 @@ describe('review votes (B-46)', () => {
       assert.deepEqual(await counts(pick.id), [helpful + 1, unhelpful], 'a second click counts once');
       await reviewsService.voteReview(pick.id, pick.voter, 'UNHELPFUL');
       assert.deepEqual(await counts(pick.id), [helpful, unhelpful + 1], 'switching moves the vote');
-      await reviewsService.voteReview(pick.id, pick.voter, 'HELPFUL');
+      const cast = await reviewsService.voteReview(pick.id, pick.voter, 'HELPFUL');
       assert.deepEqual(await counts(pick.id), [helpful + 1, unhelpful]);
+      assert.equal(cast.myVote, 'HELPFUL', 'the response says which vote is theirs');
+
+      const cleared = await reviewsService.clearReviewVote(pick.id, pick.voter);
+      assert.deepEqual(await counts(pick.id), [helpful, unhelpful], 'clearing takes the vote back');
+      assert.equal(cleared.myVote, null);
+      await reviewsService.clearReviewVote(pick.id, pick.voter);
+      assert.deepEqual(await counts(pick.id), [helpful, unhelpful], 'clearing twice changes nothing');
+      await reviewsService.voteReview(pick.id, pick.voter, 'UNHELPFUL');
+      assert.deepEqual(await counts(pick.id), [helpful, unhelpful + 1], 'a cleared vote can be cast again');
 
       await assert.rejects(reviewsService.voteReview(pick.id, pick.author, 'HELPFUL'), { statusCode: 403 });
       if (pick.pending) {

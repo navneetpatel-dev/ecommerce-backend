@@ -7,8 +7,8 @@ import { reviewsRepository } from './reviews.repository';
 import type { CreateReviewRequest, ProductReviewsQuery, UpdateReviewRequest } from './reviews.dto';
 import { findVisibleReviewPage, summarizeVisibleReviews } from './productReviewListing';
 import { resolveEditedReviewMedia, resolveReviewMedia } from './reviewMedia';
+import { castReviewVote, clearReviewVote, findViewerVotes, type ReviewVoteValue } from './reviewVotes';
 import { Review } from '@database/models/review.model';
-import { ReviewVote } from '@database/models/reviewVote.model';
 import { OrderItem } from '@database/models/orderItem.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { Product } from '@database/models/product.model';
@@ -123,8 +123,10 @@ export class ReviewsService {
           })
         : Promise.resolve(null),
     ]);
+    // Each review carries the viewer's own vote, so their Helpful / Not helpful shows as chosen.
+    const votes = viewerUserId ? await findViewerVotes(rows.map((row) => row.id), viewerUserId) : new Map();
     return {
-      reviews: rows,
+      reviews: rows.map((row) => ({ ...row.get({ plain: true }), myVote: votes.get(row.id) ?? null })),
       pagination: buildPaginationMeta(count, query.page, query.limit),
       summary,
       myReview,
@@ -142,36 +144,13 @@ export class ReviewsService {
     return reviewsRepository.findByVendor(vendorId);
   }
 
-  async voteReview(reviewId: string, userId: string, vote: 'HELPFUL' | 'UNHELPFUL') {
-    return sequelize.transaction(async (t) => {
-      const review = await Review.findByPk(reviewId, {
-        transaction: t,
-        lock: t.LOCK.UPDATE,
-      });
-      // Only published reviews can be voted on; a pending one does not exist for shoppers.
-      if (!review || review.status !== REVIEW_STATUS.APPROVED) throw new NotFoundError('Review');
-      if (review.userId === userId) {
-        throw new ForbiddenError(ERROR_MESSAGES.REVIEW_VOTE_OWN);
-      }
+  /** Helpful / Not helpful, returned with the caller's vote (see reviewVotes). */
+  async voteReview(reviewId: string, userId: string, vote: ReviewVoteValue) {
+    return castReviewVote(reviewId, userId, vote);
+  }
 
-      const [reviewVote, created] = await ReviewVote.findOrCreate({
-        where: { reviewId, userId },
-        defaults: { reviewId, userId, vote },
-        transaction: t,
-      });
-      // Read the old vote before changing it: comparing after the update made a
-      // switch decrement the old counter but never increment the new one.
-      const previous = created ? null : reviewVote.vote;
-      if (previous === vote) return review.reload({ transaction: t });
-
-      if (previous) {
-        await reviewVote.update({ vote }, { transaction: t });
-        await review.decrement(previous === 'HELPFUL' ? 'helpfulCount' : 'unhelpfulCount', { transaction: t });
-      }
-      await review.increment(vote === 'HELPFUL' ? 'helpfulCount' : 'unhelpfulCount', { transaction: t });
-
-      return review.reload({ transaction: t });
-    });
+  async clearReviewVote(reviewId: string, userId: string) {
+    return clearReviewVote(reviewId, userId);
   }
 
   /**

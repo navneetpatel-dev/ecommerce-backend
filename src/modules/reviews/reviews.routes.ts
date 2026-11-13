@@ -18,6 +18,7 @@ router.get('/vendor/me', authenticate, authorize(PERMISSIONS.REVIEW_RESPOND), re
 router.patch('/:id', authenticate, validate(UpdateReviewSchema), reviewsController.update);
 router.delete('/:id', authenticate, reviewsController.remove);
 router.post('/:id/vote', authenticate, validate(VoteReviewSchema), reviewsController.vote);
+router.delete('/:id/vote', authenticate, reviewsController.clearVote);
 router.patch('/:id/approve', authenticate, authorize(PERMISSIONS.REVIEW_MODERATE), reviewsController.approve);
 router.patch('/:id/reject', authenticate, authorize(PERMISSIONS.REVIEW_MODERATE), reviewsController.reject);
 router.patch('/:id/respond', authenticate, authorize(PERMISSIONS.REVIEW_RESPOND), validate(RespondReviewSchema), reviewsController.respond);
