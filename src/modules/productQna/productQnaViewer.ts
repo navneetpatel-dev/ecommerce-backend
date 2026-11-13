@@ -49,6 +49,12 @@ export async function findViewerAnswers(questionIds: string[], viewerUserId: str
   return new Map(rows.map((row) => [row.questionId, serializeAnswer(toAnswerRow(row))]));
 }
 
+/** A just-posted answer in the same shape as the thread (with the author's name). */
+export async function serializeNewAnswer(answer: ProductAnswer) {
+  await answer.reload({ include: [{ association: 'author', attributes: ['id', 'name'] }] });
+  return serializeAnswer(toAnswerRow(answer));
+}
+
 /** "My questions": everything the shopper asked, newest first, any status. */
 export async function findMyQuestions(userId: string, limit: number, offset: number) {
   const { rows, count } = await ProductQuestion.findAndCountAll({

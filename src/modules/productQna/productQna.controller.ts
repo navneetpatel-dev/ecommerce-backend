@@ -16,6 +16,7 @@ import {
   UpdateQuestionSchema,
 } from './productQna.dto';
 import { deleteOwnQuestion, updateOwnAnswer, updateOwnQuestion } from './productQnaEdits';
+import { serializeNewAnswer } from './productQnaViewer';
 
 export const ask = asyncHandler(async (req: Request, res: Response) => {
   const dto = AskQuestionSchema.parse(req.body);
@@ -58,7 +59,7 @@ export const answer = asyncHandler(async (req: Request, res: Response) => {
     req.user!.vendorId,
     answerText,
   );
-  res.status(201).json(ok(created));
+  res.status(201).json(ok(await serializeNewAnswer(created)));
 });
 
 export const moderate = asyncHandler(async (req: Request, res: Response) => {
