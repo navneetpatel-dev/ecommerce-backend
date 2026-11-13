@@ -5,7 +5,9 @@ import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { pageLimitQuerySchema } from '@core/http/pagination';
 import { reviewsService } from './reviews.service';
-import { CreateReviewSchema, VoteReviewSchema } from './reviews.dto';
+import { findProductsAwaitingReview, findReviewableOrderItem } from './reviewEligibility';
+import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
+import { CreateReviewSchema, ProductReviewsQuerySchema, UpdateReviewSchema, VoteReviewSchema } from './reviews.dto';
 
 export const listPending = asyncHandler(async (req: Request, res: Response) => {
   const query = pageLimitQuerySchema.parse(req.query);
@@ -20,8 +22,9 @@ export const create = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const getByProduct = asyncHandler(async (req: Request, res: Response) => {
-  const reviews = await reviewsService.getProductReviews(req.params.productId!);
-  res.json(ok(reviews));
+  const query = ProductReviewsQuerySchema.parse(req.query);
+  const result = await reviewsService.getProductReviewPage(req.params.productId!, query);
+  res.json(ok(result.reviews, { pagination: result.pagination, summary: result.summary }));
 });
 
 export const getMyReviews = asyncHandler(async (req: Request, res: Response) => {
@@ -55,4 +58,27 @@ export const reject = asyncHandler(async (req: Request, res: Response) => {
 
 export const respond = asyncHandler(async (req: Request, res: Response) => {
   res.json(ok(await reviewsService.respondToReview(req.params.id!, req.user!.vendorId, req.body.response)));
+});
+
+/** PDP "Write a review": the signed-in shopper's delivered, unreviewed line for this product, if any. */
+export const getMyEligibility = asyncHandler(async (req: Request, res: Response) => {
+  const orderItemId = await findReviewableOrderItem(req.user!.id, req.params.productId!);
+  res.json(ok({ orderItemId }));
+});
+
+/** Owner edit (stars + text); goes back to moderation. */
+export const update = asyncHandler(async (req: Request, res: Response) => {
+  const dto = UpdateReviewSchema.parse(req.body);
+  res.json(ok(await reviewsService.updateOwnReview(req.params.id!, req.user!.id, dto)));
+});
+
+/** Delivered products the shopper has not reviewed yet, newest first. */
+export const getAwaitingReview = asyncHandler(async (req: Request, res: Response) => {
+  const query = pageLimitQuerySchema.parse(req.query);
+  const { rows, count } = await findProductsAwaitingReview(
+    req.user!.id,
+    query.limit,
+    paginationOffset(query.page, query.limit),
+  );
+  res.json(ok(rows, { pagination: buildPaginationMeta(count, query.page, query.limit) }));
 });

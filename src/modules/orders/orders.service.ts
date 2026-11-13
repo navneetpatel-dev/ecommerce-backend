@@ -5,6 +5,7 @@ import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { ordersRepository } from './orders.repository';
 import { assertPartPaidFor } from '@modules/suborders/subOrderTransitions';
 import { returnableOrderItemIds } from './orderReturnability';
+import { canReviewLine, orderItemReviewStates } from './orderItemReviews';
 import { ORDER_VENDOR_ATTRIBUTES } from './orderPublicAttributes';
 import { sequelize } from '@database/models';
 import { OrderItem } from '@database/models/orderItem.model';
@@ -130,15 +131,25 @@ export class OrdersService {
       ((order as unknown as { subOrders?: unknown[] }).subOrders ?? []) as Parameters<typeof returnableOrderItemIds>[0],
       linesWithReturns,
     );
+    const reviewStates = await orderItemReviewStates(
+      mapped.subOrders.flatMap((part) => part.items.map((item) => String(item.id))),
+    );
     const detail = {
       ...mapped,
       subOrders: mapped.subOrders.map((part) => ({
         ...part,
-        items: part.items.map((item) => ({
-          ...item,
-          canReturn: returnable.has(String(item.id)),
-          returnWindowClosed: windowClosed.has(String(item.id)),
-        })),
+        items: part.items.map((item) => {
+          const reviewState = reviewStates.get(String(item.id));
+          return {
+            ...item,
+            canReturn: returnable.has(String(item.id)),
+            returnWindowClosed: windowClosed.has(String(item.id)),
+            productId: reviewState?.productId ?? null,
+            // Only the buyer reading their own order may review it.
+            canReview: Boolean(userId) && canReviewLine((part as { status?: unknown }).status, reviewState),
+            review: reviewState?.review ?? null,
+          };
+        }),
       })),
       ...summary,
     };

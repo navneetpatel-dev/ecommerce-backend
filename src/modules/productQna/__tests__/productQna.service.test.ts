@@ -13,6 +13,9 @@ import {
   ROLES,
 } from '@core/constants/statuses';
 
+
+const PUBLIC_QUERY = { page: 1, limit: 20, answered: 'all', sort: 'recent' } as const;
+
 describe('ProductQnaService moderation', () => {
   afterEach(() => {
     mock.restoreAll();
@@ -110,28 +113,25 @@ describe('ProductQnaService moderation', () => {
     assert.equal(query.mock.callCount(), 0);
   });
 
-  it('public read only includes PUBLISHED answers', async () => {
+  it('public read carries each question its preview answer and published count, never the full thread', async () => {
+    mock.method(productQnaRepository, 'summarizePublishedForProduct', async () => ({ total: 2, answered: 1 }));
     mock.method(productQnaRepository, 'findPublishedForProduct', async () => ({
       rows: [
-        {
-          id: 'q-1',
-          productId: 'p-1',
-          question: 'Is it good?',
-          status: PRODUCT_QUESTION_STATUS.PUBLISHED,
-          createdAt: new Date(),
-          answers: [
-            { id: 'a-pub', answer: 'Yes', status: PRODUCT_ANSWER_STATUS.PUBLISHED, authorType: 'VENDOR' },
-            { id: 'a-pend', answer: 'Soon', status: PRODUCT_ANSWER_STATUS.PENDING, authorType: 'CUSTOMER' },
-            { id: 'a-rej', answer: 'No', status: PRODUCT_ANSWER_STATUS.REJECTED, authorType: 'CUSTOMER' },
-          ],
-        },
+        { id: 'q-1', productId: 'p-1', question: 'Is it good?', status: PRODUCT_QUESTION_STATUS.PUBLISHED, createdAt: new Date(), answerCount: '3' },
+        { id: 'q-2', productId: 'p-1', question: 'Warranty?', status: PRODUCT_QUESTION_STATUS.PUBLISHED, createdAt: new Date(), answerCount: '0' },
       ],
-      count: 1,
+      count: 2,
     }));
+    const preview = mock.method(productQnaRepository, 'findPreviewAnswers', async () => [
+      { id: 'a-pub', questionId: 'q-1', answer: 'Yes', status: PRODUCT_ANSWER_STATUS.PUBLISHED, authorType: 'VENDOR', authorId: 'v', authorName: null, createdAt: new Date(), editedAt: null },
+    ]);
 
-    const result = await productQnaService.getProductQuestions('p-1', { page: 1, limit: 20 });
-    assert.equal(result.questions[0]?.answers.length, 1);
-    assert.equal(result.questions[0]?.answers[0]?.id, 'a-pub');
+    const result = await productQnaService.getProductQuestions('p-1', PUBLIC_QUERY);
+    assert.deepEqual(preview.mock.calls[0]?.arguments, [['q-1', 'q-2'], 1]);
+    assert.equal(result.questions[0]?.answerCount, 3);
+    assert.deepEqual(result.questions[0]?.answers.map((a) => a.id), ['a-pub']);
+    assert.equal(result.questions[1]?.answerCount, 0);
+    assert.deepEqual(result.questions[1]?.answers, []);
   });
 
   it('lets the author or a moderator delete an answer, but not another customer', async () => {
@@ -180,6 +180,7 @@ describe('ProductQnaService moderation', () => {
     await productQnaService.moderateAnswer('a-1', PRODUCT_ANSWER_STATUS.PUBLISHED);
     assert.equal(status, PRODUCT_ANSWER_STATUS.PUBLISHED);
 
+    mock.method(productQnaRepository, 'summarizePublishedForProduct', async () => ({ total: 1, answered: 1 }));
     mock.method(productQnaRepository, 'findPublishedForProduct', async () => ({
       rows: [
         {
@@ -188,12 +189,18 @@ describe('ProductQnaService moderation', () => {
           question: 'Q',
           status: PRODUCT_QUESTION_STATUS.PUBLISHED,
           createdAt: new Date(),
-          answers: [{ id: 'a-1', answer: 'A', status, authorType: 'VENDOR' }],
+          answerCount: '1',
         },
       ],
       count: 1,
     }));
-    const result = await productQnaService.getProductQuestions('p-1', { page: 1, limit: 20 });
+    // The preview query returns PUBLISHED answers only (SQL-filtered).
+    mock.method(productQnaRepository, 'findPreviewAnswers', async () =>
+      status === PRODUCT_ANSWER_STATUS.PUBLISHED
+        ? [{ id: 'a-1', questionId: 'q-1', answer: 'A', status, authorType: 'VENDOR', authorId: 'v', authorName: null, createdAt: new Date(), editedAt: null }]
+        : [],
+    );
+    const result = await productQnaService.getProductQuestions('p-1', PUBLIC_QUERY);
     assert.equal(result.questions[0]?.answers[0]?.id, 'a-1');
   });
 });

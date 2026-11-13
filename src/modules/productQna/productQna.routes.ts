@@ -3,7 +3,13 @@ import { authenticate, optionalAuthenticate } from '@middleware/auth.middleware'
 import { authorize } from '@middleware/rbac.middleware';
 import { validate } from '@middleware/validate.middleware';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
-import { AskQuestionSchema, AnswerQuestionSchema, ModerateQuestionSchema } from './productQna.dto';
+import {
+  AskQuestionSchema,
+  AnswerQuestionSchema,
+  ModerateQuestionSchema,
+  UpdateAnswerSchema,
+  UpdateQuestionSchema,
+} from './productQna.dto';
 import * as productQnaController from './productQna.controller';
 
 const router = Router();
@@ -17,7 +23,10 @@ router.get(
   productQnaController.getByProduct,
 );
 router.get('/products/:productId/can-answer', authenticate, productQnaController.canAnswer);
+router.get('/questions/:id/answers', productQnaController.getAnswers);
 router.post('/questions/:id/answers', authenticate, validate(AnswerQuestionSchema), productQnaController.answer);
+router.patch('/questions/:id', authenticate, validate(UpdateQuestionSchema), productQnaController.editQuestion);
+router.patch('/answers/:answerId', authenticate, validate(UpdateAnswerSchema), productQnaController.editAnswer);
 router.delete('/answers/:answerId', authenticate, productQnaController.deleteAnswer);
 router.patch(
   '/answers/:answerId/status',

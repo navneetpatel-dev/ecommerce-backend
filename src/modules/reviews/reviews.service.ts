@@ -4,7 +4,8 @@ import { ValidationError } from '@core/errors/ValidationError';
 import { REVIEW_STATUS, ORDER_STATUS } from '@core/constants/statuses';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { reviewsRepository } from './reviews.repository';
-import type { CreateReviewRequest } from './reviews.dto';
+import type { CreateReviewRequest, ProductReviewsQuery, UpdateReviewRequest } from './reviews.dto';
+import { findVisibleReviewPage, summarizeVisibleReviews } from './productReviewListing';
 import { resolveReviewMedia } from './reviewMedia';
 import { Review } from '@database/models/review.model';
 import { ReviewVote } from '@database/models/reviewVote.model';
@@ -97,6 +98,18 @@ export class ReviewsService {
     return reviewsRepository.findByProduct(productId);
   }
 
+  /** PDP list: one filtered page of public reviews plus the (unfiltered) star summary. */
+  async getProductReviewPage(productId: string, query: ProductReviewsQuery) {
+    const [{ rows, count }, summary] = await Promise.all([
+      findVisibleReviewPage(productId, query, {
+        limit: query.limit,
+        offset: paginationOffset(query.page, query.limit),
+      }),
+      summarizeVisibleReviews(productId),
+    ]);
+    return { reviews: rows, pagination: buildPaginationMeta(count, query.page, query.limit), summary };
+  }
+
   /** Own reviews on account page — personal history, deliberately unscoped. */
   async getUserReviews(userId: string, query: { page: number; limit: number }) {
     const { rows, count } = await reviewsRepository.findByUser(userId, { limit: query.limit, offset: paginationOffset(query.page, query.limit) });
@@ -137,6 +150,31 @@ export class ReviewsService {
       await review.increment(vote === 'HELPFUL' ? 'helpfulCount' : 'unhelpfulCount', { transaction: t });
 
       return review.reload({ transaction: t });
+    });
+  }
+
+  /**
+   * Owner edit of stars and text. Back to PENDING like a new review (nothing
+   * unchecked goes public), so the product average drops it until re-approved.
+   */
+  async updateOwnReview(reviewId: string, userId: string, data: UpdateReviewRequest) {
+    return sequelize.transaction(async (t) => {
+      const review = await Review.findByPk(reviewId, { transaction: t, lock: t.LOCK.UPDATE });
+      if (!review) throw new NotFoundError('Review');
+      if (review.userId !== userId) throw new ForbiddenError(ERROR_MESSAGES.REVIEW_NOT_YOURS);
+      await review.update(
+        {
+          rating: data.rating,
+          title: data.title?.trim() ? data.title : null,
+          body: data.body,
+          status: REVIEW_STATUS.PENDING,
+          editedAt: new Date(),
+          updatedBy: userId,
+        },
+        { transaction: t },
+      );
+      await this.recalculateProductRating(review.productId, t);
+      return review;
     });
   }
 

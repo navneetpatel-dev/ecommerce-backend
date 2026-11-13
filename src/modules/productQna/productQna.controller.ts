@@ -7,7 +7,15 @@ import { pageLimitQuerySchema } from '@core/http/pagination';
 import { productQnaService } from './productQna.service';
 import { canAnswerForProduct } from './buyerCheck';
 import { assertNotDuplicateSubmission } from '@core/http/duplicateSubmitGuard';
-import { AskQuestionSchema, AnswerQuestionSchema, ModerateQuestionSchema } from './productQna.dto';
+import {
+  AskQuestionSchema,
+  AnswerQuestionSchema,
+  ModerateQuestionSchema,
+  ProductQuestionsQuerySchema,
+  UpdateAnswerSchema,
+  UpdateQuestionSchema,
+} from './productQna.dto';
+import { updateOwnAnswer, updateOwnQuestion } from './productQnaEdits';
 
 export const ask = asyncHandler(async (req: Request, res: Response) => {
   const dto = AskQuestionSchema.parse(req.body);
@@ -17,13 +25,9 @@ export const ask = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const getByProduct = asyncHandler(async (req: Request, res: Response) => {
-  const query = pageLimitQuerySchema.parse(req.query);
-  const result = await productQnaService.getProductQuestions(
-    req.params.productId!,
-    query,
-    req.user?.id,
-  );
-  res.json(ok(result.questions, { pagination: result.pagination }));
+  const query = ProductQuestionsQuerySchema.parse(req.query);
+  const result = await productQnaService.getProductQuestions(req.params.productId!, query, req.user?.id);
+  res.json(ok(result.questions, { pagination: result.pagination, summary: result.summary }));
 });
 
 /** Whether the signed-in shopper may answer this product's questions (C-01): the web shows Answer only then. */
@@ -76,4 +80,20 @@ export const moderateAnswer = asyncHandler(async (req: Request, res: Response) =
   const { status } = ModerateQuestionSchema.parse(req.body);
   const answer = await productQnaService.moderateAnswer(req.params.answerId!, status);
   res.json(ok(answer));
+});
+
+/** A published question's answers, a page at a time. */
+export const getAnswers = asyncHandler(async (req: Request, res: Response) => {
+  const result = await productQnaService.getQuestionAnswers(req.params.id!, pageLimitQuerySchema.parse(req.query));
+  res.json(ok(result.answers, { pagination: result.pagination }));
+});
+
+export const editQuestion = asyncHandler(async (req: Request, res: Response) => {
+  const { question } = UpdateQuestionSchema.parse(req.body);
+  res.json(ok(await updateOwnQuestion(req.params.id!, req.user!.id, question)));
+});
+
+export const editAnswer = asyncHandler(async (req: Request, res: Response) => {
+  const { answer } = UpdateAnswerSchema.parse(req.body);
+  res.json(ok(await updateOwnAnswer(req.params.answerId!, req.user!.id, answer)));
 });

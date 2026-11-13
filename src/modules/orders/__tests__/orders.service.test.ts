@@ -80,6 +80,10 @@ describe('OrdersService.getOrderById image join', () => {
       };
     });
     mock.method(ReturnRequest, 'findAll', async () => []);
+    // The per-line review lookup is raw SQL over real ids; these fixtures use fake ones.
+    const realQuery = sequelize.query.bind(sequelize);
+    mock.method(sequelize, 'query', (async (sql: unknown, options?: unknown) =>
+      String(sql).includes('LEFT JOIN reviews') ? [] : realQuery(sql as string, options as never)) as typeof sequelize.query);
 
     const order = await ordersService.getOrderById('order-1', 'user-1');
     const productInclude = findProductInclude(capturedInclude);

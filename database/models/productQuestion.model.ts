@@ -6,6 +6,7 @@ export class ProductQuestion extends Model<InferAttributes<ProductQuestion>, Inf
   declare userId: string;
   declare question: string;
   declare status: 'PENDING' | 'PUBLISHED' | 'REJECTED';
+  declare editedAt: CreationOptional<Date | null>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -28,6 +29,7 @@ export const initProductQuestionModel = (sequelize: Sequelize) => {
       userId: { type: DataTypes.UUID, allowNull: false },
       question: { type: DataTypes.TEXT, allowNull: false },
       status: { type: DataTypes.ENUM('PENDING', 'PUBLISHED', 'REJECTED'), defaultValue: 'PENDING' },
+      editedAt: { type: DataTypes.DATE, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

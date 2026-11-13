@@ -9,7 +9,7 @@ function review(overrides: Record<string, unknown> = {}) {
     orderItemId: UUID,
     productId: UUID,
     rating: 5,
-    body: 'Great product',
+    body: 'Great product, fits well and arrived on time.',
     ...overrides,
   };
 }
@@ -35,6 +35,14 @@ describe('reviews DTO schemas', () => {
 
   it('body must be non-empty', () => {
     assert.equal(CreateReviewSchema.safeParse(review({ body: '' })).success, false);
+  });
+
+  it('enforces the shared length limits, counting trimmed text', () => {
+    assert.equal(CreateReviewSchema.safeParse(review({ body: '   short   ' })).success, false);
+    assert.equal(CreateReviewSchema.safeParse(review({ body: 'x'.repeat(2001) })).success, false);
+    assert.equal(CreateReviewSchema.safeParse(review({ title: 't'.repeat(101) })).success, false);
+    const parsed = CreateReviewSchema.parse(review({ body: `  ${'y'.repeat(20)}  ` }));
+    assert.equal(parsed.body, 'y'.repeat(20));
   });
 
   it('votes are restricted to HELPFUL / UNHELPFUL', () => {

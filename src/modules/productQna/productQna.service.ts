@@ -13,13 +13,21 @@ import {
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { userHasPermission } from '@middleware/rbac.middleware';
 import { productQnaRepository } from './productQna.repository';
+import { serializeAnswer, type AnswerRow } from './productAnswerThreads';
+
+/** Answers shown under each question in the list; the rest load on demand. */
+const ANSWER_PREVIEW_PER_QUESTION = 1;
+import type { ProductQuestionsQuery } from './productQna.dto';
 import { ProductQuestion } from '@database/models/productQuestion.model';
 import { ProductAnswer } from '@database/models/productAnswer.model';
 import { Product } from '@database/models/product.model';
 import { sequelize } from '@database/models';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 
-function serializeQuestion(row: ProductQuestion, opts?: { publishedAnswersOnly?: boolean }) {
+function serializeQuestion(
+  row: ProductQuestion,
+  opts?: { publishedAnswersOnly?: boolean; previewAnswers?: AnswerRow[] },
+) {
   const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
   const answers = ((plain.answers ?? []) as Array<Record<string, unknown>>).filter((answer) =>
     opts?.publishedAnswersOnly ? answer.status === PRODUCT_ANSWER_STATUS.PUBLISHED : true,
@@ -27,19 +35,27 @@ function serializeQuestion(row: ProductQuestion, opts?: { publishedAnswersOnly?:
   return {
     id: plain.id,
     productId: plain.productId,
+    userId: plain.userId,
     question: plain.question,
     status: plain.status,
     createdAt: plain.createdAt,
+    editedAt: plain.editedAt ?? null,
     customerName: plain.user?.name ?? null,
     productName: plain.product?.name ?? null,
-    answers: answers.map((a: any) => ({
-      id: a.id,
-      answer: a.answer,
-      authorType: a.authorType,
-      authorName: a.author?.name ?? null,
-      status: a.status,
-      createdAt: a.createdAt,
-    })),
+    // Public list: only the best answer(s) ride along; the thread pages in separately.
+    answerCount: plain.answerCount !== undefined ? Number(plain.answerCount) : answers.length,
+    answers: opts?.previewAnswers
+      ? opts.previewAnswers.map(serializeAnswer)
+      : answers.map((a: any) => ({
+          id: a.id,
+          answer: a.answer,
+          authorId: a.authorId,
+          authorType: a.authorType,
+          authorName: a.author?.name ?? null,
+          status: a.status,
+          createdAt: a.createdAt,
+          editedAt: a.editedAt ?? null,
+        })),
   };
 }
 
@@ -63,20 +79,42 @@ export class ProductQnaService {
   }
 
   /** Public PDP Q&A — PUBLISHED questions and PUBLISHED answers only. */
-  async getProductQuestions(
-    productId: string,
-    query: { page: number; limit: number },
-    viewerUserId?: string,
-  ) {
+  async getProductQuestions(productId: string, query: ProductQuestionsQuery, viewerUserId?: string) {
     const offset = paginationOffset(query.page, query.limit);
-    const { rows, count } = await productQnaRepository.findPublishedForProduct(
-      productId,
+    const [{ rows, count }, summary] = await Promise.all([
+      productQnaRepository.findPublishedForProduct(productId, query, query.limit, offset, viewerUserId),
+      productQnaRepository.summarizePublishedForProduct(productId),
+    ]);
+    const previews = await productQnaRepository.findPreviewAnswers(
+      rows.map((row) => row.id),
+      ANSWER_PREVIEW_PER_QUESTION,
+    );
+    const byQuestion = new Map<string, AnswerRow[]>();
+    for (const answer of previews) {
+      byQuestion.set(answer.questionId, [...(byQuestion.get(answer.questionId) ?? []), answer]);
+    }
+    return {
+      questions: rows.map((row) =>
+        serializeQuestion(row, { previewAnswers: byQuestion.get(row.id) ?? [] }),
+      ),
+      pagination: buildPaginationMeta(count, query.page, query.limit),
+      summary,
+    };
+  }
+
+  /** A published question's answers, a page at a time (threads can be very long). */
+  async getQuestionAnswers(questionId: string, query: { page: number; limit: number }) {
+    const question = await ProductQuestion.findByPk(questionId, { attributes: ['id', 'status'] });
+    if (!question || question.status !== PRODUCT_QUESTION_STATUS.PUBLISHED) {
+      throw new NotFoundError('ProductQuestion');
+    }
+    const { rows, count } = await productQnaRepository.findAnswerPage(
+      questionId,
       query.limit,
-      offset,
-      viewerUserId,
+      paginationOffset(query.page, query.limit),
     );
     return {
-      questions: rows.map((row) => serializeQuestion(row, { publishedAnswersOnly: true })),
+      answers: rows.map(serializeAnswer),
       pagination: buildPaginationMeta(count, query.page, query.limit),
     };
   }

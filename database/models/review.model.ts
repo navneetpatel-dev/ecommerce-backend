@@ -21,6 +21,7 @@ export class Review extends Model<InferAttributes<Review>, InferCreationAttribut
   declare media: CreationOptional<ReviewMediaItem[]>;
   declare vendorResponse: string | null;
   declare vendorRespondedAt: Date | null;
+  declare editedAt: CreationOptional<Date | null>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -52,6 +53,7 @@ export const initReviewModel = (sequelize: Sequelize) => {
       media: { type: DataTypes.JSONB, allowNull: false, defaultValue: [] },
       vendorResponse: { type: DataTypes.TEXT, allowNull: true },
       vendorRespondedAt: { type: DataTypes.DATE, allowNull: true },
+      editedAt: { type: DataTypes.DATE, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },
