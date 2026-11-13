@@ -1,6 +1,7 @@
-import { Op, literal, type Order, type WhereOptions } from 'sequelize';
+import { Op, literal, type OrderItem, type WhereOptions } from 'sequelize';
 import type { ProductQuestionsQuery } from './productQna.dto';
 import { findAnswerPage, findPreviewAnswers } from './productAnswerThreads';
+import { sequelize } from '@database/models';
 import { BaseRepository } from '@core/repository/BaseRepository';
 import { ProductQuestion } from '@database/models/productQuestion.model';
 import { PRODUCT_ANSWER_STATUS, PRODUCT_QUESTION_STATUS } from '@core/constants/statuses';
@@ -11,7 +12,7 @@ const PUBLISHED_ANSWER_COUNT = `(SELECT COUNT(*) FROM product_answers pa
     AND pa.status = '${PRODUCT_ANSWER_STATUS.PUBLISHED}'
     AND pa."deletedAt" IS NULL)`;
 
-const QUESTION_SORT_ORDER: Record<ProductQuestionsQuery['sort'], Order> = {
+const QUESTION_SORT_ORDER: Record<ProductQuestionsQuery['sort'], OrderItem[]> = {
   recent: [['createdAt', 'DESC'], ['id', 'ASC']],
   oldest: [['createdAt', 'ASC'], ['id', 'ASC']],
   most_answered: [[literal(PUBLISHED_ANSWER_COUNT), 'DESC'], ['createdAt', 'DESC'], ['id', 'ASC']],
@@ -59,7 +60,13 @@ export class ProductQnaRepository extends BaseRepository<ProductQuestion> {
       // The best answer per question comes from `findPreviewAnswers`, the rest a page at a time.
       attributes: { include: [[literal(PUBLISHED_ANSWER_COUNT), 'answerCount']] },
       include: [{ association: 'user', attributes: ['id', 'name'] }],
-      order: QUESTION_SORT_ORDER[filters.sort],
+      // The viewer's own questions first, then the chosen order.
+      order: viewerUserId
+        ? [
+            [literal(`("ProductQuestion"."userId" = ${sequelize.escape(viewerUserId)})`), 'DESC'],
+            ...QUESTION_SORT_ORDER[filters.sort],
+          ]
+        : QUESTION_SORT_ORDER[filters.sort],
       limit,
       offset,
       distinct: true,

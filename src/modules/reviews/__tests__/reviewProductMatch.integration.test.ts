@@ -39,3 +39,35 @@ describe('purchase reviews stay on the product bought (B-40)', () => {
     );
   });
 });
+
+describe('one review per product per shopper', () => {
+  it('refuses a second review of a product the shopper already reviewed, even from another line', async (t) => {
+    try {
+      await sequelize.authenticate();
+    } catch {
+      return t.skip('database unavailable');
+    }
+    // A delivered, unreviewed line for a product this shopper has already reviewed elsewhere.
+    const [line] = await sequelize.query<{ orderItemId: string; userId: string; productId: string }>(
+      `SELECT oi.id AS "orderItemId", o."userId", pv."productId"
+         FROM order_items oi
+         JOIN sub_orders so ON so.id = oi."subOrderId" AND so.status = 'DELIVERED'
+         JOIN orders o ON o.id = so."orderId"
+         JOIN product_variants pv ON pv.id = oi."variantId"
+        WHERE NOT EXISTS (SELECT 1 FROM reviews r WHERE r."orderItemId" = oi.id)
+          AND EXISTS (SELECT 1 FROM reviews r2 WHERE r2."userId" = o."userId" AND r2."productId" = pv."productId")
+        LIMIT 1`,
+      { type: QueryTypes.SELECT },
+    );
+    if (!line) return t.skip('no repeat purchase of an already reviewed product');
+    await assert.rejects(
+      reviewsService.createReview(line.userId, {
+        orderItemId: line.orderItemId,
+        productId: line.productId,
+        rating: 4,
+        body: 'Second review of the same product, should be refused.',
+      } as never),
+      (err: { message?: string }) => /already reviewed this product/.test(String(err.message)),
+    );
+  });
+});

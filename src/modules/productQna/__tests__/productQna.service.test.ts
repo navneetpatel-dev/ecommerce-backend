@@ -21,11 +21,46 @@ describe('ProductQnaService moderation', () => {
     mock.restoreAll();
   });
 
-  function stubTransaction() {
+  function stubTransaction(existingAnswers = 0) {
     mock.method(sequelize, 'transaction', async (callback: (t: unknown) => Promise<unknown>) => {
       return callback({});
     });
+    // Has this person already answered the question? (one answer each)
+    mock.method(ProductAnswer, 'count', async () => existingAnswers);
   }
+
+  it("refuses a shopper answering their own question", async () => {
+    stubTransaction();
+    mock.method(ProductQuestion, 'findByPk', async () => ({
+      id: 'q-1',
+      productId: 'p-1',
+      userId: 'u-1',
+      status: PRODUCT_QUESTION_STATUS.PUBLISHED,
+      product: { vendorId: 'v-1' },
+    }) as unknown as ProductQuestion);
+    await assert.rejects(
+      () => productQnaService.answerQuestion('q-1', 'u-1', null, 'Answering myself'),
+      (err: unknown) => err instanceof ValidationError,
+    );
+  });
+
+  it('refuses a second answer from the same person on one question', async () => {
+    stubTransaction(1);
+    mock.method(ProductQuestion, 'findByPk', async () => ({
+      id: 'q-1',
+      productId: 'p-1',
+      status: PRODUCT_QUESTION_STATUS.PUBLISHED,
+      product: { vendorId: 'v-1' },
+    }) as unknown as ProductQuestion);
+    const create = mock.method(ProductAnswer, 'create', async (fields: Record<string, unknown>) => fields as never);
+
+    await assert.rejects(
+      () => productQnaService.answerQuestion('q-1', 'u-2', 'v-1', 'Another answer'),
+      (err: unknown) =>
+        err instanceof ValidationError && /already answered/.test(JSON.stringify((err as ValidationError).validationDetails)),
+    );
+    assert.equal(create.mock.callCount(), 0);
+  });
 
   it('rejects answering a PENDING or REJECTED question', async () => {
     stubTransaction();

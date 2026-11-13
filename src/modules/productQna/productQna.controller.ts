@@ -97,3 +97,13 @@ export const editAnswer = asyncHandler(async (req: Request, res: Response) => {
   const { answer } = UpdateAnswerSchema.parse(req.body);
   res.json(ok(await updateOwnAnswer(req.params.answerId!, req.user!.id, answer)));
 });
+
+export const getMyQuestions = asyncHandler(async (req: Request, res: Response) => {
+  const result = await productQnaService.getMyQuestions(req.user!.id, pageLimitQuerySchema.parse(req.query));
+  res.json(ok(result.questions, { pagination: result.pagination }));
+});
+
+export const getMyAnswers = asyncHandler(async (req: Request, res: Response) => {
+  const result = await productQnaService.getMyAnswers(req.user!.id, pageLimitQuerySchema.parse(req.query));
+  res.json(ok(result.answers, { pagination: result.pagination }));
+});

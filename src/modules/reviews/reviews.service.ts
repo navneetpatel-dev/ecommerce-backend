@@ -70,6 +70,14 @@ export class ReviewsService {
       if (existing) {
         throw new ValidationError(ERROR_MESSAGES.REVIEW_ALREADY_EXISTS);
       }
+      // One review per product per shopper, whichever order line it comes from.
+      const reviewedProduct = await Review.count({
+        where: { userId, productId: data.productId },
+        transaction: t,
+      });
+      if (reviewedProduct > 0) {
+        throw new ValidationError(ERROR_MESSAGES.PRODUCT_ALREADY_REVIEWED);
+      }
 
       // Create review
       const review = await Review.create({
@@ -99,15 +107,28 @@ export class ReviewsService {
   }
 
   /** PDP list: one filtered page of public reviews plus the (unfiltered) star summary. */
-  async getProductReviewPage(productId: string, query: ProductReviewsQuery) {
-    const [{ rows, count }, summary] = await Promise.all([
+  async getProductReviewPage(productId: string, query: ProductReviewsQuery, viewerUserId?: string) {
+    const [{ rows, count }, summary, myReview] = await Promise.all([
       findVisibleReviewPage(productId, query, {
         limit: query.limit,
         offset: paginationOffset(query.page, query.limit),
       }),
       summarizeVisibleReviews(productId),
+      // The viewer's own review in any moderation state, pinned on top of their view.
+      viewerUserId
+        ? Review.findOne({
+            where: { productId, userId: viewerUserId },
+            include: [{ association: 'user', attributes: ['id', 'name'] }],
+            order: [['createdAt', 'DESC']],
+          })
+        : Promise.resolve(null),
     ]);
-    return { reviews: rows, pagination: buildPaginationMeta(count, query.page, query.limit), summary };
+    return {
+      reviews: rows,
+      pagination: buildPaginationMeta(count, query.page, query.limit),
+      summary,
+      myReview,
+    };
   }
 
   /** Own reviews on account page — personal history, deliberately unscoped. */

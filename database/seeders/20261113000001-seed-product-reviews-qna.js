@@ -198,11 +198,12 @@ function planQuestions(products, customers, buyersByProduct, now) {
       const askedAt = new Date(now - between(rng, 2, 360) * DAY_MS - between(rng, 0, 23) * 3_600_000);
       const { question, answers: replies } = buildQuestion(rng);
       const questionId = randomUUID();
+      const asker = pick(rng, customers);
       const stamp = (at) => ({ createdBy: SEED_MARKER, createdAt: at, updatedAt: at });
       questions.push({
         id: questionId,
         productId: product.id,
-        userId: pick(rng, customers).id,
+        userId: asker.id,
         question,
         status: 'PUBLISHED',
         ...stamp(askedAt),
@@ -227,7 +228,9 @@ function planQuestions(products, customers, buyersByProduct, now) {
       };
       if (product.vendorUserId && rng() < 0.75) answer(product.vendorUserId, 'VENDOR');
       const buyerAnswers = between(rng, product.vendorUserId ? 0 : 1, 2);
-      for (let n = 0; n < buyerAnswers; n += 1) answer(pick(rng, buyers).id, 'CUSTOMER');
+      // Buyers only (the C-01 rule), never the asker, each at most once per question.
+      const answerers = shuffled(buyers.filter((b) => b.id !== asker.id), rng).slice(0, buyerAnswers);
+      for (const buyer of answerers) answer(buyer.id, 'CUSTOMER');
     }
   }
   return { questions, answers };

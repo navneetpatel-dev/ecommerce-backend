@@ -16,6 +16,8 @@ const router = Router();
 
 router.get('/moderation', authenticate, authorize(PERMISSIONS.REVIEW_MODERATE), productQnaController.listPending);
 router.post('/questions', authenticate, validate(AskQuestionSchema), productQnaController.ask);
+router.get('/questions/mine', authenticate, productQnaController.getMyQuestions);
+router.get('/answers/mine', authenticate, productQnaController.getMyAnswers);
 router.get('/questions/vendor/me', authenticate, authorize(PERMISSIONS.REVIEW_RESPOND), productQnaController.getVendorQuestions);
 router.get(
   '/products/:productId/questions',

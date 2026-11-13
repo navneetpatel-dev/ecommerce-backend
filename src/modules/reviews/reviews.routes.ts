@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authenticate } from '@middleware/auth.middleware';
+import { authenticate, optionalAuthenticate } from '@middleware/auth.middleware';
 import { authorize } from '@middleware/rbac.middleware';
 import { validate } from '@middleware/validate.middleware';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
@@ -10,7 +10,7 @@ const router = Router();
 
 router.get('/moderation', authenticate, authorize(PERMISSIONS.REVIEW_MODERATE), reviewsController.listPending);
 router.post('/', authenticate, validate(CreateReviewSchema), reviewsController.create);
-router.get('/product/:productId', reviewsController.getByProduct);
+router.get('/product/:productId', optionalAuthenticate, reviewsController.getByProduct);
 router.get('/product/:productId/eligibility', authenticate, reviewsController.getMyEligibility);
 router.get('/my-reviews', authenticate, reviewsController.getMyReviews);
 router.get('/awaiting', authenticate, reviewsController.getAwaitingReview);

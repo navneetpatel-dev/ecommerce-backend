@@ -1,3 +1,4 @@
+import { UniqueConstraintError } from 'sequelize';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { assertBuyerMayAnswer } from './buyerCheck';
 import { ValidationError } from '@core/errors/ValidationError';
@@ -14,6 +15,7 @@ import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { userHasPermission } from '@middleware/rbac.middleware';
 import { productQnaRepository } from './productQna.repository';
 import { serializeAnswer, type AnswerRow } from './productAnswerThreads';
+import { findMyAnswers, findMyQuestions, findViewerAnswers } from './productQnaViewer';
 
 /** Answers shown under each question in the list; the rest load on demand. */
 const ANSWER_PREVIEW_PER_QUESTION = 1;
@@ -89,17 +91,34 @@ export class ProductQnaService {
       rows.map((row) => row.id),
       ANSWER_PREVIEW_PER_QUESTION,
     );
+    const mine = viewerUserId
+      ? await findViewerAnswers(rows.map((row) => row.id), viewerUserId)
+      : new Map<string, ReturnType<typeof serializeAnswer>>();
     const byQuestion = new Map<string, AnswerRow[]>();
     for (const answer of previews) {
       byQuestion.set(answer.questionId, [...(byQuestion.get(answer.questionId) ?? []), answer]);
     }
     return {
-      questions: rows.map((row) =>
-        serializeQuestion(row, { previewAnswers: byQuestion.get(row.id) ?? [] }),
-      ),
+      questions: rows.map((row) => ({
+        ...serializeQuestion(row, { previewAnswers: byQuestion.get(row.id) ?? [] }),
+        // The viewer's own answer (any status): pinned first, and "Edit your answer".
+        myAnswer: mine.get(row.id) ?? null,
+      })),
       pagination: buildPaginationMeta(count, query.page, query.limit),
       summary,
     };
+  }
+
+  /** "My questions" page. */
+  async getMyQuestions(userId: string, query: { page: number; limit: number }) {
+    const { questions, count } = await findMyQuestions(userId, query.limit, paginationOffset(query.page, query.limit));
+    return { questions, pagination: buildPaginationMeta(count, query.page, query.limit) };
+  }
+
+  /** "My answers" page. */
+  async getMyAnswers(userId: string, query: { page: number; limit: number }) {
+    const { answers, count } = await findMyAnswers(userId, query.limit, paginationOffset(query.page, query.limit));
+    return { answers, pagination: buildPaginationMeta(count, query.page, query.limit) };
   }
 
   /** A published question's answers, a page at a time (threads can be very long). */
@@ -158,8 +177,15 @@ export class ProductQnaService {
           ? PRODUCT_ANSWER_AUTHOR_TYPE.VENDOR
           : PRODUCT_ANSWER_AUTHOR_TYPE.CUSTOMER;
       if (authorType === PRODUCT_ANSWER_AUTHOR_TYPE.CUSTOMER) {
+        if (question.userId === userId) {
+          throw new ValidationError({ answer: [ERROR_MESSAGES.ANSWER_OWN_QUESTION] });
+        }
         await assertBuyerMayAnswer(userId, question.productId, t);
       }
+
+      // One answer per person per question; a second one is an edit of the first.
+      const already = await ProductAnswer.count({ where: { questionId, authorId: userId }, transaction: t });
+      if (already > 0) throw new ValidationError({ answer: [ERROR_MESSAGES.ANSWER_ALREADY_EXISTS] });
 
       return ProductAnswer.create(
         {
@@ -170,7 +196,13 @@ export class ProductQnaService {
           status: PRODUCT_ANSWER_STATUS.PENDING,
         },
         { transaction: t },
-      );
+      ).catch((error: unknown) => {
+        // Two quick submits: the unique index (live rows) holds the rule.
+        if (error instanceof UniqueConstraintError) {
+          throw new ValidationError({ answer: [ERROR_MESSAGES.ANSWER_ALREADY_EXISTS] });
+        }
+        throw error;
+      });
     });
   }
 

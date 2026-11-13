@@ -23,8 +23,10 @@ export const create = asyncHandler(async (req: Request, res: Response) => {
 
 export const getByProduct = asyncHandler(async (req: Request, res: Response) => {
   const query = ProductReviewsQuerySchema.parse(req.query);
-  const result = await reviewsService.getProductReviewPage(req.params.productId!, query);
-  res.json(ok(result.reviews, { pagination: result.pagination, summary: result.summary }));
+  const result = await reviewsService.getProductReviewPage(req.params.productId!, query, req.user?.id);
+  res.json(
+    ok(result.reviews, { pagination: result.pagination, summary: result.summary, myReview: result.myReview }),
+  );
 });
 
 export const getMyReviews = asyncHandler(async (req: Request, res: Response) => {
