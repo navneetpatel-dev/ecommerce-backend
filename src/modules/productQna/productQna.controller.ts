@@ -15,7 +15,7 @@ import {
   UpdateAnswerSchema,
   UpdateQuestionSchema,
 } from './productQna.dto';
-import { updateOwnAnswer, updateOwnQuestion } from './productQnaEdits';
+import { deleteOwnQuestion, updateOwnAnswer, updateOwnQuestion } from './productQnaEdits';
 
 export const ask = asyncHandler(async (req: Request, res: Response) => {
   const dto = AskQuestionSchema.parse(req.body);
@@ -106,4 +106,10 @@ export const getMyQuestions = asyncHandler(async (req: Request, res: Response) =
 export const getMyAnswers = asyncHandler(async (req: Request, res: Response) => {
   const result = await productQnaService.getMyAnswers(req.user!.id, pageLimitQuerySchema.parse(req.query));
   res.json(ok(result.answers, { pagination: result.pagination }));
+});
+
+/** The asker deletes their question (and its answers). */
+export const removeQuestion = asyncHandler(async (req: Request, res: Response) => {
+  await deleteOwnQuestion(req.params.id!, req.user!.id);
+  res.json(ok({ deleted: true }));
 });

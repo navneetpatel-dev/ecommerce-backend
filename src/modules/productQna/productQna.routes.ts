@@ -28,6 +28,7 @@ router.get('/products/:productId/can-answer', authenticate, productQnaController
 router.get('/questions/:id/answers', productQnaController.getAnswers);
 router.post('/questions/:id/answers', authenticate, validate(AnswerQuestionSchema), productQnaController.answer);
 router.patch('/questions/:id', authenticate, validate(UpdateQuestionSchema), productQnaController.editQuestion);
+router.delete('/questions/:id', authenticate, productQnaController.removeQuestion);
 router.patch('/answers/:answerId', authenticate, validate(UpdateAnswerSchema), productQnaController.editAnswer);
 router.delete('/answers/:answerId', authenticate, productQnaController.deleteAnswer);
 router.patch(

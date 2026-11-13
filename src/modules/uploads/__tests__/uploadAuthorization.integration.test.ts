@@ -206,3 +206,24 @@ describe('upload authorization', () => {
     });
   });
 });
+
+describe('review photos added while editing', () => {
+  it('lets only the review author upload under a posted review', async (t) => {
+    if (!ready) return t.skip('seed data unavailable');
+    const [review] = await sequelize.query<{ id: string; userId: string; roleId: string; roleName: string }>(
+      `SELECT r.id, r."userId", u."roleId", ro.name AS "roleName"
+         FROM reviews r JOIN users u ON u.id = r."userId" JOIN roles ro ON ro.id = u."roleId"
+        WHERE r."deletedAt" IS NULL AND ro.name = 'CUSTOMER' LIMIT 1`,
+      { type: QueryTypes.SELECT },
+    );
+    if (!review) return t.skip('no customer review');
+    const author = { id: review.userId, vendorId: null, roleId: review.roleId, role: { name: review.roleName } } as Actor;
+    await assertUploadAllowed(author, S3_ENTITY_TYPES.REVIEWS, review.id, S3_PURPOSES.ATTACHMENTS);
+
+    const stranger = review.userId === customer.id ? otherCustomer : customer;
+    await assert.rejects(
+      assertUploadAllowed(stranger, S3_ENTITY_TYPES.REVIEWS, review.id, S3_PURPOSES.ATTACHMENTS),
+      (err: unknown) => err instanceof ForbiddenError,
+    );
+  });
+});

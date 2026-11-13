@@ -46,3 +46,41 @@ export async function resolveReviewMedia(
     durationSeconds: attachment.durationSeconds ?? null,
   }));
 }
+
+/**
+ * Media on an edited review. Anything it already had stays as posted; anything new
+ * must be the author's upload under the review's own id (uploads are authorized to
+ * the review's author only once it exists). Same limits as posting.
+ */
+export async function resolveEditedReviewMedia(
+  review: { id: string; media: ReviewMediaItem[] | null },
+  attachments: NonNullable<CreateReviewRequest['attachments']>,
+): Promise<ReviewMediaItem[]> {
+  const current = new Map((review.media ?? []).map((item) => [item.url, item]));
+  const next: ReviewMediaItem[] = [];
+  for (const attachment of attachments) {
+    const kept = current.get(attachment.url);
+    if (kept) {
+      next.push(kept);
+      continue;
+    }
+    const key = extractS3KeyFromUrl(attachment.url);
+    const parsed = key ? parseS3Key(key) : null;
+    if (
+      !parsed ||
+      parsed.entityType !== S3_ENTITY_TYPES.REVIEWS ||
+      parsed.entityId !== review.id ||
+      parsed.purpose !== S3_PURPOSES.ATTACHMENTS
+    ) {
+      throw mediaInvalid();
+    }
+    next.push({ url: attachment.url, type: attachment.type, durationSeconds: attachment.durationSeconds ?? null });
+  }
+  assertAttachmentLimits(next, 'ticket');
+  await assertRemoteVideoBackstop(
+    next.filter((item) => !current.has(item.url)),
+    'ticket',
+    S3_ENTITY_TYPES.REVIEWS,
+  );
+  return next;
+}

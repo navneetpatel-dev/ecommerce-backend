@@ -7,6 +7,16 @@ import { UGC_LIMITS } from '@core/constants/ugcLimits';
 const reviewTitle = ugcText('Title', UGC_LIMITS.reviewTitle).optional();
 const reviewBody = ugcText('Review', UGC_LIMITS.reviewBody);
 
+const ReviewAttachmentsSchema = z
+  .array(
+    z.object({
+      url: z.string().url(),
+      type: z.enum(TICKET_ATTACHMENT_TYPE_VALUES),
+      durationSeconds: z.number().positive().nullable().optional(),
+    }),
+  )
+  .max(6);
+
 export const CreateReviewSchema = z.object({
   orderItemId: z.string().uuid(),
   productId: z.string().uuid(),
@@ -15,17 +25,7 @@ export const CreateReviewSchema = z.object({
   body: reviewBody,
   /** Id the review takes: its photos/video were uploaded under it before posting. */
   draftId: z.string().uuid().optional(),
-  attachments: z
-    .array(
-      z.object({
-        url: z.string().url(),
-        type: z.enum(TICKET_ATTACHMENT_TYPE_VALUES),
-        durationSeconds: z.number().positive().nullable().optional(),
-      }),
-    )
-    .max(6)
-    .optional()
-    .default([]),
+  attachments: ReviewAttachmentsSchema.optional().default([]),
 });
 
 /** Owner edit of the text and stars (photos stay as posted). */
@@ -33,6 +33,8 @@ export const UpdateReviewSchema = z.object({
   rating: z.number().int().min(1).max(5),
   title: reviewTitle,
   body: reviewBody,
+  /** The full photo/video list after editing; omitted = keep what is there. */
+  attachments: ReviewAttachmentsSchema.optional(),
 });
 
 export const VoteReviewSchema = z.object({

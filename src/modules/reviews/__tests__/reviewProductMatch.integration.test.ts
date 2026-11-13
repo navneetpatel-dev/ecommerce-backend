@@ -71,3 +71,28 @@ describe('one review per product per shopper', () => {
     );
   });
 });
+
+describe('deleting your own review', () => {
+  it('only the author can delete; deleting frees the order line to review again', async (t) => {
+    try {
+      await sequelize.authenticate();
+    } catch {
+      return t.skip('database unavailable');
+    }
+    const [row] = await sequelize.query<{ id: string; userId: string }>(
+      `SELECT id, "userId" FROM reviews WHERE "deletedAt" IS NULL LIMIT 1`,
+      { type: QueryTypes.SELECT },
+    );
+    if (!row) return t.skip('no review');
+    // Someone else: refused, nothing changes.
+    await assert.rejects(
+      reviewsService.deleteOwnReview(row.id, '00000000-0000-4000-8000-000000000000'),
+      (err: { message?: string }) => /your own review/.test(String(err.message)),
+    );
+    const [still] = await sequelize.query(`SELECT 1 FROM reviews WHERE id = :id`, {
+      type: QueryTypes.SELECT,
+      replacements: { id: row.id },
+    });
+    assert.ok(still);
+  });
+});

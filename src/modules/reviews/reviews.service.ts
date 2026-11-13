@@ -6,7 +6,7 @@ import { ERROR_MESSAGES } from '@core/constants/errors';
 import { reviewsRepository } from './reviews.repository';
 import type { CreateReviewRequest, ProductReviewsQuery, UpdateReviewRequest } from './reviews.dto';
 import { findVisibleReviewPage, summarizeVisibleReviews } from './productReviewListing';
-import { resolveReviewMedia } from './reviewMedia';
+import { resolveEditedReviewMedia, resolveReviewMedia } from './reviewMedia';
 import { Review } from '@database/models/review.model';
 import { ReviewVote } from '@database/models/reviewVote.model';
 import { OrderItem } from '@database/models/orderItem.model';
@@ -179,6 +179,12 @@ export class ReviewsService {
    * unchecked goes public), so the product average drops it until re-approved.
    */
   async updateOwnReview(reviewId: string, userId: string, data: UpdateReviewRequest) {
+    // Media first, outside the transaction (it reads S3), against the stored review.
+    const stored = await Review.findByPk(reviewId);
+    if (!stored) throw new NotFoundError('Review');
+    if (stored.userId !== userId) throw new ForbiddenError(ERROR_MESSAGES.REVIEW_NOT_YOURS);
+    const media = data.attachments ? await resolveEditedReviewMedia(stored, data.attachments) : undefined;
+
     return sequelize.transaction(async (t) => {
       const review = await Review.findByPk(reviewId, { transaction: t, lock: t.LOCK.UPDATE });
       if (!review) throw new NotFoundError('Review');
@@ -188,6 +194,7 @@ export class ReviewsService {
           rating: data.rating,
           title: data.title?.trim() ? data.title : null,
           body: data.body,
+          ...(media ? { media } : {}),
           status: REVIEW_STATUS.PENDING,
           editedAt: new Date(),
           updatedBy: userId,
@@ -196,6 +203,20 @@ export class ReviewsService {
       );
       await this.recalculateProductRating(review.productId, t);
       return review;
+    });
+  }
+
+  /**
+   * The author removes their review for good (votes go with it). A hard delete:
+   * the order line's unique review slot is freed, so they can review it again.
+   */
+  async deleteOwnReview(reviewId: string, userId: string) {
+    return sequelize.transaction(async (t) => {
+      const review = await Review.findByPk(reviewId, { transaction: t, lock: t.LOCK.UPDATE });
+      if (!review) throw new NotFoundError('Review');
+      if (review.userId !== userId) throw new ForbiddenError(ERROR_MESSAGES.REVIEW_NOT_YOURS);
+      await review.destroy({ force: true, transaction: t });
+      await this.recalculateProductRating(review.productId, t);
     });
   }
 

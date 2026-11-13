@@ -66,12 +66,13 @@ async function returnExists(returnId: string): Promise<boolean> {
   return Boolean(row);
 }
 
-async function reviewExists(reviewId: string): Promise<boolean> {
-  const [row] = await sequelize.query<{ id: string }>(
-    `SELECT id FROM reviews WHERE id = :reviewId LIMIT 1`,
+/** The author of a posted review (any state), or null while the id is still a draft. */
+async function reviewAuthorId(reviewId: string): Promise<string | null> {
+  const [row] = await sequelize.query<{ userId: string }>(
+    `SELECT "userId" FROM reviews WHERE id = :reviewId LIMIT 1`,
     { replacements: { reviewId }, type: QueryTypes.SELECT },
   );
-  return Boolean(row);
+  return row?.userId ?? null;
 }
 
 async function ticketOwnedByCustomer(ticketId: string, customerId: string): Promise<boolean> {
@@ -330,9 +331,15 @@ export async function assertUploadAllowed(
 
     case S3_ENTITY_TYPES.REVIEWS: {
       // A review's photos and video go up before it is posted, under the id it will
-      // take (see reviews.service createReview); a posted review takes no new media.
-      if (purpose !== S3_PURPOSES.ATTACHMENTS || (await reviewExists(entityId))) {
+      // take (see reviews.service createReview). Once posted, only its author may add
+      // more (editing the review) — still under that same id.
+      if (purpose !== S3_PURPOSES.ATTACHMENTS) {
         throw new ForbiddenError(ERROR_MESSAGES.UPLOAD_FORBIDDEN);
+      }
+      const reviewAuthor = await reviewAuthorId(entityId);
+      if (reviewAuthor) {
+        if (reviewAuthor !== actor.id) throw new ForbiddenError(ERROR_MESSAGES.UPLOAD_FORBIDDEN);
+        return;
       }
       await claimUploadDraft(entityType, entityId, actor.id);
       return;

@@ -84,3 +84,9 @@ export const getAwaitingReview = asyncHandler(async (req: Request, res: Response
   );
   res.json(ok(rows, { pagination: buildPaginationMeta(count, query.page, query.limit) }));
 });
+
+/** The author deletes their review (permanently). */
+export const remove = asyncHandler(async (req: Request, res: Response) => {
+  await reviewsService.deleteOwnReview(req.params.id!, req.user!.id);
+  res.json(ok({ deleted: true }));
+});
