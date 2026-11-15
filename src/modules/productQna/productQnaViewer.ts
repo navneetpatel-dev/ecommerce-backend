@@ -3,6 +3,7 @@ import { ProductQuestion } from '@database/models/productQuestion.model';
 import { ProductAnswer } from '@database/models/productAnswer.model';
 import { PRODUCT_ANSWER_STATUS } from '@core/constants/statuses';
 import { serializeAnswer, type AnswerRow } from './productAnswerThreads';
+import { ownerRevisionFields } from './productQnaRevisions';
 
 /** Published answers on the current question row (same rule as the public count). */
 const ANSWER_COUNT = literal(`(SELECT COUNT(*) FROM product_answers pa
@@ -19,10 +20,14 @@ interface MyQuestionRow {
   editedAt: Date | null;
   userId: string;
   answerCount?: string | number;
+  pendingRevision?: unknown;
+  revisionRejectedAt?: unknown;
   product?: ProductLink;
 }
 
 interface MyAnswerRow {
+  pendingRevision?: unknown;
+  revisionRejectedAt?: unknown;
   question?: { id: string; question: string; product?: ProductLink } | null;
 }
 
@@ -46,7 +51,12 @@ export async function findViewerAnswers(questionIds: string[], viewerUserId: str
     where: { questionId: questionIds, authorId: viewerUserId },
     include: [{ association: 'author', attributes: ['id', 'name'] }],
   });
-  return new Map(rows.map((row) => [row.questionId, serializeAnswer(toAnswerRow(row))]));
+  return new Map(
+    rows.map((row) => [
+      row.questionId,
+      { ...serializeAnswer(toAnswerRow(row)), ...ownerRevisionFields(row.get({ plain: true })) },
+    ]),
+  );
 }
 
 /** A just-posted answer in the same shape as the thread (with the author's name). */
@@ -78,6 +88,7 @@ export async function findMyQuestions(userId: string, limit: number, offset: num
       userId: plain.userId,
       answerCount: Number(plain.answerCount ?? 0),
       product: productLink(plain.product),
+      ...ownerRevisionFields(plain),
     };
   });
   return { questions, count };
@@ -106,6 +117,7 @@ export async function findMyAnswers(userId: string, limit: number, offset: numbe
     const plain = row.get({ plain: true }) as unknown as MyAnswerRow;
     return {
       ...serializeAnswer(toAnswerRow(row)),
+      ...ownerRevisionFields(plain),
       question: plain.question
         ? {
             id: plain.question.id,

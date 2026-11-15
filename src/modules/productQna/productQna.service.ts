@@ -16,6 +16,7 @@ import { userHasPermission } from '@middleware/rbac.middleware';
 import { productQnaRepository } from './productQna.repository';
 import { serializeAnswer, type AnswerRow } from './productAnswerThreads';
 import { findMyAnswers, findMyQuestions, findViewerAnswers } from './productQnaViewer';
+import { moderateAnswerUpdate, moderateQuestionUpdate, ownerRevisionFields } from './productQnaRevisions';
 
 /** Answers shown under each question in the list; the rest load on demand. */
 const ANSWER_PREVIEW_PER_QUESTION = 1;
@@ -101,6 +102,8 @@ export class ProductQnaService {
     return {
       questions: rows.map((row) => ({
         ...serializeQuestion(row, { previewAnswers: byQuestion.get(row.id) ?? [] }),
+        // The asker alone sees their waiting edit (everyone else: the published text).
+        ...(viewerUserId && row.userId === viewerUserId ? ownerRevisionFields(row.get({ plain: true })) : {}),
         // The viewer's own answer (any status): pinned first, and "Edit your answer".
         myAnswer: mine.get(row.id) ?? null,
       })),
@@ -206,10 +209,16 @@ export class ProductQnaService {
     });
   }
 
+  /** Publish / reject a new question, or approve / reject an edit of a published one. */
   async moderateQuestion(questionId: string, status: Exclude<ProductQuestionStatus, 'PENDING'>) {
     const question = await ProductQuestion.findByPk(questionId);
     if (!question) throw new NotFoundError('ProductQuestion');
-    return question.update({ status });
+    const answered = question.pendingRevision
+      ? await ProductAnswer.count({ where: { questionId, status: PRODUCT_ANSWER_STATUS.PUBLISHED } })
+      : 0;
+    return question.update(
+      moderateQuestionUpdate(question, status === PRODUCT_QUESTION_STATUS.PUBLISHED, answered),
+    );
   }
 
   async deleteAnswer(
@@ -226,10 +235,11 @@ export class ProductQnaService {
     await answer.destroy();
   }
 
+  /** Publish / reject a new answer, or approve / reject an edit of a published one. */
   async moderateAnswer(answerId: string, status: Exclude<ProductAnswerStatus, 'PENDING'>) {
     const answer = await ProductAnswer.findByPk(answerId);
     if (!answer) throw new NotFoundError('ProductAnswer');
-    return answer.update({ status });
+    return answer.update(moderateAnswerUpdate(answer, status === PRODUCT_ANSWER_STATUS.PUBLISHED));
   }
 }
 

@@ -1,5 +1,8 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
 
+/** A proposed edit of the published text (shown only to its author and moderators). */
+export type AnswerRevision = { answer: string; submittedAt: string };
+
 export class ProductAnswer extends Model<InferAttributes<ProductAnswer>, InferCreationAttributes<ProductAnswer>> {
   declare id: CreationOptional<string>;
   declare questionId: string;
@@ -8,6 +11,10 @@ export class ProductAnswer extends Model<InferAttributes<ProductAnswer>, InferCr
   declare answer: string;
   declare status: CreationOptional<'PENDING' | 'PUBLISHED' | 'REJECTED'>;
   declare editedAt: CreationOptional<Date | null>;
+  /** An edit of the approved version, awaiting moderation (the live fields stay public). */
+  declare pendingRevision: CreationOptional<AnswerRevision | null>;
+  /** When the author's last edit was turned down (cleared by their next edit). */
+  declare revisionRejectedAt: CreationOptional<Date | null>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -35,6 +42,8 @@ export const initProductAnswerModel = (sequelize: Sequelize) => {
         defaultValue: 'PENDING',
       },
       editedAt: { type: DataTypes.DATE, allowNull: true },
+      pendingRevision: { type: DataTypes.JSONB, allowNull: true },
+      revisionRejectedAt: { type: DataTypes.DATE, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

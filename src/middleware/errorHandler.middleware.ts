@@ -1,15 +1,21 @@
 import { Request, Response, NextFunction, ErrorRequestHandler } from 'express';
+import { ZodError } from 'zod';
 import { AppError } from '@core/errors';
+import { ValidationError } from '@core/errors/ValidationError';
 import { logError, unwrapRootError } from '@core/logger';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { toPublicErrorBody } from '@core/http/publicError';
 
 export const errorHandlerMiddleware: ErrorRequestHandler = (
-  err: Error,
+  thrown: Error,
   req: Request,
   res: Response,
   _next: NextFunction,
 ) => {
+  // A controller's own `Schema.parse(req.query)` throws a ZodError: that is bad
+  // input (e.g. `?limit=500`), answered like the validate() middleware — 422 with
+  // the field errors — not a 500.
+  const err = thrown instanceof ZodError ? new ValidationError(thrown.flatten()) : thrown;
   if (err instanceof AppError) {
     const rootError = unwrapRootError(err);
     logError('API error', rootError, {

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { z } from 'zod';
 import type { Request, Response } from 'express';
 import { errorHandlerMiddleware } from '../errorHandler.middleware';
 
@@ -33,5 +34,15 @@ describe('malformed ids (B-34)', () => {
 
   it('keeps other unexpected errors as 500', () => {
     assert.equal(run(new Error('boom')).status, 500);
+  });
+});
+
+describe('error handler — invalid query parsed inside a controller', () => {
+  it('answers a ZodError with 422 and the field errors, not 500', () => {
+    const parsed = z.object({ limit: z.coerce.number().max(100) }).safeParse({ limit: '500' });
+    assert.equal(parsed.success, false);
+    const out = run(parsed.error as Error);
+    assert.equal(out.status, 422);
+    assert.equal(out.body?.error?.code, 'VALIDATION_ERROR');
   });
 });

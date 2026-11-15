@@ -7,6 +7,14 @@ import { reviewsRepository } from './reviews.repository';
 import type { CreateReviewRequest, ProductReviewsQuery, UpdateReviewRequest } from './reviews.dto';
 import { findVisibleReviewPage, summarizeVisibleReviews } from './productReviewListing';
 import { resolveEditedReviewMedia, resolveReviewMedia } from './reviewMedia';
+import {
+  applyRevisionUpdate,
+  discardRevisionUpdate,
+  editableMediaBase,
+  serializePendingReview,
+  reviewEditUpdate,
+  withoutRevision,
+} from './reviewRevisions';
 import { castReviewVote, clearReviewVote, findViewerVotes, type ReviewVoteValue } from './reviewVotes';
 import { Review } from '@database/models/review.model';
 import { OrderItem } from '@database/models/orderItem.model';
@@ -14,22 +22,9 @@ import { SubOrder } from '@database/models/subOrder.model';
 import { Product } from '@database/models/product.model';
 import { User } from '@database/models/user.model';
 import { sequelize } from '@database/models';
-import { QueryTypes } from 'sequelize';
+import { Op, QueryTypes } from 'sequelize';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 
-function serializePendingReview(row: Review) {
-  const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
-  return {
-    id: plain.id,
-    rating: plain.rating,
-    title: plain.title,
-    body: plain.body,
-    status: plain.status,
-    createdAt: plain.createdAt,
-    productName: plain.product?.name ?? null,
-    customerName: plain.user?.name ?? null,
-  };
-}
 
 export class ReviewsService {
   async createReview(userId: string, data: CreateReviewRequest) {
@@ -126,7 +121,7 @@ export class ReviewsService {
     // Each review carries the viewer's own vote, so their Helpful / Not helpful shows as chosen.
     const votes = viewerUserId ? await findViewerVotes(rows.map((row) => row.id), viewerUserId) : new Map();
     return {
-      reviews: rows.map((row) => ({ ...row.get({ plain: true }), myVote: votes.get(row.id) ?? null })),
+      reviews: rows.map((row) => ({ ...withoutRevision(row.get({ plain: true })), myVote: votes.get(row.id) ?? null })),
       pagination: buildPaginationMeta(count, query.page, query.limit),
       summary,
       myReview,
@@ -140,8 +135,10 @@ export class ReviewsService {
   }
 
   /** Vendor-scoped reviews across all vendor products. */
-  async getVendorReviews(vendorId: string) {
-    return reviewsRepository.findByVendor(vendorId);
+  async getVendorReviews(vendorId: string): Promise<Record<string, unknown>[]> {
+    // Sellers see what shoppers see — never an author's unapproved edit.
+    const rows = await reviewsRepository.findByVendor(vendorId);
+    return rows.map((row) => withoutRevision(row.get({ plain: true })));
   }
 
   /** Helpful / Not helpful, returned with the caller's vote (see reviewVotes). */
@@ -162,24 +159,16 @@ export class ReviewsService {
     const stored = await Review.findByPk(reviewId);
     if (!stored) throw new NotFoundError('Review');
     if (stored.userId !== userId) throw new ForbiddenError(ERROR_MESSAGES.REVIEW_NOT_YOURS);
-    const media = data.attachments ? await resolveEditedReviewMedia(stored, data.attachments) : undefined;
+    const media = data.attachments
+      ? await resolveEditedReviewMedia(editableMediaBase(stored), data.attachments)
+      : undefined;
 
     return sequelize.transaction(async (t) => {
       const review = await Review.findByPk(reviewId, { transaction: t, lock: t.LOCK.UPDATE });
       if (!review) throw new NotFoundError('Review');
       if (review.userId !== userId) throw new ForbiddenError(ERROR_MESSAGES.REVIEW_NOT_YOURS);
-      await review.update(
-        {
-          rating: data.rating,
-          title: data.title?.trim() ? data.title : null,
-          body: data.body,
-          ...(media ? { media } : {}),
-          status: REVIEW_STATUS.PENDING,
-          editedAt: new Date(),
-          updatedBy: userId,
-        },
-        { transaction: t },
-      );
+      // Approved: the edit waits beside the live review (see reviewRevisions).
+      await review.update(reviewEditUpdate(review, { ...data, media }, userId), { transaction: t });
       await this.recalculateProductRating(review.productId, t);
       return review;
     });
@@ -204,7 +193,11 @@ export class ReviewsService {
       const review = await Review.findByPk(reviewId, { transaction: t });
       if (!review) throw new NotFoundError('Review');
 
-      await review.update({ status: REVIEW_STATUS.APPROVED }, { transaction: t });
+      // An edit of a live review replaces it; otherwise the review goes live.
+      await review.update(
+        review.pendingRevision ? applyRevisionUpdate(review.pendingRevision) : { status: REVIEW_STATUS.APPROVED },
+        { transaction: t },
+      );
 
       // Recalculate product rating
       await this.recalculateProductRating(review.productId, t);
@@ -218,7 +211,11 @@ export class ReviewsService {
       const review = await Review.findByPk(reviewId, { transaction: t });
       if (!review) throw new NotFoundError('Review');
 
-      await review.update({ status: REVIEW_STATUS.REJECTED }, { transaction: t });
+      // Rejecting an edit drops only the edit: the approved review stays public.
+      await review.update(
+        review.pendingRevision ? discardRevisionUpdate() : { status: REVIEW_STATUS.REJECTED },
+        { transaction: t },
+      );
 
       // Recalculate product rating — required whenever the previous status was APPROVED (its
       // score was counted into the average), but harmless to always run since the aggregate
@@ -241,7 +238,8 @@ export class ReviewsService {
   async listPending(query: { page: number; limit: number }) {
     const offset = paginationOffset(query.page, query.limit);
     const { rows, count } = await Review.findAndCountAll({
-      where: { status: REVIEW_STATUS.PENDING },
+      // New reviews and edits of approved ones, oldest first.
+      where: { [Op.or]: [{ status: REVIEW_STATUS.PENDING }, { pendingRevision: { [Op.ne]: null } }] },
       include: [
         { model: Product, as: 'product', attributes: ['id', 'name'] },
         { model: User, as: 'user', attributes: ['id', 'name'] },

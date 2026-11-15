@@ -15,6 +15,12 @@ import * as productQnaController from './productQna.controller';
 const router = Router();
 
 router.get('/moderation', authenticate, authorize(PERMISSIONS.REVIEW_MODERATE), productQnaController.listPending);
+router.get(
+  '/moderation/queue',
+  authenticate,
+  authorize(PERMISSIONS.REVIEW_MODERATE),
+  productQnaController.moderationQueue,
+);
 router.post('/questions', authenticate, validate(AskQuestionSchema), productQnaController.ask);
 router.get('/questions/mine', authenticate, productQnaController.getMyQuestions);
 router.get('/answers/mine', authenticate, productQnaController.getMyAnswers);

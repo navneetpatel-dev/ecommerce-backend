@@ -5,17 +5,16 @@ import { ERROR_MESSAGES } from '@core/constants/errors';
 import { Review } from '@database/models/review.model';
 import { ReviewVote } from '@database/models/reviewVote.model';
 import { sequelize } from '@database/models';
+import { withoutRevision } from './reviewRevisions';
 import type { Transaction } from 'sequelize';
 
 export type ReviewVoteValue = 'HELPFUL' | 'UNHELPFUL';
 
 const counter = (vote: ReviewVoteValue) => (vote === 'HELPFUL' ? 'helpfulCount' : 'unhelpfulCount');
 
-/** A review plus the caller's own vote on it, so the page can show which one is theirs. */
-export type ReviewWithMyVote = ReturnType<Review['get']> & { myVote: ReviewVoteValue | null };
-
-function withMyVote(review: Review, myVote: ReviewVoteValue | null): ReviewWithMyVote {
-  return { ...review.get({ plain: true }), myVote };
+function withMyVote(review: Review, myVote: ReviewVoteValue | null) {
+  // Voters are never the author: they get the public review, not a pending edit.
+  return { ...withoutRevision(review.get({ plain: true })), myVote };
 }
 
 /** Only someone else's published review can be voted on. */

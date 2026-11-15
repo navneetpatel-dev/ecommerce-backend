@@ -6,6 +6,15 @@ export type ReviewMediaItem = {
   durationSeconds: number | null;
 };
 
+/** A proposed edit of an approved review (shown only to its author and moderators). */
+export type ReviewRevision = {
+  rating: number;
+  title: string | null;
+  body: string;
+  media: ReviewMediaItem[];
+  submittedAt: string;
+};
+
 export class Review extends Model<InferAttributes<Review>, InferCreationAttributes<Review>> {
   declare id: CreationOptional<string>;
   declare productId: string;
@@ -22,6 +31,10 @@ export class Review extends Model<InferAttributes<Review>, InferCreationAttribut
   declare vendorResponse: string | null;
   declare vendorRespondedAt: Date | null;
   declare editedAt: CreationOptional<Date | null>;
+  /** An edit of the approved version, awaiting moderation (the live fields stay public). */
+  declare pendingRevision: CreationOptional<ReviewRevision | null>;
+  /** When the author's last edit was turned down (cleared by their next edit). */
+  declare revisionRejectedAt: CreationOptional<Date | null>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -54,6 +67,8 @@ export const initReviewModel = (sequelize: Sequelize) => {
       vendorResponse: { type: DataTypes.TEXT, allowNull: true },
       vendorRespondedAt: { type: DataTypes.DATE, allowNull: true },
       editedAt: { type: DataTypes.DATE, allowNull: true },
+      pendingRevision: { type: DataTypes.JSONB, allowNull: true },
+      revisionRejectedAt: { type: DataTypes.DATE, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

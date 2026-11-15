@@ -1,5 +1,8 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
 
+/** A proposed edit of the published text (shown only to its author and moderators). */
+export type QuestionRevision = { question: string; submittedAt: string };
+
 export class ProductQuestion extends Model<InferAttributes<ProductQuestion>, InferCreationAttributes<ProductQuestion>> {
   declare id: CreationOptional<string>;
   declare productId: string;
@@ -7,6 +10,10 @@ export class ProductQuestion extends Model<InferAttributes<ProductQuestion>, Inf
   declare question: string;
   declare status: 'PENDING' | 'PUBLISHED' | 'REJECTED';
   declare editedAt: CreationOptional<Date | null>;
+  /** An edit of the approved version, awaiting moderation (the live fields stay public). */
+  declare pendingRevision: CreationOptional<QuestionRevision | null>;
+  /** When the author's last edit was turned down (cleared by their next edit). */
+  declare revisionRejectedAt: CreationOptional<Date | null>;
   declare createdBy: string | null;
   declare updatedBy: string | null;
   declare deletedBy: string | null;
@@ -30,6 +37,8 @@ export const initProductQuestionModel = (sequelize: Sequelize) => {
       question: { type: DataTypes.TEXT, allowNull: false },
       status: { type: DataTypes.ENUM('PENDING', 'PUBLISHED', 'REJECTED'), defaultValue: 'PENDING' },
       editedAt: { type: DataTypes.DATE, allowNull: true },
+      pendingRevision: { type: DataTypes.JSONB, allowNull: true },
+      revisionRejectedAt: { type: DataTypes.DATE, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },
       deletedBy: { type: DataTypes.UUID, allowNull: true },

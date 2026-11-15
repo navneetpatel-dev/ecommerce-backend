@@ -3,7 +3,8 @@ import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
-import { pageLimitQuerySchema } from '@core/http/pagination';
+import { buildPaginationMeta, pageLimitQuerySchema } from '@core/http/pagination';
+import { listQnaModerationQueue } from './productQnaModeration';
 import { productQnaService } from './productQna.service';
 import { canAnswerForProduct } from './buyerCheck';
 import { assertNotDuplicateSubmission } from '@core/http/duplicateSubmitGuard';
@@ -49,6 +50,13 @@ export const listPending = asyncHandler(async (req: Request, res: Response) => {
   const query = pageLimitQuerySchema.parse(req.query);
   const result = await productQnaService.listPending(query);
   res.json(ok(result.questions, { pagination: result.pagination }));
+});
+
+/** Moderators: new and edited questions and answers awaiting a decision. */
+export const moderationQueue = asyncHandler(async (req: Request, res: Response) => {
+  const { page, limit } = pageLimitQuerySchema.parse(req.query);
+  const { items, count } = await listQnaModerationQueue(limit, (page - 1) * limit);
+  res.json(ok(items, { pagination: buildPaginationMeta(count, page, limit) }));
 });
 
 export const answer = asyncHandler(async (req: Request, res: Response) => {
