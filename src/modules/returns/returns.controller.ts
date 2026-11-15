@@ -80,6 +80,29 @@ export const restock = asyncHandler(async (req: Request, res: Response) => {
   res.json(ok(item));
 });
 
+export const dispute = asyncHandler(async (req: Request, res: Response) => {
+  const item = await returnsService.disputeReturn(
+    req.params.id!,
+    {
+      id: req.user!.id,
+      roleId: req.user!.roleId,
+      role: req.user!.role,
+      vendorId: req.user!.vendorId,
+    },
+    req.body,
+  );
+  res.json(ok(item));
+});
+
+export const resolveDispute = asyncHandler(async (req: Request, res: Response) => {
+  const item = await returnsService.resolveReturnDispute(
+    req.params.id!,
+    req.user!.id,
+    req.body,
+  );
+  res.json(ok(item));
+});
+
 export const remove = asyncHandler(async (req: Request, res: Response) => {
   await returnsService.delete(req.params.id!, req.user!.id);
   res.status(204).send();

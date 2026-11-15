@@ -16,6 +16,8 @@ export interface QnaModerationItem {
   questionText: string | null;
   productName: string | null;
   authorName: string | null;
+  authorType?: 'VENDOR' | 'CUSTOMER';
+  vendorName?: string | null;
   submittedAt: string;
 }
 
@@ -25,6 +27,7 @@ const QUEUE = `
          COALESCE(q."pendingRevision"->>'question', q.question) AS text,
          CASE WHEN q."pendingRevision" IS NULL THEN NULL ELSE q.question END AS "previousText",
          NULL AS "questionText", p.name AS "productName", u.name AS "authorName",
+         'CUSTOMER' AS "authorType", NULL AS "vendorName",
          COALESCE((q."pendingRevision"->>'submittedAt')::timestamptz, q."createdAt") AS "submittedAt"
     FROM product_questions q
     LEFT JOIN products p ON p.id = q."productId"
@@ -37,11 +40,13 @@ const QUEUE = `
          COALESCE(a."pendingRevision"->>'answer', a.answer),
          CASE WHEN a."pendingRevision" IS NULL THEN NULL ELSE a.answer END,
          q.question, p.name, u.name,
+         a."authorType", v."businessName" AS "vendorName",
          COALESCE((a."pendingRevision"->>'submittedAt')::timestamptz, a."createdAt")
     FROM product_answers a
     JOIN product_questions q ON q.id = a."questionId" AND q."deletedAt" IS NULL
     LEFT JOIN products p ON p.id = q."productId"
     LEFT JOIN users u ON u.id = a."authorId"
+    LEFT JOIN vendors v ON v.id = u."vendorId"
    WHERE a."deletedAt" IS NULL
      AND (a.status = :answerPending OR a."pendingRevision" IS NOT NULL)`;
 

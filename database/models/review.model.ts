@@ -30,6 +30,9 @@ export class Review extends Model<InferAttributes<Review>, InferCreationAttribut
   declare media: CreationOptional<ReviewMediaItem[]>;
   declare vendorResponse: string | null;
   declare vendorRespondedAt: Date | null;
+  declare flaggedReason: CreationOptional<string | null>;
+  declare flaggedAt: CreationOptional<Date | null>;
+  declare flaggedBy: CreationOptional<string | null>;
   declare editedAt: CreationOptional<Date | null>;
   /** An edit of the approved version, awaiting moderation (the live fields stay public). */
   declare pendingRevision: CreationOptional<ReviewRevision | null>;
@@ -66,6 +69,9 @@ export const initReviewModel = (sequelize: Sequelize) => {
       media: { type: DataTypes.JSONB, allowNull: false, defaultValue: [] },
       vendorResponse: { type: DataTypes.TEXT, allowNull: true },
       vendorRespondedAt: { type: DataTypes.DATE, allowNull: true },
+      flaggedReason: { type: DataTypes.STRING(500), allowNull: true },
+      flaggedAt: { type: DataTypes.DATE, allowNull: true },
+      flaggedBy: { type: DataTypes.UUID, allowNull: true },
       editedAt: { type: DataTypes.DATE, allowNull: true },
       pendingRevision: { type: DataTypes.JSONB, allowNull: true },
       revisionRejectedAt: { type: DataTypes.DATE, allowNull: true },

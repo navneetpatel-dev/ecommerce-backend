@@ -265,7 +265,9 @@ async function getTicketOrThrow(id: string, transaction?: Transaction): Promise<
 
 export class SupportTicketsService {
   async create(actor: Actor, data: CreateSupportTicketRequest) {
-    if (actor.role.name !== ROLES.CUSTOMER) {
+    const isCustomer = actor.role.name === ROLES.CUSTOMER;
+    const isVendor = isVendorActor(actor);
+    if (!isCustomer && !isVendor) {
       throw new AppError(ERROR_MESSAGES.TICKET_FORBIDDEN, 403, ERROR_CODES.TICKET_FORBIDDEN);
     }
     assertAttachmentLimits(data.attachmentUrls ?? [], 'ticket');
@@ -279,74 +281,89 @@ export class SupportTicketsService {
 
       let relatedOrderId = data.relatedOrderId ?? null;
       let relatedVendorId: string | null = null;
+      let assignedToId: string | null = null;
       const clientVendorId = data.relatedVendorId ?? null;
 
-      if (relatedOrderId) {
-        const order = await Order.findByPk(relatedOrderId, {
-          include: [{ model: SubOrder, as: 'subOrders', attributes: ['vendorId'] }],
-          transaction: t,
-        });
-        if (!order || order.userId !== actor.id) {
-          throw new AppError(ERROR_MESSAGES.NOT_YOUR_ORDER, 403, ERROR_CODES.FORBIDDEN);
+      if (isVendor) {
+        relatedVendorId = actor.vendorId ?? null;
+        if (relatedOrderId) {
+          const suborder = await SubOrder.findOne({
+            where: { orderId: relatedOrderId, vendorId: actor.vendorId! },
+            transaction: t,
+          });
+          if (!suborder) {
+            relatedOrderId = null;
+          }
         }
-        const vendorIds = [
-          ...new Set(
-            ((order as Order & { subOrders?: SubOrder[] }).subOrders ?? []).map((s) => s.vendorId),
-          ),
-        ];
-        if (vendorIds.length === 1) {
-          relatedVendorId = vendorIds[0]!;
-          if (clientVendorId && clientVendorId !== relatedVendorId) {
-            throw new AppError(
-              ERROR_MESSAGES.TICKET_VENDOR_INVALID,
-              422,
-              ERROR_CODES.TICKET_VENDOR_INVALID,
-            );
-          }
-        } else if (vendorIds.length > 1) {
-          if (!clientVendorId) {
-            throw new AppError(
-              ERROR_MESSAGES.TICKET_VENDOR_REQUIRED,
-              422,
-              ERROR_CODES.TICKET_VENDOR_REQUIRED,
-            );
-          }
-          if (!vendorIds.includes(clientVendorId)) {
-            throw new AppError(
-              ERROR_MESSAGES.TICKET_VENDOR_INVALID,
-              422,
-              ERROR_CODES.TICKET_VENDOR_INVALID,
-            );
-          }
-          relatedVendorId = clientVendorId;
-        }
+        assignedToId = null;
       } else {
-        relatedOrderId = null;
-        if (data.category === SUPPORT_TICKET_CATEGORY.VENDOR) {
-          if (!clientVendorId) {
-            throw new AppError(
-              ERROR_MESSAGES.TICKET_VENDOR_REQUIRED,
-              422,
-              ERROR_CODES.TICKET_VENDOR_REQUIRED,
-            );
+        if (relatedOrderId) {
+          const order = await Order.findByPk(relatedOrderId, {
+            include: [{ model: SubOrder, as: 'subOrders', attributes: ['vendorId'] }],
+            transaction: t,
+          });
+          if (!order || order.userId !== actor.id) {
+            throw new AppError(ERROR_MESSAGES.NOT_YOUR_ORDER, 403, ERROR_CODES.FORBIDDEN);
           }
-          const vendor = await Vendor.findByPk(clientVendorId, { transaction: t });
-          if (!vendor) {
-            throw new AppError(
-              ERROR_MESSAGES.TICKET_VENDOR_INVALID,
-              422,
-              ERROR_CODES.TICKET_VENDOR_INVALID,
-            );
+          const vendorIds = [
+            ...new Set(
+              ((order as Order & { subOrders?: SubOrder[] }).subOrders ?? []).map((s) => s.vendorId),
+            ),
+          ];
+          if (vendorIds.length === 1) {
+            relatedVendorId = vendorIds[0]!;
+            if (clientVendorId && clientVendorId !== relatedVendorId) {
+              throw new AppError(
+                ERROR_MESSAGES.TICKET_VENDOR_INVALID,
+                422,
+                ERROR_CODES.TICKET_VENDOR_INVALID,
+              );
+            }
+          } else if (vendorIds.length > 1) {
+            if (!clientVendorId) {
+              throw new AppError(
+                ERROR_MESSAGES.TICKET_VENDOR_REQUIRED,
+                422,
+                ERROR_CODES.TICKET_VENDOR_REQUIRED,
+              );
+            }
+            if (!vendorIds.includes(clientVendorId)) {
+              throw new AppError(
+                ERROR_MESSAGES.TICKET_VENDOR_INVALID,
+                422,
+                ERROR_CODES.TICKET_VENDOR_INVALID,
+              );
+            }
+            relatedVendorId = clientVendorId;
           }
-          relatedVendorId = clientVendorId;
         } else {
-          relatedVendorId = null;
+          relatedOrderId = null;
+          if (data.category === SUPPORT_TICKET_CATEGORY.VENDOR) {
+            if (!clientVendorId) {
+              throw new AppError(
+                ERROR_MESSAGES.TICKET_VENDOR_REQUIRED,
+                422,
+                ERROR_CODES.TICKET_VENDOR_REQUIRED,
+              );
+            }
+            const vendor = await Vendor.findByPk(clientVendorId, { transaction: t });
+            if (!vendor) {
+              throw new AppError(
+                ERROR_MESSAGES.TICKET_VENDOR_INVALID,
+                422,
+                ERROR_CODES.TICKET_VENDOR_INVALID,
+              );
+            }
+            relatedVendorId = clientVendorId;
+          } else {
+            relatedVendorId = null;
+          }
         }
-      }
 
-      const assignedToId = relatedVendorId
-        ? await findVendorStaffUserId(relatedVendorId)
-        : null;
+        assignedToId = relatedVendorId
+          ? await findVendorStaffUserId(relatedVendorId)
+          : null;
+      }
 
       const ticket = await SupportTicket.create(
         {

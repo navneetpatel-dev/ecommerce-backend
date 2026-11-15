@@ -149,7 +149,7 @@ export const deleteVendor = asyncHandler(async (req: Request, res: Response) => 
 });
 
 export const getDashboardSummary = asyncHandler(async (req: Request, res: Response) => {
-  const summary = await vendorsService.getDashboardSummary(req.user!.vendorId!);
+  const summary = await vendorsService.getDashboardSummary(req.user!.vendorId!, req.user);
   res.json(ok(summary));
 });
 

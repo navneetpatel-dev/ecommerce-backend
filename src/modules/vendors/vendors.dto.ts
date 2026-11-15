@@ -56,6 +56,7 @@ export const RejectVendorSchema = z.object({
 
 export const SuspendVendorSchema = z.object({
   reason: z.string().min(1),
+  cancelActiveOrders: z.boolean().optional().default(false),
 });
 
 export const GetVendorsQuerySchema = z.object({

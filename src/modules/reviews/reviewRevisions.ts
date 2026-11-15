@@ -114,5 +114,9 @@ export function serializePendingReview(row: Review) {
     previousRating: revision ? plain.rating : null,
     previousTitle: revision ? plain.title : null,
     previousBody: revision ? plain.body : null,
+    vendorResponse: (plain as any).vendorResponse ?? null,
+    vendorRespondedAt: (plain as any).vendorRespondedAt ?? null,
+    flaggedReason: (plain as any).flaggedReason ?? null,
+    flaggedAt: (plain as any).flaggedAt ?? null,
   };
 }

@@ -1,6 +1,7 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { assertPartPaidFor, assertSubOrderTransition, VENDOR_VISIBLE_ORDER_WHERE } from './subOrderTransitions';
 import { recordPartShipment } from './partShipment';
+import { User } from '@database/models/user.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { Vendor } from '@database/models/vendor.model';
 import { Order } from '@database/models/order.model';
@@ -139,7 +140,14 @@ export class SubordersService {
     };
   }
 
-  async updateStatus(id: string, status: SubOrder['status'], trackingId: string | undefined, updatedBy: string) {
+  async updateStatus(
+    id: string,
+    status: SubOrder['status'],
+    trackingId: string | undefined,
+    updatedBy: string,
+    cancellationReason?: string,
+    cancelledByRole?: string,
+  ) {
     let razorpayDue = 0;
     let razorpayPaymentId: string | null = null;
     let refundOrderId: string | null = null;
@@ -173,11 +181,26 @@ export class SubordersService {
         action: 'SUBORDER_STATUS_UPDATED',
         entityType: 'SubOrder',
         entityId: id,
-        metadata: { previousStatus: row.status, newStatus: status, trackingId: trackingId ?? null },
+        metadata: {
+          previousStatus: row.status,
+          newStatus: status,
+          trackingId: trackingId ?? null,
+          cancellationReason: cancellationReason ?? null,
+          cancelledByRole: cancelledByRole ?? null,
+        },
         transaction,
       });
 
-      await row.update({ status, trackingId: trackingId ?? row.trackingId, updatedBy }, { transaction });
+      const patchData: Record<string, unknown> = {
+        status,
+        trackingId: trackingId ?? row.trackingId,
+        updatedBy,
+      };
+      if (status === ORDER_STATUS.CANCELLED) {
+        patchData.cancellationReason = cancellationReason ?? row.cancellationReason;
+        patchData.cancelledByRole = cancelledByRole ?? 'VENDOR';
+      }
+      await row.update(patchData, { transaction });
       if (status === ORDER_STATUS.SHIPPED || status === ORDER_STATUS.DELIVERED) {
         await issueTaxInvoicesOnDispatch(id, transaction);
         await rollUpOrderStatus(row.orderId, transaction);
@@ -383,6 +406,23 @@ export class SubordersService {
           ? notificationsService.sendOrderCancelled(order.userId, order.id, { orderId: order.id, orderNumber })
           : notificationsService.sendSubOrderCancelled(order.userId, suborder.id, { orderId: order.id, orderNumber });
         void notify;
+
+        if (cancelledByRole !== 'VENDOR' && suborder.vendorId) {
+          void User.findAll({
+            where: { vendorId: suborder.vendorId },
+            attributes: ['id'],
+          }).then((vendorUsers) => {
+            for (const vUser of vendorUsers) {
+              void notificationsService.sendVendorOrderCancelled(vUser.id, suborder.id, {
+                orderId: order.id,
+                orderNumber,
+                subOrderId: suborder.id,
+              });
+            }
+          }).catch(() => {
+            // Non-critical notification failure logged by service
+          });
+        }
       }
     }
 

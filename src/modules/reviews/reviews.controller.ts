@@ -64,7 +64,17 @@ export const reject = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const respond = asyncHandler(async (req: Request, res: Response) => {
-  res.json(ok(await reviewsService.respondToReview(req.params.id!, req.user!.vendorId, req.body.response)));
+  const isAdmin = req.user?.role?.name === 'SUPER_ADMIN' || !req.user?.vendorId;
+  res.json(
+    ok(
+      await reviewsService.respondToReview(
+        req.params.id!,
+        req.user?.vendorId ?? null,
+        req.body.response,
+        isAdmin,
+      ),
+    ),
+  );
 });
 
 /** PDP "Write a review": the signed-in shopper's delivered, unreviewed line for this product, if any. */
@@ -88,6 +98,11 @@ export const getAwaitingReview = asyncHandler(async (req: Request, res: Response
     paginationOffset(query.page, query.limit),
   );
   res.json(ok(rows, { pagination: buildPaginationMeta(count, query.page, query.limit) }));
+});
+
+export const flag = asyncHandler(async (req: Request, res: Response) => {
+  const review = await reviewsService.flagReview(req.params.id!, req.user!.id, req.body.reason);
+  res.json(ok(review));
 });
 
 /** The author deletes their review (permanently). */

@@ -3,7 +3,7 @@ import { authenticate } from '@middleware/auth.middleware';
 import { authorize } from '@middleware/rbac.middleware';
 import { validate } from '@middleware/validate.middleware';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
-import { CreateReturnRequestSchema, TransitionReturnSchema } from './returns.dto';
+import { CreateReturnRequestSchema, TransitionReturnSchema, DisputeReturnSchema, ResolveReturnDisputeSchema } from './returns.dto';
 import * as returnsController from './returns.controller';
 
 const router = Router();
@@ -33,6 +33,20 @@ router.post(
   authenticate,
   authorize(PERMISSIONS.ORDER_REFUND, PERMISSIONS.SUBORDER_MANAGE),
   returnsController.restock,
+);
+router.post(
+  '/:id/dispute',
+  authenticate,
+  authorize(PERMISSIONS.ORDER_REFUND, PERMISSIONS.SUBORDER_MANAGE),
+  validate(DisputeReturnSchema),
+  returnsController.dispute,
+);
+router.post(
+  '/:id/resolve-dispute',
+  authenticate,
+  authorize(PERMISSIONS.ORDER_REFUND),
+  validate(ResolveReturnDisputeSchema),
+  returnsController.resolveDispute,
 );
 router.post('/:id/retry-refund', authenticate, authorize(PERMISSIONS.ORDER_REFUND), returnsController.retryRefund);
 router.delete('/:id', authenticate, authorize(PERMISSIONS.ORDER_REFUND), returnsController.remove);

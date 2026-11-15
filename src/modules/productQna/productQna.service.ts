@@ -8,9 +8,13 @@ import {
   PRODUCT_QUESTION_STATUS,
   PRODUCT_ANSWER_AUTHOR_TYPE,
   PRODUCT_ANSWER_STATUS,
+  VENDOR_STATUS,
+  ROLES,
   type ProductQuestionStatus,
   type ProductAnswerStatus,
 } from '@core/constants/statuses';
+import { notificationsService } from '@modules/notifications/notifications.service';
+import { Vendor } from '@database/models/vendor.model';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { userHasPermission } from '@middleware/rbac.middleware';
 import { productQnaRepository } from './productQna.repository';
@@ -161,8 +165,19 @@ export class ProductQnaService {
    * The product's own vendor answers as VENDOR. Anyone else answers as CUSTOMER,
    * and only once that product has been delivered to them (C-01).
    */
-  async answerQuestion(questionId: string, userId: string, vendorId: string | null, answer: string) {
-    return sequelize.transaction(async (t) => {
+  async answerQuestion(
+    questionId: string,
+    userId: string,
+    vendorId: string | null,
+    answer: string,
+    actor?: { id: string; role: { name: string }; roleId?: string; permissions?: string[] },
+  ) {
+    let publishedQuestionUserId: string | null = null;
+    let publishedProductName: string | null = null;
+    let verifiedVendorName: string | null = null;
+    let wasPublished = false;
+
+    const created = await sequelize.transaction(async (t) => {
       const question = await ProductQuestion.findByPk(questionId, {
         include: [{ model: Product, as: 'product' }],
         transaction: t,
@@ -179,11 +194,35 @@ export class ProductQnaService {
         vendorId && product?.vendorId === vendorId
           ? PRODUCT_ANSWER_AUTHOR_TYPE.VENDOR
           : PRODUCT_ANSWER_AUTHOR_TYPE.CUSTOMER;
+
+      if (authorType === PRODUCT_ANSWER_AUTHOR_TYPE.VENDOR && actor?.role) {
+        const isOwner = actor.role.name === ROLES.VENDOR_OWNER;
+        const canRespond = isOwner || (await userHasPermission(actor, PERMISSIONS.REVIEW_RESPOND));
+        if (!canRespond) {
+          throw new ForbiddenError(ERROR_MESSAGES.FORBIDDEN);
+        }
+      }
+
       if (authorType === PRODUCT_ANSWER_AUTHOR_TYPE.CUSTOMER) {
         if (question.userId === userId) {
           throw new ValidationError({ answer: [ERROR_MESSAGES.ANSWER_OWN_QUESTION] });
         }
         await assertBuyerMayAnswer(userId, question.productId, t);
+      }
+
+      let answerStatus: ProductAnswerStatus = PRODUCT_ANSWER_STATUS.PENDING;
+      if (authorType === PRODUCT_ANSWER_AUTHOR_TYPE.VENDOR && product?.vendorId) {
+        const vendor = await Vendor.findByPk(product.vendorId, {
+          attributes: ['id', 'status', 'kycVerified', 'businessName'],
+          transaction: t,
+        });
+        if (vendor?.status === VENDOR_STATUS.APPROVED && vendor?.kycVerified === true) {
+          answerStatus = PRODUCT_ANSWER_STATUS.PUBLISHED;
+          verifiedVendorName = vendor.businessName;
+          wasPublished = true;
+          publishedQuestionUserId = question.userId;
+          publishedProductName = product.name;
+        }
       }
 
       // One answer per person per question; a second one is an edit of the first.
@@ -196,7 +235,7 @@ export class ProductQnaService {
           authorId: userId,
           authorType,
           answer,
-          status: PRODUCT_ANSWER_STATUS.PENDING,
+          status: answerStatus,
         },
         { transaction: t },
       ).catch((error: unknown) => {
@@ -207,6 +246,16 @@ export class ProductQnaService {
         throw error;
       });
     });
+
+    if (wasPublished && publishedQuestionUserId && publishedQuestionUserId !== userId) {
+      void notificationsService.sendQuestionAnswered(publishedQuestionUserId, questionId, {
+        productName: publishedProductName,
+        vendorName: verifiedVendorName ?? 'Seller',
+        answerText: answer,
+      });
+    }
+
+    return created;
   }
 
   /** Publish / reject a new question, or approve / reject an edit of a published one. */

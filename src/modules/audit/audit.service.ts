@@ -1,6 +1,7 @@
 import { AuditLog } from '@database/models/auditLog.model';
 import { User } from '@database/models/user.model';
 import { Op, type Transaction } from 'sequelize';
+import { sequelize } from '@database/models';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { getRequestContext } from '@core/context/requestContext';
 
@@ -42,6 +43,7 @@ export type AuditListFilters = {
   actorId?: string;
   /** Free-text match against the actor's name/email (case-insensitive substring). */
   actor?: string;
+  vendorId?: string;
   from?: Date;
   to?: Date;
 };
@@ -51,11 +53,17 @@ export async function listAudit(
   filters: AuditListFilters = {},
 ) {
   const offset = paginationOffset(query.page, query.limit);
-  const { entityType, actorId, actor, from, to } = filters;
+  const { entityType, actorId, actor, vendorId, from, to } = filters;
 
   const where: Record<PropertyKey, unknown> = {};
   if (entityType) where.entityType = { [Op.eq]: entityType };
   if (actorId) where.actorId = { [Op.eq]: actorId };
+  if (vendorId) {
+    where[Op.or as unknown as string] = [
+      sequelize.literal(`"AuditLog"."metadata"->>'vendorId' = ${sequelize.escape(vendorId)}`),
+      { [Op.and]: [{ entityType: 'Vendor' }, { entityId: vendorId }] },
+    ];
+  }
   if (from || to) {
     where.createdAt = {
       ...(from ? { [Op.gte]: from } : {}),

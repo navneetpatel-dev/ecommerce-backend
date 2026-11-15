@@ -21,6 +21,8 @@ import { OrderItem } from '@database/models/orderItem.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { Product } from '@database/models/product.model';
 import { User } from '@database/models/user.model';
+import { notificationsService } from '@modules/notifications/notifications.service';
+import { logAudit } from '@modules/audit/audit.service';
 import { sequelize } from '@database/models';
 import { Op, QueryTypes } from 'sequelize';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
@@ -195,7 +197,9 @@ export class ReviewsService {
 
       // An edit of a live review replaces it; otherwise the review goes live.
       await review.update(
-        review.pendingRevision ? applyRevisionUpdate(review.pendingRevision) : { status: REVIEW_STATUS.APPROVED },
+        review.pendingRevision
+          ? { ...applyRevisionUpdate(review.pendingRevision), flaggedReason: null, flaggedAt: null, flaggedBy: null }
+          : { status: REVIEW_STATUS.APPROVED, flaggedReason: null, flaggedAt: null, flaggedBy: null },
         { transaction: t },
       );
 
@@ -226,20 +230,58 @@ export class ReviewsService {
     });
   }
 
-  async respondToReview(reviewId: string, vendorId: string | null, response: string) {
+  async respondToReview(reviewId: string, vendorId: string | null, response: string, isAdmin: boolean = false) {
     const review = await Review.findByPk(reviewId, { include: [{ model: Product, as: 'product' }] });
     if (!review) throw new NotFoundError('Review');
-    if (!vendorId || (review as any).product?.vendorId !== vendorId) {
+    if (!isAdmin && (!vendorId || (review as any).product?.vendorId !== vendorId)) {
       throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_PRODUCT_REVIEW);
     }
-    return review.update({ vendorResponse: response, vendorRespondedAt: new Date() });
+    const cleanResponse = response.trim();
+    const updated = await review.update({
+      vendorResponse: cleanResponse.length > 0 ? cleanResponse : null,
+      vendorRespondedAt: cleanResponse.length > 0 ? new Date() : null,
+    });
+
+    if (cleanResponse.length > 0 && review.userId) {
+      void notificationsService.sendReviewReplied(review.userId, review.id, {
+        reviewId: review.id,
+        productId: review.productId,
+        productName: (review as any).product?.name,
+      });
+    }
+
+    return updated;
+  }
+
+  async flagReview(reviewId: string, actorId: string, reason: string) {
+    const review = await Review.findByPk(reviewId);
+    if (!review) throw new NotFoundError('Review');
+    await review.update({
+      flaggedReason: reason.trim(),
+      flaggedAt: new Date(),
+      flaggedBy: actorId,
+    });
+    await logAudit({
+      actorId,
+      action: 'REVIEW_FLAGGED',
+      entityType: 'Review',
+      entityId: review.id,
+      metadata: { reason },
+    });
+    return review;
   }
 
   async listPending(query: { page: number; limit: number }) {
     const offset = paginationOffset(query.page, query.limit);
     const { rows, count } = await Review.findAndCountAll({
-      // New reviews and edits of approved ones, oldest first.
-      where: { [Op.or]: [{ status: REVIEW_STATUS.PENDING }, { pendingRevision: { [Op.ne]: null } }] },
+      // New reviews, edits of approved ones, and reviews flagged by merchants/users, oldest first.
+      where: {
+        [Op.or]: [
+          { status: REVIEW_STATUS.PENDING },
+          { pendingRevision: { [Op.ne]: null } },
+          { flaggedReason: { [Op.ne]: null } },
+        ],
+      },
       include: [
         { model: Product, as: 'product', attributes: ['id', 'name'] },
         { model: User, as: 'user', attributes: ['id', 'name'] },

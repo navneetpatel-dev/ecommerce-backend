@@ -66,6 +66,7 @@ export const answer = asyncHandler(async (req: Request, res: Response) => {
     req.user!.id,
     req.user!.vendorId,
     answerText,
+    req.user,
   );
   res.status(201).json(ok(await serializeNewAnswer(created)));
 });

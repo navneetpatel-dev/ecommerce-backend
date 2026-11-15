@@ -2,6 +2,7 @@ import { NotFoundError } from '@core/errors/NotFoundError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { sequelize } from '@database/models';
+import { User } from '@database/models/user.model';
 import { Order } from '@database/models/order.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { OrderItem } from '@database/models/orderItem.model';
@@ -134,7 +135,14 @@ export async function cancelPaidOrder(
           transaction: t,
         });
       }
-      await subOrder.update({ status: ORDER_STATUS.CANCELLED }, { transaction: t });
+      await subOrder.update(
+        {
+          status: ORDER_STATUS.CANCELLED,
+          cancelledByRole: isAdmin ? 'ADMIN' : 'CUSTOMER',
+          cancellationReason: isAdmin ? 'Order cancelled by platform admin' : 'Order cancelled by customer',
+        },
+        { transaction: t },
+      );
       await CommissionLedger.destroy({
         where: { subOrderId: subOrder.id, status: COMMISSION_STATUS.PENDING },
         transaction: t,
@@ -167,7 +175,14 @@ export async function cancelPaidOrder(
   });
 
   for (const partId of remainingPartIds) {
-    await subordersService.updateStatus(partId, ORDER_STATUS.CANCELLED, undefined, userId);
+    await subordersService.updateStatus(
+      partId,
+      ORDER_STATUS.CANCELLED,
+      undefined,
+      userId,
+      isAdmin ? 'Order cancelled by platform admin' : 'Order cancelled by customer',
+      isAdmin ? 'ADMIN' : 'CUSTOMER',
+    );
   }
   if (remainingPartIds.length > 0) return { orderId, cancelled: true };
 
@@ -206,6 +221,29 @@ export async function cancelPaidOrder(
       orderId: order.id,
       orderNumber: order.id.slice(0, 8).toUpperCase(),
     });
+
+    const cancelledParts = await SubOrder.findAll({
+      where: { orderId: order.id },
+      attributes: ['id', 'vendorId'],
+    });
+    for (const part of cancelledParts) {
+      if (part.vendorId) {
+        void User.findAll({
+          where: { vendorId: part.vendorId },
+          attributes: ['id'],
+        }).then((vendorUsers) => {
+          for (const vUser of vendorUsers) {
+            void notificationsService.sendVendorOrderCancelled(vUser.id, part.id, {
+              orderId: order.id,
+              orderNumber: order.id.slice(0, 8).toUpperCase(),
+              subOrderId: part.id,
+            });
+          }
+        }).catch(() => {
+          // Non-critical notification failure
+        });
+      }
+    }
 
     await logAudit({
       actorId: userId,

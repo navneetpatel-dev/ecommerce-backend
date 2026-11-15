@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { CreateReviewSchema, RespondReviewSchema, VoteReviewSchema } from '../reviews.dto';
+import { CreateReviewSchema, RespondReviewSchema, VoteReviewSchema, FlagReviewSchema } from '../reviews.dto';
 
 const UUID = '8bdf2ea7-6f4f-4b1b-9d7a-0f0f5b1a2c3d';
 
@@ -51,8 +51,15 @@ describe('reviews DTO schemas', () => {
     assert.equal(VoteReviewSchema.safeParse({ vote: 'MAYBE' }).success, false);
   });
 
-  it('vendor responses must be non-empty', () => {
-    assert.equal(RespondReviewSchema.safeParse({ response: '' }).success, false);
+  it('vendor responses can be updated or cleared', () => {
+    assert.equal(RespondReviewSchema.safeParse({ response: '' }).success, true);
     assert.equal(RespondReviewSchema.safeParse({ response: 'Thanks!' }).success, true);
+    assert.equal(RespondReviewSchema.safeParse({ response: 'x'.repeat(2001) }).success, false);
+  });
+
+  it('validates FlagReviewSchema', () => {
+    assert.equal(FlagReviewSchema.safeParse({ reason: 'Abusive language and harassment' }).success, true);
+    assert.equal(FlagReviewSchema.safeParse({ reason: 'no' }).success, false);
+    assert.equal(FlagReviewSchema.safeParse({ reason: 'x'.repeat(501) }).success, false);
   });
 });

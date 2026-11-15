@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import * as vendorsController from './vendors.controller';
+import * as vendorStaffController from './vendorStaff.controller';
+import { AddStaffSchema } from './vendorStaff.dto';
 import { authenticate } from '@middleware/auth.middleware';
 import { authorize } from '@middleware/rbac.middleware';
 import { validate } from '@middleware/validate.middleware';
@@ -58,7 +60,12 @@ router.post('/register', authenticate, validate(RegisterVendorSchema), vendorsCo
 router.get('/dashboard/summary', authenticate, vendorDashAuth, vendorsController.getDashboardSummary);
 // authenticate only — service scopes strictly to req.user.vendorId (mirrors payouts'
 // /me-style vendor scoping) and 404s when the caller has no vendor context.
-router.get('/dashboard/analytics', authenticate, vendorsController.getDashboardAnalytics);
+router.get(
+  '/dashboard/analytics',
+  authenticate,
+  authorize(PERMISSIONS.PAYOUT_VIEW),
+  vendorsController.getDashboardAnalytics,
+);
 router.get('/me', authenticate, vendorDashAuth, vendorsController.getMyVendor);
 router.patch(
   '/me',
@@ -76,6 +83,27 @@ router.post(
   vendorsController.uploadMyDocument,
 );
 router.get('/me/kyc-checklist', authenticate, vendorDashAuth, vendorsController.getMyKycChecklist);
+
+// Vendor staff management (Vendor Owner only)
+router.get(
+  '/me/staff',
+  authenticate,
+  authorize(PERMISSIONS.PAYOUT_VIEW),
+  vendorStaffController.listStaff,
+);
+router.post(
+  '/me/staff',
+  authenticate,
+  authorize(PERMISSIONS.PAYOUT_VIEW),
+  validate(AddStaffSchema),
+  vendorStaffController.addStaff,
+);
+router.delete(
+  '/me/staff/:userId',
+  authenticate,
+  authorize(PERMISSIONS.PAYOUT_VIEW),
+  vendorStaffController.removeStaff,
+);
 
 // Admin vendor management (static admin document routes before /:id)
 router.get(

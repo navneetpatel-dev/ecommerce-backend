@@ -3,7 +3,7 @@ import { authenticate, optionalAuthenticate } from '@middleware/auth.middleware'
 import { authorize } from '@middleware/rbac.middleware';
 import { validate } from '@middleware/validate.middleware';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
-import { CreateReviewSchema, VoteReviewSchema, RespondReviewSchema, UpdateReviewSchema } from './reviews.dto';
+import { CreateReviewSchema, VoteReviewSchema, RespondReviewSchema, UpdateReviewSchema, FlagReviewSchema } from './reviews.dto';
 import * as reviewsController from './reviews.controller';
 
 const router = Router();
@@ -15,12 +15,13 @@ router.get('/product/:productId/eligibility', authenticate, reviewsController.ge
 router.get('/my-reviews', authenticate, reviewsController.getMyReviews);
 router.get('/awaiting', authenticate, reviewsController.getAwaitingReview);
 router.get('/vendor/me', authenticate, authorize(PERMISSIONS.REVIEW_RESPOND), reviewsController.getVendorReviews);
+router.post('/:id/flag', authenticate, validate(FlagReviewSchema), reviewsController.flag);
 router.patch('/:id', authenticate, validate(UpdateReviewSchema), reviewsController.update);
 router.delete('/:id', authenticate, reviewsController.remove);
 router.post('/:id/vote', authenticate, validate(VoteReviewSchema), reviewsController.vote);
 router.delete('/:id/vote', authenticate, reviewsController.clearVote);
 router.patch('/:id/approve', authenticate, authorize(PERMISSIONS.REVIEW_MODERATE), reviewsController.approve);
 router.patch('/:id/reject', authenticate, authorize(PERMISSIONS.REVIEW_MODERATE), reviewsController.reject);
-router.patch('/:id/respond', authenticate, authorize(PERMISSIONS.REVIEW_RESPOND), validate(RespondReviewSchema), reviewsController.respond);
+router.patch('/:id/respond', authenticate, authorize(PERMISSIONS.REVIEW_RESPOND, PERMISSIONS.REVIEW_MODERATE), validate(RespondReviewSchema), reviewsController.respond);
 
 export default router;

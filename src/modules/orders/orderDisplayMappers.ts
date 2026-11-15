@@ -163,6 +163,8 @@ export function mapSubOrder(sub: Record<string, unknown>) {
     cancelRefundAmount:
       sub.cancelRefundAmountPaise != null ? fromPaise(Number(sub.cancelRefundAmountPaise)) : null,
     cancelRefundStatus: (sub.cancelRefundStatus as string | null | undefined) ?? null,
+    cancellationReason: (sub.cancellationReason as string | null | undefined) ?? null,
+    cancelledByRole: (sub.cancelledByRole as string | null | undefined) ?? null,
     shipment: sub.shipment ?? null,
     items,
   };

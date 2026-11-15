@@ -15,6 +15,7 @@ import {
   sqlIstDay,
 } from '@modules/pricing/istCalendar';
 import { settingsService } from '@modules/settings/settings.service';
+import { subordersService } from '@modules/suborders/suborders.service';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import {
   GMV_SUB_ORDER_SQL,
@@ -50,13 +51,14 @@ import type {
   ResolveDocumentsQuery,
 } from './vendors.dto';
 import { User } from '@database/models/user.model';
+import { RefreshToken } from '@database/models/refreshToken.model';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import {
   findSuperAdminUserIds,
   findVendorOwnerUserId,
 } from '@modules/notifications/orderNotifications';
 import { logAudit } from '@modules/audit/audit.service';
-import { clearPermissionCache, resolvePermissionsForUser } from '@middleware/rbac.middleware';
+import { clearPermissionCache, resolvePermissionsForUser, userHasPermission } from '@middleware/rbac.middleware';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import {
   areCategoryDocumentsSatisfied,
@@ -162,6 +164,11 @@ export class VendorsService {
   }
 
   async registerVendor(userId: string, data: RegisterVendorRequest) {
+    const existingUser = await User.findByPk(userId);
+    if (existingUser?.vendorId) {
+      throw new ValidationError('Your account is already linked to a registered vendor store');
+    }
+
     const nameMismatchWarning = detectNameMismatch(
       data.panHolderName,
       data.bankAccountHolderName,
@@ -347,7 +354,8 @@ export class VendorsService {
         data.bankDetails !== undefined ||
         data.payoutFrequency !== undefined ||
         data.returnShippingFee !== undefined ||
-        data.codEnabled !== undefined;
+        data.codEnabled !== undefined ||
+        data.entityType !== undefined;
       if (isMutatingSensitiveFields) {
         throw new ForbiddenError('Only vendor owners can update store bank details and financial settings');
       }
@@ -497,6 +505,28 @@ export class VendorsService {
         { transaction: t },
       );
     });
+
+    if (data.cancelActiveOrders) {
+      const activeSubOrders = await SubOrder.findAll({
+        where: {
+          vendorId,
+          status: {
+            [Op.in]: [ORDER_STATUS.PENDING, ORDER_STATUS.CONFIRMED],
+          },
+        },
+        attributes: ['id'],
+      });
+      for (const sub of activeSubOrders) {
+        await subordersService.updateStatus(
+          sub.id,
+          ORDER_STATUS.CANCELLED,
+          undefined,
+          actorId,
+          'Vendor account suspended by platform administration',
+          'ADMIN',
+        );
+      }
+    }
 
     const updated = await this.getVendorById(vendorId);
     await logAudit({
@@ -661,6 +691,24 @@ export class VendorsService {
       await VendorCategory.destroy({ where: { vendorId }, transaction: t });
       await vendorsRepository.softDelete(vendorId, { transaction: t });
 
+      const vendorUsers = await User.findAll({ where: { vendorId }, transaction: t });
+      const userIds = vendorUsers.map((u) => u.id);
+      if (userIds.length > 0) {
+        const customerRole = await Role.findOne({ where: { name: ROLES.CUSTOMER }, transaction: t });
+        await User.update(
+          {
+            vendorId: null,
+            ...(customerRole ? { roleId: customerRole.id } : {}),
+          },
+          { where: { vendorId }, transaction: t },
+        );
+        await RefreshToken.destroy({
+          where: { userId: { [Op.in]: userIds } },
+          transaction: t,
+        });
+        clearPermissionCache();
+      }
+
       if (actorId) {
         await logAudit({
           actorId,
@@ -798,62 +846,76 @@ export class VendorsService {
     return { url };
   }
 
-  async getDashboardSummary(vendorId: string): Promise<{
+  async getDashboardSummary(
+    vendorId: string,
+    actor?: { id: string; role: { name: string }; roleId?: string },
+  ): Promise<{
     todayOrders: number;
     pendingShipments: number;
-    monthRevenue: number;
-    pendingPayouts: number;
+    monthRevenue: number | null;
+    pendingPayouts: number | null;
     performanceScore: number | null;
   }> {
     const vendor = await vendorsRepository.findById(vendorId);
     if (!vendor) throw new NotFoundError('Vendor');
 
     const { today, pending } = await vendorDashboardOrderCounts(vendorId);
-    const [month] = await sequelize.query<{ revenuePaise: string | null }>(
-      `SELECT COALESCE(SUM(${sqlGmvPaise('s')}), 0)::bigint AS "revenuePaise"
-       FROM sub_orders s
-       INNER JOIN orders o ON o.id = s."orderId"
-       WHERE s."vendorId" = :vendorId
-         AND o."createdAt" >= :monthStart
-         AND ${GMV_SUB_ORDER_SQL}`,
-      { replacements: { vendorId, monthStart: istStartOfMonth(new Date()) }, type: QueryTypes.SELECT },
-    );
-    // What the vendor will be paid for pending commission: net less 194-O TDS, GST on
-    // commission and vendor-borne cashback cost — the payout run's own breakdown
-    // (pricing/vendorPayout).
-    const [pendingLedgers, settings] = await Promise.all([
-      CommissionLedger.findAll({
-        where: {
-          vendorId,
-          status: COMMISSION_STATUS.PENDING,
-          // Not an online checkout still awaiting its payment: that is no sale yet.
-          subOrderId: {
-            [Op.in]: literal(`(
-              SELECT s.id FROM sub_orders s INNER JOIN orders o ON o.id = s."orderId"
-              WHERE s."vendorId" = ${sequelize.escape(vendorId)} AND ${PAID_OR_COD_ORDER_SQL}
-            )`),
+
+    const canViewFinancials = !actor || (await userHasPermission(actor, PERMISSIONS.PAYOUT_VIEW));
+
+    let monthRevenue: number | null = null;
+    let pendingPayouts: number | null = null;
+
+    if (canViewFinancials) {
+      const [month] = await sequelize.query<{ revenuePaise: string | null }>(
+        `SELECT COALESCE(SUM(${sqlGmvPaise('s')}), 0)::bigint AS "revenuePaise"
+         FROM sub_orders s
+         INNER JOIN orders o ON o.id = s."orderId"
+         WHERE s."vendorId" = :vendorId
+           AND o."createdAt" >= :monthStart
+           AND ${GMV_SUB_ORDER_SQL}`,
+        { replacements: { vendorId, monthStart: istStartOfMonth(new Date()) }, type: QueryTypes.SELECT },
+      );
+      // What the vendor will be paid for pending commission: net less 194-O TDS, GST on
+      // commission and vendor-borne cashback cost — the payout run's own breakdown
+      // (pricing/vendorPayout).
+      const [pendingLedgers, settings] = await Promise.all([
+        CommissionLedger.findAll({
+          where: {
+            vendorId,
+            status: COMMISSION_STATUS.PENDING,
+            // Not an online checkout still awaiting its payment: that is no sale yet.
+            subOrderId: {
+              [Op.in]: literal(`(
+                SELECT s.id FROM sub_orders s INNER JOIN orders o ON o.id = s."orderId"
+                WHERE s."vendorId" = ${sequelize.escape(vendorId)} AND ${PAID_OR_COD_ORDER_SQL}
+              )`),
+            },
           },
-        },
-        attributes: [
-          'netPayoutAmountPaise',
-          'commissionAmountPaise',
-          'taxableAmountPaise',
-          'supplyTaxablePaise',
-          'tdsRatePercent',
-          'referenceType',
-        ],
-      }),
-      settingsService.getPlatformSettings(),
-    ]);
-    const pendingPayout = vendorPayoutBreakdown(
-      pendingLedgers,
-      payoutRatesFromSettings(settings, vendor.state ?? null),
-    );
+          attributes: [
+            'netPayoutAmountPaise',
+            'commissionAmountPaise',
+            'taxableAmountPaise',
+            'supplyTaxablePaise',
+            'tdsRatePercent',
+            'referenceType',
+          ],
+        }),
+        settingsService.getPlatformSettings(),
+      ]);
+      const pendingPayout = vendorPayoutBreakdown(
+        pendingLedgers,
+        payoutRatesFromSettings(settings, vendor.state ?? null),
+      );
+      monthRevenue = fromPaise(Number(month?.revenuePaise ?? 0));
+      pendingPayouts = fromPaise(pendingPayout.payoutPaise);
+    }
+
     return {
       todayOrders: Number(today?.orders ?? 0),
       pendingShipments: Number(pending?.shipments ?? 0),
-      monthRevenue: fromPaise(Number(month?.revenuePaise ?? 0)),
-      pendingPayouts: fromPaise(pendingPayout.payoutPaise),
+      monthRevenue,
+      pendingPayouts,
       performanceScore: vendor.performanceScore == null ? null : Number(vendor.performanceScore),
     };
   }

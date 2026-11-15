@@ -42,13 +42,18 @@ export const VoteReviewSchema = z.object({
 });
 
 export const RespondReviewSchema = z.object({
-  response: z.string().min(1),
+  response: z.string().max(2000),
+});
+
+export const FlagReviewSchema = z.object({
+  reason: z.string().trim().min(3).max(500),
 });
 
 export type CreateReviewRequest = z.infer<typeof CreateReviewSchema>;
 export type UpdateReviewRequest = z.infer<typeof UpdateReviewSchema>;
 export type VoteReviewRequest = z.infer<typeof VoteReviewSchema>;
 export type RespondReviewRequest = z.infer<typeof RespondReviewSchema>;
+export type FlagReviewRequest = z.infer<typeof FlagReviewSchema>;
 
 /** PDP review list: a page at a time, narrowed by stars / photos, in a chosen order. */
 export const PRODUCT_REVIEW_SORTS = ['recent', 'helpful', 'highest', 'lowest'] as const;

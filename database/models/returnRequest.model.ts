@@ -56,6 +56,15 @@ export class ReturnRequest extends Model<InferAttributes<ReturnRequest>, InferCr
   declare restockedAt: CreationOptional<Date | null>;
   declare restockedBy: CreationOptional<string | null>;
   declare rejectionReason: CreationOptional<string | null>;
+  declare disputeReason: CreationOptional<string | null>;
+  declare disputeDescription: CreationOptional<string | null>;
+  declare disputeEvidenceUrls: CreationOptional<string[]>;
+  declare disputedAt: CreationOptional<Date | null>;
+  declare disputedBy: CreationOptional<string | null>;
+  declare disputeStatus: CreationOptional<'PENDING' | 'UPHELD' | 'REJECTED' | null>;
+  declare disputeResolvedAt: CreationOptional<Date | null>;
+  declare disputeResolvedBy: CreationOptional<string | null>;
+  declare disputeResolutionNotes: CreationOptional<string | null>;
   declare type: CreationOptional<ReturnType>;
   declare replacementDeliveredAt: CreationOptional<Date | null>;
   declare resolvedById: string | null;
@@ -126,6 +135,18 @@ export const initReturnRequestModel = (sequelize: Sequelize) => {
       restockedAt: { type: DataTypes.DATE, allowNull: true },
       restockedBy: { type: DataTypes.UUID, allowNull: true },
       rejectionReason: { type: DataTypes.TEXT, allowNull: true },
+      disputeReason: { type: DataTypes.STRING(255), allowNull: true },
+      disputeDescription: { type: DataTypes.TEXT, allowNull: true },
+      disputeEvidenceUrls: { type: DataTypes.JSONB, allowNull: false, defaultValue: [] },
+      disputedAt: { type: DataTypes.DATE, allowNull: true },
+      disputedBy: { type: DataTypes.UUID, allowNull: true },
+      disputeStatus: {
+        type: DataTypes.ENUM('PENDING', 'UPHELD', 'REJECTED'),
+        allowNull: true,
+      },
+      disputeResolvedAt: { type: DataTypes.DATE, allowNull: true },
+      disputeResolvedBy: { type: DataTypes.UUID, allowNull: true },
+      disputeResolutionNotes: { type: DataTypes.TEXT, allowNull: true },
       type: { type: DataTypes.ENUM(...RETURN_TYPE_VALUES), allowNull: false, defaultValue: RETURN_TYPE.REFUND },
       replacementDeliveredAt: { type: DataTypes.DATE, allowNull: true },
       resolvedById: { type: DataTypes.UUID, allowNull: true },

@@ -64,46 +64,48 @@ export class InventoryService {
     if (previousStock <= 0 && stock > 0) {
       const product = (updated as ProductVariant & { product?: Product }).product;
       if (product) {
-        const wishlistItems = await WishlistItem.findAll({
-          where: { productId: product.id },
-          include: [{ model: Wishlist, required: true }],
-          limit: 200,
-        });
-        for (const item of wishlistItems) {
-          const wishlist = (item as WishlistItem & { Wishlist?: Wishlist }).Wishlist;
-          if (!wishlist?.userId) continue;
-          void notificationsService.sendBackInStock(wishlist.userId, product.id, {
-            productName: product.name,
-          });
-        }
-
-        // Explicit subscribe/unsubscribe stock alerts (variant-scoped), additive to the
-        // wishlist-based notifications above.
-        const stockAlerts = await StockAlert.findAll({
-          where: { variantId, notifiedAt: null },
-          limit: 500,
-        });
-        for (const alert of stockAlerts) {
-          if (alert.userId) {
-            void notificationsService.sendBackInStock(alert.userId, product.id, {
-              productName: product.name,
-            });
-          }
-          // Guest (email-only) alerts: notificationsService.sendBackInStock requires a
-          // userId (it enqueues via NotificationLog, which is keyed to a User). There is
-          // no generic raw-email send path today, so guest notifications are a documented
-          // v1 gap — we still stamp notifiedAt below so the alert doesn't linger forever.
-        }
-        if (stockAlerts.length) {
-          await StockAlert.update(
-            { notifiedAt: new Date() },
-            { where: { id: { [Op.in]: stockAlerts.map((a) => a.id) } } },
-          );
-        }
+        void this.notifyBackInStock(product.id, variantId);
       }
     }
 
     return updated;
+  }
+
+  async notifyBackInStock(productId: string, variantId: string) {
+    const product = await Product.findByPk(productId);
+    if (!product) return;
+
+    const wishlistItems = await WishlistItem.findAll({
+      where: { productId: product.id },
+      include: [{ model: Wishlist, required: true }],
+      limit: 200,
+    });
+    for (const item of wishlistItems) {
+      const wishlist = (item as WishlistItem & { Wishlist?: Wishlist }).Wishlist;
+      if (!wishlist?.userId) continue;
+      void notificationsService.sendBackInStock(wishlist.userId, product.id, {
+        productName: product.name,
+      });
+    }
+
+    // Explicit subscribe/unsubscribe stock alerts (variant-scoped)
+    const stockAlerts = await StockAlert.findAll({
+      where: { variantId, notifiedAt: null },
+      limit: 500,
+    });
+    for (const alert of stockAlerts) {
+      if (alert.userId) {
+        void notificationsService.sendBackInStock(alert.userId, product.id, {
+          productName: product.name,
+        });
+      }
+    }
+    if (stockAlerts.length) {
+      await StockAlert.update(
+        { notifiedAt: new Date() },
+        { where: { id: { [Op.in]: stockAlerts.map((a) => a.id) } } },
+      );
+    }
   }
 
   async createStockAlert(variantId: string, userId: string | null, guestEmail?: string) {

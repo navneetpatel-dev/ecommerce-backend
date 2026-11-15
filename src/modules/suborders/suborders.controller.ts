@@ -14,7 +14,15 @@ export const list = asyncHandler(async (req: Request, res: Response) => {
 
 
 export const updateStatus = asyncHandler(async (req: Request, res: Response) => {
-  const updated = await subordersService.updateStatus(req.params.id!, req.body.status, req.body.trackingId, req.user!.id);
+  const roleName = req.user?.role?.name || (req.user?.vendorId ? 'VENDOR' : 'ADMIN');
+  const updated = await subordersService.updateStatus(
+    req.params.id!,
+    req.body.status,
+    req.body.trackingId,
+    req.user!.id,
+    req.body.cancellationReason,
+    roleName,
+  );
   res.json(ok(updated));
 });
 

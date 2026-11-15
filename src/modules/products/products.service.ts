@@ -17,11 +17,13 @@ import { ProductVariant } from '@database/models/productVariant.model';
 import { ProductImage } from '@database/models/productImage.model';
 import { Review } from '@database/models/review.model';
 import { Product } from '@database/models/product.model';
+import { User } from '@database/models/user.model';
 import { ProductCategory } from '@database/models/productCategory.model';
 import { RecentlyViewedItem } from '@database/models/recentlyViewedItem.model';
 import { ProductAffinity } from '@database/models/productAffinity.model';
 import { sequelize } from '@database/models';
 import { categoriesService } from '@modules/categories/categories.service';
+import { inventoryService } from '@modules/inventory/inventory.service';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { findVendorOwnerUserId } from '@modules/notifications/orderNotifications';
 import { vendorsService } from '@modules/vendors/vendors.service';
@@ -787,11 +789,16 @@ export class ProductsService {
       metadata: { name: product.name },
     });
 
-    const ownerId = await findVendorOwnerUserId(product.vendorId);
-    if (ownerId) {
-      void notificationsService.sendProductApproved(ownerId, product.id, {
-        productName: product.name,
-      });
+    if (product.vendorId) {
+      void User.findAll({ where: { vendorId: product.vendorId }, attributes: ['id'] })
+        .then((vUsers) => {
+          for (const u of vUsers) {
+            void notificationsService.sendProductApproved(u.id, product.id, {
+              productName: product.name,
+            });
+          }
+        })
+        .catch(() => {});
     }
     return product;
   }
@@ -823,12 +830,17 @@ export class ProductsService {
       });
     }
 
-    const ownerId = await findVendorOwnerUserId(product.vendorId);
-    if (ownerId) {
-      void notificationsService.sendProductRejected(ownerId, product.id, {
-        productName: product.name,
-        reason: data.rejectionNote,
-      });
+    if (product.vendorId) {
+      void User.findAll({ where: { vendorId: product.vendorId }, attributes: ['id'] })
+        .then((vUsers) => {
+          for (const u of vUsers) {
+            void notificationsService.sendProductRejected(u.id, product.id, {
+              productName: product.name,
+              reason: data.rejectionNote,
+            });
+          }
+        })
+        .catch(() => {});
     }
     return product;
   }
@@ -910,12 +922,16 @@ export class ProductsService {
   }
 
   async updateVariant(variantId: string, data: UpdateVariantRequest) {
-    return sequelize.transaction(async (t) => {
-      const variant = await ProductVariant.findByPk(variantId, { transaction: t });
-      if (!variant) throw new NotFoundError('ProductVariant');
+    let shouldNotifyRestock = false;
+    let notifyProductId = '';
+    const variant = await sequelize.transaction(async (t) => {
+      const row = await ProductVariant.findByPk(variantId, { transaction: t });
+      if (!row) throw new NotFoundError('ProductVariant');
+
+      const previousStock = Number(row.stock ?? 0);
 
       if (data.price !== undefined) {
-        const product = await Product.findByPk(variant.productId, {
+        const product = await Product.findByPk(row.productId, {
           attributes: ['id', 'categoryId', 'compareAtPrice'],
           transaction: t,
         });
@@ -927,10 +943,22 @@ export class ProductsService {
         );
       }
 
-      await variant.update(data, { transaction: t });
-      if (data.price !== undefined) await syncProductBasePrice(variant.productId, t);
-      return variant;
+      await row.update(data, { transaction: t });
+      if (data.price !== undefined) await syncProductBasePrice(row.productId, t);
+
+      if (data.stock !== undefined && previousStock <= 0 && data.stock > 0) {
+        shouldNotifyRestock = true;
+        notifyProductId = row.productId;
+      }
+
+      return row;
     });
+
+    if (shouldNotifyRestock && notifyProductId) {
+      void inventoryService.notifyBackInStock(notifyProductId, variantId);
+    }
+
+    return variant;
   }
 
   async deleteVariant(variantId: string) {

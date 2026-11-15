@@ -567,6 +567,99 @@ export class ReturnsService {
     return this.getById(returnId, actor);
   }
 
+  /**
+   * Allows a merchant to dispute a returned item (e.g. damaged goods, wrong product returned, empty box)
+   * with photo/video evidence instead of restocking it.
+   */
+  async disputeReturn(
+    returnId: string,
+    actor: { id: string; roleId: string; role: { name: string }; vendorId?: string | null },
+    data: { reason: string; description: string; evidenceUrls?: string[] },
+  ) {
+    await sequelize.transaction(async (t) => {
+      const row = await findReturnForUpdate(returnId, t);
+      const orderItem = (row as (ReturnRequest & { orderItem?: OrderItem & { subOrder?: SubOrder } }) | null)
+        ?.orderItem;
+      if (!row || !orderItem?.subOrder) throw new NotFoundError('ReturnRequest');
+      const ownsPart = Boolean(actor.vendorId) && orderItem.subOrder.vendorId === actor.vendorId;
+      if (!ownsPart && !(await this.canManageRefunds(actor))) {
+        throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_RETURN);
+      }
+      if (!row.receivedAt && row.status !== RETURN_STATUS.PICKUP_SCHEDULED) {
+        throw new ValidationError({ status: ['The item must be in transit or received before it can be disputed'] });
+      }
+      if (row.disputeStatus === 'PENDING' || row.disputedAt) {
+        throw new ValidationError({ status: ['This return is already under active dispute'] });
+      }
+      await row.update(
+        {
+          disputeReason: data.reason,
+          disputeDescription: data.description,
+          disputeEvidenceUrls: data.evidenceUrls ?? [],
+          disputedAt: new Date(),
+          disputedBy: actor.id,
+          disputeStatus: 'PENDING',
+          updatedBy: actor.id,
+        },
+        { transaction: t },
+      );
+      await logAudit({
+        actorId: actor.id,
+        action: 'RETURN_DISPUTED',
+        entityType: 'ReturnRequest',
+        entityId: row.id,
+        metadata: {
+          vendorId: orderItem.subOrder.vendorId,
+          reason: data.reason,
+          evidenceCount: data.evidenceUrls?.length ?? 0,
+        },
+        transaction: t,
+      });
+    });
+    return this.getById(returnId, actor);
+  }
+
+  /**
+   * Resolves a seller-initiated return dispute. Admin only.
+   */
+  async resolveReturnDispute(
+    returnId: string,
+    actorId: string,
+    data: { resolution: 'UPHELD' | 'REJECTED'; notes: string },
+  ) {
+    let resolvedRow: ReturnRequest;
+    await sequelize.transaction(async (t) => {
+      const row = await findReturnForUpdate(returnId, t);
+      if (!row) throw new NotFoundError('ReturnRequest');
+      if (row.disputeStatus !== 'PENDING') {
+        throw new ValidationError({ status: ['This return dispute is not pending resolution'] });
+      }
+      await row.update(
+        {
+          disputeStatus: data.resolution,
+          disputeResolvedAt: new Date(),
+          disputeResolvedBy: actorId,
+          disputeResolutionNotes: data.notes,
+          updatedBy: actorId,
+        },
+        { transaction: t },
+      );
+      resolvedRow = row;
+      await logAudit({
+        actorId,
+        action: 'RETURN_DISPUTE_RESOLVED',
+        entityType: 'ReturnRequest',
+        entityId: row.id,
+        metadata: {
+          resolution: data.resolution,
+          notes: data.notes,
+        },
+        transaction: t,
+      });
+    });
+    return resolvedRow!;
+  }
+
   async listForVendor(vendorId: string, query: { page: number; limit: number }) {
     const slaDays = await refundSlaDays();
     const offset = paginationOffset(query.page, query.limit);
@@ -1528,6 +1621,28 @@ export class ReturnsService {
           orderNumber,
           status,
         });
+
+        if (
+          (status === RETURN_STATUS.PICKUP_SCHEDULED || status === RETURN_STATUS.RECEIVED) &&
+          result.subOrderId
+        ) {
+          void SubOrder.findByPk(result.subOrderId, { attributes: ['vendorId'] }).then((sub) => {
+            if (sub?.vendorId) {
+              void User.findAll({
+                where: { vendorId: sub.vendorId },
+                attributes: ['id'],
+              }).then((vUsers) => {
+                for (const vUser of vUsers) {
+                  void notificationsService.sendOrderReturned(vUser.id, result.id, {
+                    orderId: order.id,
+                    orderNumber,
+                    status,
+                  });
+                }
+              }).catch(() => {});
+            }
+          }).catch(() => {});
+        }
       }
     }
 

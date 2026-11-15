@@ -74,12 +74,13 @@ function serializePayout(row: Payout) {
     commissionGstAmount: fromPaise(Number(plain.commissionGstPaise ?? 0)),
     adjustmentAmount: fromPaise(Number(plain.adjustmentPaise ?? 0)),
     vendorName: vendorAssoc?.businessName ?? null,
+    bankDetails: vendorAssoc?.bankDetails ?? null,
   };
 }
 
 const vendorInclude = {
   model: Vendor,
-  attributes: ['id', 'businessName'],
+  attributes: ['id', 'businessName', 'bankDetails'],
 };
 
 /** Open returns still in flight — exclude these suborders from payout eligibility. */

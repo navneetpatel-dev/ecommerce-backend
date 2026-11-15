@@ -89,7 +89,12 @@ async function assertSelfDeletionAllowed(
     return;
   }
 
-  if (roleName === ROLES.VENDOR_OWNER || roleName === ROLES.VENDOR_STAFF) {
+  if (roleName === ROLES.VENDOR_STAFF) {
+    // A staff member can delete their account without blocking the store's operations.
+    return;
+  }
+
+  if (roleName === ROLES.VENDOR_OWNER) {
     if (!user.vendorId) return;
     const [activeSuborders, pendingCommission] = await Promise.all([
       SubOrder.count({
@@ -106,12 +111,12 @@ async function assertSelfDeletionAllowed(
     ]);
     if (activeSuborders > 0) {
       throw new ForbiddenError(
-        `You have ${activeSuborders} active suborders in progress — settle these before deleting your account`,
+        `Your store has ${activeSuborders} active suborders in progress — settle these before deleting your owner account`,
       );
     }
     if (pendingCommission > 0) {
       throw new ForbiddenError(
-        `You have ${pendingCommission} pending commission ledger entries — settle these before deleting your account`,
+        `Your store has ${pendingCommission} pending commission ledger entries — settle these before deleting your owner account`,
       );
     }
     return;

@@ -112,7 +112,7 @@ router.patch(
 router.delete(
   '/variants/:variantId',
   authenticate,
-  authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE),
+  authorize(PERMISSIONS.PRODUCT_DELETE, PERMISSIONS.PRODUCT_MANAGE),
   checkProductVariantOwnership(),
   productsController.deleteVariant,
 );

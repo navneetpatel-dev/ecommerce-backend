@@ -54,6 +54,8 @@ export class SubOrder extends Model<InferAttributes<SubOrder>, InferCreationAttr
   declare tcsRatePercent: CreationOptional<number | null>;
   /** When the part was cancelled; set by the model whenever its status becomes CANCELLED. */
   declare cancelledAt: CreationOptional<Date | null>;
+  declare cancellationReason: CreationOptional<string | null>;
+  declare cancelledByRole: CreationOptional<string | null>;
   declare trackingId: string | null;
   declare createdBy: string | null;
   declare updatedBy: string | null;
@@ -117,6 +119,8 @@ export const initSubOrderModel = (sequelize: Sequelize) => {
       shippingInvoiceSnapshot: { type: DataTypes.JSONB, allowNull: true },
       tcsRatePercent: { type: DataTypes.DECIMAL(6, 3), allowNull: true },
       cancelledAt: { type: DataTypes.DATE, allowNull: true },
+      cancellationReason: { type: DataTypes.STRING(500), allowNull: true },
+      cancelledByRole: { type: DataTypes.STRING(32), allowNull: true },
       trackingId: { type: DataTypes.STRING, allowNull: true },
       createdBy: { type: DataTypes.UUID, allowNull: true },
       updatedBy: { type: DataTypes.UUID, allowNull: true },

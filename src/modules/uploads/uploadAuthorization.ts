@@ -230,6 +230,10 @@ export async function assertUploadAllowed(
       const exists = await productExists(entityId);
       if (!exists) {
         // Draft product id before create — vendor Phase-1 gallery uploads.
+        const canCreate = await hasAnyPermission(actor, [PERMISSIONS.PRODUCT_CREATE]);
+        if (!canCreate) {
+          throw new ForbiddenError(ERROR_MESSAGES.UPLOAD_FORBIDDEN);
+        }
         await claimUploadDraft(entityType, entityId, actor.id);
         return;
       }

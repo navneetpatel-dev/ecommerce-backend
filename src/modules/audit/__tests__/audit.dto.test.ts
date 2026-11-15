@@ -39,4 +39,9 @@ describe('audit DTO schema', () => {
   it('rejects entityType that trims to empty', () => {
     assert.equal(ListAuditQuerySchema.safeParse({ entityType: '   ' }).success, false);
   });
+
+  it('accepts vendorId as a uuid and rejects non-uuid', () => {
+    assert.equal(ListAuditQuerySchema.safeParse({ vendorId: UUID }).success, true);
+    assert.equal(ListAuditQuerySchema.safeParse({ vendorId: 'not-a-valid-uuid' }).success, false);
+  });
 });

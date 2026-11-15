@@ -758,6 +758,36 @@ export class NotificationsService {
       templateData: { ...templateData, bugReportId },
     });
   }
+
+  sendQuestionAnswered(userId: string, questionId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({
+      userId,
+      type: 'QUESTION_ANSWERED',
+      referenceType: 'ProductQuestion',
+      referenceId: questionId,
+      templateData: { ...templateData, questionId },
+    });
+  }
+
+  sendReviewReplied(userId: string, reviewId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({
+      userId,
+      type: 'REVIEW_REPLIED',
+      referenceType: 'Review',
+      referenceId: reviewId,
+      templateData: { ...templateData, reviewId },
+    });
+  }
+
+  sendVendorOrderCancelled(vendorUserId: string, subOrderId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({
+      userId: vendorUserId,
+      type: 'VENDOR_ORDER_CANCELLED',
+      referenceType: 'SubOrder',
+      referenceId: subOrderId,
+      templateData: { ...templateData, subOrderId },
+    });
+  }
 }
 
 export const notificationsService = new NotificationsService();

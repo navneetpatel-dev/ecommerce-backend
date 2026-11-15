@@ -17,5 +17,18 @@ export const TransitionReturnSchema = z.object({
   rejectionReason: z.string().trim().min(3).max(1000).optional(),
 });
 
+export const DisputeReturnSchema = z.object({
+  reason: z.string().trim().min(3).max(255),
+  description: z.string().trim().min(5).max(2000),
+  evidenceUrls: z.array(z.string().url()).max(10).optional().default([]),
+});
+
+export const ResolveReturnDisputeSchema = z.object({
+  resolution: z.enum(['UPHELD', 'REJECTED']),
+  notes: z.string().trim().min(3).max(2000),
+});
+
 export type CreateReturnRequest = z.infer<typeof CreateReturnRequestSchema>;
 export type TransitionReturnRequest = z.infer<typeof TransitionReturnSchema>;
+export type DisputeReturnRequest = z.infer<typeof DisputeReturnSchema>;
+export type ResolveReturnDisputeRequest = z.infer<typeof ResolveReturnDisputeSchema>;
