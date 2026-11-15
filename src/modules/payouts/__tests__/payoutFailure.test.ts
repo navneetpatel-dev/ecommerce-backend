@@ -8,6 +8,7 @@ import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { CommissionInvoice } from '@database/models/commissionInvoice.model';
 import { TdsLedger } from '@database/models/tdsLedger.model';
 import { User } from '@database/models/user.model';
+import { Role } from '@database/models/role.model';
 import { payoutsService } from '../payouts.service';
 
 describe('PayoutsService.markFailed', () => {
@@ -30,6 +31,7 @@ describe('PayoutsService.markFailed', () => {
     mock.method(Payout, 'findByPk', async () => payout as never);
     mock.method(Vendor, 'findByPk', async () => ({ businessName: 'Store' }) as never);
     mock.method(User, 'findOne', async () => null);
+    mock.method(Role, 'findOne', async () => null);
     mock.method(AuditLog, 'create', async () => ({}) as never);
     const reopened: Array<{ values: Record<string, unknown>; where: Record<string, unknown> }> = [];
     mock.method(CommissionLedger, 'update', async (values: Record<string, unknown>, options: { where: Record<string, unknown> }) => {

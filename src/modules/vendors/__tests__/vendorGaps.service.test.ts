@@ -11,6 +11,8 @@ import { TcsLedger } from '@database/models/tcsLedger.model';
 import { AuditLog } from '@database/models/auditLog.model';
 import { ProductImage } from '@database/models/productImage.model';
 import { ProductCategory } from '@database/models/productCategory.model';
+import { User } from '@database/models/user.model';
+import { Role } from '@database/models/role.model';
 import { sequelize } from '@database/models';
 import { sequelize as dbSequelize } from '@config/db';
 import { checkProductVariantOwnership } from '@middleware/ownership.middleware';
@@ -18,6 +20,8 @@ import { subordersService } from '@modules/suborders/suborders.service';
 import { payoutsService } from '@modules/payouts/payouts.service';
 import { vendorsService } from '../vendors.service';
 import { vendorsRepository } from '../vendors.repository';
+import { vendorStaffService } from '../vendorStaff.service';
+import { authService } from '@modules/auth/auth.service';
 import { productsService } from '@modules/products/products.service';
 import { productsRepository } from '@modules/products/products.repository';
 import { settingsService } from '@modules/settings/settings.service';
@@ -264,6 +268,7 @@ describe('Vendor Modules Gap Fixes Verification', () => {
       }) as any);
 
       mock.method(AuditLog, 'create', async () => ({} as any));
+      mock.method(User, 'findOne', async () => ({ id: 'owner-1' } as any));
       mock.method(notificationsService, 'sendVendorApproved', () => {});
 
       const res = await vendorsService.unsuspendVendor(vendorId, adminId);
@@ -363,6 +368,85 @@ describe('Vendor Modules Gap Fixes Verification', () => {
 
       assert.equal(updatedFields?.status, PRODUCT_STATUS.PENDING_APPROVAL);
       assert.equal((res as any)?.status, PRODUCT_STATUS.PENDING_APPROVAL);
+    });
+  });
+
+  describe('6. Vendor Staff Permissions and Protections', () => {
+    it('blocks VENDOR_STAFF from updating businessName and gstNumber', async () => {
+      const staffActor = {
+        id: 'staff-1',
+        role: { name: ROLES.VENDOR_STAFF },
+        roleId: 'role-staff-1',
+      };
+
+      await assert.rejects(
+        async () =>
+          vendorsService.updateMyVendor(
+            'vendor-1',
+            { businessName: 'Malicious Change' },
+            staffActor,
+          ),
+        /Only vendor owners can update store bank details, legal settings, and financials/,
+      );
+
+      await assert.rejects(
+        async () =>
+          vendorsService.updateMyVendor(
+            'vendor-1',
+            { gstNumber: '29ABCDE1234F1Z5' },
+            staffActor,
+          ),
+        /Only vendor owners can update store bank details, legal settings, and financials/,
+      );
+    });
+
+    it('blocks VENDOR_STAFF from uploading KYC documents', async () => {
+      const staffActor = {
+        id: 'staff-1',
+        role: { name: ROLES.VENDOR_STAFF },
+        roleId: 'role-staff-1',
+      };
+
+      await assert.rejects(
+        async () =>
+          vendorsService.uploadMyDocument(
+            'vendor-1',
+            { type: 'GST_CERT', url: 'https://example.com/doc.pdf' },
+            staffActor,
+          ),
+        /Only vendor owners can upload KYC verification documents/,
+      );
+    });
+
+    it('triggers forgotPassword setup email when a new staff user is added', async () => {
+      mock.method(sequelize, 'transaction', async (callback: (t: any) => Promise<any>) => {
+        return callback({});
+      });
+
+      mock.method(Role, 'findOne', async () => ({ id: 'staff-role-id' } as any));
+      mock.method(User, 'findOne', async () => null);
+
+      let createdUserPayload: any = null;
+      mock.method(User, 'create', async (payload: any) => {
+        createdUserPayload = payload;
+        return { id: 'new-user-1', email: payload.email, name: payload.name } as any;
+      });
+      mock.method(AuditLog, 'create', async () => ({} as any));
+
+      let forgotPasswordCalledWith: string | null = null;
+      mock.method(authService, 'forgotPassword', async (email: string) => {
+        forgotPasswordCalledWith = email;
+      });
+
+      const res = await vendorStaffService.addStaff(
+        'vendor-1',
+        { name: 'John Staff', email: 'staff@example.com' },
+        'owner-1',
+      );
+
+      assert.equal(res.email, 'staff@example.com');
+      assert.equal(createdUserPayload?.email, 'staff@example.com');
+      assert.equal(forgotPasswordCalledWith, 'staff@example.com');
     });
   });
 });

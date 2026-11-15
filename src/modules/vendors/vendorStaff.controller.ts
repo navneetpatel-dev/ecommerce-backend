@@ -6,7 +6,7 @@ import { ROLES } from '@core/constants/statuses';
 import { AddStaffSchema } from './vendorStaff.dto';
 import { vendorStaffService } from './vendorStaff.service';
 
-function assertCanManageStaff(user: any) {
+function assertCanManageStaff(user?: { vendorId?: string | null; role?: { name: string } }) {
   if (!user?.vendorId) throw new ForbiddenError('Vendor account required');
   const roleName = user.role?.name;
   if (roleName !== ROLES.VENDOR_OWNER && roleName !== ROLES.SUPER_ADMIN) {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { afterEach, describe, it, mock } from 'node:test';
+import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { env } from '@config/env';
-import { publicObjectUrl } from '@config/s3';
+import { publicObjectUrl, s3Client } from '@config/s3';
 import { sequelize } from '@database/models';
 import { AppError } from '@core/errors/AppError';
 import { ERROR_CODES } from '@core/constants/errors';
@@ -23,6 +23,15 @@ async function code(promise: Promise<unknown>): Promise<string | undefined> {
 }
 
 describe('resolveReviewMedia', () => {
+  beforeEach(() => {
+    if (s3Client) {
+      mock.method(s3Client, 'send', async () => ({
+        ContentLength: 1024 * 1024,
+        Body: Buffer.alloc(0),
+      }));
+    }
+  });
+
   afterEach(() => mock.restoreAll());
 
   it('keeps photos and a video uploaded under the reviewer’s own draft', async () => {

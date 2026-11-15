@@ -10,6 +10,7 @@ import { RefreshToken } from '@database/models/refreshToken.model';
 import { sequelize } from '@database/models';
 import { clearPermissionCache } from '@middleware/rbac.middleware';
 import { logAudit } from '@modules/audit/audit.service';
+import { authService } from '@modules/auth/auth.service';
 import type { AddStaffRequest } from './vendorStaff.dto';
 
 export interface StaffMember {
@@ -30,15 +31,18 @@ export class VendorStaffService {
       attributes: ['id', 'name', 'email', 'status', 'createdAt', 'roleId'],
       order: [['createdAt', 'ASC']],
     });
-    return users.map((u) => ({
-      id: u.id,
-      name: u.name,
-      email: u.email,
-      status: u.status,
-      roleName: (u as any).role?.name ?? 'VENDOR_STAFF',
-      isOwner: (u as any).role?.name === ROLES.VENDOR_OWNER,
-      createdAt: u.createdAt,
-    }));
+    return users.map((u) => {
+      const userWithRole = u as User & { role?: { name: string } };
+      return {
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        status: u.status,
+        roleName: userWithRole.role?.name ?? 'VENDOR_STAFF',
+        isOwner: userWithRole.role?.name === ROLES.VENDOR_OWNER,
+        createdAt: u.createdAt,
+      };
+    });
   }
 
   async addStaff(
@@ -63,7 +67,7 @@ export class VendorStaffService {
         if (existingUser.vendorId === vendorId) {
           throw new ValidationError('User is already a member of this vendor team');
         }
-        if ((existingUser as any).role?.name === ROLES.SUPER_ADMIN) {
+        if ((existingUser as User & { role?: { name: string } }).role?.name === ROLES.SUPER_ADMIN) {
           throw new ForbiddenError('Cannot assign super admin as vendor staff');
         }
 
@@ -122,6 +126,8 @@ export class VendorStaffService {
 
       clearPermissionCache();
 
+      void authService.forgotPassword(newUser.email);
+
       return {
         id: newUser.id,
         name: newUser.name,
@@ -145,7 +151,7 @@ export class VendorStaffService {
       });
 
       if (!user) throw new NotFoundError('Staff member not found on this vendor');
-      if ((user as any).role?.name === ROLES.VENDOR_OWNER) {
+      if ((user as User & { role?: { name: string } }).role?.name === ROLES.VENDOR_OWNER) {
         throw new ForbiddenError('Cannot remove the vendor owner from staff');
       }
 

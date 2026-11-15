@@ -25,7 +25,6 @@ import { sequelize } from '@database/models';
 import { categoriesService } from '@modules/categories/categories.service';
 import { inventoryService } from '@modules/inventory/inventory.service';
 import { notificationsService } from '@modules/notifications/notifications.service';
-import { findVendorOwnerUserId } from '@modules/notifications/orderNotifications';
 import { vendorsService } from '@modules/vendors/vendors.service';
 import { shippingService } from '@modules/shipping/shipping.service';
 import { logAudit } from '@modules/audit/audit.service';

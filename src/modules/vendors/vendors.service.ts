@@ -34,10 +34,9 @@ import { VendorDocument } from '@database/models/vendorDocument.model';
 import { VendorCategory } from '@database/models/vendorCategory.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { Product } from '@database/models/product.model';
-import { Category } from '@database/models/category.model';
 import { Role } from '@database/models/role.model';
 import { sequelize } from '@database/models';
-import { Op, QueryTypes, literal, type Transaction } from 'sequelize';
+import { Op, QueryTypes, literal } from 'sequelize';
 import type {
   RegisterVendorRequest,
   UpdateVendorRequest,
@@ -75,59 +74,13 @@ import {
  */
 const VENDOR_FULFILLMENT_SLA_HOURS = 72;
 
-function generateSlug(businessName: string): string {
-  return businessName
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '');
-}
-
-function normalizeName(value: string | undefined | null): string {
-  return (value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
-}
-
-function detectNameMismatch(
-  panHolderName?: string,
-  bankAccountHolderName?: string,
-): boolean {
-  const pan = normalizeName(panHolderName);
-  const bank = normalizeName(bankAccountHolderName);
-  if (!pan || !bank) return false;
-  return pan !== bank;
-}
-
-async function assertCategoriesExist(categoryIds: string[], transaction?: Transaction) {
-  const rows = await Category.findAll({
-    where: { id: { [Op.in]: categoryIds } },
-    attributes: ['id'],
-    transaction,
-  });
-  if (rows.length !== categoryIds.length) {
-    throw new ValidationError({ categoryIds: [ERROR_MESSAGES.VENDOR_CATEGORIES_INVALID] });
-  }
-}
-
-async function syncVendorCategories(
-  vendorId: string,
-  categoryIds: string[],
-  transaction: Transaction,
-) {
-  await VendorCategory.destroy({ where: { vendorId }, transaction, force: true });
-  if (categoryIds.length === 0) return;
-  await VendorCategory.bulkCreate(
-    categoryIds.map((categoryId) => ({ vendorId, categoryId })),
-    { transaction },
-  );
-}
-
-async function getVendorCategoryIds(vendorId: string, transaction?: Transaction) {
-  const links = await VendorCategory.findAll({
-    where: { vendorId },
-    attributes: ['categoryId'],
-    transaction,
-  });
-  return links.map((link) => link.categoryId);
-}
+import {
+  generateSlug,
+  detectNameMismatch,
+  assertCategoriesExist,
+  syncVendorCategories,
+  getVendorCategoryIds,
+} from './vendorCategoryHelpers';
 
 export class VendorsService {
   async getPublicVendorProfile(slug: string): Promise<{
@@ -201,7 +154,7 @@ export class VendorsService {
           description: data.description ?? null,
           slug,
           status: VENDOR_STATUS.PENDING,
-        } as any,
+        } as Parameters<typeof vendorsRepository.create>[0],
         { transaction: t },
       );
 
@@ -355,9 +308,11 @@ export class VendorsService {
         data.payoutFrequency !== undefined ||
         data.returnShippingFee !== undefined ||
         data.codEnabled !== undefined ||
-        data.entityType !== undefined;
+        data.entityType !== undefined ||
+        data.businessName !== undefined ||
+        data.gstNumber !== undefined;
       if (isMutatingSensitiveFields) {
-        throw new ForbiddenError('Only vendor owners can update store bank details and financial settings');
+        throw new ForbiddenError('Only vendor owners can update store bank details, legal settings, and financials');
       }
     }
     // commissionRate is admin-only (set via approval or PATCH /vendors/:id) — strip it
@@ -377,7 +332,11 @@ export class VendorsService {
       }
 
       const { categoryIds: _categoryIds, ...vendorFields } = data;
-      await vendorsRepository.update(vendorId, vendorFields as any, { transaction: t });
+      await vendorsRepository.update(
+        vendorId,
+        vendorFields as Parameters<typeof vendorsRepository.update>[1],
+        { transaction: t },
+      );
 
       if (data.logoUrl !== undefined) {
         await deleteS3ObjectIfReplaced(vendor.logoUrl, data.logoUrl);
@@ -634,9 +593,16 @@ export class VendorsService {
     return VendorDocument.findAll({ where: { vendorId } });
   }
 
-  async uploadMyDocument(userVendorId: string | null | undefined, data: UploadDocumentRequest) {
+  async uploadMyDocument(
+    userVendorId: string | null | undefined,
+    data: UploadDocumentRequest,
+    actor?: { id: string; role: { name: string }; roleId?: string },
+  ) {
     if (!userVendorId) {
       throw new ForbiddenError(ERROR_MESSAGES.VENDOR_NOT_LINKED);
+    }
+    if (actor && actor.role?.name === ROLES.VENDOR_STAFF) {
+      throw new ForbiddenError('Only vendor owners can upload KYC verification documents');
     }
     return this.uploadDocument(userVendorId, data);
   }

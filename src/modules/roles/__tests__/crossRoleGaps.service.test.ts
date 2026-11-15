@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { afterEach, describe, it, mock } from 'node:test';
+import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import type { Request, Response, NextFunction } from 'express';
 import { payoutsService } from '@modules/payouts/payouts.service';
 import { Payout } from '@database/models/payout.model';
@@ -13,11 +13,13 @@ import { AuditLog } from '@database/models/auditLog.model';
 import { requireVendorOwner } from '@modules/coupons/coupons.routes';
 import { checkOwnership } from '@middleware/ownership.middleware';
 import { Product } from '@database/models/product.model';
-import { sequelize } from '@config/db';
+import { sequelize as dbSequelize } from '@config/db';
+import { sequelize } from '@database/models';
 import { usersRepository } from '@modules/users/users.repository';
 import { authRepository } from '@modules/auth/auth.repository';
 import { supportTicketsService } from '@modules/supportTickets/supportTickets.service';
 import { SupportTicket } from '@database/models/supportTicket.model';
+import { VendorCategory } from '@database/models/vendorCategory.model';
 import { ROLES, SUPPORT_TICKET_STATUS } from '@core/constants/statuses';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
@@ -25,6 +27,15 @@ import { AppError } from '@core/errors/AppError';
 import { setPermissionCache, clearPermissionCache } from '@middleware/rbac.middleware';
 
 describe('Cross-Role & Dynamic RBAC Gap Fixes Verification', () => {
+  beforeEach(() => {
+    mock.method(sequelize, 'transaction', async (callback: (t: any) => Promise<any>) => {
+      return callback({ LOCK: { UPDATE: 'UPDATE' } } as any);
+    });
+    mock.method(dbSequelize, 'transaction', async (callback: (t: any) => Promise<any>) => {
+      return callback({ LOCK: { UPDATE: 'UPDATE' } } as any);
+    });
+  });
+
   afterEach(() => {
     mock.restoreAll();
     clearPermissionCache();
@@ -124,7 +135,7 @@ describe('Cross-Role & Dynamic RBAC Gap Fixes Verification', () => {
         },
         (err: ForbiddenError) => {
           assert.equal(err.statusCode, 403);
-          assert.match(err.message, /Only vendor owners can update store bank details and financial settings/i);
+          assert.match(err.message, /Only vendor owners can update store bank details/i);
           return true;
         },
       );
@@ -151,6 +162,7 @@ describe('Cross-Role & Dynamic RBAC Gap Fixes Verification', () => {
       });
 
       mock.method(AuditLog, 'create', async () => ({} as any));
+      mock.method(VendorCategory, 'findAll', async () => []);
 
       const res = await vendorsService.updateMyVendor(
         'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',

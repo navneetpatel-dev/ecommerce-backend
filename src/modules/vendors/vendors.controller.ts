@@ -134,7 +134,7 @@ export const getDocumentViewUrl = asyncHandler(async (req: Request, res: Respons
 
 export const uploadMyDocument = asyncHandler(async (req: Request, res: Response) => {
   const dto = UploadDocumentSchema.parse(req.body);
-  const document = await vendorsService.uploadMyDocument(req.user!.vendorId, dto);
+  const document = await vendorsService.uploadMyDocument(req.user!.vendorId, dto, req.user!);
   res.status(201).json(ok(document));
 });
 
