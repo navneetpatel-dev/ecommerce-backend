@@ -37,7 +37,7 @@ export class WalletRechargeOrder extends Model<
   declare readonly deletedAt: CreationOptional<Date>;
 
   static associate(models: Record<string, unknown>) {
-    WalletRechargeOrder.belongsTo(models.User as never, { foreignKey: 'userId' });
+    WalletRechargeOrder.belongsTo(models.User as never, { foreignKey: 'userId', as: 'user' });
   }
 }
 

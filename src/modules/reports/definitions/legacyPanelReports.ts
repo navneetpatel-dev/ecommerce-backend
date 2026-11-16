@@ -1,6 +1,7 @@
 import { Op, QueryTypes } from 'sequelize';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { sequelize } from '@database/models';
+import { User } from '@database/models/user.model';
 import { WalletWriteOff } from '@database/models/walletWriteOff.model';
 import { WalletRechargeOrder } from '@database/models/walletRechargeOrder.model';
 import { paginationOffset } from '@core/http/pagination';
@@ -288,6 +289,7 @@ async function cashbackWriteOffQuery(filters: ReportFilters) {
 
   const findOpts = {
     where,
+    include: [{ model: User, as: 'user', attributes: ['name', 'email'], required: false }],
     order: [['createdAt', 'DESC']] as [string, string][],
     limit,
     offset: paginationOffset(page, limit),
@@ -295,17 +297,20 @@ async function cashbackWriteOffQuery(filters: ReportFilters) {
   if (filters._exportSkipCount && filters._exportKnownTotal != null) {
     const rows = await WalletWriteOff.findAll(findOpts);
     return {
-      rows: rows.map((row) => ({
-        id: row.id,
-        userId: row.userId,
-        originalClawbackAmount: Number(row.originalClawbackAmount),
-        recoveredAmount: Number(row.recoveredAmount),
-        writtenOffAmount: Number(row.writtenOffAmount),
-        bornBy: row.bornBy,
-        referenceType: row.referenceType,
-        referenceId: row.referenceId,
-        createdAt: row.createdAt as Date,
-      })),
+      rows: rows.map((row) => {
+        const u = row.get('user') as User | undefined;
+        return {
+          id: row.id,
+          customerName: u?.name || 'Customer',
+          customerEmail: u?.email || '',
+          originalClawbackAmount: Number(row.originalClawbackAmount),
+          recoveredAmount: Number(row.recoveredAmount),
+          writtenOffAmount: Number(row.writtenOffAmount),
+          bornBy: row.bornBy,
+          referenceType: row.referenceType,
+          createdAt: row.createdAt as Date,
+        };
+      }),
       total: filters._exportKnownTotal,
       meta: {
         recoveredTotal: null,
@@ -336,17 +341,20 @@ async function cashbackWriteOffQuery(filters: ReportFilters) {
   }) as { recoveredTotal: string | number; writtenOffTotal: string | number };
 
   return {
-    rows: pageResult.rows.map((row) => ({
-      id: row.id,
-      userId: row.userId,
-      originalClawbackAmount: Number(row.originalClawbackAmount),
-      recoveredAmount: Number(row.recoveredAmount),
-      writtenOffAmount: Number(row.writtenOffAmount),
-      bornBy: row.bornBy,
-      referenceType: row.referenceType,
-      referenceId: row.referenceId,
-      createdAt: row.createdAt as Date,
-    })),
+    rows: pageResult.rows.map((row) => {
+      const u = row.get('user') as User | undefined;
+      return {
+        id: row.id,
+        customerName: u?.name || 'Customer',
+        customerEmail: u?.email || '',
+        originalClawbackAmount: Number(row.originalClawbackAmount),
+        recoveredAmount: Number(row.recoveredAmount),
+        writtenOffAmount: Number(row.writtenOffAmount),
+        bornBy: row.bornBy,
+        referenceType: row.referenceType,
+        createdAt: row.createdAt as Date,
+      };
+    }),
     total: pageResult.count,
     meta: {
       recoveredTotal: roundMoney(aggregate.recoveredTotal),
@@ -365,15 +373,16 @@ function cashbackWriteOffSelectSql(): string {
   return `
     SELECT
       w.id AS id,
-      w."userId" AS "userId",
+      COALESCE(u.name, 'Customer') AS "customerName",
+      COALESCE(u.email, '') AS "customerEmail",
       w."originalClawbackAmount" AS "originalClawbackAmount",
       w."recoveredAmount" AS "recoveredAmount",
       w."writtenOffAmount" AS "writtenOffAmount",
       w."bornBy" AS "bornBy",
       w."referenceType" AS "referenceType",
-      w."referenceId" AS "referenceId",
       w."createdAt" AS "createdAt"
     FROM wallet_write_offs w
+    LEFT JOIN users u ON u.id = w."userId"
     WHERE w."deletedAt" IS NULL
       AND w."createdAt" BETWEEN :from AND :to
       AND (:bornBy::text IS NULL OR w."bornBy" = :bornBy)
@@ -383,13 +392,13 @@ function cashbackWriteOffSelectSql(): string {
 function mapCashbackWriteOffRow(row: Record<string, unknown>) {
   return {
     id: String(row.id ?? ''),
-    userId: String(row.userId ?? ''),
+    customerName: String(row.customerName ?? 'Customer'),
+    customerEmail: String(row.customerEmail ?? ''),
     originalClawbackAmount: Number(row.originalClawbackAmount ?? 0),
     recoveredAmount: Number(row.recoveredAmount ?? 0),
     writtenOffAmount: Number(row.writtenOffAmount ?? 0),
     bornBy: String(row.bornBy ?? ''),
     referenceType: String(row.referenceType ?? ''),
-    referenceId: String(row.referenceId ?? ''),
     createdAt: row.createdAt as Date,
   };
 }
@@ -611,6 +620,7 @@ async function walletRechargeQuery(filters: ReportFilters) {
 
   const findOpts = {
     where,
+    include: [{ model: User, as: 'user', attributes: ['name', 'email'], required: false }],
     order: [['createdAt', 'DESC']] as [string, string][],
     limit,
     offset: paginationOffset(page, limit),
@@ -634,9 +644,11 @@ async function walletRechargeQuery(filters: ReportFilters) {
 }
 
 function mapWalletRechargeRow(row: WalletRechargeOrder) {
+  const u = row.get('user') as User | undefined;
   return {
     id: row.id,
-    userId: row.userId,
+    customerName: u?.name || 'Customer',
+    customerEmail: u?.email || '',
     amountInr: Number(row.amountInr),
     pointsCredited: Number(row.pointsCredited),
     status: row.status,
@@ -703,6 +715,8 @@ export const legacyPanelReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: true,
     columns: [
+      { key: 'customerName', labelKey: 'customer' },
+      { key: 'customerEmail', labelKey: 'email' },
       { key: 'amountInr', labelKey: 'amountInr', format: 'currency' },
       { key: 'pointsCredited', labelKey: 'pointsCredited', format: 'points' },
       { key: 'status', labelKey: 'status' },
@@ -720,6 +734,8 @@ export const legacyPanelReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: true,
     columns: [
+      { key: 'customerName', labelKey: 'customer' },
+      { key: 'customerEmail', labelKey: 'email' },
       { key: 'originalClawbackAmount', labelKey: 'originalClawbackAmount', format: 'currency' },
       { key: 'recoveredAmount', labelKey: 'recoveredAmount', format: 'currency' },
       { key: 'writtenOffAmount', labelKey: 'writtenOffAmount', format: 'currency' },

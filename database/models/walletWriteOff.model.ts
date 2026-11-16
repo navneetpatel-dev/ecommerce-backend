@@ -20,7 +20,7 @@ export class WalletWriteOff extends Model<
   declare readonly deletedAt: CreationOptional<Date>;
 
   static associate(models: Record<string, any>) {
-    WalletWriteOff.belongsTo(models.User, { foreignKey: 'userId' });
+    WalletWriteOff.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
   }
 }
 

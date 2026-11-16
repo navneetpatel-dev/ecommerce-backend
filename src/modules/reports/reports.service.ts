@@ -168,6 +168,8 @@ export class ReportsService {
     promotionalPointsLiability: number;
     rows: Array<{
       userId: string;
+      customerName: string;
+      email: string;
       balance: number;
       asOf: Date;
       purchasedPoints: number;
@@ -196,6 +198,8 @@ export class ReportsService {
       promotionalPointsLiability: roundMoney(pointTotals.promotionalPointsLiability),
       rows: result.rows.map((r) => ({
         userId: String(r.userId ?? ''),
+        customerName: String(r.name ?? 'Customer'),
+        email: String(r.email ?? ''),
         balance: Number(r.balance ?? 0),
         asOf: r.asOf as Date,
         purchasedPoints: Number(r.purchasedPoints ?? 0),

@@ -55,6 +55,14 @@ export const TAX_INVOICE_COPY = {
  * Excel / API column headers. Keys must match ReportColumn.labelKey and FE LABELS.
  */
 export const REPORT_COLUMN_LABELS: Record<string, string> = {
+  customer: 'Customer',
+  customerEmail: 'Email',
+  balance: 'Balance',
+  asOf: 'As Of',
+  originalClawbackAmount: 'Original Clawback',
+  recoveredAmount: 'Recovered Amount',
+  writtenOffAmount: 'Written Off Amount',
+  bornBy: 'Born By',
   groupType: 'Group',
   vendorId: 'Vendor ID',
   vendorName: 'Vendor',
