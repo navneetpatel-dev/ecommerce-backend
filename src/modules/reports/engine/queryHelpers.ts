@@ -5,19 +5,12 @@ import { paginationOffset } from '@core/http/pagination';
 import { reportExportConfig } from '../reportExportConfig';
 import { fromPaise, toPaise } from '@modules/pricing/money';
 import {
-  REPORTABLE_ORDER_SQL,
-  sqlFrozenPaise,
-  sqlLedgerPlatformDiscountPaise,
-  sqlLedgerVendorDiscountPaise,
-  sqlOrderPaymentPaise,
+  REPORTABLE_ORDER_SQL, sqlFrozenPaise, sqlLedgerPlatformDiscountPaise,
+  sqlLedgerVendorDiscountPaise, sqlOrderPaymentPaise,
 } from '@modules/pricing/frozenMoneySql';
 import {
-  COMMISSION_REFERENCE_TYPE,
-  COMMISSION_STATUS,
-  PAYMENT_STATUS,
-  PAYMENT_METHOD,
-  ORDER_STATUS,
-  DISCOUNT_BEARER,
+  COMMISSION_REFERENCE_TYPE, COMMISSION_STATUS, PAYMENT_STATUS,
+  PAYMENT_METHOD, ORDER_STATUS, DISCOUNT_BEARER,
 } from '@core/constants/statuses';
 import { sequelize } from '@database/models';
 import { Order } from '@database/models/order.model';
@@ -42,15 +35,12 @@ function isIstMidnight(moment: Date): boolean {
  * timestamp is kept as given.
  */
 export function inclusiveReportFrom(from: Date): Date {
+  if (!from || Number.isNaN(from.getTime())) return from;
   return isUtcMidnight(from) ? new Date(from.getTime() - IST_OFFSET_MS) : new Date(from);
 }
 
-/**
- * A date-only `to` (midnight UTC, or midnight IST once normalised) runs to the end of
- * that day in IST (23:59:59.999 IST), so the selected end day is inclusive and a
- * monthly report covers exactly the IST month. A full timestamp is kept as given.
- */
 export function inclusiveReportTo(to: Date): Date {
+  if (!to || Number.isNaN(to.getTime())) return to;
   if (isUtcMidnight(to)) return new Date(to.getTime() + DAY_MS - IST_OFFSET_MS - 1);
   if (isIstMidnight(to)) return new Date(to.getTime() + DAY_MS - 1);
   return new Date(to);
@@ -65,6 +55,14 @@ export function normalizeReportFilters(filters: ReportFilters): ReportFilters {
 }
 
 export function assertReportRange(filters: ReportFilters) {
+  if (
+    !filters.from ||
+    !filters.to ||
+    Number.isNaN(filters.from.getTime()) ||
+    Number.isNaN(filters.to.getTime())
+  ) {
+    throw new ValidationError(ERROR_MESSAGES.REPORT_INVALID_RANGE);
+  }
   if (filters.from > filters.to) {
     throw new ValidationError(ERROR_MESSAGES.REPORT_INVALID_RANGE);
   }

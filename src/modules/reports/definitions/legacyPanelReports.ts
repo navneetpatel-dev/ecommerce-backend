@@ -9,25 +9,16 @@ import { DEFAULT_PAGE_LIMIT } from '@core/constants/http';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
 import { createOffsetExportQuery, createSingleShotExportQuery } from '../engine/export/createOffsetExportQuery';
 import {
-  assertReportRange,
-  inclusiveReportTo,
-  emptyPage,
-  computeReconciliationSummary,
-  fromPaise,
-  sqlFrozenPaise,
-  sqlVendorNetPayoutPaise,
-  COMMISSION_STATUS,
+  assertReportRange, inclusiveReportTo, emptyPage,
+  computeReconciliationSummary, fromPaise, sqlFrozenPaise,
+  sqlVendorNetPayoutPaise, COMMISSION_STATUS,
 } from '../engine/queryHelpers';
 import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQuery';
 import { queryOrderRates } from '../engine/orderRates';
 import { roundMoney } from '@modules/pricing/money';
 import {
-  GMV_SUB_ORDER_SQL,
-  PAID_OR_COD_ORDER_SQL,
-  sqlGmvPaise,
-  sqlLedgerOnPaidOrder,
-  sqlLedgerPlatformDiscountPaise,
-  sqlLedgerVendorDiscountPaise,
+  GMV_SUB_ORDER_SQL, PAID_OR_COD_ORDER_SQL, sqlGmvPaise, sqlLedgerOnPaidOrder,
+  sqlLedgerPlatformDiscountPaise, sqlLedgerVendorDiscountPaise,
 } from '@modules/pricing/frozenMoneySql';
 import { vendorPayablePaise } from '../engine/vendorPayable';
 import { sqlIstDay } from '@modules/pricing/istCalendar';
@@ -47,10 +38,7 @@ function walletLiabilityUserSourcesCte(): string {
         COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' AND wl."pointSourceBreakdown" IS NOT NULL THEN COALESCE((wl."pointSourceBreakdown"->>'purchased')::numeric, 0) ELSE 0 END), 0)::numeric AS purchased_dr_explicit,
         COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' AND wl."pointSourceBreakdown" IS NOT NULL THEN COALESCE((wl."pointSourceBreakdown"->>'promotional')::numeric, 0) ELSE 0 END), 0)::numeric AS promo_dr_explicit,
         COALESCE(SUM(CASE WHEN wl.type = 'DEBIT' AND wl."pointSourceBreakdown" IS NULL THEN wl.amount ELSE 0 END), 0)::numeric AS legacy_debits
-      FROM wallet_ledgers wl
-      WHERE wl."deletedAt" IS NULL
-        AND wl."createdAt" <= :to
-      GROUP BY wl."userId"
+      FROM wallet_ledgers wl WHERE wl."deletedAt" IS NULL AND wl."createdAt" <= :to GROUP BY wl."userId"
     )`;
 }
 
@@ -73,9 +61,7 @@ export function walletLiabilitySelectSql(): string {
         wl."userId" AS "userId",
         wl."balanceAfter"::numeric AS balance,
         wl."createdAt" AS "asOf"
-      FROM wallet_ledgers wl
-      WHERE wl."deletedAt" IS NULL
-        AND wl."createdAt" <= :to
+      FROM wallet_ledgers wl WHERE wl."deletedAt" IS NULL AND wl."createdAt" <= :to
       ORDER BY wl."userId", wl."createdAt" DESC
     )
     SELECT
@@ -97,18 +83,16 @@ export function walletLiabilitySelectSql(): string {
  * Wallet liability as of the range's end: every customer's balance then, whether or not
  * their wallet moved within the range — the same set the points totals count.
  */
-export async function walletLiabilityTotals(filters: {
-  from: Date;
-  to: Date;
-}): Promise<{ customerCount: number; totalLiability: number }> {
+export async function walletLiabilityTotals(filters: { from: Date; to: Date }): Promise<{
+  customerCount: number;
+  totalLiability: number;
+}> {
   const [[totals]] = (await sequelize.query(
     `WITH latest AS (
        SELECT DISTINCT ON (wl."userId")
          wl."userId",
          wl."balanceAfter"
-       FROM wallet_ledgers wl
-       WHERE wl."deletedAt" IS NULL
-         AND wl."createdAt" <= :to
+       FROM wallet_ledgers wl WHERE wl."deletedAt" IS NULL AND wl."createdAt" <= :to
        ORDER BY wl."userId", wl."createdAt" DESC
      )
      SELECT
@@ -124,9 +108,7 @@ export async function walletLiabilityTotals(filters: {
   };
 }
 
-export async function walletPointSourceLiabilityTotals(filters: {
-  to: Date;
-}): Promise<{
+export async function walletPointSourceLiabilityTotals(filters: { to: Date }): Promise<{
   totalPointsLiability: number;
   purchasedPointsLiability: number;
   promotionalPointsLiability: number;
@@ -136,9 +118,7 @@ export async function walletPointSourceLiabilityTotals(filters: {
        SELECT DISTINCT ON (wl."userId")
          wl."userId",
          wl."balanceAfter"::numeric AS balance
-       FROM wallet_ledgers wl
-       WHERE wl."deletedAt" IS NULL
-         AND wl."createdAt" <= :to
+       FROM wallet_ledgers wl WHERE wl."deletedAt" IS NULL AND wl."createdAt" <= :to
        ORDER BY wl."userId", wl."createdAt" DESC
      ),
      user_sources AS (

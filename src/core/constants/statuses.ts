@@ -100,12 +100,8 @@ export const CATEGORY_ATTRIBUTE_TYPE = {
   RANGE: 'RANGE',
   BOOLEAN: 'BOOLEAN',
 } as const;
-export type CategoryAttributeType =
-  (typeof CATEGORY_ATTRIBUTE_TYPE)[keyof typeof CATEGORY_ATTRIBUTE_TYPE];
-export const CATEGORY_ATTRIBUTE_TYPE_VALUES = Object.values(CATEGORY_ATTRIBUTE_TYPE) as [
-  CategoryAttributeType,
-  ...CategoryAttributeType[],
-];
+export type CategoryAttributeType = (typeof CATEGORY_ATTRIBUTE_TYPE)[keyof typeof CATEGORY_ATTRIBUTE_TYPE];
+export const CATEGORY_ATTRIBUTE_TYPE_VALUES = Object.values(CATEGORY_ATTRIBUTE_TYPE) as [CategoryAttributeType, ...CategoryAttributeType[]];
 
 export const PROMO_BANNER_STATUS = {
   DRAFT: 'DRAFT',

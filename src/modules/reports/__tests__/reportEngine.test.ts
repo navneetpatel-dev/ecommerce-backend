@@ -336,6 +336,27 @@ describe('report engine', () => {
     );
   });
 
+  it('assertReportRange rejects invalid, NaN, inverted, and oversized date ranges', async () => {
+    const { assertReportRange } = await import('../engine/queryHelpers');
+    const { ValidationError } = await import('@core/errors/ValidationError');
+
+    assert.throws(
+      () => assertReportRange({ from: new Date('invalid'), to: new Date('2026-03-15') }),
+      ValidationError,
+    );
+    assert.throws(
+      () => assertReportRange({ from: new Date('2026-03-15'), to: new Date('invalid') }),
+      ValidationError,
+    );
+    assert.throws(
+      () => assertReportRange({ from: new Date('2026-03-20'), to: new Date('2026-03-10') }),
+      ValidationError,
+    );
+    assert.doesNotThrow(() =>
+      assertReportRange({ from: new Date('2026-03-01'), to: new Date('2026-03-15') }),
+    );
+  });
+
   it('every registered report defines exportQuery for streaming exports', async () => {
     const { ALL_REPORT_DEFINITIONS } = await import('../definitions/index');
     for (const def of ALL_REPORT_DEFINITIONS) {
