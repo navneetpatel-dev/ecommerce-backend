@@ -350,10 +350,7 @@ export const adminOpsReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: false,
     columns: [
-      { key: 'vendorId', labelKey: 'vendorId' },
       { key: 'vendorName', labelKey: 'vendorName' },
-      { key: 'subOrderId', labelKey: 'subOrderId' },
-      { key: 'orderId', labelKey: 'orderId' },
       { key: 'createdAt', labelKey: 'createdAt', format: 'date' },
       { key: 'deliveredAt', labelKey: 'deliveredAt', format: 'date' },
       { key: 'hoursToDeliver', labelKey: 'hoursToDeliver', format: 'number' },
@@ -369,9 +366,6 @@ export const adminOpsReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: false,
     columns: [
-      { key: 'orderId', labelKey: 'orderId' },
-      { key: 'subOrderId', labelKey: 'subOrderId' },
-      { key: 'vendorId', labelKey: 'vendorId' },
       { key: 'vendorName', labelKey: 'vendorName' },
       { key: 'status', labelKey: 'status' },
       { key: 'amount', labelKey: 'cancelledAmount', format: 'currency' },
@@ -388,9 +382,6 @@ export const adminOpsReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: false,
     columns: [
-      { key: 'id', labelKey: 'id' },
-      { key: 'subOrderId', labelKey: 'subOrderId' },
-      { key: 'orderItemId', labelKey: 'orderItemId' },
       { key: 'reasonCode', labelKey: 'reasonCode' },
       { key: 'status', labelKey: 'status' },
       { key: 'refundStatus', labelKey: 'refundStatus' },
@@ -411,10 +402,6 @@ export const adminOpsReports: ReportDefinition[] = [
     financial: false,
     columns: [
       { key: 'reason', labelKey: 'reason' },
-      { key: 'orderId', labelKey: 'orderId' },
-      { key: 'subOrderId', labelKey: 'subOrderId' },
-      { key: 'returnId', labelKey: 'returnId' },
-      { key: 'vendorId', labelKey: 'vendorId' },
       { key: 'vendorName', labelKey: 'vendorName' },
       { key: 'status', labelKey: 'status' },
       { key: 'stuckSince', labelKey: 'stuckSince', format: 'date' },

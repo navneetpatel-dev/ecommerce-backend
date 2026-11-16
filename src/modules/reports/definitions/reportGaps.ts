@@ -1040,13 +1040,10 @@ async function newsletterSubscribers(filters: ReportFilters) {
 }
 
 const taxInvoiceRegisterColumns = [
-  { key: 'subOrderId', labelKey: 'subOrderId' },
-  { key: 'orderId', labelKey: 'orderId' },
-  { key: 'vendorId', labelKey: 'vendorId' },
-  { key: 'vendorName', labelKey: 'vendorName' },
-  { key: 'vendorGstin', labelKey: 'vendorGstin' },
   { key: 'taxInvoiceNumber', labelKey: 'taxInvoiceNumber' },
   { key: 'taxInvoiceIssuedAt', labelKey: 'taxInvoiceIssuedAt', format: 'date' as const },
+  { key: 'vendorName', labelKey: 'vendorName' },
+  { key: 'vendorGstin', labelKey: 'vendorGstin' },
   { key: 'taxable', labelKey: 'taxable', format: 'currency' as const },
   { key: 'cgst', labelKey: 'cgst', format: 'currency' as const },
   { key: 'sgst', labelKey: 'sgst', format: 'currency' as const },
@@ -1081,7 +1078,6 @@ export const adminFinanceGapReports: ReportDefinition[] = [
     columns: [
       { key: 'taxInvoiceNumber', labelKey: 'taxInvoiceNumber' },
       { key: 'taxInvoiceIssuedAt', labelKey: 'taxInvoiceIssuedAt', format: 'date' },
-      { key: 'orderId', labelKey: 'orderId' },
       { key: 'vendorName', labelKey: 'vendorName' },
       { key: 'vendorGstin', labelKey: 'vendorGstin' },
       { key: 'buyerGstin', labelKey: 'buyerGstin' },
@@ -1146,7 +1142,6 @@ export const adminFinanceGapReports: ReportDefinition[] = [
     financial: true,
     columns: [
       { key: 'sourceType', labelKey: 'pgSourceType' },
-      { key: 'orderId', labelKey: 'pgReferenceId' },
       { key: 'createdAt', labelKey: 'createdAt', format: 'date' },
       { key: 'paymentMethod', labelKey: 'paymentMethod' },
       { key: 'paymentStatus', labelKey: 'paymentStatus' },
@@ -1185,7 +1180,6 @@ export const adminFinanceGapReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: true,
     columns: [
-      { key: 'orderId', labelKey: 'orderId' },
       { key: 'createdAt', labelKey: 'createdAt', format: 'date' },
       { key: 'orderStatus', labelKey: 'orderStatus' },
       { key: 'paymentStatus', labelKey: 'paymentStatus' },
@@ -1205,7 +1199,6 @@ export const adminFinanceGapReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: false,
     columns: [
-      { key: 'userId', labelKey: 'userId' },
       { key: 'email', labelKey: 'email' },
       { key: 'name', labelKey: 'name' },
       { key: 'orderCount', labelKey: 'orderCount', format: 'number' },
@@ -1225,8 +1218,6 @@ export const adminFinanceGapReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: true,
     columns: [
-      { key: 'payoutId', labelKey: 'payoutId' },
-      { key: 'vendorId', labelKey: 'vendorId' },
       { key: 'vendorName', labelKey: 'vendorName' },
       { key: 'amount', labelKey: 'payoutAmount', format: 'currency' },
       { key: 'status', labelKey: 'payoutStatus' },
@@ -1251,8 +1242,6 @@ export const adminOpsGapReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: false,
     columns: [
-      { key: 'subOrderId', labelKey: 'subOrderId' },
-      { key: 'orderId', labelKey: 'orderId' },
       { key: 'vendorName', labelKey: 'vendorName' },
       { key: 'shippingCost', labelKey: 'shippingCost', format: 'currency' },
       { key: 'shippingCharged', labelKey: 'shippingCharged', format: 'currency' },
@@ -1272,8 +1261,6 @@ export const adminOpsGapReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: false,
     columns: [
-      { key: 'cartId', labelKey: 'cartId' },
-      { key: 'userId', labelKey: 'userId' },
       { key: 'userEmail', labelKey: 'email' },
       { key: 'userName', labelKey: 'name' },
       { key: 'lastActivityAt', labelKey: 'lastActivityAt', format: 'date' },
@@ -1312,7 +1299,6 @@ export const adminOpsGapReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: false,
     columns: [
-      { key: 'vendorId', labelKey: 'vendorId' },
       { key: 'vendorName', labelKey: 'vendorName' },
       { key: 'status', labelKey: 'status' },
       { key: 'vendorGstin', labelKey: 'vendorGstin' },
@@ -1391,7 +1377,6 @@ export const customerGapReports: ReportDefinition[] = [
       { key: 'amount', labelKey: 'pointsAmount', format: 'points' },
       { key: 'balanceAfter', labelKey: 'pointsBalanceAfter', format: 'points' },
       { key: 'referenceType', labelKey: 'referenceType' },
-      { key: 'referenceId', labelKey: 'referenceId' },
       { key: 'pointSource', labelKey: 'pointSource' },
       { key: 'description', labelKey: 'description' },
     ],

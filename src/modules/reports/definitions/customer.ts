@@ -23,6 +23,7 @@ const ORDER_PARTS_INCLUDE = [
 function mapOrderHistoryRow(order: Order) {
   const subs = (order as Order & { subOrders?: SubOrder[] }).subOrders ?? [];
   return {
+    taxInvoiceNumber: order.taxInvoiceNumber ?? subs[0]?.taxInvoiceNumber ?? 'Not issued yet',
     orderId: order.id,
     status: order.status,
     paymentStatus: order.paymentStatus,
@@ -115,7 +116,7 @@ export const customerReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: false,
     columns: [
-      { key: 'orderId', labelKey: 'orderId' },
+      { key: 'taxInvoiceNumber', labelKey: 'taxInvoiceNumber' },
       { key: 'status', labelKey: 'status' },
       { key: 'paymentStatus', labelKey: 'paymentStatus' },
       { key: 'totalAmount', labelKey: 'totalAmount', format: 'currency' },

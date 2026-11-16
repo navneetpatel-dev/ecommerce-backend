@@ -127,6 +127,8 @@ export const REPORT_COLUMN_LABELS: Record<string, string> = {
   netSales: 'Net sales (after discounts, excl. GST)',
   createdAt: 'Created At',
   actorId: 'Actor ID',
+  actorName: 'Actor',
+  customerName: 'Customer',
   action: 'Action',
   entityType: 'Entity Type',
   entityId: 'Entity ID',

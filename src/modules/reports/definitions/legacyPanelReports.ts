@@ -79,12 +79,15 @@ export function walletLiabilitySelectSql(): string {
     )
     SELECT
       l."userId",
+      COALESCE(u.email, 'Unknown') AS email,
+      COALESCE(u.name, 'Customer') AS name,
       l.balance,
       l."asOf",
       LEAST(l.balance, ${fifoPurchasedRemainingSql('us')}) AS "purchasedPoints",
       l.balance - LEAST(l.balance, ${fifoPurchasedRemainingSql('us')}) AS "promotionalPoints"
     FROM latest l
     INNER JOIN user_sources us ON us."userId" = l."userId"
+    LEFT JOIN users u ON u.id = l."userId"
     WHERE l.balance > 0
   `;
 }
@@ -199,6 +202,8 @@ async function walletLiabilityExport(
     cursor,
     mapRow: (row) => ({
       userId: String(row.userId ?? ''),
+      email: String(row.email ?? ''),
+      name: String(row.name ?? ''),
       balance: Number(row.balance ?? 0),
       asOf: row.asOf as Date,
       purchasedPoints: Number(row.purchasedPoints ?? 0),
@@ -246,6 +251,8 @@ async function walletLiabilityQuery(filters: ReportFilters) {
   )) as [
     Array<{
       userId: string;
+      email?: string;
+      name?: string;
       balance: number;
       asOf: Date;
       purchasedPoints: number;
@@ -257,6 +264,8 @@ async function walletLiabilityQuery(filters: ReportFilters) {
   return {
     rows: rows.map((r) => ({
       userId: r.userId,
+      email: r.email ?? '',
+      name: r.name ?? 'Customer',
       balance: Number(r.balance),
       asOf: r.asOf,
       purchasedPoints: Number(r.purchasedPoints ?? 0),
@@ -676,7 +685,8 @@ export const legacyPanelReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: true,
     columns: [
-      { key: 'userId', labelKey: 'userId' },
+      { key: 'email', labelKey: 'email' },
+      { key: 'name', labelKey: 'name' },
       { key: 'balance', labelKey: 'balance', format: 'points' },
       { key: 'purchasedPoints', labelKey: 'purchasedPoints', format: 'points' },
       { key: 'promotionalPoints', labelKey: 'promotionalPoints', format: 'points' },
@@ -693,11 +703,9 @@ export const legacyPanelReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: true,
     columns: [
-      { key: 'userId', labelKey: 'userId' },
       { key: 'amountInr', labelKey: 'amountInr', format: 'currency' },
       { key: 'pointsCredited', labelKey: 'pointsCredited', format: 'points' },
       { key: 'status', labelKey: 'status' },
-      { key: 'razorpayOrderId', labelKey: 'razorpayOrderId' },
       { key: 'paidAt', labelKey: 'paidAt', format: 'date' },
       { key: 'createdAt', labelKey: 'createdAt', format: 'date' },
     ],
@@ -712,14 +720,11 @@ export const legacyPanelReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: true,
     columns: [
-      { key: 'id', labelKey: 'id' },
-      { key: 'userId', labelKey: 'userId' },
       { key: 'originalClawbackAmount', labelKey: 'originalClawbackAmount', format: 'currency' },
       { key: 'recoveredAmount', labelKey: 'recoveredAmount', format: 'currency' },
       { key: 'writtenOffAmount', labelKey: 'writtenOffAmount', format: 'currency' },
       { key: 'bornBy', labelKey: 'bornBy' },
       { key: 'referenceType', labelKey: 'referenceType' },
-      { key: 'referenceId', labelKey: 'referenceId' },
       { key: 'createdAt', labelKey: 'createdAt', format: 'date' },
     ],
     query: cashbackWriteOffQuery,
@@ -769,7 +774,6 @@ export const legacyPanelReports: ReportDefinition[] = [
     vendorScoped: true,
     financial: true,
     columns: [
-      { key: 'vendorId', labelKey: 'vendorId' },
       { key: 'sales', labelKey: 'netSales', format: 'currency' },
       { key: 'commissionDeducted', labelKey: 'commissionDeducted', format: 'currency' },
       { key: 'tcsDeducted', labelKey: 'tcsDeducted', format: 'currency' },

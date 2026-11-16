@@ -28,6 +28,7 @@ import { keysetSqlQuery, type KeysetOrderCol } from '../engine/export/keysetSqlQ
 import { GMV_CATEGORY_KEYSET, GMV_KEYSET, GST_TCS_KEYSET, HSN_SALES_KEYSET } from './adminFinanceKeysets';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { AuditLog } from '@database/models/auditLog.model';
+import { User } from '@database/models/user.model';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
 import { createSingleShotExportQuery } from '../engine/export/createOffsetExportQuery';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
@@ -732,6 +733,7 @@ function commissionRevenueSelectSql(): string {
       s."vendorId"::text AS "vendorId",
       MAX(v."businessName") AS "vendorName",
       (COALESCE(oi."categoryId", p."categoryId"))::text AS "categoryId",
+      COALESCE(MAX(c.name), 'All Categories') AS "categoryName",
       COALESCE((COALESCE(oi."categoryId", p."categoryId"))::text, '') AS "categorySort",
       ${periodExpr} AS period,
       SUM(oi."commissionAmountPaise")::bigint AS "commissionPaise"
@@ -741,6 +743,7 @@ function commissionRevenueSelectSql(): string {
     INNER JOIN vendors v ON v.id = s."vendorId"
     LEFT JOIN product_variants pv ON pv.id = oi."variantId"
     LEFT JOIN products p ON p.id = pv."productId"
+    LEFT JOIN categories c ON c.id = COALESCE(oi."categoryId", p."categoryId")
     WHERE oi."deletedAt" IS NULL
       AND o."createdAt" BETWEEN :from AND :to
       AND ${GMV_SUB_ORDER_SQL}
@@ -755,6 +758,7 @@ function mapCommissionRevenueRow(row: Record<string, unknown>) {
     vendorId: String(row.vendorId ?? ''),
     vendorName: String(row.vendorName ?? ''),
     categoryId: row.categoryId == null ? null : String(row.categoryId),
+    categoryName: String(row.categoryName ?? 'All Categories'),
     period: String(row.period ?? ''),
     commission: fromPaise(Number(row.commissionPaise ?? 0)),
   };
@@ -869,6 +873,7 @@ async function gmvSales(filters: ReportFilters) {
         s."vendorId"::text AS "vendorId",
         MAX(v."businessName") AS "vendorName",
         (COALESCE(oi."categoryId", p."categoryId"))::text AS "categoryId",
+        COALESCE(MAX(c.name), 'All Categories') AS "categoryName",
         SUM(${sqlLineSubtotalPaise('oi')})::bigint AS "gmvPaise"
       FROM order_items oi
       INNER JOIN sub_orders s ON s.id = oi."subOrderId" AND s."deletedAt" IS NULL
@@ -876,6 +881,7 @@ async function gmvSales(filters: ReportFilters) {
       INNER JOIN product_variants pv ON pv.id = oi."variantId"
       INNER JOIN products p ON p.id = pv."productId"
       LEFT JOIN vendors v ON v.id = s."vendorId"
+      LEFT JOIN categories c ON c.id = COALESCE(oi."categoryId", p."categoryId")
       WHERE oi."deletedAt" IS NULL
         AND o."createdAt" BETWEEN :from AND :to
         AND ${GMV_SUB_ORDER_SQL}
@@ -893,6 +899,7 @@ async function gmvSales(filters: ReportFilters) {
         vendorId: String(row.vendorId ?? 'UNKNOWN'),
         vendorName: String(row.vendorName ?? row.vendorId ?? 'UNKNOWN'),
         categoryId: String(row.categoryId ?? filters.categoryId),
+        categoryName: String(row.categoryName ?? 'All Categories'),
         gmv: fromPaise(Number(row.gmvPaise ?? 0)),
       }),
     });
@@ -904,6 +911,7 @@ async function gmvSales(filters: ReportFilters) {
       s."vendorId"::text AS "vendorId",
       MAX(v."businessName") AS "vendorName",
       NULL::text AS "categoryId",
+      'All Categories'::text AS "categoryName",
       SUM(${subtotalExpr})::bigint AS "gmvPaise"
     FROM sub_orders s
     INNER JOIN orders o ON o.id = s."orderId" AND o."deletedAt" IS NULL
@@ -923,6 +931,7 @@ async function gmvSales(filters: ReportFilters) {
       vendorId: String(row.vendorId ?? 'UNKNOWN'),
       vendorName: String(row.vendorName ?? row.vendorId ?? 'UNKNOWN'),
       categoryId: null,
+      categoryName: 'All Categories',
       gmv: fromPaise(Number(row.gmvPaise ?? 0)),
     }),
   });
@@ -941,6 +950,7 @@ async function gmvSalesExport(
         s."vendorId"::text AS "vendorId",
         MAX(v."businessName") AS "vendorName",
         (COALESCE(oi."categoryId", p."categoryId"))::text AS "categoryId",
+        COALESCE(MAX(c.name), 'All Categories') AS "categoryName",
         SUM(${sqlLineSubtotalPaise('oi')})::bigint AS "gmvPaise"
       FROM order_items oi
       INNER JOIN sub_orders s ON s.id = oi."subOrderId" AND s."deletedAt" IS NULL
@@ -948,6 +958,7 @@ async function gmvSalesExport(
       INNER JOIN product_variants pv ON pv.id = oi."variantId"
       INNER JOIN products p ON p.id = pv."productId"
       LEFT JOIN vendors v ON v.id = s."vendorId"
+      LEFT JOIN categories c ON c.id = COALESCE(oi."categoryId", p."categoryId")
       WHERE oi."deletedAt" IS NULL
         AND o."createdAt" BETWEEN :from AND :to
         AND ${GMV_SUB_ORDER_SQL}
@@ -965,6 +976,7 @@ async function gmvSalesExport(
         vendorId: String(row.vendorId ?? 'UNKNOWN'),
         vendorName: String(row.vendorName ?? row.vendorId ?? 'UNKNOWN'),
         categoryId: String(row.categoryId ?? filters.categoryId),
+        categoryName: String(row.categoryName ?? 'All Categories'),
         gmv: fromPaise(Number(row.gmvPaise ?? 0)),
       }),
     });
@@ -1013,6 +1025,7 @@ async function auditLogReport(filters: ReportFilters) {
     AuditLog,
     {
       where,
+      include: [{ model: User, as: 'actor', attributes: ['name', 'email'] }],
       order: [['createdAt', 'DESC']],
     },
     filters,
@@ -1024,21 +1037,17 @@ async function auditLogReport(filters: ReportFilters) {
   };
 }
 
-function mapAuditLogRow(log: {
-  createdAt: Date;
-  actorId: string | null;
-  action: string;
-  entityType: string;
-  entityId: string | null;
-  metadata: Record<string, unknown> | null;
-}) {
+function mapAuditLogRow(log: AuditLog | Record<string, unknown>) {
+  const row = log as AuditLog & { actor?: { name?: string; email?: string } };
+  const actorName = row.actor?.name || row.actor?.email || 'System';
   return {
-    createdAt: log.createdAt,
-    actorId: log.actorId,
-    action: log.action,
-    entityType: log.entityType,
-    entityId: log.entityId,
-    metadata: log.metadata ?? {},
+    createdAt: row.createdAt,
+    actorId: row.actorId,
+    actorName,
+    action: row.action,
+    entityType: row.entityType,
+    entityId: row.entityId,
+    metadata: row.metadata ?? {},
   };
 }
 
@@ -1054,11 +1063,13 @@ async function auditLogExport(
       al.id AS id,
       al."createdAt" AS "createdAt",
       al."actorId" AS "actorId",
+      COALESCE(u.name, u.email, 'System') AS "actorName",
       al.action AS action,
       al."entityType" AS "entityType",
       al."entityId" AS "entityId",
       al.metadata AS metadata
     FROM audit_logs al
+    LEFT JOIN users u ON u.id = al."actorId"
     WHERE al."deletedAt" IS NULL
       AND al."createdAt" BETWEEN :from AND :to
       ${actionFilter}
@@ -1078,6 +1089,7 @@ async function auditLogExport(
     mapRow: (row) => ({
       createdAt: row.createdAt as Date,
       actorId: row.actorId as string | null,
+      actorName: String(row.actorName ?? 'System'),
       action: String(row.action ?? ''),
       entityType: String(row.entityType ?? ''),
       entityId: row.entityId as string | null,
@@ -1097,7 +1109,6 @@ export const adminFinanceReports: ReportDefinition[] = [
     financial: true,
     columns: [
       { key: 'groupType', labelKey: 'groupType' },
-      { key: 'vendorId', labelKey: 'vendorId' },
       { key: 'vendorName', labelKey: 'vendorName' },
       { key: 'vendorGstin', labelKey: 'vendorGstin' },
       { key: 'state', labelKey: 'state' },
@@ -1121,7 +1132,6 @@ export const adminFinanceReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: true,
     columns: [
-      { key: 'vendorId', labelKey: 'vendorId' },
       { key: 'vendorName', labelKey: 'vendorName' },
       { key: 'period', labelKey: 'period' },
       { key: 'section', labelKey: 'section' },
@@ -1210,9 +1220,6 @@ export const adminFinanceReports: ReportDefinition[] = [
     columns: [
       { key: 'type', labelKey: 'type' },
       { key: 'noteNumber', labelKey: 'noteNumber' },
-      { key: 'orderId', labelKey: 'orderId' },
-      { key: 'subOrderId', labelKey: 'subOrderId' },
-      { key: 'vendorId', labelKey: 'vendorId' },
       { key: 'supplierName', labelKey: 'supplierName' },
       { key: 'againstInvoiceNumber', labelKey: 'againstInvoiceNumber' },
       { key: 'recipientGstin', labelKey: 'recipientGstin' },
@@ -1237,7 +1244,6 @@ export const adminFinanceReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: true,
     columns: [
-      { key: 'vendorId', labelKey: 'vendorId' },
       { key: 'vendorName', labelKey: 'vendorName' },
       { key: 'pendingNet', labelKey: 'pendingNet', format: 'currency' },
       { key: 'settledNet', labelKey: 'settledNet', format: 'currency' },
@@ -1258,9 +1264,8 @@ export const adminFinanceReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: true,
     columns: [
-      { key: 'vendorId', labelKey: 'vendorId' },
       { key: 'vendorName', labelKey: 'vendorName' },
-      { key: 'categoryId', labelKey: 'categoryId' },
+      { key: 'categoryName', labelKey: 'categoryName' },
       { key: 'period', labelKey: 'period' },
       { key: 'commission', labelKey: 'commission', format: 'currency' },
     ],
@@ -1275,7 +1280,6 @@ export const adminFinanceReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: true,
     columns: [
-      { key: 'vendorId', labelKey: 'vendorId' },
       { key: 'vendorName', labelKey: 'vendorName' },
       { key: 'vendorDiscount', labelKey: 'vendorDiscount', format: 'currency' },
       { key: 'platformDiscount', labelKey: 'platformDiscount', format: 'currency' },
@@ -1294,9 +1298,8 @@ export const adminFinanceReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: true,
     columns: [
-      { key: 'vendorId', labelKey: 'vendorId' },
       { key: 'vendorName', labelKey: 'vendorName' },
-      { key: 'categoryId', labelKey: 'categoryId' },
+      { key: 'categoryName', labelKey: 'categoryName' },
       { key: 'gmv', labelKey: 'gmv', format: 'currency' },
     ],
     query: gmvSales,
@@ -1311,10 +1314,9 @@ export const adminFinanceReports: ReportDefinition[] = [
     financial: false,
     columns: [
       { key: 'createdAt', labelKey: 'createdAt', format: 'date' },
-      { key: 'actorId', labelKey: 'actorId' },
+      { key: 'actorName', labelKey: 'actorName' },
       { key: 'action', labelKey: 'action' },
       { key: 'entityType', labelKey: 'entityType' },
-      { key: 'entityId', labelKey: 'entityId' },
       { key: 'metadata', labelKey: 'metadata' },
     ],
     query: auditLogReport,

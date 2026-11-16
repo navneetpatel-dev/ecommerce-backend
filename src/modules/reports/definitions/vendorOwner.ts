@@ -81,10 +81,14 @@ async function vendorSales(filters: ReportFilters) {
 
 function mapVendorSalesRow(sub: SubOrder | Record<string, unknown>) {
   // Serves both SubOrder instances (paged query) and raw SQL rows (keyset export).
-  const row = sub as Record<string, unknown> & { order?: { createdAt?: Date } };
+  const row = sub as Record<string, unknown> & {
+    taxInvoiceNumber?: string;
+    order?: { createdAt?: Date };
+  };
   return {
     subOrderId: String(row.subOrderId ?? row.id ?? ''),
     orderId: String(row.orderId ?? ''),
+    taxInvoiceNumber: String(row.taxInvoiceNumber ?? 'Awaiting dispatch'),
     status: String(row.status ?? ''),
     subtotal: fromPaise(frozenPaise(row.subtotalPaise)),
     taxAmount: fromPaise(frozenPaise(row.taxAmountPaise)),
@@ -104,6 +108,7 @@ function vendorSalesSelectSql(): string {
     SELECT
       s.id AS "subOrderId",
       s."orderId" AS "orderId",
+      COALESCE(s."taxInvoiceNumber", 'Awaiting dispatch') AS "taxInvoiceNumber",
       s.status AS status,
       s."subtotalPaise" AS "subtotalPaise",
       s."taxAmountPaise" AS "taxAmountPaise",
@@ -267,6 +272,7 @@ async function vendorGstSales(filters: ReportFilters) {
         orderId: row.orderId ?? null,
         subOrderId: row.subOrderId ?? null,
         invoiceId: row.invoiceId ?? null,
+        documentNumber: String(row.invoiceId ?? row.documentNumber ?? ''),
         documentDate: row.documentDate,
         productName: String(row.productName ?? ''),
         hsnCode: String(row.hsnCode ?? 'UNKNOWN'),
@@ -866,8 +872,7 @@ export const vendorOwnerReports: ReportDefinition[] = [
     vendorScoped: true,
     financial: true,
     columns: [
-      { key: 'subOrderId', labelKey: 'subOrderId' },
-      { key: 'orderId', labelKey: 'orderId' },
+      { key: 'taxInvoiceNumber', labelKey: 'taxInvoiceNumber' },
       { key: 'status', labelKey: 'status' },
       { key: 'subtotal', labelKey: 'subtotal', format: 'currency' },
       { key: 'taxAmount', labelKey: 'taxAmount', format: 'currency' },
@@ -887,7 +892,7 @@ export const vendorOwnerReports: ReportDefinition[] = [
     financial: true,
     columns: [
       { key: 'docType', labelKey: 'docType' },
-      { key: 'invoiceId', labelKey: 'invoiceId' },
+      { key: 'documentNumber', labelKey: 'documentNumber' },
       { key: 'documentDate', labelKey: 'documentDate', format: 'date' },
       { key: 'productName', labelKey: 'productName' },
       { key: 'hsnCode', labelKey: 'hsnCode' },
@@ -910,7 +915,6 @@ export const vendorOwnerReports: ReportDefinition[] = [
     vendorScoped: true,
     financial: true,
     columns: [
-      { key: 'orderId', labelKey: 'orderId' },
       { key: 'period', labelKey: 'period' },
       { key: 'section', labelKey: 'section' },
       { key: 'entryType', labelKey: 'entryType' },
@@ -934,8 +938,6 @@ export const vendorOwnerReports: ReportDefinition[] = [
     vendorScoped: true,
     financial: true,
     columns: [
-      { key: 'orderId', labelKey: 'orderId' },
-      { key: 'payoutId', labelKey: 'payoutId' },
       { key: 'period', labelKey: 'period' },
       { key: 'section', labelKey: 'section' },
       { key: 'grossTaxable', labelKey: 'grossTaxable', format: 'currency' },
@@ -953,7 +955,6 @@ export const vendorOwnerReports: ReportDefinition[] = [
     vendorScoped: true,
     financial: true,
     columns: [
-      { key: 'payoutId', labelKey: 'payoutId' },
       { key: 'grossAmount', labelKey: 'payoutGross', format: 'currency' },
       { key: 'tdsAmount', labelKey: 'tdsAmount', format: 'currency' },
       { key: 'commissionGstAmount', labelKey: 'commissionGst', format: 'currency' },
@@ -975,7 +976,6 @@ export const vendorOwnerReports: ReportDefinition[] = [
     vendorScoped: true,
     financial: true,
     columns: [
-      { key: 'subOrderId', labelKey: 'subOrderId' },
       { key: 'status', labelKey: 'status' },
       { key: 'saleAmount', labelKey: 'saleAmount', format: 'currency' },
       { key: 'commissionRate', labelKey: 'commissionRate', format: 'number' },
@@ -995,7 +995,6 @@ export const vendorOwnerReports: ReportDefinition[] = [
     vendorScoped: true,
     financial: true,
     columns: [
-      { key: 'subOrderId', labelKey: 'subOrderId' },
       { key: 'vendorDiscount', labelKey: 'vendorDiscount', format: 'currency' },
       { key: 'platformDiscount', labelKey: 'platformDiscount', format: 'currency' },
       { key: 'discountAmount', labelKey: 'discountAmount', format: 'currency' },
@@ -1012,8 +1011,6 @@ export const vendorOwnerReports: ReportDefinition[] = [
     vendorScoped: true,
     financial: true,
     columns: [
-      { key: 'id', labelKey: 'id' },
-      { key: 'orderId', labelKey: 'orderId' },
       { key: 'reasonCode', labelKey: 'reasonCode' },
       { key: 'status', labelKey: 'status' },
       { key: 'refundAmount', labelKey: 'refundAmount', format: 'currency' },
@@ -1051,8 +1048,6 @@ export const vendorOwnerReports: ReportDefinition[] = [
     vendorScoped: true,
     financial: false,
     columns: [
-      { key: 'subOrderId', labelKey: 'subOrderId' },
-      { key: 'orderId', labelKey: 'orderId' },
       { key: 'status', labelKey: 'status' },
       { key: 'createdAt', labelKey: 'createdAt', format: 'date' },
       { key: 'deliveredAt', labelKey: 'deliveredAt', format: 'date' },

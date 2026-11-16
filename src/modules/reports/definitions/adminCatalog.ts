@@ -3,6 +3,7 @@ import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { PRODUCT_STATUS } from '@core/constants/statuses';
 import { Product } from '@database/models/product.model';
 import { Category } from '@database/models/category.model';
+import { Vendor } from '@database/models/vendor.model';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
 import { createOffsetExportQuery } from '../engine/export/createOffsetExportQuery';
 import {
@@ -46,7 +47,7 @@ async function productPerformance(filters: ReportFilters) {
     SELECT
       p.id AS "productId",
       p.name AS "productName",
-      p."categoryId" AS "categoryId",
+      COALESCE(MAX(c.name), '—') AS "categoryName",
       SUM(oi.quantity)::int AS qty,
       SUM(${GMV_PAISE_SQL})::bigint AS "gmvPaise",
       SUM(${TAXABLE_PAISE_SQL})::bigint AS "netSalesPaise"
@@ -62,13 +63,16 @@ async function productPerformance(filters: ReportFilters) {
       ON pv.id = oi."variantId"
     INNER JOIN products p
       ON p.id = pv."productId"
+    LEFT JOIN categories c
+      ON c.id = p."categoryId"
+      AND c."deletedAt" IS NULL
     WHERE oi."deletedAt" IS NULL
       AND o."createdAt" BETWEEN :from AND :to
       AND ${REPORTABLE_ORDER_SQL}
       AND ${STANDING_PART_SQL}
       ${vendorId ? 'AND so."vendorId" = :vendorId' : ''}
       ${filters.categoryId ? 'AND p."categoryId" = :categoryId' : ''}
-    GROUP BY p.id, p.name, p."categoryId"
+    GROUP BY p.id, p.name
   `;
 
   return pagedSqlQuery({
@@ -79,7 +83,7 @@ async function productPerformance(filters: ReportFilters) {
     mapRow: (row) => ({
       productId: row.productId,
       productName: row.productName,
-      categoryId: row.categoryId,
+      categoryName: row.categoryName,
       qty: Number(row.qty ?? 0),
       gmv: fromPaise(Number(row.gmvPaise ?? 0)),
       netSales: fromPaise(Number(row.netSalesPaise ?? 0)),
@@ -159,7 +163,10 @@ async function productApprovalTat(filters: ReportFilters) {
     Product,
     {
       where,
-      include: [{ model: Category, attributes: ['id', 'name'], required: false }],
+      include: [
+        { model: Category, attributes: ['id', 'name'], required: false },
+        { model: Vendor, attributes: ['id', 'businessName'], required: false },
+      ],
       order: [['updatedAt', 'DESC']],
     },
     filters,
@@ -174,17 +181,18 @@ async function productApprovalTat(filters: ReportFilters) {
         approved || p.status === PRODUCT_STATUS.REJECTED
           ? (p.updatedAt as Date)
           : null;
+      const vendorName =
+        (p as Product & { Vendor?: Vendor }).Vendor?.businessName ?? '—';
+      const categoryName =
+        (p as Product & { Category?: Category }).Category?.name ?? '—';
       return {
-        productId: p.id,
         productName: p.name,
-        vendorId: p.vendorId,
-        categoryId: p.categoryId,
-        categoryName: (p as Product & { Category?: Category }).Category?.name ?? null,
+        vendorName,
+        categoryName,
         status: p.status,
         submittedAt,
         decidedAt,
         turnaroundHours: decidedAt ? hoursBetween(submittedAt, decidedAt) : null,
-        approvedById: p.approvedById,
       };
     }),
     total,
@@ -249,9 +257,8 @@ export const adminCatalogReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: false,
     columns: [
-      { key: 'productId', labelKey: 'productId' },
       { key: 'productName', labelKey: 'productName' },
-      { key: 'categoryId', labelKey: 'categoryId' },
+      { key: 'categoryName', labelKey: 'categoryName' },
       { key: 'qty', labelKey: 'qty', format: 'number' },
       { key: 'gmv', labelKey: 'gmv', format: 'currency' },
       { key: 'netSales', labelKey: 'netSales', format: 'currency' },
@@ -267,7 +274,6 @@ export const adminCatalogReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: false,
     columns: [
-      { key: 'categoryId', labelKey: 'categoryId' },
       { key: 'categoryName', labelKey: 'categoryName' },
       { key: 'qty', labelKey: 'qty', format: 'number' },
       { key: 'gmv', labelKey: 'gmv', format: 'currency' },
@@ -284,10 +290,9 @@ export const adminCatalogReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: false,
     columns: [
-      { key: 'productId', labelKey: 'productId' },
       { key: 'productName', labelKey: 'productName' },
-      { key: 'vendorId', labelKey: 'vendorId' },
-      { key: 'categoryId', labelKey: 'categoryId' },
+      { key: 'vendorName', labelKey: 'vendorName' },
+      { key: 'categoryName', labelKey: 'categoryName' },
       { key: 'status', labelKey: 'status' },
       { key: 'submittedAt', labelKey: 'submittedAt', format: 'date' },
       { key: 'decidedAt', labelKey: 'decidedAt', format: 'date' },
@@ -304,7 +309,6 @@ export const adminCatalogReports: ReportDefinition[] = [
     vendorScoped: false,
     financial: false,
     columns: [
-      { key: 'productId', labelKey: 'productId' },
       { key: 'productName', labelKey: 'productName' },
       { key: 'avgRating', labelKey: 'avgRating', format: 'number' },
       { key: 'reviewCount', labelKey: 'reviewCount', format: 'number' },

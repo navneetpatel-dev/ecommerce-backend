@@ -147,8 +147,6 @@ export const vendorStaffReports: ReportDefinition[] = [
     vendorScoped: true,
     financial: false,
     columns: [
-      { key: 'orderId', labelKey: 'orderId' },
-      { key: 'subOrderId', labelKey: 'subOrderId' },
       { key: 'orderStatus', labelKey: 'orderStatus' },
       { key: 'subOrderStatus', labelKey: 'subOrderStatus' },
       { key: 'productName', labelKey: 'productName' },
