@@ -23,12 +23,6 @@ async function canBypassOwnership(
 ): Promise<boolean> {
   if (user.role.name === ROLES.SUPER_ADMIN) return true;
   if (
-    user.role.name === ROLES.ADMIN_CATALOG_MANAGER ||
-    user.role.name === ROLES.ADMIN_ORDER_MANAGER
-  ) {
-    return true;
-  }
-  if (
     resourceType === 'product' ||
     resourceType === 'variant' ||
     resourceType === 'image'

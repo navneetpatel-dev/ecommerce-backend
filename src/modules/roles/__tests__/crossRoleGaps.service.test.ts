@@ -302,6 +302,90 @@ describe('Cross-Role & Dynamic RBAC Gap Fixes Verification', () => {
       assert.equal(nextCalled, true);
       assert.ok(errorThrown instanceof ForbiddenError);
     });
+
+    it('rejects access to product for ADMIN_ORDER_MANAGER lacking PRODUCT_MANAGE', async () => {
+      setPermissionCache('role-order-mgr-1', [PERMISSIONS.ORDER_MANAGE, PERMISSIONS.SUBORDER_MANAGE]);
+      mock.method(sequelize, 'query', async () => [
+        { vendorId: 'vendor-xyz-1' },
+      ]);
+
+      const middleware = checkOwnership('product');
+      let nextCalled = false;
+      let errorThrown: any = null;
+
+      const req = {
+        params: { id: 'prod-123' },
+        user: {
+          id: 'admin-order-mgr-1',
+          roleId: 'role-order-mgr-1',
+          role: { name: ROLES.ADMIN_ORDER_MANAGER },
+          vendorId: null,
+        },
+      } as unknown as Request;
+
+      await middleware(req, {} as Response, ((err?: unknown) => {
+        errorThrown = err;
+        nextCalled = true;
+      }) as NextFunction);
+
+      assert.equal(nextCalled, true);
+      assert.ok(errorThrown instanceof ForbiddenError);
+    });
+
+    it('rejects access to suborder for ADMIN_CATALOG_MANAGER lacking ORDER_MANAGE', async () => {
+      setPermissionCache('role-catalog-mgr-1', [PERMISSIONS.PRODUCT_MANAGE, PERMISSIONS.CATEGORY_MANAGE]);
+      mock.method(sequelize, 'query', async () => [
+        { vendorId: 'vendor-xyz-1' },
+      ]);
+
+      const middleware = checkOwnership('suborder');
+      let nextCalled = false;
+      let errorThrown: any = null;
+
+      const req = {
+        params: { id: 'suborder-123' },
+        user: {
+          id: 'admin-catalog-mgr-1',
+          roleId: 'role-catalog-mgr-1',
+          role: { name: ROLES.ADMIN_CATALOG_MANAGER },
+          vendorId: null,
+        },
+      } as unknown as Request;
+
+      await middleware(req, {} as Response, ((err?: unknown) => {
+        errorThrown = err;
+        nextCalled = true;
+      }) as NextFunction);
+
+      assert.equal(nextCalled, true);
+      assert.ok(errorThrown instanceof ForbiddenError);
+    });
+
+    it('allows access to suborder for ADMIN_ORDER_MANAGER having ORDER_MANAGE', async () => {
+      setPermissionCache('role-order-mgr-2', [PERMISSIONS.ORDER_MANAGE, PERMISSIONS.SUBORDER_MANAGE]);
+
+      const middleware = checkOwnership('suborder');
+      let nextCalled = false;
+      let errorThrown: any = null;
+
+      const req = {
+        params: { id: 'suborder-456' },
+        user: {
+          id: 'admin-order-mgr-2',
+          roleId: 'role-order-mgr-2',
+          role: { name: ROLES.ADMIN_ORDER_MANAGER },
+          vendorId: null,
+        },
+      } as unknown as Request;
+
+      await middleware(req, {} as Response, ((err?: unknown) => {
+        errorThrown = err;
+        nextCalled = true;
+      }) as NextFunction);
+
+      assert.equal(nextCalled, true);
+      assert.equal(errorThrown, undefined);
+    });
   });
 
   describe('5. Role Assignment & Vendor Binding', () => {
