@@ -10,6 +10,8 @@ export const UpdateSettingsSchema = z.object({
   platformLegalName: z.string().max(200).default(''),
   platformState: z.string().max(64).default(''),
   autoApproveProducts: z.boolean(),
+  autoApproveReviews: z.boolean().default(true),
+  autoApproveQuestions: z.boolean().default(true),
   defaultReturnWindow: z.number().int().positive(),
   payoutCycle: z.enum(['DAILY', 'WEEKLY', 'BIWEEKLY', 'MONTHLY']),
   freeShippingThreshold: z.number().min(0),

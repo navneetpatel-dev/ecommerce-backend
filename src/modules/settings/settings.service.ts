@@ -25,6 +25,8 @@ export type PlatformSettingsPayload = {
   platformLegalName: string;
   platformState: string;
   autoApproveProducts: boolean;
+  autoApproveReviews: boolean;
+  autoApproveQuestions: boolean;
   defaultReturnWindow: number;
   payoutCycle: string;
   freeShippingThreshold: number;
@@ -77,6 +79,8 @@ const DEFAULTS: PlatformSettingsPayload = {
   platformLegalName: '',
   platformState: '',
   autoApproveProducts: false,
+  autoApproveReviews: true,
+  autoApproveQuestions: true,
   defaultReturnWindow: 7,
   payoutCycle: 'WEEKLY',
   freeShippingThreshold: 500,
@@ -109,9 +113,7 @@ const DEFAULTS: PlatformSettingsPayload = {
 /** Presets outside the stored cap are a broken config; raise the cap so they can be paid. */
 function alignWalletRecharge(settings: PlatformSettingsPayload): PlatformSettingsPayload {
   const minInr = settings.walletMinRechargeInr;
-  const presets = (settings.walletRechargePresetsInr ?? []).filter(
-    (amount) => Number.isFinite(amount) && amount >= minInr,
-  );
+  const presets = (settings.walletRechargePresetsInr ?? []).filter((amount) => Number.isFinite(amount) && amount >= minInr);
   const highestPreset = presets.reduce((highest, amount) => Math.max(highest, amount), minInr);
   const maxInr = Math.max(settings.walletMaxRechargeInr, highestPreset);
   return {
@@ -124,16 +126,11 @@ function alignWalletRecharge(settings: PlatformSettingsPayload): PlatformSetting
 export const settingsService = {
   async getPlatformSettings(): Promise<PlatformSettingsPayload> {
     const row = await PlatformSetting.findOne({ where: { key: SETTINGS_KEY } });
-    const merged = row
-      ? { ...DEFAULTS, ...(row.value as Partial<PlatformSettingsPayload>) }
-      : { ...DEFAULTS };
+    const merged = row ? { ...DEFAULTS, ...(row.value as Partial<PlatformSettingsPayload>) } : { ...DEFAULTS };
     return alignWalletRecharge(merged);
   },
 
-  async updatePlatformSettings(
-    value: PlatformSettingsPayload,
-    actorId: string,
-  ): Promise<PlatformSettingsPayload> {
+  async updatePlatformSettings(value: PlatformSettingsPayload, actorId: string): Promise<PlatformSettingsPayload> {
     const next = { ...DEFAULTS, ...value };
     await PlatformSetting.upsert({
       key: SETTINGS_KEY,

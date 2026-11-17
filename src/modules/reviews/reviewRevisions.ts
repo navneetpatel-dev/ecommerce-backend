@@ -1,5 +1,6 @@
 import { REVIEW_STATUS } from '@core/constants/statuses';
 import type { Review, ReviewMediaItem, ReviewRevision } from '@database/models/review.model';
+import { evaluateReviewModeration } from './reviewModerationDecision';
 
 /**
  * Edits of an approved review wait as a `pendingRevision` beside the live one:
@@ -7,7 +8,7 @@ import type { Review, ReviewMediaItem, ReviewRevision } from '@database/models/r
  * a moderator approves the edit (it replaces the live version) or rejects it
  * (only the edit is dropped). A review that is not live yet — pending, or
  * rejected and being resubmitted — has nothing public to protect, so it is
- * edited in place and goes (back) to the queue.
+ * edited in place and evaluated through automated moderation.
  */
 export interface ReviewEdit {
   rating: number;
@@ -20,7 +21,7 @@ export interface ReviewEdit {
 export const isLiveReview = (review: Pick<Review, 'status'>) => review.status === REVIEW_STATUS.APPROVED;
 
 /** The columns an owner edit writes. */
-export function reviewEditUpdate(review: Review, edit: ReviewEdit, userId: string) {
+export function reviewEditUpdate(review: Review, edit: ReviewEdit, userId: string, autoApproveEnabled: boolean = true) {
   const title = edit.title?.trim() ? edit.title : null;
   if (isLiveReview(review)) {
     const revision: ReviewRevision = {
@@ -33,12 +34,23 @@ export function reviewEditUpdate(review: Review, edit: ReviewEdit, userId: strin
     };
     return { pendingRevision: revision, revisionRejectedAt: null, updatedBy: userId };
   }
+
+  const moderation = evaluateReviewModeration({
+    rating: edit.rating,
+    title,
+    body: edit.body,
+    media: edit.media,
+    autoApproveEnabled,
+  });
+
   return {
     rating: edit.rating,
     title,
     body: edit.body,
     ...(edit.media ? { media: edit.media } : {}),
-    status: REVIEW_STATUS.PENDING,
+    status: moderation.status,
+    flaggedReason: moderation.flaggedReason,
+    flaggedAt: moderation.flaggedAt,
     editedAt: new Date(),
     pendingRevision: null,
     revisionRejectedAt: null,

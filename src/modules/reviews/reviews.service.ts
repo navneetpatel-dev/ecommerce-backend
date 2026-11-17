@@ -22,11 +22,12 @@ import { SubOrder } from '@database/models/subOrder.model';
 import { Product } from '@database/models/product.model';
 import { User } from '@database/models/user.model';
 import { notificationsService } from '@modules/notifications/notifications.service';
+import { settingsService } from '@modules/settings/settings.service';
+import { evaluateReviewModeration } from './reviewModerationDecision';
 import { logAudit } from '@modules/audit/audit.service';
 import { sequelize } from '@database/models';
 import { Op, QueryTypes } from 'sequelize';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
-
 
 export class ReviewsService {
   async createReview(userId: string, data: CreateReviewRequest) {
@@ -76,20 +77,40 @@ export class ReviewsService {
         throw new ValidationError(ERROR_MESSAGES.PRODUCT_ALREADY_REVIEWED);
       }
 
-      // Create review
-      const review = await Review.create({
-        ...(media.length && data.draftId ? { id: data.draftId } : {}),
-        media,
-        productId: data.productId,
-        userId,
-        orderItemId: data.orderItemId,
+      const settings = await settingsService.getPlatformSettings().catch(() => null);
+      const autoApproveEnabled = settings?.autoApproveReviews ?? true;
+
+      const moderation = evaluateReviewModeration({
         rating: data.rating,
         title: data.title ?? null,
         body: data.body,
-        status: REVIEW_STATUS.PENDING, // Set to APPROVED if auto-approve mode
-        helpfulCount: 0,
-        unhelpfulCount: 0,
-      }, { transaction: t });
+        media,
+        autoApproveEnabled,
+      });
+
+      // Create review
+      const review = await Review.create(
+        {
+          ...(media.length && data.draftId ? { id: data.draftId } : {}),
+          media,
+          productId: data.productId,
+          userId,
+          orderItemId: data.orderItemId,
+          rating: data.rating,
+          title: data.title ?? null,
+          body: data.body,
+          status: moderation.status,
+          flaggedReason: moderation.flaggedReason,
+          flaggedAt: moderation.flaggedAt,
+          helpfulCount: 0,
+          unhelpfulCount: 0,
+        },
+        { transaction: t },
+      );
+
+      if (review.status === REVIEW_STATUS.APPROVED) {
+        await this.recalculateProductRating(review.productId, t);
+      }
 
       return review;
     });
@@ -121,7 +142,12 @@ export class ReviewsService {
         : Promise.resolve(null),
     ]);
     // Each review carries the viewer's own vote, so their Helpful / Not helpful shows as chosen.
-    const votes = viewerUserId ? await findViewerVotes(rows.map((row) => row.id), viewerUserId) : new Map();
+    const votes = viewerUserId
+      ? await findViewerVotes(
+          rows.map((row) => row.id),
+          viewerUserId,
+        )
+      : new Map();
     return {
       reviews: rows.map((row) => ({ ...withoutRevision(row.get({ plain: true })), myVote: votes.get(row.id) ?? null })),
       pagination: buildPaginationMeta(count, query.page, query.limit),
@@ -132,7 +158,10 @@ export class ReviewsService {
 
   /** Own reviews on account page — personal history, deliberately unscoped. */
   async getUserReviews(userId: string, query: { page: number; limit: number }) {
-    const { rows, count } = await reviewsRepository.findByUser(userId, { limit: query.limit, offset: paginationOffset(query.page, query.limit) });
+    const { rows, count } = await reviewsRepository.findByUser(userId, {
+      limit: query.limit,
+      offset: paginationOffset(query.page, query.limit),
+    });
     return { reviews: rows, pagination: buildPaginationMeta(count, query.page, query.limit) };
   }
 
@@ -161,16 +190,17 @@ export class ReviewsService {
     const stored = await Review.findByPk(reviewId);
     if (!stored) throw new NotFoundError('Review');
     if (stored.userId !== userId) throw new ForbiddenError(ERROR_MESSAGES.REVIEW_NOT_YOURS);
-    const media = data.attachments
-      ? await resolveEditedReviewMedia(editableMediaBase(stored), data.attachments)
-      : undefined;
+    const media = data.attachments ? await resolveEditedReviewMedia(editableMediaBase(stored), data.attachments) : undefined;
+
+    const settings = await settingsService.getPlatformSettings().catch(() => null);
+    const autoApproveEnabled = settings?.autoApproveReviews ?? true;
 
     return sequelize.transaction(async (t) => {
       const review = await Review.findByPk(reviewId, { transaction: t, lock: t.LOCK.UPDATE });
       if (!review) throw new NotFoundError('Review');
       if (review.userId !== userId) throw new ForbiddenError(ERROR_MESSAGES.REVIEW_NOT_YOURS);
       // Approved: the edit waits beside the live review (see reviewRevisions).
-      await review.update(reviewEditUpdate(review, { ...data, media }, userId), { transaction: t });
+      await review.update(reviewEditUpdate(review, { ...data, media }, userId, autoApproveEnabled), { transaction: t });
       await this.recalculateProductRating(review.productId, t);
       return review;
     });
@@ -216,10 +246,7 @@ export class ReviewsService {
       if (!review) throw new NotFoundError('Review');
 
       // Rejecting an edit drops only the edit: the approved review stays public.
-      await review.update(
-        review.pendingRevision ? discardRevisionUpdate() : { status: REVIEW_STATUS.REJECTED },
-        { transaction: t },
-      );
+      await review.update(review.pendingRevision ? discardRevisionUpdate() : { status: REVIEW_STATUS.REJECTED }, { transaction: t });
 
       // Recalculate product rating — required whenever the previous status was APPROVED (its
       // score was counted into the average), but harmless to always run since the aggregate
@@ -276,11 +303,7 @@ export class ReviewsService {
     const { rows, count } = await Review.findAndCountAll({
       // New reviews, edits of approved ones, and reviews flagged by merchants/users, oldest first.
       where: {
-        [Op.or]: [
-          { status: REVIEW_STATUS.PENDING },
-          { pendingRevision: { [Op.ne]: null } },
-          { flaggedReason: { [Op.ne]: null } },
-        ],
+        [Op.or]: [{ status: REVIEW_STATUS.PENDING }, { pendingRevision: { [Op.ne]: null } }, { flaggedReason: { [Op.ne]: null } }],
       },
       include: [
         { model: Product, as: 'product', attributes: ['id', 'name'] },
@@ -306,13 +329,10 @@ export class ReviewsService {
         replacements: { productId, status: REVIEW_STATUS.APPROVED },
         type: QueryTypes.SELECT,
         transaction,
-      }
+      },
     );
 
-    await Product.update(
-      { avgRating: Number(result?.avg ?? 0) },
-      { where: { id: productId }, transaction }
-    );
+    await Product.update({ avgRating: Number(result?.avg ?? 0) }, { where: { id: productId }, transaction });
   }
 }
 

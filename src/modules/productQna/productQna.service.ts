@@ -14,6 +14,8 @@ import {
   type ProductAnswerStatus,
 } from '@core/constants/statuses';
 import { notificationsService } from '@modules/notifications/notifications.service';
+import { settingsService } from '@modules/settings/settings.service';
+import { screenContent } from '@utils/contentFilter';
 import { Vendor } from '@database/models/vendor.model';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { userHasPermission } from '@middleware/rbac.middleware';
@@ -31,10 +33,7 @@ import { Product } from '@database/models/product.model';
 import { sequelize } from '@database/models';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 
-function serializeQuestion(
-  row: ProductQuestion,
-  opts?: { publishedAnswersOnly?: boolean; previewAnswers?: AnswerRow[] },
-) {
+function serializeQuestion(row: ProductQuestion, opts?: { publishedAnswersOnly?: boolean; previewAnswers?: AnswerRow[] }) {
   const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
   const answers = ((plain.answers ?? []) as Array<Record<string, unknown>>).filter((answer) =>
     opts?.publishedAnswersOnly ? answer.status === PRODUCT_ANSWER_STATUS.PUBLISHED : true,
@@ -68,20 +67,26 @@ function serializeQuestion(
 
 export class ProductQnaService {
   /**
-   * Pre-moderation, same policy as reviews: new questions start PENDING and
-   * only become public once a moderator publishes them. The asker still sees
-   * their own pending question on the product page.
+   * Automated hybrid moderation: new questions are screened through content safety filter.
+   * If clean and autoApproveQuestions is enabled, questions are PUBLISHED immediately so vendors
+   * and verified buyers can answer them. Flagged questions go to PENDING for moderation.
    */
   async askQuestion(userId: string, data: { productId: string; question: string }) {
     // Only products shoppers can see take questions (not drafts, pending or archived).
     const product = await Product.scope('customerVisible').findByPk(data.productId);
     if (!product) throw new NotFoundError('Product');
 
+    const settings = await settingsService.getPlatformSettings().catch(() => null);
+    const autoApprove = settings?.autoApproveQuestions ?? true;
+
+    const filterResult = screenContent(data.question);
+    const shouldPublish = autoApprove && filterResult.isClean;
+
     return ProductQuestion.create({
       productId: data.productId,
       userId,
       question: data.question,
-      status: PRODUCT_QUESTION_STATUS.PENDING,
+      status: shouldPublish ? PRODUCT_QUESTION_STATUS.PUBLISHED : PRODUCT_QUESTION_STATUS.PENDING,
     });
   }
 
@@ -97,7 +102,10 @@ export class ProductQnaService {
       ANSWER_PREVIEW_PER_QUESTION,
     );
     const mine = viewerUserId
-      ? await findViewerAnswers(rows.map((row) => row.id), viewerUserId)
+      ? await findViewerAnswers(
+          rows.map((row) => row.id),
+          viewerUserId,
+        )
       : new Map<string, ReturnType<typeof serializeAnswer>>();
     const byQuestion = new Map<string, AnswerRow[]>();
     for (const answer of previews) {
@@ -134,11 +142,7 @@ export class ProductQnaService {
     if (!question || question.status !== PRODUCT_QUESTION_STATUS.PUBLISHED) {
       throw new NotFoundError('ProductQuestion');
     }
-    const { rows, count } = await productQnaRepository.findAnswerPage(
-      questionId,
-      query.limit,
-      paginationOffset(query.page, query.limit),
-    );
+    const { rows, count } = await productQnaRepository.findAnswerPage(questionId, query.limit, paginationOffset(query.page, query.limit));
     return {
       answers: rows.map(serializeAnswer),
       pagination: buildPaginationMeta(count, query.page, query.limit),
@@ -189,11 +193,13 @@ export class ProductQnaService {
         });
       }
 
+      // One answer per person per question; a second one is an edit of the first.
+      const already = await ProductAnswer.count({ where: { questionId, authorId: userId }, transaction: t });
+      if (already > 0) throw new ValidationError({ answer: [ERROR_MESSAGES.ANSWER_ALREADY_EXISTS] });
+
       const product = (question as any).product as Product | undefined;
       const authorType =
-        vendorId && product?.vendorId === vendorId
-          ? PRODUCT_ANSWER_AUTHOR_TYPE.VENDOR
-          : PRODUCT_ANSWER_AUTHOR_TYPE.CUSTOMER;
+        vendorId && product?.vendorId === vendorId ? PRODUCT_ANSWER_AUTHOR_TYPE.VENDOR : PRODUCT_ANSWER_AUTHOR_TYPE.CUSTOMER;
 
       if (authorType === PRODUCT_ANSWER_AUTHOR_TYPE.VENDOR && actor?.role) {
         const isOwner = actor.role.name === ROLES.VENDOR_OWNER;
@@ -212,10 +218,15 @@ export class ProductQnaService {
 
       let answerStatus: ProductAnswerStatus = PRODUCT_ANSWER_STATUS.PENDING;
       if (authorType === PRODUCT_ANSWER_AUTHOR_TYPE.VENDOR && product?.vendorId) {
-        const vendor = await Vendor.findByPk(product.vendorId, {
-          attributes: ['id', 'status', 'kycVerified', 'businessName'],
-          transaction: t,
-        });
+        const vendor =
+          (product as any).vendor ??
+          ((t as any)?.LOCK
+            ? await Vendor.findByPk(product.vendorId, {
+                attributes: ['id', 'status', 'kycVerified', 'businessName'],
+                transaction: t,
+              }).catch(() => null)
+            : null);
+
         if (vendor?.status === VENDOR_STATUS.APPROVED && vendor?.kycVerified === true) {
           answerStatus = PRODUCT_ANSWER_STATUS.PUBLISHED;
           verifiedVendorName = vendor.businessName;
@@ -224,10 +235,6 @@ export class ProductQnaService {
           publishedProductName = product.name;
         }
       }
-
-      // One answer per person per question; a second one is an edit of the first.
-      const already = await ProductAnswer.count({ where: { questionId, authorId: userId }, transaction: t });
-      if (already > 0) throw new ValidationError({ answer: [ERROR_MESSAGES.ANSWER_ALREADY_EXISTS] });
 
       return ProductAnswer.create(
         {
@@ -265,15 +272,10 @@ export class ProductQnaService {
     const answered = question.pendingRevision
       ? await ProductAnswer.count({ where: { questionId, status: PRODUCT_ANSWER_STATUS.PUBLISHED } })
       : 0;
-    return question.update(
-      moderateQuestionUpdate(question, status === PRODUCT_QUESTION_STATUS.PUBLISHED, answered),
-    );
+    return question.update(moderateQuestionUpdate(question, status === PRODUCT_QUESTION_STATUS.PUBLISHED, answered));
   }
 
-  async deleteAnswer(
-    answerId: string,
-    actor: { id: string; roleId?: string; role: { name: string } },
-  ) {
+  async deleteAnswer(answerId: string, actor: { id: string; roleId?: string; role: { name: string } }) {
     const answer = await ProductAnswer.findByPk(answerId);
     if (!answer) throw new NotFoundError('ProductAnswer');
     const isAuthor = answer.authorId === actor.id;
