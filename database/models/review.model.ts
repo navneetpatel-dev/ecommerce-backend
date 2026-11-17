@@ -22,7 +22,7 @@ export class Review extends Model<InferAttributes<Review>, InferCreationAttribut
   declare orderItemId: string;
   declare rating: number;
   declare title: string | null;
-  declare body: string;
+  declare body: CreationOptional<string>;
   declare status: 'PENDING' | 'APPROVED' | 'REJECTED';
   declare helpfulCount: CreationOptional<number>;
   declare unhelpfulCount: CreationOptional<number>;
@@ -62,7 +62,7 @@ export const initReviewModel = (sequelize: Sequelize) => {
       orderItemId: { type: DataTypes.UUID, allowNull: false, unique: true },
       rating: { type: DataTypes.SMALLINT, allowNull: false, validate: { min: 1, max: 5 } },
       title: { type: DataTypes.STRING, allowNull: true },
-      body: { type: DataTypes.TEXT, allowNull: false },
+      body: { type: DataTypes.TEXT, allowNull: false, defaultValue: '' },
       status: { type: DataTypes.ENUM('PENDING', 'APPROVED', 'REJECTED'), defaultValue: 'PENDING' },
       helpfulCount: { type: DataTypes.INTEGER, defaultValue: 0 },
       unhelpfulCount: { type: DataTypes.INTEGER, defaultValue: 0 },

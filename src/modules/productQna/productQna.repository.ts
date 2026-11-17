@@ -109,9 +109,10 @@ export class ProductQnaRepository extends BaseRepository<ProductQuestion> {
     });
   }
 
-  /** Vendor dashboard — questions for products owned by this vendor. */
+  /** Vendor dashboard — published questions for products owned by this vendor. */
   async findForVendor(vendorId: string) {
     return this.model.findAll({
+      where: { status: PRODUCT_QUESTION_STATUS.PUBLISHED },
       include: [
         { association: 'user', attributes: ['id', 'name'] },
         {

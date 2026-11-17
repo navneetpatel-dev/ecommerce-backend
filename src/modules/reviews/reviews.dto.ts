@@ -5,7 +5,12 @@ import { ugcText } from '@core/http/ugcText';
 import { UGC_LIMITS } from '@core/constants/ugcLimits';
 
 const reviewTitle = ugcText('Title', UGC_LIMITS.reviewTitle).optional();
-const reviewBody = ugcText('Review', UGC_LIMITS.reviewBody);
+const reviewBody = z
+  .string()
+  .trim()
+  .max(UGC_LIMITS.reviewBody.max, `Review must be at most ${UGC_LIMITS.reviewBody.max} characters`)
+  .optional()
+  .default('');
 
 const ReviewAttachmentsSchema = z
   .array(

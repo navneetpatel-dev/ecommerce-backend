@@ -33,12 +33,18 @@ describe('reviews DTO schemas', () => {
     assert.equal(CreateReviewSchema.safeParse(review({ productId: '' })).success, false);
   });
 
-  it('body must be non-empty', () => {
-    assert.equal(CreateReviewSchema.safeParse(review({ body: '' })).success, false);
+  it('body is optional so customer can submit only rating', () => {
+    const emptyBody = CreateReviewSchema.parse(review({ body: '' }));
+    assert.equal(emptyBody.body, '');
+
+    const noBodyReview = review();
+    delete (noBodyReview as any).body;
+    const omittedBody = CreateReviewSchema.parse(noBodyReview);
+    assert.equal(omittedBody.body, '');
   });
 
-  it('enforces the shared length limits, counting trimmed text', () => {
-    assert.equal(CreateReviewSchema.safeParse(review({ body: '   short   ' })).success, false);
+  it('enforces maximum length limits, counting trimmed text', () => {
+    assert.equal(CreateReviewSchema.safeParse(review({ body: 'short' })).success, true);
     assert.equal(CreateReviewSchema.safeParse(review({ body: 'x'.repeat(2001) })).success, false);
     assert.equal(CreateReviewSchema.safeParse(review({ title: 't'.repeat(101) })).success, false);
     const parsed = CreateReviewSchema.parse(review({ body: `  ${'y'.repeat(20)}  ` }));

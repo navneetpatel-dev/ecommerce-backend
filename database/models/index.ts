@@ -78,6 +78,7 @@ import { initGiftCardModel, GiftCard } from './giftCard.model';
 import { initProductQuestionModel, ProductQuestion } from './productQuestion.model';
 import { initProductAnswerModel, ProductAnswer } from './productAnswer.model';
 import { initExportJobModel, ExportJob } from './exportJob.model';
+import { initShortLinkModel, ShortLink } from './shortLink.model';
 
 const models = {
   Role: initRoleModel(sequelize),
@@ -150,6 +151,7 @@ const models = {
   ProductAnswer: initProductAnswerModel(sequelize),
   GiftCard: initGiftCardModel(sequelize),
   ExportJob: initExportJobModel(sequelize),
+  ShortLink: initShortLinkModel(sequelize),
 };
 
 Object.values(models).forEach((model: any) => {
@@ -185,4 +187,5 @@ export {
   ProductAnswer,
   GiftCard,
   ExportJob,
+  ShortLink,
 };

@@ -41,6 +41,7 @@ export const API_MOUNTS = {
   payments: '/payments',
   roles: '/roles',
   exports: '/exports',
+  shortLinks: '/short-links',
 } as const;
 
 export const HEALTH_PATH = '/health';
