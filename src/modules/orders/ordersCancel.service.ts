@@ -29,6 +29,7 @@ import { logAudit } from '@modules/audit/audit.service';
 import { failedOrderRefundAttempt } from '@modules/payments/orderCancelRefund';
 import { subordersService } from '@modules/suborders/suborders.service';
 import { isReversedPart } from '@modules/pricing/partReversal';
+import { orderReference } from '@modules/orders/orderReference';
 
 type OrderForCancel = Order & {
   subOrders?: (SubOrder & { items?: OrderItem[] })[];
@@ -219,7 +220,7 @@ export async function cancelPaidOrder(
 
     void notificationsService.sendOrderCancelled(order.userId, order.id, {
       orderId: order.id,
-      orderNumber: order.id.slice(0, 8).toUpperCase(),
+      orderNumber: orderReference(order.id),
     });
 
     const cancelledParts = await SubOrder.findAll({
@@ -235,8 +236,9 @@ export async function cancelPaidOrder(
           for (const vUser of vendorUsers) {
             void notificationsService.sendVendorOrderCancelled(vUser.id, part.id, {
               orderId: order.id,
-              orderNumber: order.id.slice(0, 8).toUpperCase(),
+              orderNumber: orderReference(order.id),
               subOrderId: part.id,
+              cancelledBy: 'the customer',
             });
           }
         }).catch(() => {

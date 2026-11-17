@@ -135,6 +135,14 @@ async function buildPlatformInvoicePdf(
   return { source, pdf, filename: buildTaxInvoicePdfFilename(source.invoiceNo, 'platform') };
 }
 
+/** The invoice PDF for an email attachment: the same document the customer downloads, built by the platform. */
+export async function buildSubOrderInvoiceForEmail(orderId: string, subOrderId: string) {
+  const order = await loadOrder(orderId);
+  const sub = (((order as any).subOrders ?? []) as SubOrder[]).find((row) => row.id === subOrderId);
+  if (!sub) throw new NotFoundError('SubOrder');
+  return buildSubOrderInvoicePdf(order, sub, await hsnMapForOrder(order));
+}
+
 export async function getCustomerSubOrderInvoice(input: {
   userId: string;
   orderId: string;

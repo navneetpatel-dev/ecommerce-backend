@@ -21,7 +21,7 @@ import { OrderItem } from '@database/models/orderItem.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { Product } from '@database/models/product.model';
 import { User } from '@database/models/user.model';
-import { notificationsService } from '@modules/notifications/notifications.service';
+import { notifyReviewApproved, notifyReviewCreated, notifyReviewDecision, notifyReviewReplied } from '@modules/notifications/events/reviewEvents';
 import { settingsService } from '@modules/settings/settings.service';
 import { evaluateReviewModeration } from './reviewModerationDecision';
 import { logAudit } from '@modules/audit/audit.service';
@@ -110,6 +110,7 @@ export class ReviewsService {
         await this.recalculateProductRating(review.productId, t);
       }
 
+      t.afterCommit(() => void notifyReviewCreated(review.id));
       return review;
     });
   }
@@ -228,6 +229,7 @@ export class ReviewsService {
       // Recalculate product rating
       await this.recalculateProductRating(review.productId, t);
 
+      if (review.status === REVIEW_STATUS.APPROVED) t.afterCommit(() => void notifyReviewApproved(review.id));
       return review;
     });
   }
@@ -248,6 +250,7 @@ export class ReviewsService {
       // query only ever counts APPROVED rows regardless of what this review used to be.
       await this.recalculateProductRating(review.productId, t);
 
+      if (review.status === REVIEW_STATUS.REJECTED) t.afterCommit(() => void notifyReviewDecision(review.id, 'rejected', review.flaggedReason ?? undefined));
       return review;
     });
   }
@@ -265,11 +268,7 @@ export class ReviewsService {
     });
 
     if (cleanResponse.length > 0 && review.userId) {
-      void notificationsService.sendReviewReplied(review.userId, review.id, {
-        reviewId: review.id,
-        productId: review.productId,
-        productName: (review as any).product?.name,
-      });
+      void notifyReviewReplied(review.id, cleanResponse);
     }
 
     return updated;

@@ -19,6 +19,7 @@ import { isReversedPart } from '@modules/pricing/partReversal';
 import { walletService } from '@modules/wallet/wallet.service';
 import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
 import { env } from '@config/env';
+import { notifyCashbackCredited } from '@modules/notifications/events/walletEvents';
 
 /**
  * Credits pending cashback once per order (idempotent via cashbackCreditedAt).
@@ -94,6 +95,7 @@ export async function creditPendingCashbackForOrder(
         pointSource: WALLET_POINT_SOURCE.PROMOTIONAL,
       },
     );
+    transaction?.afterCommit(() => void notifyCashbackCredited(order.userId, order.id, proratedPending));
 
     const bearer = (order.cashbackDiscountBearer as DiscountBearer | null) ?? DISCOUNT_BEARER.PLATFORM;
     if (bearer === DISCOUNT_BEARER.VENDOR) {

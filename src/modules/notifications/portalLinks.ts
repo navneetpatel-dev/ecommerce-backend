@@ -36,10 +36,24 @@ const VENDOR_PAGE_BY_TYPE: Record<string, string> = {
   PAYOUT_FAILED: 'payouts',
   COUPON_USAGE_LIMIT: 'coupons',
   COUPON_EXPIRING: 'coupons',
+  KYC_DOCUMENT_RECEIVED: 'shop-settings',
+  KYC_DOCUMENT_APPROVED: 'shop-settings',
+  KYC_DOCUMENT_REJECTED: 'shop-settings',
+  KYC_PENDING_REMINDER: 'shop-settings',
+  VENDOR_STAFF_ROLE_CHANGED: 'overview',
+  VENDOR_RETURN_REQUESTED: 'returns',
+  VENDOR_NEW_QUESTION: 'qna',
+  VENDOR_NEW_REVIEW: 'reviews',
+  COMMISSION_INVOICE_READY: 'payouts',
+  VENDOR_WEEKLY_SUMMARY: 'analytics',
 };
 
 export function vendorDashboardUrl(notificationType: string): string {
   return `${clientBase()}/vendor/dashboard/${VENDOR_PAGE_BY_TYPE[notificationType] ?? 'overview'}`;
+}
+
+export function customerReturnUrl(returnId: string): string {
+  return returnId ? `${clientBase()}/my-returns/${encodeURIComponent(returnId)}` : `${clientBase()}/my-returns`;
 }
 
 export function walletUrl(): string {

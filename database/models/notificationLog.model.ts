@@ -16,11 +16,35 @@ export type NotificationType =
   | 'QUESTION_ANSWERED' | 'REVIEW_REPLIED' | 'VENDOR_ORDER_CANCELLED'
   | 'BUG_REPORT_TRIAGED' | 'BUG_REPORT_FIXED' | 'BUG_REPORT_WONT_FIX' | 'BUG_REPORT_DUPLICATE'
   | 'DELIVERY_ATTEMPT_FAILED'
-  | 'ADMIN_BROADCAST';
+  | 'ADMIN_BROADCAST'
+  | 'PASSWORD_CHANGED' | 'NEW_DEVICE_LOGIN' | 'ACCOUNT_DEACTIVATED' | 'ACCOUNT_REACTIVATED'
+  | 'NEWSLETTER_CONFIRM' | 'NEWSLETTER_WELCOME' | 'NEWSLETTER_UNSUBSCRIBED'
+  | 'CONTACT_ACKNOWLEDGEMENT'
+  | 'WALLET_RECHARGE_SUCCESS' | 'CASHBACK_CREDITED' | 'POINTS_EXPIRING'
+  | 'GIFT_CARD_PURCHASED' | 'GIFT_CARD_RECEIVED' | 'GIFT_CARD_REDEEMED'
+  | 'ORDER_OUT_FOR_DELIVERY' | 'CHECKOUT_PAYMENT_PENDING' | 'CHECKOUT_EXPIRED'
+  | 'RETURN_REQUESTED' | 'RETURN_APPROVED' | 'RETURN_REJECTED' | 'RETURN_PICKUP_SCHEDULED' | 'RETURN_RECEIVED'
+  | 'TICKET_AUTO_CLOSED' | 'TICKET_REOPEN_WINDOW_ENDING'
+  | 'REVIEW_PUBLISHED' | 'REVIEW_REJECTED' | 'WISHLIST_DIGEST'
+  | 'KYC_DOCUMENT_RECEIVED' | 'KYC_DOCUMENT_APPROVED' | 'KYC_PENDING_REMINDER'
+  | 'VENDOR_STAFF_INVITE' | 'VENDOR_STAFF_ROLE_CHANGED'
+  | 'VENDOR_RETURN_REQUESTED' | 'VENDOR_NEW_QUESTION' | 'VENDOR_NEW_REVIEW'
+  | 'COMMISSION_INVOICE_READY' | 'VENDOR_WEEKLY_SUMMARY'
+  | 'ADMIN_RETURN_ESCALATION' | 'ADMIN_NEW_BUG_REPORT' | 'ADMIN_CONTACT_ENQUIRY'
+  | 'ADMIN_SETTINGS_CHANGED' | 'ADMIN_DAILY_DIGEST';
 
 export class NotificationLog extends Model<InferAttributes<NotificationLog>, InferCreationAttributes<NotificationLog>> {
   declare id: CreationOptional<string>;
-  declare userId: string;
+  declare userId: string | null;
+  /** Set when the recipient is not a registered user (subscriber, contact enquiry, gift-card recipient). */
+  declare recipientEmail: string | null;
+  /** What the email is rendered from, kept so a stuck or failed email can be re-sent. */
+  declare payload: Record<string, unknown> | null;
+  declare attempts: CreationOptional<number>;
+  /** Why it failed: TEMPORARY, PERMANENT, RENDER, RECIPIENT, CONFIG or UNCERTAIN (null when it did not fail). */
+  declare errorCategory: CreationOptional<string | null>;
+  /** Set when a send starts; a leftover value means a worker died mid-send. */
+  declare sendingAt: CreationOptional<Date | null>;
   declare type: NotificationType;
   declare referenceType: string;
   declare referenceId: string;
@@ -45,7 +69,12 @@ export const initNotificationLogModel = (sequelize: Sequelize) => {
   NotificationLog.init(
     {
       id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
-      userId: { type: DataTypes.UUID, allowNull: false },
+      userId: { type: DataTypes.UUID, allowNull: true },
+      recipientEmail: { type: DataTypes.STRING(255), allowNull: true },
+      payload: { type: DataTypes.JSONB, allowNull: true },
+      attempts: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+      errorCategory: { type: DataTypes.STRING(20), allowNull: true },
+      sendingAt: { type: DataTypes.DATE, allowNull: true },
       type: { type: DataTypes.STRING, allowNull: false },
       referenceType: { type: DataTypes.STRING, allowNull: false },
       referenceId: { type: DataTypes.STRING(191), allowNull: false },

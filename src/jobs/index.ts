@@ -2,6 +2,7 @@ import type { Worker } from 'bullmq';
 import { areQueuesReady } from '@config/queue';
 import { logger } from '@core/logger';
 import { startEmailWorkers, stopEmailWorkers } from './email.processor';
+import { startEmailSweeper, stopEmailSweeper } from './emailSweeper.job';
 import { startNotificationScheduler, stopNotificationScheduler } from './notificationScheduler.job';
 import { startProductAffinityScheduler, stopProductAffinityScheduler } from './productAffinity.processor';
 import { startReportExportWorker, stopReportExportWorker } from './reportExport.processor';
@@ -33,6 +34,7 @@ export async function startBackgroundWorkers(): Promise<void> {
   }
 
   startNotificationScheduler();
+  startEmailSweeper();
   startProductAffinityScheduler();
   workersStarted = true;
   logger.info('Background workers ready');
@@ -40,6 +42,7 @@ export async function startBackgroundWorkers(): Promise<void> {
 
 export async function stopBackgroundWorkers(): Promise<void> {
   stopNotificationScheduler();
+  stopEmailSweeper();
   stopProductAffinityScheduler();
   await stopEmailWorkers(emailWorkers);
   await stopReportExportWorker(reportExportWorker);

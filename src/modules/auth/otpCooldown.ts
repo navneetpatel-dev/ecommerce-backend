@@ -10,6 +10,12 @@ export const OTP_RESEND_COOLDOWN_SECONDS = 60;
  * If Redis is unavailable the code is sent, as before.
  */
 export const otpCooldown = {
+  /** Frees the minute again when the code could not be sent, so the shopper can try right away. */
+  async release(email: string): Promise<void> {
+    const digest = crypto.createHash('sha256').update(email.trim().toLowerCase()).digest('hex').slice(0, 32);
+    await withRedis(() => redisClient.del(`otp:cooldown:${digest}`));
+  },
+
   async claim(email: string): Promise<boolean> {
     const digest = crypto.createHash('sha256').update(email.trim().toLowerCase()).digest('hex').slice(0, 32);
     const key = `otp:cooldown:${digest}`;

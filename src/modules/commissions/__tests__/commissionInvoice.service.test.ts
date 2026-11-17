@@ -12,6 +12,7 @@ import {
 
 const transaction = {
   LOCK: { UPDATE: 'UPDATE', SHARE: 'SHARE' },
+  afterCommit: () => undefined,
 } as unknown as Transaction;
 
 /**

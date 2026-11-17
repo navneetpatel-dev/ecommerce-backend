@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { Op } from 'sequelize';
 import { sequelize } from '@database/models';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
+import { OrderItem } from '@database/models/orderItem.model';
 import { Payout } from '@database/models/payout.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { Vendor } from '@database/models/vendor.model';
@@ -206,6 +207,43 @@ describe('PayoutsService.process return-window and dispute hold', () => {
 
     assert.equal(created.length, 0);
     assert.equal(create.mock.callCount(), 0, 'no FAILED payout and no failure notice');
+  });
+
+  it('leaves sales delivered after the payout-cycle boundary for the next run', async () => {
+    mock.method(settingsService, 'getPlatformSettings', async () => ({
+      tdsRatePercent: 0,
+      commissionGstRatePercent: 18,
+      defaultReturnWindow: 7,
+      payoutCycle: 'MONTHLY',
+    }));
+    const delivered = (daysAgo: number) => ({ shipment: { deliveredAt: new Date(Date.now() - daysAgo * 86_400_000) } });
+    const rows = [
+      // Delivered long before this month began: settled.
+      { id: 'cl-old', vendorId: 'vendor-1', subOrderId: 'so-old', createdAt: new Date(), netPayoutAmountPaise: 10000, commissionAmountPaise: 0, taxableAmountPaise: 10000, referenceType: null, SubOrder: { orderId: 'o-1', ...delivered(90) } },
+      // Delivered after the 1st of this month: waits for the next monthly run.
+      { id: 'cl-new', vendorId: 'vendor-1', subOrderId: 'so-new', createdAt: new Date(), netPayoutAmountPaise: 20000, commissionAmountPaise: 0, taxableAmountPaise: 20000, referenceType: null, SubOrder: { orderId: 'o-2', deliveredAt: undefined, shipment: { deliveredAt: new Date() } } },
+    ];
+    const lockedIds: string[][] = [];
+    mock.method(OrderItem, 'findAll', async () => [] as never);
+    mock.method(CommissionLedger, 'findAll', async (options: { where?: { id?: Record<symbol, string[]> } }) => {
+      const ids = options.where?.id?.[Op.in];
+      if (ids) {
+        lockedIds.push(ids);
+        return rows.filter((row) => ids.includes(row.id)) as never;
+      }
+      return rows as never;
+    });
+    mock.method(sequelize, 'transaction', async (callback: (t: { LOCK: { UPDATE: string } }) => Promise<unknown>) =>
+      callback({ LOCK: { UPDATE: 'UPDATE' } }),
+    );
+    mock.method(Payout, 'create', async () => ({ id: 'payout-x' }) as never);
+    mock.method(CommissionLedger, 'update', async () => [1] as never);
+
+    await payoutsService.process('actor-1').catch(() => undefined);
+
+    // Only the old sale was ever considered for settlement.
+    assert.ok(lockedIds.length > 0);
+    assert.deepEqual(lockedIds[0], ['cl-old']);
   });
 
   it('carries ledgers forward when vendor-borne cashback cost exceeds the sales', async () => {

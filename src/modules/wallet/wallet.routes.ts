@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authenticate } from '@middleware/auth.middleware';
+import { blockNewPurchasesDuringMaintenance } from '@middleware/maintenance.middleware';
 import { validate } from '@middleware/validate.middleware';
 import { validateCreateWalletRecharge } from './walletRecharge.middleware';
 import { reportExportGuard } from '@modules/reports/reportExportGuard';
@@ -15,6 +16,7 @@ router.get('/balance', authenticate, walletController.getBalance);
 router.post(
   '/recharge',
   authenticate,
+  blockNewPurchasesDuringMaintenance,
   validateCreateWalletRecharge,
   walletController.createRecharge,
 );

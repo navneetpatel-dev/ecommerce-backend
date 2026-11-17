@@ -25,7 +25,7 @@ type AuditRow = { actorId: string; action: string; entityId: string };
 function stubInfrastructure(): AuditRow[] {
   const audit: AuditRow[] = [];
   mock.method(sequelize, 'transaction', async (callback: (t: unknown) => Promise<unknown>) =>
-    callback({ LOCK: { UPDATE: 'UPDATE' } }),
+    callback({ LOCK: { UPDATE: 'UPDATE' }, afterCommit: () => undefined }),
   );
   mock.method(AuditLog, 'create', async (row: AuditRow) => {
     audit.push(row);

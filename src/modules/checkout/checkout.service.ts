@@ -71,6 +71,7 @@ import { tdsRateForSale } from '@modules/pricing/tds194o';
 import { preGstCouponBreakdown } from './couponUsageAmounts';
 import { discardUnreachedOrder } from './paymentProviderErrors';
 import { taxService } from '@modules/tax/tax.service';
+import { orderReference } from '@modules/orders/orderReference';
 
 /** Flat platform fee for checkout-time gift wrapping (v1: hardcoded, not vendor-specific). */
 export const GIFT_WRAP_FEE_RUPEES = 49;
@@ -960,10 +961,10 @@ export class CheckoutService {
         { transaction: t },
       );
 
-      void notificationsService.sendOrderCancelled(order.userId, order.id, {
+      t.afterCommit(() => void notificationsService.sendOrderCancelled(order.userId, order.id, {
         orderId: order.id,
-        orderNumber: order.id.slice(0, 8).toUpperCase(),
-      });
+        orderNumber: orderReference(order.id),
+      }));
 
       return { restored: true, orderId: order.id };
     });

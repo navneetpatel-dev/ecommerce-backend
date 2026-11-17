@@ -24,7 +24,7 @@ describe('CheckoutService.cancelPendingCheckout coupon rollback', () => {
 
   it('destroys CouponUsage and decrements Coupon.usedCount', async () => {
     mock.method(sequelize, 'transaction', async (callback: (t: unknown) => Promise<unknown>) => {
-      return callback({ LOCK: { UPDATE: 'UPDATE' } });
+      return callback({ LOCK: { UPDATE: 'UPDATE' }, afterCommit: () => undefined });
     });
 
     const mockOrder = {
@@ -83,7 +83,7 @@ describe('CheckoutService.createOrderFromCart stock lock', () => {
 
   it('checks stock against the variant total when a cart holds two lines of it', async () => {
     mock.method(sequelize, 'transaction', async (callback: (t: unknown) => Promise<unknown>) =>
-      callback({ LOCK: { UPDATE: 'UPDATE' } }),
+      callback({ LOCK: { UPDATE: 'UPDATE' }, afterCommit: () => undefined }),
     );
     const variant = {
       id: 'var-1',

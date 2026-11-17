@@ -1,59 +1,77 @@
 import { env } from '@config/env';
-import { sendEmail } from '@config/mail';
-import { escapeHtml, renderEmailLayout } from '@modules/notifications/templates/layout';
 import { GiftCard } from '@database/models/giftCard.model';
 import { User } from '@database/models/user.model';
 import { logger } from '@core/logger';
+import { notificationsService } from '@modules/notifications/notifications.service';
+import { inr } from '@modules/notifications/templates/blocks';
 
-function formatInr(amount: number): string {
-  return amount.toLocaleString('en-IN', {
-    style: 'currency',
-    currency: 'INR',
-    maximumFractionDigits: 0,
-  });
-}
+const redeemUrl = (code: string) => `${env.CLIENT_URL.replace(/\/$/, '')}/gift-cards/redeem/${code}`;
 
 /**
- * Sent directly via the raw mail transport (not the NotificationLog/enqueue
- * pipeline) because the recipient is an arbitrary email address, not
- * necessarily a registered User — enqueue() requires a User row.
+ * Emails a purchased gift card: the card itself to its recipient (who may not have an
+ * account), and a confirmation to the buyer. Both go through the normal mail queue, so
+ * they are logged, retried and styled like every other email. A resend uses a fresh
+ * reference, otherwise the duplicate guard would swallow it. Resolves true once the card
+ * is queued for its recipient.
  */
-/** Resolves true once the email is handed to the mail provider; failures are logged, not thrown. */
-export async function sendGiftCardPurchasedEmail(giftCard: GiftCard): Promise<boolean> {
-  const purchaser = await User.findByPk(giftCard.purchaserId, { attributes: ['name', 'email'] });
-  const purchaserLabel = escapeHtml(purchaser?.name || purchaser?.email || 'Someone');
-  const amount = formatInr(Number(giftCard.amount));
-  const base = env.CLIENT_URL.replace(/\/$/, '');
-  const redeemUrl = `${base}/gift-cards/redeem/${giftCard.code}`;
-
-  const greeting = giftCard.recipientName ? `Hi ${escapeHtml(giftCard.recipientName)},` : 'Hi,';
-  const messageLine = giftCard.message
-    ? ` with a message: &ldquo;${escapeHtml(giftCard.message)}&rdquo;`
-    : '';
-  const subject = `You've received a ${amount} gift card`;
-  const bodyHtml = `<p>${greeting}</p><p>${purchaserLabel} sent you a gift card worth ${amount}${messageLine}.</p><p>Redeem it below to add the balance straight to your wallet.</p>`;
-
-  const rendered = renderEmailLayout({
-    preview: subject,
-    title: subject,
-    bodyHtml,
-    ctaLabel: 'Redeem gift card',
-    ctaUrl: redeemUrl,
-  });
-
+export async function sendGiftCardPurchasedEmail(giftCard: GiftCard, options: { resend?: boolean } = {}): Promise<boolean> {
   try {
-    await sendEmail({
-      to: giftCard.recipientEmail,
-      subject,
-      html: rendered.html,
-      text: rendered.text,
+    const purchaser = await User.findByPk(giftCard.purchaserId, { attributes: ['name', 'email'] });
+    const suffix = options.resend ? `-${Date.now()}` : '';
+    const amount = Number(giftCard.amount);
+    const received = await notificationsService.enqueue({
+      to: { email: giftCard.recipientEmail, name: giftCard.recipientName },
+      type: 'GIFT_CARD_RECEIVED',
+      referenceType: 'GiftCard',
+      referenceId: `${giftCard.id}${suffix}`,
+      templateData: {
+        customerName: giftCard.recipientName,
+        name: giftCard.recipientName,
+        purchaserName: purchaser?.name || purchaser?.email || 'Someone',
+        amount,
+        message: giftCard.message ?? '',
+        codeBox: { code: giftCard.code, caption: `Worth ${inr(amount).replace('.00', '')} · valid until ${giftCard.expiresAt.toISOString().slice(0, 10)}` },
+        actionUrl: redeemUrl(giftCard.code),
+      },
     });
-    return true;
+    if (!options.resend) {
+      await notificationsService.enqueue({
+        userId: giftCard.purchaserId,
+        type: 'GIFT_CARD_PURCHASED',
+        referenceType: 'GiftCard',
+        referenceId: giftCard.id,
+        templateData: {
+          amount,
+          recipientName: giftCard.recipientName || giftCard.recipientEmail,
+          details: [
+            { label: 'Sent to', value: giftCard.recipientEmail },
+            ...(giftCard.message ? [{ label: 'Your message', value: giftCard.message }] : []),
+            { label: 'Valid until', value: giftCard.expiresAt.toISOString().slice(0, 10) },
+          ],
+        },
+      });
+    }
+    return received != null;
   } catch (error) {
-    logger.error('Failed to send gift card email', {
-      giftCardId: giftCard.id,
-      error: error instanceof Error ? error.message : error,
-    });
+    logger.error('Failed to queue gift card email', { giftCardId: giftCard.id, error: error instanceof Error ? error.message : error });
     return false;
+  }
+}
+
+/** The recipient redeemed the card: let the buyer know their gift landed. */
+export async function notifyGiftCardRedeemed(giftCardId: string): Promise<void> {
+  try {
+    const card = await GiftCard.findByPk(giftCardId);
+    if (!card) return;
+    const redeemer = card.redeemedByUserId ? await User.findByPk(card.redeemedByUserId, { attributes: ['name'] }) : null;
+    await notificationsService.enqueue({
+      userId: card.purchaserId,
+      type: 'GIFT_CARD_REDEEMED',
+      referenceType: 'GiftCardRedeemed',
+      referenceId: card.id,
+      templateData: { amount: Number(card.amount), recipientName: card.recipientName || redeemer?.name || card.recipientEmail },
+    });
+  } catch (error) {
+    logger.warn('Gift card redeemed email failed', { giftCardId, error: error instanceof Error ? error.message : error });
   }
 }

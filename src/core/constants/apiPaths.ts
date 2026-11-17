@@ -25,6 +25,7 @@ export const API_MOUNTS = {
   notifications: '/notifications',
   inventory: '/inventory',
   newsletter: '/newsletter',
+  contact: '/contact',
   webVitals: '/web-vitals',
   audit: '/audit',
   settings: '/settings',

@@ -43,6 +43,9 @@ import type { GetSubOrdersQuery } from './suborders.dto';
 import { issueTaxInvoicesOnDispatch } from '@modules/pricing/taxInvoiceIssue';
 import { destroyCouponUsageForOrder } from '@modules/coupons/couponEngine';
 import { isReversedPart } from '@modules/pricing/partReversal';
+import { orderReference } from '@modules/orders/orderReference';
+import { buildOrderEmailData } from '@modules/notifications/orderEmailData';
+import { notifySubOrderDelivered } from '@modules/notifications/events/orderEvents';
 
 /** A part's shipment: its carrier, tracking and delivery status. */
 const shipmentInclude = {
@@ -397,19 +400,20 @@ export class SubordersService {
 
     const order = (suborder as SubOrder & { order?: Order }).order;
     if (order?.userId) {
-      const orderNumber = order.id.slice(0, 8).toUpperCase();
+      const orderNumber = orderReference(order.id);
       if (status === ORDER_STATUS.SHIPPED) {
-        void notificationsService.sendSubOrderShipped(order.userId, suborder.id, {
-          orderId: order.id,
-          orderNumber,
-          trackingId: suborder.trackingId,
-        });
+        // The tax invoice is issued at dispatch, so the shipped email is the one that carries it.
+        void buildOrderEmailData(order.id, { subOrderId: suborder.id, withAddress: true }).then((rich) =>
+          notificationsService.sendSubOrderShipped(
+            order.userId,
+            suborder.id,
+            { orderId: order.id, orderNumber, trackingId: suborder.trackingId, ...rich },
+            [{ kind: 'taxInvoice', subOrderId: suborder.id }],
+          ),
+        );
       }
       if (status === ORDER_STATUS.DELIVERED) {
-        void notificationsService.sendSubOrderDelivered(order.userId, suborder.id, {
-          orderId: order.id,
-          orderNumber,
-        });
+        void notifySubOrderDelivered(order.id, suborder.id);
       }
       if (status === ORDER_STATUS.CANCELLED) {
         // The whole order only once its last part goes: an "order cancelled" email for one
@@ -429,6 +433,7 @@ export class SubordersService {
                 orderId: order.id,
                 orderNumber,
                 subOrderId: suborder.id,
+                cancelledBy: cancelledByRole === 'ADMIN' ? 'the marketplace team' : 'the customer',
               });
             }
           }).catch(() => {

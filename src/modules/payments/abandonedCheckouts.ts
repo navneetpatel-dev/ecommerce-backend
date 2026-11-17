@@ -2,10 +2,10 @@ import { Op } from 'sequelize';
 import { env } from '@config/env';
 import { Order } from '@database/models/order.model';
 import { ORDER_STATUS, PAYMENT_METHOD, PAYMENT_STATUS } from '@core/constants/statuses';
-import { notificationsService } from '@modules/notifications/notifications.service';
 import { paymentsService } from './payments.service';
 import { razorpayOrderPayments } from './razorpayOrderPayments';
 import { unpaidOrders } from './unpaidOrderCancel';
+import { notifyCheckoutExpired } from '@modules/notifications/events/orderEvents';
 
 const BATCH_SIZE = 100;
 /** Batches per run: enough to get past orders it must leave alone, bounded per run. */
@@ -75,9 +75,6 @@ async function settleAbandonedCheckout(order: Order, run: AbandonedCheckoutRun):
   const cancelledOrderId = await unpaidOrders.cancel({ id: order.id });
   if (cancelledOrderId) {
     run.expired += 1;
-    void notificationsService.sendOrderCancelled(order.userId, cancelledOrderId, {
-      orderId: cancelledOrderId,
-      orderNumber: cancelledOrderId.slice(0, 8).toUpperCase(),
-    });
+    void notifyCheckoutExpired(cancelledOrderId);
   }
 }

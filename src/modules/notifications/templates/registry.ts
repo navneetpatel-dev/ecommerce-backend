@@ -1,10 +1,25 @@
 import type { NotificationType } from '@database/models/notificationLog.model';
-import { env } from '@config/env';
+import { logger } from '@core/logger';
 import { EMAIL_COPY, formatEmailCopy } from '../emailCopy';
-import { bugReportPortalUrl, customerOrderUrl, ticketPortalUrlForGroup, vendorDashboardUrl, walletUrl } from '../portalLinks';
-import { escapeHtml, renderEmailLayout } from './layout';
+import {
+  bulletList,
+  callout,
+  codeBox,
+  detailsTable,
+  inr,
+  itemsTable,
+  paragraph,
+  totalsTable,
+  type EmailBlock,
+  type EmailItem,
+  type EmailRow,
+} from './blocks';
+import { defaultCta, str, type EmailTemplateData } from './cta';
+import { renderEmailLayout } from './layout';
+import { emailMeta, MARKETING_TYPES, SECURITY_TYPES } from './meta';
+import type { EmailTone } from './theme';
 
-export type EmailTemplateData = Record<string, unknown>;
+export type { EmailTemplateData };
 
 export type RenderedEmail = {
   subject: string;
@@ -12,188 +27,121 @@ export type RenderedEmail = {
   text: string;
 };
 
-function str(data: EmailTemplateData, key: string, fallback = ''): string {
-  const value = data[key];
-  if (value == null) return fallback;
-  return String(value);
-}
+export type RenderOptions = { theme?: 'auto' | 'light' | 'dark' };
 
-/** Rupee amounts as shoppers read them: Indian grouping, two decimals (3,863.21). */
+/** Rupee amounts as the copy writes them after its own "₹": Indian grouping, two decimals. */
 function money(data: EmailTemplateData, key: string): string {
-  const raw = data[key];
-  if (raw == null || raw === '') return '';
-  const value = Number(raw);
-  if (!Number.isFinite(value)) return String(raw);
-  return value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return inr(data[key]).replace(/^₹/, '');
 }
 
 function greeting(data: EmailTemplateData): string {
   const name = str(data, 'customerName') || str(data, 'name');
-  return name
-    ? formatEmailCopy(EMAIL_COPY.greetings.withName, { name })
-    : EMAIL_COPY.greetings.anonymous;
+  return name ? formatEmailCopy(EMAIL_COPY.greetings.withName, { name }) : EMAIL_COPY.greetings.anonymous;
 }
 
-function subjectFor(type: NotificationType, data: EmailTemplateData): string {
-  const template =
-    EMAIL_COPY.subjects[type] ?? `Notification from ${EMAIL_COPY.brandName}`;
-  return formatEmailCopy(template, {
-    orderNumber: str(data, 'orderNumber', str(data, 'orderId', '')),
-    productName: str(data, 'productName'),
-    code: str(data, 'code'),
-    expiresInMinutes: str(data, 'expiresInMinutes', '5'),
-    brand: EMAIL_COPY.brandName,
-    reportType: str(data, 'reportType'),
-    ticketNumber: str(data, 'ticketNumber'),
-    reportNumber: str(data, 'reportNumber'),
-    subject: str(data, 'subject'),
-  });
-}
+/** Placeholders whose value may legitimately be empty (they are optional sentence endings). */
+const OPTIONAL_VARS = new Set([
+  'trackingSuffix', 'businessNameSuffix', 'reason', 'reasonSuffix', 'orderSuffix', 'messageSuffix',
+  'expiresSuffix', 'nextStep', 'progressSuffix', 'replyWindow', 'message',
+]);
 
-function bodyFor(type: NotificationType, data: EmailTemplateData): string {
-  const template =
-    EMAIL_COPY.bodies[type] ??
-    'You have a new notification from {brand}. Sign in to your account for details.';
-  return formatEmailCopy(template, {
+/**
+ * Every value a subject or body can name. Scalars from the data are available as-is, so a
+ * sender that passes `vendorName` can use `{vendorName}` in the copy; the entries below
+ * add money formatting and the optional sentence endings.
+ */
+function copyVars(data: EmailTemplateData): Record<string, string> {
+  const vars: Record<string, string> = {};
+  for (const key of Object.keys(data)) {
+    const value = data[key];
+    if (value != null && typeof value !== 'object') vars[key] = String(value);
+  }
+  const orderNumber = str(data, 'orderNumber', str(data, 'orderId'));
+  const reason = str(data, 'reason');
+  const messageText = str(data, 'message');
+  const expiresAt = str(data, 'expiresAt');
+  const nextStep = str(data, 'nextStep');
+  const progress = str(data, 'progress');
+  const businessName = str(data, 'businessName');
+  return {
+    ...vars,
     brand: EMAIL_COPY.brandName,
-    orderNumber: str(data, 'orderNumber', str(data, 'orderId')),
+    orderNumber,
     total: money(data, 'total'),
     subtotal: money(data, 'subtotal'),
     amount: money(data, 'amount'),
-    expiresInMinutes: str(data, 'expiresInMinutes', '5'),
-    paymentMethod: str(data, 'paymentMethod'),
-    paymentReferenceNumber: str(data, 'paymentReferenceNumber'),
-    status: str(data, 'status'),
-    statusText: str(data, 'statusText', `updated (${str(data, 'status')})`),
-    reason: str(data, 'reason', '—'),
-    businessName: str(data, 'businessName'),
-    businessNameSuffix: str(data, 'businessName')
-      ? ` for ${str(data, 'businessName')}`
-      : '',
-    productName: str(data, 'productName'),
-    sku: str(data, 'sku'),
-    stock: str(data, 'stock'),
-    stockList: str(data, 'stockList', `${str(data, 'productName')} (${str(data, 'sku')}): ${str(data, 'stock')} left`),
     price: money(data, 'price'),
-    code: str(data, 'code'),
-    usedCount: str(data, 'usedCount'),
-    usageLimit: str(data, 'usageLimit'),
-    expiresAt: str(data, 'expiresAt'),
-    trackingSuffix: str(data, 'trackingId')
-      ? ` (tracking: ${str(data, 'trackingId')})`
-      : '',
-    trackingNumber: str(data, 'trackingNumber'),
-    reportType: str(data, 'reportType'),
-    rowCount: str(data, 'rowCount'),
-    ticketNumber: str(data, 'ticketNumber'),
-    subject: str(data, 'subject'),
-    reportNumber: str(data, 'reportNumber'),
-    title: str(data, 'title'),
-    amountInr: str(data, 'amountInr'),
-    reasonMessage: str(data, 'reasonMessage'),
+    expiresInMinutes: str(data, 'expiresInMinutes', '5'),
+    statusText: str(data, 'statusText', `updated (${str(data, 'status')})`),
+    reason: reason || '—',
+    reasonSuffix: reason ? ` (${reason})` : '',
+    businessNameSuffix: businessName ? ` for ${businessName}` : '',
+    trackingSuffix: str(data, 'trackingId') ? ` (tracking: ${str(data, 'trackingId')})` : '',
+    stockList: str(data, 'stockList', `${str(data, 'productName')} (${str(data, 'sku')}): ${str(data, 'stock')} left`),
     slaDays: str(data, 'slaDays', '5–7'),
-    message: str(data, 'message'),
-  });
+    orderSuffix: orderNumber ? ` for order #${orderNumber}` : '',
+    messageSuffix: messageText ? ` with a message: “${messageText}”` : '',
+    expiresSuffix: expiresAt ? ` (by ${expiresAt})` : '',
+    nextStep: nextStep ? ` ${nextStep}` : '',
+    progressSuffix: progress ? ` ${progress}` : '',
+    replyWindow: str(data, 'replyWindow', 'within 1–2 business days'),
+    recipientName: str(data, 'recipientName', 'your recipient'),
+    purchaserName: str(data, 'purchaserName', 'Someone'),
+    inviterName: str(data, 'inviterName', 'A team owner'),
+    period: str(data, 'period'),
+  };
 }
 
-function defaultCta(type: NotificationType, data: EmailTemplateData): { label?: string; url?: string } {
-  const base = env.CLIENT_URL.replace(/\/$/, '');
-  switch (type) {
-    case 'EMAIL_VERIFICATION':
-      return {
-        label: EMAIL_COPY.ctaVerifyEmail,
-        url: str(data, 'actionUrl', `${base}/verify-email`),
-      };
-    case 'PASSWORD_RESET':
-      return {
-        label: EMAIL_COPY.ctaResetPassword,
-        url: str(data, 'actionUrl', `${base}/reset-password`),
-      };
-    case 'LOGIN_OTP':
-      return { label: 'Enter sign-in code', url: str(data, 'actionUrl', `${base}/otp`) };
-    case 'ORDER_CONFIRMATION':
-    case 'PAYMENT_RECEIPT':
-    case 'PAYMENT_FAILED':
-    case 'ORDER_CANCELLED':
-    case 'SUBORDER_CANCELLED':
-    case 'ORDER_RETURNED':
-    case 'REFUND_PROCESSED':
-    case 'REFUND_INITIATED':
-    case 'SUBORDER_SHIPPED':
-    case 'SUBORDER_DELIVERED':
-      return {
-        label: EMAIL_COPY.ctaViewOrder,
-        url: str(data, 'actionUrl', customerOrderUrl(str(data, 'orderId'))),
-      };
-    case 'REVIEW_REQUEST':
-      return {
-        label: EMAIL_COPY.ctaLeaveReview,
-        url: str(data, 'actionUrl', customerOrderUrl(str(data, 'orderId'))),
-      };
-    case 'ABANDONED_CART':
-      return { label: EMAIL_COPY.ctaViewCart, url: str(data, 'actionUrl', `${base}/cart`) };
-    case 'WALLET_RECHARGE_FAILED':
-      return { label: 'View wallet', url: str(data, 'actionUrl', walletUrl()) };
-    case 'VENDOR_APPROVED':
-    case 'VENDOR_NEW_ORDER':
-    case 'LOW_STOCK_ALERT':
-    case 'PAYOUT_PROCESSED':
-    case 'PAYOUT_PAID':
-    case 'PAYOUT_FAILED':
-    case 'PRODUCT_APPROVED':
-    case 'PRODUCT_REJECTED':
-    case 'COUPON_USAGE_LIMIT':
-    case 'COUPON_EXPIRING':
-      return {
-        label: EMAIL_COPY.ctaVendorDashboard,
-        url: str(data, 'actionUrl', vendorDashboardUrl(type)),
-      };
-    case 'COUPON_OFFER_EXPIRING':
-      return { label: EMAIL_COPY.ctaViewCart, url: str(data, 'actionUrl', `${base}/cart`) };
-    case 'TICKET_CREATED':
-    case 'TICKET_REPLIED':
-    case 'TICKET_RESOLVED':
-    case 'TICKET_REOPENED': {
-      const ticketId = str(data, 'ticketId', '');
-      const portalGroupRaw = str(data, 'portalGroup', 'customer');
-      const portalGroup =
-        portalGroupRaw === 'admin' || portalGroupRaw === 'vendor' ? portalGroupRaw : 'customer';
-      return {
-        label: EMAIL_COPY.ctaViewTicket,
-        url: str(data, 'actionUrl', ticketPortalUrlForGroup(ticketId, portalGroup)),
-      };
-    }
-    case 'BUG_REPORT_TRIAGED':
-    case 'BUG_REPORT_FIXED':
-    case 'BUG_REPORT_WONT_FIX':
-    case 'BUG_REPORT_DUPLICATE': {
-      // Prefer caller actionUrl. If missing, use role-aware portal when reporterRole is present;
-      // otherwise a neutral support path (do not assume customer vs vendor incorrectly).
-      const bugReportId = str(data, 'bugReportId', '');
-      const reporterRole = str(data, 'reporterRole', '');
-      const fallback =
-        bugReportId && reporterRole
-          ? bugReportPortalUrl(bugReportId, reporterRole)
-          : `${base}/support/bug-reports/${bugReportId}`;
-      return {
-        label: EMAIL_COPY.ctaViewBugReport,
-        url: str(data, 'actionUrl', fallback),
-      };
-    }
-    case 'DELIVERY_ATTEMPT_FAILED':
-      return { label: EMAIL_COPY.ctaTrackShipment, url: str(data, 'actionUrl', `${base}/orders/tracking`) };
-    default:
-      return { label: EMAIL_COPY.ctaOpenStore, url: base };
+/** Fills a template; if a required value is missing it returns null so the caller can fall back. */
+function fill(template: string, vars: Record<string, string>): string | null {
+  for (const match of template.matchAll(/\{(\w+)\}/g)) {
+    const key = match[1]!;
+    if (!OPTIONAL_VARS.has(key) && !vars[key]) return null;
   }
+  return formatEmailCopy(template, vars);
 }
 
-const MARKETING_TYPES = new Set<NotificationType>([
-  'REVIEW_REQUEST',
-  'ABANDONED_CART',
-  'PRICE_DROP_ALERT',
-  'BACK_IN_STOCK',
-  'COUPON_OFFER_EXPIRING',
-]);
+function asRows(value: unknown): EmailRow[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === 'object')
+    .map((row) => ({ label: String(row.label ?? ''), value: String(row.value ?? ''), strong: row.strong === true }))
+    .filter((row) => row.label && row.value);
+}
+
+function asItems(value: unknown): EmailItem[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+    .map((item) => ({
+      name: String(item.name ?? ''),
+      meta: item.meta ? String(item.meta) : undefined,
+      quantity: Number(item.quantity ?? 1) || 1,
+      price: String(item.price ?? ''),
+      imageUrl: item.imageUrl ? String(item.imageUrl) : null,
+    }))
+    .filter((item) => item.name);
+}
+
+/** The rich sections a sender asks for through its data: items, totals, details, code, notes. */
+function sectionBlocks(data: EmailTemplateData): EmailBlock[] {
+  const blocks: EmailBlock[] = [];
+  const note = data.callout as { text?: unknown; tone?: unknown } | undefined;
+  if (note && typeof note === 'object' && note.text) {
+    blocks.push(callout(String(note.text), (['info', 'success', 'warning', 'danger'].includes(String(note.tone)) ? note.tone : 'info') as EmailTone));
+  }
+  const code = data.codeBox as { code?: unknown; caption?: unknown } | undefined;
+  if (code && typeof code === 'object' && code.code) blocks.push(codeBox(String(code.code), code.caption ? String(code.caption) : undefined));
+  const items = asItems(data.items);
+  if (items.length) blocks.push(itemsTable(items, str(data, 'itemsTitle', 'Items')));
+  const totals = asRows(data.totals);
+  if (totals.length) blocks.push(totalsTable(totals));
+  const details = asRows(data.details);
+  if (details.length) blocks.push(detailsTable(details, str(data, 'detailsTitle') || undefined));
+  const bullets = Array.isArray(data.bullets) ? data.bullets.map(String).filter(Boolean) : [];
+  if (bullets.length) blocks.push(bulletList(bullets));
+  return blocks;
+}
 
 export function isMarketingNotification(type: NotificationType): boolean {
   return MARKETING_TYPES.has(type);
@@ -202,25 +150,46 @@ export function isMarketingNotification(type: NotificationType): boolean {
 export function renderNotificationEmail(
   type: NotificationType,
   data: EmailTemplateData,
+  options: RenderOptions = {},
 ): RenderedEmail {
-  const subject = subjectFor(type, data);
-  const greetingLine = greeting(data);
-  const body = bodyFor(type, data);
+  const vars = copyVars(data);
+  const subjectTemplate = EMAIL_COPY.subjects[type] ?? EMAIL_COPY.fallbackSubject;
+  const bodyTemplate = EMAIL_COPY.bodies[type] ?? EMAIL_COPY.fallbackBody;
+  let subject = fill(subjectTemplate, vars);
+  let body = fill(bodyTemplate, vars);
+  if (subject === null || body === null) {
+    // A sender left out something the copy names; a sentence with a hole reads as a bug.
+    logger.warn('Email copy is missing data, using generic wording', { type });
+    subject ??= formatEmailCopy(EMAIL_COPY.fallbackSubject, vars);
+    body ??= formatEmailCopy(EMAIL_COPY.fallbackBody, vars);
+  }
+
   const cta = defaultCta(type, data);
-  const bodyHtml = `<p>${escapeHtml(greetingLine)}</p><p>${escapeHtml(body)}</p>`;
+  const marketing = isMarketingNotification(type);
+  const unsubscribeUrl = str(data, 'unsubscribeUrl');
+  // The sign-in code is the point of its email: show it large, whether or not the sender built the box.
+  const withCode: EmailTemplateData =
+    type === 'LOGIN_OTP' && str(data, 'code') && !data.codeBox
+      ? { ...data, codeBox: { code: str(data, 'code'), caption: `Expires in ${str(data, 'expiresInMinutes', '5')} minutes · one use only` } }
+      : data;
+  const blocks = [paragraph(greeting(data)), paragraph(body), ...sectionBlocks(withCode)];
+
   const rendered = renderEmailLayout({
     preview: body,
     title: subject,
-    bodyHtml,
-    ctaLabel: cta.label,
+    eyebrow: emailMeta(type).group,
+    blocks,
+    ctaLabel: str(data, 'ctaLabel') || cta.label,
     ctaUrl: cta.url,
-    footerNote: isMarketingNotification(type)
+    footerNote: marketing || type === 'NEWSLETTER_WELCOME'
       ? EMAIL_COPY.footerUnsubscribe
-      : EMAIL_COPY.footerHelp,
-    footerLink:
-      isMarketingNotification(type) && str(data, 'unsubscribeUrl')
-        ? { label: EMAIL_COPY.unsubscribeLink, url: str(data, 'unsubscribeUrl') }
-        : undefined,
+      : SECURITY_TYPES.has(type)
+        ? EMAIL_COPY.footerSecurity
+        : EMAIL_COPY.footerHelp,
+    footerLink: (marketing || type === 'NEWSLETTER_WELCOME') && unsubscribeUrl ? { label: EMAIL_COPY.unsubscribeLink, url: unsubscribeUrl } : undefined,
+    supportEmail: str(data, 'supportEmail') || undefined,
+    supportHours: str(data, 'supportHours') || undefined,
+    theme: options.theme,
   });
-  return { subject, ...rendered };
+  return { subject: data.testEmail === true ? `[Test] ${subject}` : subject, ...rendered };
 }

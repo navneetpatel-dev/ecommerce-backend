@@ -36,6 +36,7 @@ import { gstRuleResolver, priceWithRuleGst } from '@modules/tax/gstPricing';
 import { roundMoney, toPaise } from '@modules/pricing/money';
 import { gstRateForPieces } from '@modules/pricing/pricing.engine';
 import { CreateProductSchema } from './products.dto';
+import { submitProductForApproval } from './productSubmission';
 import type {
   CreateProductRequest,
   UpdateProductRequest,
@@ -694,44 +695,8 @@ export class ProductsService {
     });
   }
 
-  async submitForApproval(id: string, vendorId: string) {
-    await sequelize.transaction(async (t) => {
-      const product = await productsRepository.findById(id, { transaction: t });
-      if (!product) throw new NotFoundError('Product');
-
-      if (product.vendorId !== vendorId) {
-        throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_PRODUCT);
-      }
-
-      if (product.status !== PRODUCT_STATUS.DRAFT) {
-        throw new ValidationError(ERROR_MESSAGES.PRODUCT_NOT_DRAFT);
-      }
-
-      const variantCount = await ProductVariant.count({ where: { productId: id }, transaction: t });
-      if (variantCount === 0) {
-        throw new ValidationError('Cannot submit product for approval without at least one variant.');
-      }
-
-      const imageCount = await ProductImage.count({ where: { productId: id }, transaction: t });
-      if (imageCount === 0) {
-        throw new ValidationError('Cannot submit product for approval without at least one image.');
-      }
-
-      const secondary = await ProductCategory.findAll({
-        where: { productId: id },
-        attributes: ['categoryId'],
-        transaction: t,
-      });
-      const categoryIds = [
-        product.categoryId,
-        ...secondary.map((row) => row.categoryId),
-      ].filter(Boolean);
-      await vendorsService.assertCategoriesKycSatisfied(vendorId, categoryIds);
-
-      await productsRepository.update(id, { status: PRODUCT_STATUS.PENDING_APPROVAL }, { transaction: t });
-    });
-
-    return this.getProductById(id);
+  async submitForApproval(id: string, vendorId: string, actorId?: string) {
+    return submitProductForApproval(this, id, vendorId, actorId);
   }
 
   async approveProduct(id: string, adminId: string) {

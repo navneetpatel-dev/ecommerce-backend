@@ -35,6 +35,7 @@ import { reverseTcsForReturnedPart } from '@modules/pricing/tcsLedger';
 import { fromPaise, toPaise } from '@modules/pricing/money';
 import { priceWithRuleGst } from '@modules/tax/gstPricing';
 import { taxService } from '@modules/tax/tax.service';
+import { notifyOutForDelivery, notifySubOrderDelivered } from '@modules/notifications/events/orderEvents';
 
 /** The platform-wide free-shipping threshold (settings), or null when none is set. */
 function platformFreeShippingThreshold(settings: { freeShippingThreshold?: unknown }): number | null {
@@ -151,12 +152,7 @@ async function cascadeOrderDeliveredAndNotify(subOrderId: string, transaction: T
   // Only once the delivery is saved: a rollback (an earning or audit write failing)
   // must not leave the customer with a "Delivered" email.
   if (order) {
-    transaction.afterCommit(() => {
-      void notificationsService.sendSubOrderDelivered(order.userId, subOrderId, {
-        orderId: subOrder.orderId,
-        orderNumber: subOrder.orderId.slice(0, 8).toUpperCase(),
-      });
-    });
+    transaction.afterCommit(() => void notifySubOrderDelivered(subOrder.orderId, subOrderId));
   }
 }
 
@@ -752,6 +748,7 @@ export const shippingService = {
         },
         { transaction },
       );
+      if (status === 'OUT_FOR_DELIVERY') transaction.afterCommit(() => void notifyOutForDelivery(shipment.subOrderId, shipment.trackingNumber));
       if (DISPATCHED_SHIPMENT_STATUSES.has(status)) {
         // The goods have left the seller: issue the tax invoices (not at checkout).
         await issueTaxInvoicesOnDispatch(shipment.subOrderId, transaction);

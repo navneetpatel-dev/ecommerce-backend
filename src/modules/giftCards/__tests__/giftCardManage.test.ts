@@ -38,7 +38,7 @@ function card(overrides: Record<string, unknown> = {}) {
 
 function stubTransaction() {
   mock.method(sequelize, 'transaction', async (callback: (t: unknown) => Promise<unknown>) =>
-    callback({ LOCK: { UPDATE: 'UPDATE' } }),
+    callback({ LOCK: { UPDATE: 'UPDATE' }, afterCommit: () => undefined }),
   );
 }
 

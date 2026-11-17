@@ -14,7 +14,7 @@ describe('reviewsService auto moderation', () => {
   });
 
   function stubOrderEligibility() {
-    mock.method(sequelize, 'transaction', async (callback: (t: unknown) => Promise<unknown>) => callback({}));
+    mock.method(sequelize, 'transaction', async (callback: (t: unknown) => Promise<unknown>) => callback({ afterCommit: () => undefined }));
     mock.method(
       OrderItem,
       'findByPk',

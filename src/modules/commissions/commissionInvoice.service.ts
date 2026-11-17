@@ -11,6 +11,7 @@ import {
 import { settingsService } from '@modules/settings/settings.service';
 import { isIntraStateSupply } from '@modules/pricing/gstPlaceOfSupply';
 import { istDateString } from '@modules/pricing/istCalendar';
+import { notifyCommissionInvoiceReady } from '@modules/notifications/events/vendorEvents';
 
 export type CreateCommissionInvoiceInput = {
   vendorId: string;
@@ -79,7 +80,7 @@ export async function createCommissionInvoiceForPayout(
     total: gstPaise,
   } = gstOnTaxablePaise(input.commissionTaxablePaise, gstRate, intra);
 
-  return CommissionInvoice.create(
+  const invoice = await CommissionInvoice.create(
     {
       number,
       vendorId: input.vendorId,
@@ -102,6 +103,8 @@ export async function createCommissionInvoiceForPayout(
     },
     { transaction },
   );
+  transaction?.afterCommit(() => void notifyCommissionInvoiceReady(invoice.id));
+  return invoice;
 }
 
 export async function renderCommissionInvoicePdf(

@@ -57,6 +57,7 @@ import type {
   VendorTicketListQuery,
 } from './supportTickets.dto';
 import { SUPPORT_TICKET_SLA_HOURS, TICKET_ALLOWED_TRANSITIONS } from './supportTickets.lifecycle';
+import { notifyTicketAutoClosed } from '@modules/notifications/events/supportEvents';
 
 type Actor = {
   id: string;
@@ -461,12 +462,12 @@ export class SupportTicketsService {
       }
 
       for (const userId of notifyIds) {
-        void notificationsService.sendTicketCreated(userId, ticket.id, {
+        t.afterCommit(() => void notificationsService.sendTicketCreated(userId, ticket.id, {
           ticketNumber,
           subject: ticket.subject,
           actionUrl: ticketPortalUrlForGroup(ticket.id, recipientGroup),
           portalGroup: recipientGroup,
-        });
+        }));
       }
 
       const created = await getTicketOrThrow(ticket.id, t);
@@ -785,13 +786,13 @@ export class SupportTicketsService {
         const portalGroup =
           group === 'lookup' ? await ticketPortalGroupForUser(userId) : group;
         const actionUrl = ticketPortalUrlForGroup(id, portalGroup);
-        void notificationsService.sendTicketReplied(userId, id, {
+        t.afterCommit(() => void notificationsService.sendTicketReplied(userId, id, {
           ticketNumber: locked.ticketNumber,
           subject: locked.subject,
           actionUrl,
           portalGroup,
           messageId: message.id,
-        });
+        }));
       }
 
       const ticket = await getTicketOrThrow(id, t);
@@ -835,13 +836,13 @@ export class SupportTicketsService {
         transaction: t,
       });
 
-      void notificationsService.sendTicketResolved(locked.customerId, id, {
+      t.afterCommit(() => void notificationsService.sendTicketResolved(locked.customerId, id, {
         ticketNumber: locked.ticketNumber,
         subject: locked.subject,
         actionUrl: ticketPortalUrlForGroup(id, 'customer'),
         portalGroup: 'customer',
         resolvedAt: now.toISOString(),
-      });
+      }));
 
       return serializeTicket(await getTicketOrThrow(id, t));
     });
@@ -908,13 +909,13 @@ export class SupportTicketsService {
         const portalGroup =
           group === 'lookup' ? await ticketPortalGroupForUser(userId) : group;
         const actionUrl = ticketPortalUrlForGroup(id, portalGroup);
-        void notificationsService.sendTicketReopened(userId, id, {
+        t.afterCommit(() => void notificationsService.sendTicketReopened(userId, id, {
           ticketNumber: locked.ticketNumber,
           subject: locked.subject,
           actionUrl,
           portalGroup,
           reopenedAt: new Date().toISOString(),
-        });
+        }));
       }
 
       return serializeTicket(await getTicketOrThrow(id, t));
@@ -1170,7 +1171,10 @@ export class SupportTicketsService {
         });
         return true;
       });
-      if (updated) count += 1;
+      if (updated) {
+        count += 1;
+        void notifyTicketAutoClosed(ticket.id);
+      }
     }
     return count;
   }

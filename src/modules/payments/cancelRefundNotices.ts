@@ -1,6 +1,7 @@
 import { Order } from '@database/models/order.model';
 import { logger } from '@core/logger';
 import { notificationsService } from '@modules/notifications/notifications.service';
+import { orderReference } from '@modules/orders/orderReference';
 
 /** Refund notes reasons that pay a cancelled order (or one cancelled part) back to the card. */
 const CANCEL_REASONS = new Set(['ORDER_CANCEL', 'SUBORDER_CANCEL']);
@@ -30,7 +31,7 @@ export async function notifyCancelRefund(
     const referenceId = forPart ? notes.subOrderId! : order.id;
     const templateData = {
       orderId: order.id,
-      orderNumber: order.id.slice(0, 8).toUpperCase(),
+      orderNumber: orderReference(order.id),
       amount: Number(amountPaise) / 100,
     };
     if (stage === 'started') {

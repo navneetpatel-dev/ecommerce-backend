@@ -79,19 +79,24 @@ export class OtpService {
     if (!(await otpCooldown.claim(email))) return;
     const user = await authRepository.findByEmail(email);
     if (!user || user.status === USER_STATUS.BLOCKED) return;
-    if (!user.emailVerified) {
-      await notificationsService.sendEmailVerification(user.id, { actionUrl: emailVerifyActionUrl(user.id) });
-      return;
+    // Here the email is the whole point, so a failure to send it is reported (and the minute
+    // of cooldown is given back) instead of telling the shopper a code is on its way.
+    try {
+      if (!user.emailVerified) {
+        await notificationsService.sendEmailVerification(user.id, { actionUrl: emailVerifyActionUrl(user.id) }, { strict: true, resend: true });
+        return;
+      }
+      const otp = await sequelize.transaction((transaction) =>
+        this.issueCodeForUser(user.id, 'LOGIN', transaction),
+      );
+      await notificationsService.sendLoginOtp(user.id, otp.id, {
+        code: otp.code,
+        expiresInMinutes: OTP_TTL_MINUTES,
+      }, { strict: true });
+    } catch (error) {
+      await otpCooldown.release(email);
+      throw error;
     }
-
-    const otp = await sequelize.transaction((transaction) =>
-      this.issueCodeForUser(user.id, 'LOGIN', transaction),
-    );
-
-    await notificationsService.sendLoginOtp(user.id, otp.id, {
-      code: otp.code,
-      expiresInMinutes: OTP_TTL_MINUTES,
-    });
   }
 
   async verifyLoginCode(email: string, code: string) {

@@ -1,100 +1,17 @@
 import { Worker, type Job } from 'bullmq';
-import { NotificationLog } from '@database/models/notificationLog.model';
-import { User } from '@database/models/user.model';
-import { NOTIFICATION_STATUS } from '@core/constants/statuses';
 import { logger } from '@core/logger';
 import { env } from '@config/env';
 import { getQueueConnection } from '@config/queue';
-import { sendEmail } from '@config/mail';
-import { unsubscribeHeaders, unsubscribeLinks } from '@modules/notifications/unsubscribe';
 import { EMAIL_JOB_NAME, type EmailJobPayload } from '@modules/notifications/notifications.service';
-import {
-  isMarketingNotification,
-  renderNotificationEmail,
-} from '@modules/notifications/templates/registry';
+import { deliverNotification } from '@modules/notifications/deliverEmail';
 
 async function processEmailJob(job: Job<EmailJobPayload>): Promise<void> {
-  const { notificationLogId, type, userId, templateData, urgency } = job.data;
-
-  const log = await NotificationLog.findByPk(notificationLogId);
-  if (!log) {
-    logger.warn('Email job missing NotificationLog', { notificationLogId, jobId: job.id });
-    return;
-  }
-
-  if (log.status === NOTIFICATION_STATUS.SENT) {
-    return;
-  }
-
-  const alreadySent = await NotificationLog.findOne({
-    where: {
-      type: log.type,
-      referenceId: log.referenceId,
-      status: NOTIFICATION_STATUS.SENT,
-    },
+  await deliverNotification({
+    notificationLogId: job.data.notificationLogId,
+    templateData: job.data.templateData,
+    urgency: job.data.urgency,
+    attachments: job.data.attachments,
   });
-  if (alreadySent && alreadySent.id !== log.id) {
-    await log.update({
-      status: NOTIFICATION_STATUS.SENT,
-      providerMessageId: alreadySent.providerMessageId,
-      sentAt: alreadySent.sentAt,
-      error: null,
-    });
-    return;
-  }
-
-  const user = await User.findByPk(userId, {
-    attributes: ['id', 'email', 'name', 'emailMarketingConsent', 'emailSuppressed'],
-  });
-  if (!user?.email) {
-    await log.update({
-      status: NOTIFICATION_STATUS.FAILED,
-      error: 'Recipient email missing',
-    });
-    return;
-  }
-
-  const marketing = urgency === 'marketing' || isMarketingNotification(type);
-  if (marketing && (user.emailSuppressed || !user.emailMarketingConsent)) {
-    await log.update({
-      status: NOTIFICATION_STATUS.FAILED,
-      error: 'Marketing send blocked by consent or suppression',
-    });
-    return;
-  }
-
-  try {
-    // Marketing mail carries a one-click unsubscribe: a footer link and the List-Unsubscribe headers.
-    const unsubscribe = marketing ? unsubscribeLinks(user.id) : null;
-    const rendered = renderNotificationEmail(type, {
-      ...templateData,
-      customerName: templateData.customerName ?? user.name,
-      name: templateData.name ?? user.name,
-      ...(unsubscribe ? { unsubscribeUrl: unsubscribe.pageUrl } : {}),
-    });
-
-    const result = await sendEmail({
-      to: user.email,
-      subject: rendered.subject,
-      html: rendered.html,
-      text: rendered.text,
-      ...(unsubscribe ? { headers: unsubscribeHeaders(unsubscribe.oneClickUrl) } : {}),
-    });
-
-    await log.update({
-      status: NOTIFICATION_STATUS.SENT,
-      providerMessageId: result.messageId,
-      sentAt: new Date(),
-      error: null,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Email send failed';
-    await log.update({
-      status: NOTIFICATION_STATUS.FAILED,
-      error: message,
-    });
-    throw error;
-  }
 }
 
 export function startEmailWorkers(): Worker[] {
@@ -104,12 +21,20 @@ export function startEmailWorkers(): Worker[] {
   const transactional = new Worker<EmailJobPayload>(
     'email-transactional',
     processEmailJob,
-    { connection, concurrency: env.EMAIL_TRANSACTIONAL_WORKER_CONCURRENCY },
+    {
+      connection,
+      concurrency: env.EMAIL_TRANSACTIONAL_WORKER_CONCURRENCY,
+      limiter: { max: env.MAIL_RATE_PER_MINUTE, duration: 60_000 },
+    },
   );
   const marketing = new Worker<EmailJobPayload>(
     'email-marketing',
     processEmailJob,
-    { connection, concurrency: env.EMAIL_MARKETING_WORKER_CONCURRENCY },
+    {
+      connection,
+      concurrency: env.EMAIL_MARKETING_WORKER_CONCURRENCY,
+      limiter: { max: Math.max(1, Math.floor(env.MAIL_RATE_PER_MINUTE / 2)), duration: 60_000 },
+    },
   );
 
   for (const worker of [transactional, marketing]) {

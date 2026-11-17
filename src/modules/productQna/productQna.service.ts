@@ -32,6 +32,7 @@ import { ProductAnswer } from '@database/models/productAnswer.model';
 import { Product } from '@database/models/product.model';
 import { sequelize } from '@database/models';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
+import { notifyVendorNewQuestion } from '@modules/notifications/events/vendorEvents';
 
 function serializeQuestion(
   row: ProductQuestion,
@@ -85,12 +86,14 @@ export class ProductQnaService {
     const filterResult = screenContent(data.question);
     const shouldPublish = autoApprove && filterResult.isClean;
 
-    return ProductQuestion.create({
+    const created = await ProductQuestion.create({
       productId: data.productId,
       userId,
       question: data.question,
       status: shouldPublish ? PRODUCT_QUESTION_STATUS.PUBLISHED : PRODUCT_QUESTION_STATUS.PENDING,
     });
+    void notifyVendorNewQuestion(created.id);
+    return created;
   }
 
   /** Public PDP Q&A — PUBLISHED questions and PUBLISHED answers only. */
@@ -278,9 +281,12 @@ export class ProductQnaService {
     const answered = question.pendingRevision
       ? await ProductAnswer.count({ where: { questionId, status: PRODUCT_ANSWER_STATUS.PUBLISHED } })
       : 0;
-    return question.update(
+    const wasEdit = Boolean(question.pendingRevision);
+    const updated = await question.update(
       moderateQuestionUpdate(question, status === PRODUCT_QUESTION_STATUS.PUBLISHED, answered),
     );
+    if (!wasEdit && status === PRODUCT_QUESTION_STATUS.PUBLISHED) void notifyVendorNewQuestion(updated.id);
+    return updated;
   }
 
   async deleteAnswer(

@@ -16,6 +16,8 @@ export interface CouponUserRestriction {
 export interface CouponConfig {
   tiers?: Array<{ minSubtotal: number; percent: number }>;
   bundleProductIds?: string[];
+  /** Set on a welcome-offer coupon: the one shopper it was issued to (keeps issuing idempotent). */
+  welcomeForUserId?: string;
 }
 
 export class Coupon extends Model<InferAttributes<Coupon>, InferCreationAttributes<Coupon>> {

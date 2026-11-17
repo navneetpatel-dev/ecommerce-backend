@@ -2,6 +2,7 @@ import jwt from 'jsonwebtoken';
 import { env } from '@config/env';
 import { User } from '@database/models/user.model';
 import { ValidationError } from '@core/errors/ValidationError';
+import { NEWSLETTER_UNSUBSCRIBE_PURPOSE, newsletterService } from '@modules/newsletter/newsletter.service';
 
 const PURPOSE = 'marketing-unsubscribe';
 export const UNSUBSCRIBE_LINK_INVALID = 'This unsubscribe link is not valid. Turn marketing emails off in your account settings instead.';
@@ -31,6 +32,8 @@ export async function unsubscribeByToken(token: string): Promise<{ unsubscribed:
   let userId: string;
   try {
     const decoded = jwt.verify(token, env.JWT_SECRET, { algorithms: ['HS256'] }) as { sub?: string; purpose?: string };
+    // A newsletter subscriber (no account) uses the same link and page as a shopper.
+    if (decoded.purpose === NEWSLETTER_UNSUBSCRIBE_PURPOSE) return newsletterService.unsubscribe(token);
     if (decoded.purpose !== PURPOSE || !decoded.sub) throw new Error('purpose');
     userId = decoded.sub;
   } catch {

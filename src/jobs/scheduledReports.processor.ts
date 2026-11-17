@@ -7,6 +7,8 @@ import { sendEmail } from '@config/mail';
 import { reportEngine, type ReportActor } from '@modules/reports/engine/reportEngine';
 import { settingsService } from '@modules/settings/settings.service';
 import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
+import { renderEmailLayout } from '@modules/notifications/templates/layout';
+import { paragraph } from '@modules/notifications/templates/blocks';
 
 export type ScheduledReportsDeps = {
   sendMail?: typeof sendEmail;
@@ -93,11 +95,20 @@ export async function runScheduledWeeklyReports(
           { from, to },
           'xlsx',
         );
+        const body = `Your scheduled ${reportType} report for the past 7 days is attached.`;
+        const email = renderEmailLayout({
+          preview: body,
+          title: `Scheduled report: ${reportType}`,
+          eyebrow: 'Reports',
+          blocks: [paragraph(body)],
+          supportEmail: settings.supportEmail,
+          supportHours: settings.supportHours,
+        });
         await deliver({
           to: recipient.email,
           subject: `Scheduled report: ${reportType}`,
-          html: `<p>Your scheduled ${reportType} report for the past 7 days is attached.</p>`,
-          text: `Your scheduled ${reportType} report for the past 7 days is attached.`,
+          html: email.html,
+          text: email.text,
           attachments: [
             {
               filename: exported.filename,

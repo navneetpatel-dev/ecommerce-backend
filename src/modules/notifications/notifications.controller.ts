@@ -6,6 +6,9 @@ import { pushService } from './push.service';
 import { AppError } from '@core/errors';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { unsubscribeByToken } from './unsubscribe';
+import { getEmailHealth } from './emailHealth.service';
+import { resendNotification } from './emailRecovery';
+import { listEmailTemplates, previewEmailTemplate, sendTestEmail } from './templatePreview.service';
 import type { ListNotificationLogsQuery, BroadcastNotificationRequest } from './notifications.dto';
 
 export const listLogs = asyncHandler(async (req: Request, res: Response) => {
@@ -20,6 +23,27 @@ export const broadcast = asyncHandler(async (req: Request, res: Response) => {
 export const createTest = asyncHandler(async (req: Request, res: Response) => {
   const log = await notificationsService.createTest(req.user!.id, req.body);
   res.status(201).json(ok(log));
+});
+
+export const health = asyncHandler(async (_req: Request, res: Response) => {
+  res.json(ok(await getEmailHealth()));
+});
+
+export const resend = asyncHandler(async (req: Request, res: Response) => {
+  const log = await resendNotification(String(req.params.id), req.user!.id);
+  res.json(ok({ id: log.id, status: log.status }));
+});
+
+export const listTemplates = asyncHandler(async (_req: Request, res: Response) => {
+  res.json(ok(await listEmailTemplates()));
+});
+
+export const previewTemplate = asyncHandler(async (req: Request, res: Response) => {
+  res.json(ok(await previewEmailTemplate(String(req.params.type), req.query.theme === 'dark' ? 'dark' : 'light')));
+});
+
+export const sendTestTemplate = asyncHandler(async (req: Request, res: Response) => {
+  res.status(201).json(ok(await sendTestEmail(String(req.params.type), req.user!.id)));
 });
 
 export const pushPublicKey = asyncHandler(async (_req: Request, res: Response) => {

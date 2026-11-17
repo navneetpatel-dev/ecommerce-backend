@@ -1,5 +1,9 @@
 import { PlatformSetting } from '@database/models/platformSetting.model';
+import { sequelize } from '@database/models';
+import { ValidationError } from '@core/errors/ValidationError';
+import { reportEngine } from '@modules/reports/engine/reportEngine';
 import { logAudit } from '@modules/audit/audit.service';
+import { notifySettingsChanged } from '@modules/notifications/events/adminEvents';
 
 export type PlatformSettingsPayload = {
   defaultCommissionRate: number;
@@ -64,6 +68,12 @@ export type PlatformSettingsPayload = {
   maintenanceMessage: string;
   /** When the store expects to be back (ISO time), shown on the maintenance page. */
   maintenanceUntil: string | null;
+  /** First-order welcome code emailed when a shopper verifies their email. */
+  welcomeOfferEnabled: boolean;
+  welcomeOfferPercent: number;
+  welcomeOfferMaxDiscount: number;
+  welcomeOfferMinOrder: number;
+  welcomeOfferValidDays: number;
 };
 
 const SETTINGS_KEY = 'platform';
@@ -108,6 +118,11 @@ const DEFAULTS: PlatformSettingsPayload = {
   maintenanceEnabled: false,
   maintenanceMessage: '',
   maintenanceUntil: null,
+  welcomeOfferEnabled: true,
+  welcomeOfferPercent: 10,
+  welcomeOfferMaxDiscount: 200,
+  welcomeOfferMinOrder: 0,
+  welcomeOfferValidDays: 30,
 };
 
 /** Presets outside the stored cap are a broken config; raise the cap so they can be paid. */
@@ -123,6 +138,22 @@ function alignWalletRecharge(settings: PlatformSettingsPayload): PlatformSetting
   };
 }
 
+/** Unique, ascending recharge presets so the storefront renders a clean list. */
+function normalizePresets(presets: number[]): number[] {
+  return [...new Set(presets.filter((amount) => Number.isFinite(amount) && amount > 0))].sort((a, b) => a - b);
+}
+
+function normalizeRecipients(recipients: string[]): string[] {
+  return [...new Set(recipients.map((email) => email.trim().toLowerCase()).filter(Boolean))];
+}
+
+/** Keys whose stored value differs from the incoming one, for the audit trail. */
+function changedKeys(before: PlatformSettingsPayload, after: PlatformSettingsPayload): string[] {
+  return (Object.keys(after) as Array<keyof PlatformSettingsPayload>).filter(
+    (key) => JSON.stringify(before[key]) !== JSON.stringify(after[key]),
+  );
+}
+
 export const settingsService = {
   async getPlatformSettings(): Promise<PlatformSettingsPayload> {
     const row = await PlatformSetting.findOne({ where: { key: SETTINGS_KEY } });
@@ -130,21 +161,45 @@ export const settingsService = {
     return alignWalletRecharge(merged);
   },
 
+  /**
+   * Saves the platform settings and records who changed what. The write and the audit
+   * row share a transaction so a failed audit never leaves a silent, unaudited change,
+   * and the response is the same (wallet-aligned) view every reader gets afterwards.
+   */
   async updatePlatformSettings(value: PlatformSettingsPayload, actorId: string): Promise<PlatformSettingsPayload> {
-    const next = { ...DEFAULTS, ...value };
-    await PlatformSetting.upsert({
-      key: SETTINGS_KEY,
-      value: next as unknown as Record<string, unknown>,
-      updatedBy: actorId,
-      createdBy: actorId,
+    const schedulable = new Set(reportEngine.schedulableCatalog().map((report) => report.type));
+    const unknownReports = value.scheduledReportsTypes.filter((type) => !schedulable.has(type));
+    if (unknownReports.length > 0) {
+      throw new ValidationError(`These reports cannot be scheduled: ${unknownReports.join(', ')}`);
+    }
+
+    const next: PlatformSettingsPayload = alignWalletRecharge({
+      ...DEFAULTS,
+      ...value,
+      walletRechargePresetsInr: normalizePresets(value.walletRechargePresetsInr ?? DEFAULTS.walletRechargePresetsInr),
+      scheduledReportsRecipients: normalizeRecipients(value.scheduledReportsRecipients ?? []),
+      scheduledReportsTypes: [...new Set(value.scheduledReportsTypes ?? [])],
     });
 
-    await logAudit({
-      actorId,
-      action: 'PLATFORM_SETTINGS_UPDATED',
-      entityType: 'PlatformSetting',
-      entityId: SETTINGS_KEY,
-      metadata: { keysUpdated: Object.keys(value) },
+    await sequelize.transaction(async (transaction) => {
+      const row = await PlatformSetting.findOne({ where: { key: SETTINGS_KEY }, transaction, lock: transaction.LOCK.UPDATE });
+      const before = row ? { ...DEFAULTS, ...(row.value as Partial<PlatformSettingsPayload>) } : { ...DEFAULTS };
+      const saved = row
+        ? await row.update({ value: next as unknown as Record<string, unknown>, updatedBy: actorId }, { transaction })
+        : await PlatformSetting.create(
+            { key: SETTINGS_KEY, value: next as unknown as Record<string, unknown>, updatedBy: actorId, createdBy: actorId },
+            { transaction },
+          );
+
+      await logAudit({
+        actorId,
+        action: 'PLATFORM_SETTINGS_UPDATED',
+        entityType: 'PlatformSetting',
+        entityId: saved.id,
+        metadata: { keysUpdated: changedKeys(before, next) },
+        transaction,
+      });
+      transaction.afterCommit(() => void notifySettingsChanged(actorId, before, next, changedKeys(before, next)));
     });
 
     return next;

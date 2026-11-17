@@ -49,7 +49,7 @@ export const giftCardAccountsService = {
     if (effectiveGiftCardStatus(card) !== GIFT_CARD_STATUS.ACTIVE) {
       throw new AppError(ERROR_MESSAGES.GIFT_CARD_NOT_RESENDABLE, 409, ERROR_CODES.GIFT_CARD_NOT_RESENDABLE);
     }
-    if (!(await sendGiftCardPurchasedEmail(card))) {
+    if (!(await sendGiftCardPurchasedEmail(card, { resend: true }))) {
       throw new AppError(ERROR_MESSAGES.GIFT_CARD_EMAIL_FAILED, 502, ERROR_CODES.GIFT_CARD_EMAIL_FAILED);
     }
     return { sent: true };

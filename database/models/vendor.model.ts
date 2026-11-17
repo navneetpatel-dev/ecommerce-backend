@@ -27,7 +27,8 @@ export class Vendor extends Model<InferAttributes<Vendor>, InferCreationAttribut
   declare status: VendorStatus;
   declare rejectionReason: string | null;
   declare suspensionReason: string | null;
-  declare commissionRate: CreationOptional<number>;
+  /** Per-vendor override of the platform default commission %; null follows the platform default. */
+  declare commissionRate: CreationOptional<number | null>;
   declare performanceScore: CreationOptional<number>;
   /** Optional override for platform returnShippingFee (rupees). */
   declare returnShippingFee: CreationOptional<number | null>;
@@ -81,7 +82,7 @@ export const initVendorModel = (sequelize: Sequelize) => {
       },
       rejectionReason: { type: DataTypes.TEXT, allowNull: true },
       suspensionReason: { type: DataTypes.TEXT, allowNull: true },
-      commissionRate: { type: DataTypes.DECIMAL(5, 2), defaultValue: 10.0 },
+      commissionRate: { type: DataTypes.DECIMAL(5, 2), allowNull: true, defaultValue: null },
       performanceScore: { type: DataTypes.DECIMAL(5, 2), defaultValue: 0 },
       returnShippingFee: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       codEnabled: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },

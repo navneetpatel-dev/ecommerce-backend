@@ -11,6 +11,10 @@ import { WishlistItem } from '@database/models/wishlistItem.model';
 import { ORDER_STATUS } from '@core/constants/statuses';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { processLowStock } from './lowStockDigest';
+import { runPeriodicEmails } from './periodicEmails';
+import { orderReference } from '@modules/orders/orderReference';
+import { buildCartEmailData, buildOrderEmailData } from '@modules/notifications/orderEmailData';
+import { inr } from '@modules/notifications/templates/blocks';
 
 const SCHEDULER_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -30,10 +34,16 @@ async function processAbandonedCarts(): Promise<number> {
   let sent = 0;
   for (const cart of carts) {
     if (!cart.userId) continue;
-    const log = await notificationsService.sendAbandonedCart(cart.userId, cart.id, {
-      cartId: cart.id,
-    });
-    if (log) sent += 1;
+    try {
+      const log = await notificationsService.sendAbandonedCart(cart.userId, cart.id, {
+        cartId: cart.id,
+        ...(await buildCartEmailData(cart.id)),
+      });
+      if (log) sent += 1;
+    } catch (error) {
+      // One shopper's email must not stop the rest of the batch.
+      logger.warn('Abandoned cart email failed', { cartId: cart.id, error: error instanceof Error ? error.message : error });
+    }
   }
   return sent;
 }
@@ -61,11 +71,16 @@ async function processReviewRequests(): Promise<number> {
   }
   let sent = 0;
   for (const order of orders.values()) {
-    const log = await notificationsService.sendReviewRequest(order.userId, order.id, {
-      orderId: order.id,
-      orderNumber: order.id.slice(0, 8).toUpperCase(),
-    });
-    if (log) sent += 1;
+    try {
+      const log = await notificationsService.sendReviewRequest(order.userId, order.id, {
+        orderId: order.id,
+        orderNumber: orderReference(order.id),
+        ...(await buildOrderEmailData(order.id)),
+      });
+      if (log) sent += 1;
+    } catch (error) {
+      logger.warn('Review request email failed', { orderId: order.id, error: error instanceof Error ? error.message : error });
+    }
   }
   return sent;
 }
@@ -94,6 +109,8 @@ async function processWishlistPriceDrops(): Promise<number> {
       productName: product.name,
       // The GST-inclusive price the product page shows.
       price: Number(product.displayPrice ?? currentPrice),
+      productUrl: `${env.CLIENT_URL.replace(/\/$/, '')}/products/${product.slug}`,
+      details: [{ label: 'You saved it at', value: inr(priceAtAdd) }, { label: 'Now', value: inr(Number(product.displayPrice ?? currentPrice)), strong: true }],
     });
     if (log) sent += 1;
   }
@@ -136,8 +153,10 @@ export async function runNotificationSchedulerTick(): Promise<void> {
       ticketsEscalated +
       bugsVerified +
       bugsClosed;
-    if (total > 0) {
+    const periodic = await runPeriodicEmails();
+    if (total > 0 || Object.values(periodic).some((count) => count > 0)) {
       logger.info('Notification scheduler tick', {
+        periodic,
         abandoned,
         lowStock,
         reviews,

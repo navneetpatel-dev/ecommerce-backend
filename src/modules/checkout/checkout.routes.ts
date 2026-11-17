@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import * as checkoutController from './checkout.controller';
 import { authenticate } from '@middleware/auth.middleware';
+import { blockNewPurchasesDuringMaintenance } from '@middleware/maintenance.middleware';
 import { validate } from '@middleware/validate.middleware';
 import {
   CancelCheckoutSchema,
@@ -22,6 +23,7 @@ router.post(
 router.post(
   '/',
   authenticate,
+  blockNewPurchasesDuringMaintenance,
   validate(CreateCheckoutSchema),
   checkoutController.createCheckout,
 );
@@ -43,6 +45,7 @@ router.post(
 router.post(
   '/resume',
   authenticate,
+  blockNewPurchasesDuringMaintenance,
   validate(ResumeCheckoutSchema),
   checkoutController.resumeCheckout,
 );

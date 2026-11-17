@@ -52,6 +52,7 @@ import type {
   WontFixBugReportRequest,
 } from './bugReports.dto';
 import { BUG_ALLOWED_TRANSITIONS } from './bugReports.lifecycle';
+import { notifyAdminsOfNewBugReport } from '@modules/notifications/events/supportEvents';
 
 /** Statuses where triage fields (severity/module/assignee) may be updated without a status change. */
 const ASSIGNMENT_EDITABLE_STATUSES: BugReportStatus[] = [
@@ -372,6 +373,7 @@ export class BugReportsService {
         transaction: t,
       });
 
+      t.afterCommit(() => void notifyAdminsOfNewBugReport(bug.id));
       const created = await BugReport.findByPk(bug.id, {
         include: [
           { model: User, as: 'reporter', attributes: ['id', 'name'], required: false },
@@ -514,12 +516,12 @@ export class BugReportsService {
         transaction: t,
       });
 
-      void notificationsService.sendBugReportTriaged(locked.reporterId, id, {
+      t.afterCommit(() => void notificationsService.sendBugReportTriaged(locked.reporterId, id, {
         reportNumber: locked.reportNumber,
         title: locked.title,
         actionUrl: bugReportPortalUrl(id, locked.reporterRole),
         reporterRole: locked.reporterRole,
-      });
+      }));
 
       return this.getById(id, actor, t);
     });
@@ -616,12 +618,12 @@ export class BugReportsService {
       });
 
       if (next === BUG_REPORT_STATUS.FIXED) {
-        void notificationsService.sendBugReportFixed(locked.reporterId, id, {
+        t.afterCommit(() => void notificationsService.sendBugReportFixed(locked.reporterId, id, {
           reportNumber: locked.reportNumber,
           title: locked.title,
           actionUrl: bugReportPortalUrl(id, locked.reporterRole),
           reporterRole: locked.reporterRole,
-        });
+        }));
       }
 
       return this.getById(id, actor, t);
@@ -696,13 +698,13 @@ export class BugReportsService {
         transaction: t,
       });
 
-      void notificationsService.sendBugReportDuplicate(locked.reporterId, id, {
+      t.afterCommit(() => void notificationsService.sendBugReportDuplicate(locked.reporterId, id, {
         reportNumber: locked.reportNumber,
         title: locked.title,
         actionUrl: bugReportPortalUrl(id, locked.reporterRole),
         reporterRole: locked.reporterRole,
         duplicateOfReportNumber: target.reportNumber,
-      });
+      }));
 
       return this.getById(id, actor, t);
     });
@@ -744,13 +746,13 @@ export class BugReportsService {
         transaction: t,
       });
 
-      void notificationsService.sendBugReportWontFix(locked.reporterId, id, {
+      t.afterCommit(() => void notificationsService.sendBugReportWontFix(locked.reporterId, id, {
         reportNumber: locked.reportNumber,
         title: locked.title,
         actionUrl: bugReportPortalUrl(id, locked.reporterRole),
         reporterRole: locked.reporterRole,
         reason: data.reason.trim(),
-      });
+      }));
 
       return this.getById(id, actor, t);
     });

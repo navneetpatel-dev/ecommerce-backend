@@ -87,6 +87,8 @@ import {
   getCreditNotePdfForActor,
   getDebitNotePdfForActor,
 } from '@modules/reports/notePdf.service';
+import { orderReference } from '@modules/orders/orderReference';
+import { notifyReturnEscalated, notifyReturnStatus } from '@modules/notifications/events/returnEvents';
 
 const returnListInclude = [
   { model: OrderItem, as: 'orderItem', required: false, attributes: ['id', 'productName'] },
@@ -629,6 +631,7 @@ export class ReturnsService {
         },
         transaction: t,
       });
+      t.afterCommit(() => void notifyReturnEscalated(returnId, data.reason));
     });
     return this.getById(returnId, actor);
   }
@@ -1456,7 +1459,7 @@ export class ReturnsService {
 
     if (notifyBox.payload) {
       const payload = notifyBox.payload;
-      const orderNumber = payload.orderId.slice(0, 8).toUpperCase();
+      const orderNumber = orderReference(payload.orderId);
       void notificationsService.sendRefundProcessed(payload.userId, returnRequestId, {
         orderId: payload.orderId,
         orderNumber,
@@ -1631,48 +1634,7 @@ export class ReturnsService {
       }
     }
 
-    const orderItem = await OrderItem.findByPk(result.orderItemId, {
-      include: [{ model: SubOrder, as: 'subOrder', include: [{ model: Order, as: 'order' }] }],
-    });
-    const order = (orderItem as any)?.subOrder?.order as Order | undefined;
-    if (order?.userId) {
-      const orderNumber = order.id.slice(0, 8).toUpperCase();
-      if (
-        status === RETURN_STATUS.APPROVED ||
-        status === RETURN_STATUS.REJECTED ||
-        status === RETURN_STATUS.CLOSED ||
-        status === RETURN_STATUS.PICKUP_SCHEDULED ||
-        status === RETURN_STATUS.RECEIVED
-      ) {
-        void notificationsService.sendOrderReturned(order.userId, result.id, {
-          orderId: order.id,
-          orderNumber,
-          status,
-        });
-
-        if (
-          (status === RETURN_STATUS.PICKUP_SCHEDULED || status === RETURN_STATUS.RECEIVED) &&
-          result.subOrderId
-        ) {
-          void SubOrder.findByPk(result.subOrderId, { attributes: ['vendorId'] }).then((sub) => {
-            if (sub?.vendorId) {
-              void User.findAll({
-                where: { vendorId: sub.vendorId },
-                attributes: ['id'],
-              }).then((vUsers) => {
-                for (const vUser of vUsers) {
-                  void notificationsService.sendOrderReturned(vUser.id, result.id, {
-                    orderId: order.id,
-                    orderNumber,
-                    status,
-                  });
-                }
-              }).catch(() => {});
-            }
-          }).catch(() => {});
-        }
-      }
-    }
+    void notifyReturnStatus(result.id, status, rejectionReason);
 
     await logAudit({
       actorId,

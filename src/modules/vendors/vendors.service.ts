@@ -1,5 +1,6 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { vendorDashboardOrderCounts } from './vendorDashboardCounts';
+import { validateBankDetailsChange } from './vendorBankDetails';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { AppError } from '@core/errors/AppError';
@@ -81,6 +82,7 @@ import {
   syncVendorCategories,
   getVendorCategoryIds,
 } from './vendorCategoryHelpers';
+import { notifyKycDocumentApproved, notifyKycDocumentReceived } from '@modules/notifications/events/vendorEvents';
 
 export class VendorsService {
   async getPublicVendorProfile(slug: string): Promise<{
@@ -127,13 +129,16 @@ export class VendorsService {
       data.bankAccountHolderName,
     );
 
-    const bankDetails = {
-      ...(data.bankDetails ?? {}),
-      ...(data.panHolderName ? { panHolderName: data.panHolderName } : {}),
-      ...(data.bankAccountHolderName
-        ? { accountHolderName: data.bankAccountHolderName }
-        : {}),
-    };
+    const bankDetails = validateBankDetailsChange(
+      {
+        ...(data.bankDetails ?? {}),
+        ...(data.panHolderName ? { panHolderName: data.panHolderName } : {}),
+        ...(data.bankAccountHolderName
+          ? { accountHolderName: data.bankAccountHolderName }
+          : {}),
+      },
+      null,
+    );
 
     const vendor = await sequelize.transaction(async (t) => {
       const slug = generateSlug(data.businessName);
@@ -332,6 +337,12 @@ export class VendorsService {
       }
 
       const { categoryIds: _categoryIds, ...vendorFields } = data;
+      if (vendorFields.bankDetails !== undefined) {
+        vendorFields.bankDetails = validateBankDetailsChange(
+          vendorFields.bankDetails,
+          vendor.bankDetails as Record<string, unknown> | null,
+        );
+      }
       await vendorsRepository.update(
         vendorId,
         vendorFields as Parameters<typeof vendorsRepository.update>[1],
@@ -583,6 +594,7 @@ export class VendorsService {
     await deleteS3ObjectIfReplaced(previousUrl, data.url);
     // A new or replaced document is unverified: the vendor stops selling until it is.
     await refreshVendorKycStatus(vendorId);
+    void notifyKycDocumentReceived(document.id);
     return document;
   }
 
@@ -721,6 +733,7 @@ export class VendorsService {
       entityId: document.id,
       metadata: { vendorId: document.vendorId, type: document.type },
     });
+    void notifyKycDocumentApproved(document.id);
     return document;
   }
 

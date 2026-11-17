@@ -16,6 +16,8 @@ import { REFRESH_TOKEN_TTL_MS } from '@core/constants/http';
 import { ADMIN_ROLES, ROLES, USER_STATUS } from '@core/constants/statuses';
 import { ERROR_MESSAGES, ERROR_CODES } from '@core/constants/errors';
 import { roleNameOf } from '@utils/userRole';
+import { notifyPasswordChanged, notifyWelcome } from '@modules/notifications/events/accountEvents';
+import { recordLoginDevice } from './loginDevices';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { otpService } from './otp.service';
 import { assertResetTokenCurrent, readPasswordResetToken, signPasswordResetToken } from './passwordResetToken';
@@ -319,6 +321,7 @@ export class AuthService {
 
   private async issueSession(user: User, meta: SessionDeviceMeta): Promise<LoginSuccess> {
     const tokens = await generateTokens(user, meta);
+    void recordLoginDevice(user, meta);
     const roleName = roleNameOf(user);
     const permissions = await resolvePermissionsForUser({
       roleId: user.roleId,
@@ -422,7 +425,8 @@ export class AuthService {
 
     const token = signPasswordResetToken(user);
     const actionUrl = `${env.CLIENT_URL.replace(/\/$/, '')}/reset-password?token=${encodeURIComponent(token)}`;
-    void notificationsService.sendPasswordReset(user.id, { actionUrl });
+    // The email is the whole point of this request: if it cannot be sent, say so.
+    await notificationsService.sendPasswordReset(user.id, { actionUrl }, { strict: true });
     logger.info('Password reset requested', { email: user.email, role: roleNameOf(user) });
   }
 
@@ -448,7 +452,7 @@ export class AuthService {
 
     if (!user.emailVerified) {
       await repo.update(user.id, { emailVerified: true } as any);
-      void notificationsService.sendWelcome(user.id, { name: user.name });
+      void notifyWelcome(user.id, user.name);
     }
 
     return { verified: true };
@@ -462,9 +466,7 @@ export class AuthService {
       return { sent: false, alreadyVerified: true };
     }
 
-    void notificationsService.sendEmailVerification(user.id, {
-      actionUrl: emailVerifyActionUrl(user.id),
-    });
+    await notificationsService.sendEmailVerification(user.id, { actionUrl: emailVerifyActionUrl(user.id) }, { strict: true, resend: true });
     return { sent: true, alreadyVerified: false };
   }
 
@@ -479,9 +481,7 @@ export class AuthService {
     const user = await repo.findByEmail(email);
     if (!user || user.status === USER_STATUS.BLOCKED || user.emailVerified) return { sent: true, alreadyVerified: false };
 
-    void notificationsService.sendEmailVerification(user.id, {
-      actionUrl: emailVerifyActionUrl(user.id),
-    });
+    await notificationsService.sendEmailVerification(user.id, { actionUrl: emailVerifyActionUrl(user.id) }, { strict: true, resend: true });
     return { sent: true, alreadyVerified: false };
   }
 
@@ -496,6 +496,7 @@ export class AuthService {
     const passwordHash = await bcrypt.hash(newPassword, 12);
     await repo.update(user.id, { passwordHash } as any);
     await repo.deleteRefreshTokensByUser(user.id);
+    void notifyPasswordChanged(user.id, 'reset');
   }
 
   async changePassword(userId: string, currentPassword: string, newPassword: string) {
@@ -516,6 +517,7 @@ export class AuthService {
     const passwordHash = await bcrypt.hash(newPassword, 12);
     await repo.update(userId, { passwordHash } as any);
     await repo.deleteRefreshTokensByUser(userId);
+    void notifyPasswordChanged(userId, 'changed');
   }
 
   /**

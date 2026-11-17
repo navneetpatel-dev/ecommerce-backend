@@ -134,6 +134,18 @@ export function createSmtpMailProvider(): MailProvider {
           env.SMTP_USER && env.SMTP_PASS
             ? { user: env.SMTP_USER, pass: env.SMTP_PASS }
             : undefined,
+        // One reused, authenticated connection instead of a fresh login per email: Gmail
+        // answers a login per message with "Too many login attempts".
+        // A hung connection must not hold a worker (and every email behind it) for minutes.
+        connectionTimeout: 10_000,
+        greetingTimeout: 10_000,
+        dnsTimeout: 10_000,
+        socketTimeout: 30_000,
+        pool: true,
+        maxConnections: 1,
+        maxMessages: 100,
+        rateDelta: 60_000,
+        rateLimit: env.MAIL_RATE_PER_MINUTE,
       })
     : null;
 

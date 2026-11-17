@@ -9,6 +9,7 @@ import { Order } from '@database/models/order.model';
 import { paymentsService } from '@modules/payments/payments.service';
 import { toPaise } from '@modules/pricing/money';
 import { notificationsService } from '@modules/notifications/notifications.service';
+import { orderReference } from '@modules/orders/orderReference';
 
 /** A return's card share, frozen in the refund transaction and sent to Razorpay after it. */
 export type PendingReturnCardRefund = { returnId: string; paymentId: string; amountPaise: number };
@@ -39,7 +40,7 @@ export async function sendReturnCardRefund(
     if (order?.userId) {
       void notificationsService.sendRefundInitiated(order.userId, pending.returnId, {
         orderId: order.id,
-        orderNumber: order.id.slice(0, 8).toUpperCase(),
+        orderNumber: orderReference(order.id),
         amount: Number(pending.amountPaise) / 100,
         slaDays,
       });

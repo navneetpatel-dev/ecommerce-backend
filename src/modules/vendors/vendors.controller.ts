@@ -2,6 +2,9 @@ import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { vendorsService } from './vendors.service';
+import { maskBankDetails } from './vendorBankDetails';
+import { roleNameOf } from '@utils/userRole';
+import { ROLES } from '@core/constants/statuses';
 import {
   RegisterVendorSchema,
   UpdateVendorSchema,
@@ -57,13 +60,13 @@ export const getVendorById = asyncHandler(async (req: Request, res: Response) =>
 
 export const getMyVendor = asyncHandler(async (req: Request, res: Response) => {
   const vendor = await vendorsService.getMyVendor(req.user!.vendorId);
-  res.json(ok(vendor));
+  res.json(ok(roleNameOf(req.user) === ROLES.VENDOR_OWNER ? vendor : maskBankDetails(vendor)));
 });
 
 export const updateMyVendor = asyncHandler(async (req: Request, res: Response) => {
   const dto = UpdateVendorSchema.parse(req.body);
   const vendor = await vendorsService.updateMyVendor(req.user!.vendorId, dto, req.user!);
-  res.json(ok(vendor));
+  res.json(ok(roleNameOf(req.user) === ROLES.VENDOR_OWNER ? vendor : maskBankDetails(vendor)));
 });
 
 export const updateVendor = asyncHandler(async (req: Request, res: Response) => {

@@ -37,11 +37,11 @@ export const UpdateVendorSchema = z.object({
   returnShippingFee: z.number().min(0).nullable().optional(),
   codEnabled: z.boolean().optional(),
   /** Per-vendor commission rate override (%). Lets an admin change an already-approved vendor's rate later. */
-  commissionRate: z.number().min(0).max(100).optional(),
+  commissionRate: z.number().min(0).max(100).nullable().optional(),
   /**
-   * Vendor's preferred payout cadence — stored for reference only. Payout
-   * batches are still triggered manually by an admin via POST /payouts/process;
-   * this field does not drive an automated disbursement schedule.
+   * Vendor's preferred payout cadence. A payout run (POST /payouts/process) settles only
+   * deliveries before the later-ending of the platform cycle and this preference, so a
+   * vendor can ask to be paid less often than the platform default, never more often.
    */
   payoutFrequency: z.enum(PAYOUT_FREQUENCY_VALUES).nullable().optional(),
 });

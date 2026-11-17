@@ -9,6 +9,7 @@ import { NotFoundError } from '@core/errors/NotFoundError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { notificationsService } from '@modules/notifications/notifications.service';
+import { env } from '@config/env';
 
 export class InventoryService {
   async getLowStock(threshold?: number, vendorId?: string) {
@@ -72,6 +73,7 @@ export class InventoryService {
   }
 
   async notifyBackInStock(productId: string, variantId: string) {
+    const productPageUrl = (slug: string) => `${env.CLIENT_URL.replace(/\/$/, '')}/products/${slug}`;
     const product = await Product.findByPk(productId);
     if (!product) return;
 
@@ -85,6 +87,7 @@ export class InventoryService {
       if (!wishlist?.userId) continue;
       void notificationsService.sendBackInStock(wishlist.userId, product.id, {
         productName: product.name,
+        productUrl: productPageUrl(product.slug),
       });
     }
 
@@ -97,6 +100,7 @@ export class InventoryService {
       if (alert.userId) {
         void notificationsService.sendBackInStock(alert.userId, product.id, {
           productName: product.name,
+          productUrl: productPageUrl(product.slug),
         });
       }
     }

@@ -19,7 +19,7 @@ import { settingsService } from '@modules/settings/settings.service';
 import { WALLET_DESCRIPTIONS } from '@modules/wallet/wallet.constants';
 import { GIFT_CARD_MIN_AMOUNT_INR, GIFT_CARD_MAX_AMOUNT_INR, GIFT_CARD_VALIDITY_DAYS } from './giftCards.constants';
 import { generateGiftCardCode } from './giftCardCode';
-import { sendGiftCardPurchasedEmail } from './giftCardEmail';
+import { notifyGiftCardRedeemed, sendGiftCardPurchasedEmail } from './giftCardEmail';
 import type { PurchaseGiftCardRequest } from './giftCards.dto';
 import { toPaymentsUnavailable } from '@modules/checkout/paymentProviderErrors';
 
@@ -270,6 +270,7 @@ export class GiftCardsService {
         { transaction: t },
       );
 
+      t.afterCommit(() => void notifyGiftCardRedeemed(row.id));
       return row;
     });
 

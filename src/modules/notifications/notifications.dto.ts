@@ -6,6 +6,7 @@ export const ListNotificationLogsQuerySchema = z.object({
   type: z.string().trim().min(1).optional(),
   channel: z.enum(['EMAIL', 'SMS', 'PUSH']).optional(),
   status: z.enum(['PENDING', 'SENT', 'FAILED', 'BOUNCED', 'COMPLAINED']).optional(),
+  errorCategory: z.enum(['TEMPORARY', 'PERMANENT', 'RENDER', 'RECIPIENT', 'CONFIG', 'UNCERTAIN']).optional(),
 });
 export type ListNotificationLogsQuery = z.infer<typeof ListNotificationLogsQuerySchema>;
 

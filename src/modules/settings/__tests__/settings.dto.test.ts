@@ -87,3 +87,45 @@ describe('settings DTO schema', () => {
     );
   });
 });
+
+describe('settings DTO cross-field rules', () => {
+  const parse = (extra: Record<string, unknown>) => UpdateSettingsSchema.safeParse({ ...BASE, ...extra });
+
+  it('requires the COD maximum to be at least the minimum', () => {
+    assert.equal(parse({ codMinOrderValue: 500, codMaxOrderValue: 100 }).success, false);
+    assert.equal(parse({ codMinOrderValue: 500, codMaxOrderValue: 500 }).success, true);
+    assert.equal(parse({ codMinOrderValue: 500, codMaxOrderValue: null }).success, true);
+  });
+
+  it('requires the minimum wallet recharge not to exceed the maximum', () => {
+    assert.equal(parse({ walletMinRechargeInr: 5000, walletMaxRechargeInr: 100 }).success, false);
+  });
+
+  it('validates the GSTIN format and upper-cases it', () => {
+    assert.equal(parse({ platformGstin: 'ABC' }).success, false);
+    const ok = parse({ platformGstin: '29aabcu9603r1zm' });
+    assert.equal(ok.success, true);
+    assert.equal(ok.success && ok.data.platformGstin, '29AABCU9603R1ZM');
+    assert.equal(parse({ platformGstin: '' }).success, true);
+  });
+
+  it('needs at least one report type while scheduled reports are on', () => {
+    assert.equal(parse({ scheduledReportsEnabled: true, scheduledReportsTypes: [] }).success, false);
+    assert.equal(parse({ scheduledReportsEnabled: false, scheduledReportsTypes: [] }).success, true);
+  });
+
+  it('rejects an expected end time in the past while maintenance is on', () => {
+    assert.equal(parse({ maintenanceEnabled: true, maintenanceUntil: '2020-01-01T00:00:00Z' }).success, false);
+    assert.equal(parse({ maintenanceEnabled: false, maintenanceUntil: '2020-01-01T00:00:00Z' }).success, true);
+  });
+
+  it('keeps the return window between 1 and 365 days', () => {
+    assert.equal(parse({ defaultReturnWindow: 0 }).success, false);
+    assert.equal(parse({ defaultReturnWindow: 366 }).success, false);
+  });
+
+  it('lower-cases recipient addresses', () => {
+    const parsed = parse({ scheduledReportsRecipients: ['Ops@Example.COM'] });
+    assert.equal(parsed.success && parsed.data.scheduledReportsRecipients[0], 'ops@example.com');
+  });
+});

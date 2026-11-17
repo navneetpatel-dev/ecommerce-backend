@@ -67,6 +67,9 @@ import { initBugReportModel, BugReport } from './bugReport.model';
 import { initBugReportAttachmentModel, BugReportAttachment } from './bugReportAttachment.model';
 import { initBugReportCommentModel, BugReportComment } from './bugReportComment.model';
 import { initNewsletterSubscriberModel, NewsletterSubscriber } from './newsletterSubscriber.model';
+import { initContactMessageModel, ContactMessage } from './contactMessage.model';
+import { initUserDeviceModel, UserDevice } from './userDevice.model';
+import { initEmailSuppressionModel, EmailSuppression } from './emailSuppression.model';
 import { initOtpCodeModel, OtpCode } from './otpCode.model';
 import { initPushSubscriptionModel, PushSubscription } from './pushSubscription.model';
 import { initWebVitalModel, WebVital } from './webVital.model';
@@ -140,6 +143,9 @@ const models = {
   BugReportAttachment: initBugReportAttachmentModel(sequelize),
   BugReportComment: initBugReportCommentModel(sequelize),
   NewsletterSubscriber: initNewsletterSubscriberModel(sequelize),
+  ContactMessage: initContactMessageModel(sequelize),
+  UserDevice: initUserDeviceModel(sequelize),
+  EmailSuppression: initEmailSuppressionModel(sequelize),
   OtpCode: initOtpCodeModel(sequelize),
   PushSubscription: initPushSubscriptionModel(sequelize),
   WebVital: initWebVitalModel(sequelize),
@@ -176,6 +182,9 @@ export {
   SupportTicket, TicketMessage, TicketAttachment, TicketRead,
   BugReport, BugReportAttachment, BugReportComment,
   NewsletterSubscriber,
+  ContactMessage,
+  UserDevice,
+  EmailSuppression,
   OtpCode,
   PushSubscription,
   WebVital,

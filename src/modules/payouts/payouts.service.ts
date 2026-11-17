@@ -36,8 +36,9 @@ import type { MarkPayoutFailedRequest, MarkPayoutPaidRequest } from './payouts.d
 import { vendorNetPayoutPaise } from '@modules/pricing/frozenMoneySql';
 import { gstPeriodOf } from '@modules/pricing/gstPeriod';
 import { subOrdersInReturnWindow, type DeliveredSubOrder } from './returnWindowHold';
-import { vendorStatesFor } from './payoutVendorStates';
+import { ledgersDeliveredBeforeCycle, vendorStatesFor } from './payoutVendorStates';
 import { undoFailedPayout } from './payoutFailure';
+import { notifyPayoutPaid } from '@modules/notifications/events/vendorEvents';
 
 async function notifyPayoutFailed(params: {
   vendorId: string;
@@ -215,9 +216,9 @@ export class PayoutsService {
       where: { status: COMMISSION_STATUS.PENDING },
       include: [subOrderInclude],
     });
-    // Also hold sales still inside their items' own (longer) category return window.
+    // Also hold sales inside their category's return window or delivered after the payout-cycle boundary.
     const held = await subOrdersInReturnWindow(deliveredSubOrdersOf(candidates));
-    const ledgers = candidates.filter((ledger) => !held.has(ledger.subOrderId));
+    const ledgers = (await ledgersDeliveredBeforeCycle(candidates, settings.payoutCycle)).filter((ledger) => !held.has(ledger.subOrderId));
     const grouped = new Map<string, { start: Date; end: Date; rows: CommissionLedger[] }>();
     for (const ledger of ledgers) {
       const current = grouped.get(ledger.vendorId) ?? {
@@ -482,15 +483,7 @@ export class PayoutsService {
       return payout;
     });
 
-    const ownerId = await findVendorOwnerUserId(updated.vendorId);
-    if (ownerId) {
-      void notificationsService.sendPayoutPaid(ownerId, updated.id, {
-        amount: Number(updated.amount),
-        paymentMethod: updated.paymentMethod,
-        paymentReferenceNumber: updated.paymentReferenceNumber,
-        paidAt: updated.paidAt,
-      });
-    }
+    void notifyPayoutPaid(updated);
     return serializePayout(updated);
   }
 

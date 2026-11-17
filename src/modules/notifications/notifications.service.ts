@@ -3,41 +3,14 @@ import { randomUUID } from 'crypto';
 import { NotificationLog, type NotificationType } from '@database/models/notificationLog.model';
 import { User } from '@database/models/user.model';
 import { Role } from '@database/models/role.model';
-import { NOTIFICATION_STATUS, type RoleName } from '@core/constants/statuses';
+import type { RoleName } from '@core/constants/statuses';
 import { logger } from '@core/logger';
 import type { ListNotificationLogsQuery } from './notifications.dto';
-import {
-  areQueuesReady,
-  queues,
-  DEFAULT_MARKETING_JOB_OPTIONS,
-  DEFAULT_TRANSACTIONAL_JOB_OPTIONS,
-} from '@config/queue';
 import { isMarketingNotification, type EmailTemplateData } from './templates/registry';
-import { EMAIL_COPY, NOTIFICATION_SYSTEM_MESSAGES } from './emailCopy';
-import { pushService } from './push.service';
+import { NOTIFICATION_SYSTEM_MESSAGES } from './emailCopy';
+import { enqueueNotification, type EmailAttachmentSpec, type EnqueueParams } from './notificationDelivery';
 
-export const EMAIL_JOB_NAME = 'notification-delivery';
-
-export type EmailJobPayload = {
-  notificationLogId: string;
-  type: NotificationType;
-  userId: string;
-  referenceType: string;
-  referenceId: string;
-  templateData: EmailTemplateData;
-  urgency: 'transactional' | 'marketing';
-};
-
-type EnqueueParams = {
-  userId: string;
-  type: NotificationType;
-  referenceType: string;
-  referenceId: string;
-  templateData?: EmailTemplateData;
-  actorId?: string | null;
-  /** Force queue choice; defaults from type. */
-  urgency?: 'transactional' | 'marketing';
-};
+export { EMAIL_JOB_NAME, type EmailJobPayload } from './notificationDelivery';
 
 function todayBucket(): string {
   return new Date().toISOString().slice(0, 10);
@@ -45,20 +18,20 @@ function todayBucket(): string {
 
 export class NotificationsService {
   async listLogs(filters: ListNotificationLogsQuery = {}) {
-    const where: Record<string, unknown> = {};
+    const where: Record<string | symbol, unknown> = {};
     if (filters.type) where.type = filters.type;
     if (filters.channel) where.channel = filters.channel;
     if (filters.status) where.status = filters.status;
+    if (filters.errorCategory) where.errorCategory = filters.errorCategory;
 
-    const userInclude: Record<string, unknown> = {
-      model: User,
-      as: 'user',
-      attributes: ['email'],
-    };
-    if (filters.search?.trim()) {
-      userInclude.where = { email: { [Op.iLike]: `%${filters.search.trim()}%` } };
-      userInclude.required = true;
+    const search = filters.search?.trim();
+    if (search) {
+      where[Op.or] = [
+        { recipientEmail: { [Op.iLike]: `%${search}%` } },
+        { '$user.email$': { [Op.iLike]: `%${search}%` } },
+      ];
     }
+    const userInclude = { model: User, as: 'user', attributes: ['email'], required: false };
 
     return NotificationLog.findAll({
       where,
@@ -124,144 +97,9 @@ export class NotificationsService {
     return [];
   }
 
-  /**
-   * Creates (or reuses) a PENDING NotificationLog and enqueues delivery.
-   * Never sends synchronously from the request path.
-   */
-  async enqueue(params: EnqueueParams): Promise<NotificationLog | null> {
-    const urgency = params.urgency ?? (isMarketingNotification(params.type) ? 'marketing' : 'transactional');
-
-    const user = await User.findByPk(params.userId, {
-      attributes: ['id', 'email', 'name', 'emailMarketingConsent', 'emailSuppressed', 'status'],
-    });
-    if (!user?.email) {
-      logger.warn('Skip notification — user email missing', {
-        userId: params.userId,
-        type: params.type,
-      });
-      return null;
-    }
-
-    if (urgency === 'marketing') {
-      if (!user.emailMarketingConsent) {
-        logger.info('Skip marketing notification — no consent', {
-          userId: params.userId,
-          type: params.type,
-        });
-        return null;
-      }
-      if (user.emailSuppressed) {
-        logger.info('Skip marketing notification — email suppressed', {
-          userId: params.userId,
-          type: params.type,
-        });
-        return null;
-      }
-    }
-
-    // One email per user, type and reference — and reference type, which a sender can use
-    // to tell apart updates on one record (each status of a return gets its own email).
-    const { userId, type, referenceType, referenceId } = params;
-    const dedupe = { userId, type, referenceType, referenceId };
-    const alreadySent = await NotificationLog.findOne({ where: { ...dedupe, status: NOTIFICATION_STATUS.SENT } });
-    if (alreadySent) return alreadySent;
-
-    let log = await NotificationLog.findOne({
-      where: { ...dedupe, status: { [Op.in]: [NOTIFICATION_STATUS.PENDING, NOTIFICATION_STATUS.FAILED] } },
-      order: [['createdAt', 'DESC']],
-    });
-
-    if (!log) {
-      log = await NotificationLog.create({
-        userId: params.userId,
-        type: params.type,
-        referenceType: params.referenceType,
-        referenceId: params.referenceId,
-        channel: 'EMAIL',
-        status: NOTIFICATION_STATUS.PENDING,
-        providerMessageId: null,
-        error: null,
-        sentAt: null,
-        createdBy: params.actorId ?? params.userId,
-        updatedBy: null,
-        deletedBy: null,
-      });
-    } else if (log.status === NOTIFICATION_STATUS.FAILED) {
-      await log.update({
-        status: NOTIFICATION_STATUS.PENDING,
-        error: null,
-        updatedBy: params.actorId ?? params.userId,
-      });
-    }
-
-    const templateData: EmailTemplateData = {
-      customerName: user.name,
-      name: user.name,
-      email: user.email,
-      brand: EMAIL_COPY.brandName,
-      ...(params.templateData ?? {}),
-    };
-
-    await this.addJob({
-      notificationLogId: log.id,
-      type: params.type,
-      userId: params.userId,
-      referenceType: params.referenceType,
-      referenceId: params.referenceId,
-      templateData,
-      urgency,
-    });
-
-    void pushService
-      .sendForNotification({
-        userId: params.userId,
-        type: params.type,
-        referenceType: params.referenceType,
-        referenceId: params.referenceId,
-        templateData,
-      })
-      .catch((error) => {
-        logger.warn('Browser push dispatch failed', {
-          userId: params.userId,
-          type: params.type,
-          error: error instanceof Error ? error.message : error,
-        });
-      });
-
-    return log;
-  }
-
-  private async addJob(payload: EmailJobPayload): Promise<void> {
-    if (!areQueuesReady()) {
-      logger.warn('Queues unavailable — notification left PENDING', {
-        notificationLogId: payload.notificationLogId,
-        type: payload.type,
-      });
-      return;
-    }
-
-    const queue =
-      payload.urgency === 'marketing' ? queues.emailMarketing : queues.emailTransactional;
-    const options =
-      payload.urgency === 'marketing'
-        ? DEFAULT_MARKETING_JOB_OPTIONS
-        : DEFAULT_TRANSACTIONAL_JOB_OPTIONS;
-
-    try {
-      await queue.add(EMAIL_JOB_NAME, payload, {
-        ...options,
-        // BullMQ rejects custom jobId values that contain `:`.
-        jobId: `${payload.type}-${payload.referenceId}-${payload.notificationLogId}`.replace(
-          /:/g,
-          '-',
-        ),
-      });
-    } catch (error) {
-      logger.error('Failed to enqueue email job', {
-        notificationLogId: payload.notificationLogId,
-        error: error instanceof Error ? error.message : error,
-      });
-    }
+  /** Creates (or reuses) a PENDING NotificationLog and queues delivery; see notificationDelivery. */
+  enqueue(params: EnqueueParams): Promise<NotificationLog | null> {
+    return enqueueNotification(params);
   }
 
   async createTest(actorId: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -286,33 +124,40 @@ export class NotificationsService {
 
   // --- Typed helpers (trigger matrix) ---
 
-  sendEmailVerification(userId: string, templateData: EmailTemplateData = {}) {
+  /**
+   * `resend` is a shopper explicitly asking again: it gets its own reference, otherwise the
+   * duplicate guard would return today's already-sent email and nothing new would arrive.
+   */
+  sendEmailVerification(userId: string, templateData: EmailTemplateData = {}, options: { strict?: boolean; resend?: boolean } = {}) {
     return this.enqueue({
       userId,
       type: 'EMAIL_VERIFICATION',
       referenceType: 'User',
-      referenceId: `${userId}:${todayBucket()}`,
+      referenceId: options.resend ? `${userId}:${Date.now()}` : `${userId}:${todayBucket()}`,
       templateData,
+      strict: options.strict,
     });
   }
 
-  sendPasswordReset(userId: string, templateData: EmailTemplateData) {
+  sendPasswordReset(userId: string, templateData: EmailTemplateData, options: { strict?: boolean } = {}) {
     return this.enqueue({
       userId,
       type: 'PASSWORD_RESET',
       referenceType: 'User',
       referenceId: randomUUID(),
       templateData,
+      strict: options.strict,
     });
   }
 
-  sendLoginOtp(userId: string, otpId: string, templateData: EmailTemplateData) {
+  sendLoginOtp(userId: string, otpId: string, templateData: EmailTemplateData, options: { strict?: boolean } = {}) {
     return this.enqueue({
       userId,
       type: 'LOGIN_OTP',
       referenceType: 'OtpCode',
       referenceId: otpId,
       templateData,
+      strict: options.strict,
     });
   }
 
@@ -366,13 +211,14 @@ export class NotificationsService {
     });
   }
 
-  sendSubOrderShipped(userId: string, subOrderId: string, templateData: EmailTemplateData = {}) {
+  sendSubOrderShipped(userId: string, subOrderId: string, templateData: EmailTemplateData = {}, attachments?: EmailAttachmentSpec[]) {
     return this.enqueue({
       userId,
       type: 'SUBORDER_SHIPPED',
       referenceType: 'SubOrder',
       referenceId: subOrderId,
       templateData,
+      attachments,
     });
   }
 
@@ -577,13 +423,14 @@ export class NotificationsService {
     });
   }
 
-  sendPayoutPaid(userId: string, payoutId: string, templateData: EmailTemplateData = {}) {
+  sendPayoutPaid(userId: string, payoutId: string, templateData: EmailTemplateData = {}, attachments?: EmailAttachmentSpec[]) {
     return this.enqueue({
       userId,
       type: 'PAYOUT_PAID',
       referenceType: 'Payout',
       referenceId: payoutId,
       templateData,
+      attachments,
     });
   }
 

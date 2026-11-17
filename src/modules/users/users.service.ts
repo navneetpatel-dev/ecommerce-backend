@@ -44,6 +44,7 @@ import type {
   UpdateAddressRequest,
   ListAssigneesQuery,
 } from './users.dto';
+import { notifyAccountStatusChange } from '@modules/notifications/events/accountEvents';
 
 const ASSIGNEE_PERMISSIONS = [PERMISSIONS.TICKET_MANAGE, PERMISSIONS.BUG_REPORT_MANAGE] as const;
 
@@ -681,6 +682,7 @@ export class UsersService {
       }
 
       await usersRepository.update(userId, data, { transaction: t });
+      t.afterCommit(() => void notifyAccountStatusChange(userId, user.status, data.status));
 
       if (data.status === USER_STATUS.BLOCKED) {
         await authRepository.deleteRefreshTokensByUser(userId);

@@ -7,3 +7,5 @@ export const SubscribeNewsletterSchema = z
   .strict();
 
 export type SubscribeNewsletterRequest = z.infer<typeof SubscribeNewsletterSchema>;
+
+export const NewsletterTokenSchema = z.object({ token: z.string().min(10).max(2000) }).strict();

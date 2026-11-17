@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authenticate } from '@middleware/auth.middleware';
+import { blockNewPurchasesDuringMaintenance } from '@middleware/maintenance.middleware';
 import { validate } from '@middleware/validate.middleware';
 import { authRateLimiter } from '@middleware/rateLimiter.middleware';
 import { authorize } from '@middleware/rbac.middleware';
@@ -18,6 +19,7 @@ const router = Router();
 router.post(
   '/purchase',
   authenticate,
+  blockNewPurchasesDuringMaintenance,
   validate(PurchaseGiftCardSchema),
   giftCardsController.purchaseGiftCard,
 );

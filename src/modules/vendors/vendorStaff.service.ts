@@ -10,8 +10,8 @@ import { RefreshToken } from '@database/models/refreshToken.model';
 import { sequelize } from '@database/models';
 import { clearPermissionCache } from '@middleware/rbac.middleware';
 import { logAudit } from '@modules/audit/audit.service';
-import { authService } from '@modules/auth/auth.service';
 import type { AddStaffRequest } from './vendorStaff.dto';
+import { notifyVendorStaffInvite, notifyVendorStaffRoleChanged } from '@modules/notifications/events/vendorEvents';
 
 export interface StaffMember {
   id: string;
@@ -80,6 +80,7 @@ export class VendorStaffService {
           { transaction: t },
         );
         clearPermissionCache();
+        t.afterCommit(() => void notifyVendorStaffRoleChanged(existingUser.id, vendorId));
         await logAudit({
           actorId,
           action: 'VENDOR_STAFF_ADDED',
@@ -126,7 +127,7 @@ export class VendorStaffService {
 
       clearPermissionCache();
 
-      void authService.forgotPassword(newUser.email);
+      t.afterCommit(() => void notifyVendorStaffInvite(newUser.id, actorId));
 
       return {
         id: newUser.id,

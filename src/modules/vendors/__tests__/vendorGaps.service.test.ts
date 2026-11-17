@@ -27,6 +27,7 @@ import { productsRepository } from '@modules/products/products.repository';
 import { settingsService } from '@modules/settings/settings.service';
 import { walletService } from '@modules/wallet/wallet.service';
 import { notificationsService } from '@modules/notifications/notifications.service';
+import { Vendor } from '@database/models/vendor.model';
 import {
   ORDER_STATUS,
   COMMISSION_STATUS,
@@ -337,6 +338,9 @@ describe('Vendor Modules Gap Fixes Verification', () => {
     });
 
     it('submits successfully when product has at least 1 variant and 1 image', async () => {
+      // Moderated platform: the submission waits for an admin (the auto-approve case is in
+      // products.submitForApproval.test.ts).
+      mock.method(settingsService, 'getPlatformSettings', async () => ({ autoApproveProducts: false }) as any);
       mock.method(sequelize, 'transaction', async (callback: (t: any) => Promise<any>) => {
         return callback({});
       });
@@ -418,9 +422,9 @@ describe('Vendor Modules Gap Fixes Verification', () => {
       );
     });
 
-    it('triggers forgotPassword setup email when a new staff user is added', async () => {
+    it('queues an invite email (not a password-reset email) when a new staff user is added', async () => {
       mock.method(sequelize, 'transaction', async (callback: (t: any) => Promise<any>) => {
-        return callback({});
+        return callback({ afterCommit: (fn: () => void) => fn() });
       });
 
       mock.method(Role, 'findOne', async () => ({ id: 'staff-role-id' } as any));
@@ -433,9 +437,17 @@ describe('Vendor Modules Gap Fixes Verification', () => {
       });
       mock.method(AuditLog, 'create', async () => ({} as any));
 
-      let forgotPasswordCalledWith: string | null = null;
-      mock.method(authService, 'forgotPassword', async (email: string) => {
-        forgotPasswordCalledWith = email;
+      let forgotPasswordCalled = false;
+      mock.method(authService, 'forgotPassword', async () => {
+        forgotPasswordCalled = true;
+      });
+      // The invite email looks up who was added and which shop they joined.
+      mock.method(User, 'findByPk', async () => ({ id: 'new-user-1', email: 'staff@example.com', name: 'John Staff', vendorId: 'vendor-1', passwordHash: 'hash' }) as any);
+      mock.method(Vendor, 'findByPk', async () => ({ businessName: 'Acme Store' }) as any);
+      const invites: Array<Record<string, any>> = [];
+      mock.method(notificationsService, 'enqueue', async (params: Record<string, any>) => {
+        invites.push(params);
+        return null as any;
       });
 
       const res = await vendorStaffService.addStaff(
@@ -443,10 +455,15 @@ describe('Vendor Modules Gap Fixes Verification', () => {
         { name: 'John Staff', email: 'staff@example.com' },
         'owner-1',
       );
+      await new Promise((resolve) => setImmediate(resolve));
 
       assert.equal(res.email, 'staff@example.com');
       assert.equal(createdUserPayload?.email, 'staff@example.com');
-      assert.equal(forgotPasswordCalledWith, 'staff@example.com');
+      assert.equal(forgotPasswordCalled, false, 'a new team member gets an invite, not a "reset your password" email');
+      assert.equal(invites[0]?.type, 'VENDOR_STAFF_INVITE');
+      assert.equal(invites[0]?.userId, 'new-user-1');
+      assert.match(String(invites[0]?.templateData?.actionUrl), /\/reset-password\?token=/);
+      assert.equal(invites[0]?.templateData?.businessName, 'Acme Store');
     });
   });
 });

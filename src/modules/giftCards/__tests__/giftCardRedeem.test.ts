@@ -12,7 +12,7 @@ describe('gift card redemption and the wallet limit', () => {
 
   function stub(balance: number) {
     mock.method(sequelize, 'transaction', async (callback: (t: unknown) => Promise<unknown>) =>
-      callback({ LOCK: { UPDATE: 'UPDATE' } }),
+      callback({ LOCK: { UPDATE: 'UPDATE' }, afterCommit: () => undefined }),
     );
     const updates: Array<Record<string, unknown>> = [];
     const card = {

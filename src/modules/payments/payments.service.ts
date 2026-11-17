@@ -27,6 +27,7 @@ import { markPartCardRefundProcessed } from './partCardRefund';
 import { notifyCancelRefund } from './cancelRefundNotices';
 import { failedOrderRefundAttempt } from './orderCancelRefund';
 import { refundIfSupersededRechargePayment } from '@modules/wallet/supersededRechargePayment';
+import { orderReference } from '@modules/orders/orderReference';
 
 export type RazorpayCheckoutPayload = {
   razorpayOrderId: string;
@@ -563,7 +564,7 @@ export class PaymentsService {
           if (order) {
             void notificationsService.sendPaymentFailed(order.userId, order.id, {
               orderId: order.id,
-              orderNumber: order.id.slice(0, 8).toUpperCase(),
+              orderNumber: orderReference(order.id),
             });
           }
         }

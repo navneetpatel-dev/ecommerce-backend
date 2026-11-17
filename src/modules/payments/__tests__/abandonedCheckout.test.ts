@@ -27,6 +27,8 @@ describe('expireAbandonedCheckouts', () => {
       wheres.push(options.where);
       return (batches[call++] ?? []) as never;
     });
+    // The "checkout expired" email looks the order up; these tests are about which orders expire.
+    mock.method(Order, 'findByPk', async () => null);
     mock.method(notificationsService, 'sendOrderCancelled', () => undefined);
     return wheres;
   }

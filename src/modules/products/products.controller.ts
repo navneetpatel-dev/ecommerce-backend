@@ -139,7 +139,7 @@ export const deleteProduct = asyncHandler(async (req: Request, res: Response) =>
 });
 
 export const submitForApproval = asyncHandler(async (req: Request, res: Response) => {
-  const product = await productsService.submitForApproval(req.params.id!, req.user!.vendorId!);
+  const product = await productsService.submitForApproval(req.params.id!, req.user!.vendorId!, req.user!.id);
   res.json(ok(product));
 });
 

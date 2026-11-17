@@ -24,6 +24,7 @@ import {
   checkWalletRechargeAmountRange,
   walletRechargeAmountRangeMessage,
 } from './walletRechargeAmount.validation';
+import { notifyWalletRecharged } from '@modules/notifications/events/walletEvents';
 
 export type WalletRechargeCheckoutPayload = {
   rechargeId: string;
@@ -442,6 +443,7 @@ export class WalletRechargeService {
         transaction,
         { pointSource: WALLET_POINT_SOURCE.PURCHASED },
       );
+      transaction.afterCommit(() => void notifyWalletRecharged(row.id));
 
       await row.update(
         {

@@ -16,6 +16,11 @@ router.get(
   validate(ListNotificationLogsQuerySchema, 'query'),
   notificationsController.listLogs,
 );
+router.get('/health', authenticate, authorize(PERMISSIONS.SETTINGS_MANAGE), notificationsController.health);
+router.post('/logs/:id/resend', authenticate, authorize(PERMISSIONS.SETTINGS_MANAGE), notificationsController.resend);
+router.get('/templates', authenticate, authorize(PERMISSIONS.SETTINGS_MANAGE), notificationsController.listTemplates);
+router.get('/templates/:type/preview', authenticate, authorize(PERMISSIONS.SETTINGS_MANAGE), notificationsController.previewTemplate);
+router.post('/templates/:type/test', authenticate, authorize(PERMISSIONS.SETTINGS_MANAGE), notificationsController.sendTestTemplate);
 router.post('/test', authenticate, authorize(PERMISSIONS.SETTINGS_MANAGE), notificationsController.createTest);
 router.post(
   '/broadcast',

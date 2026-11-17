@@ -20,6 +20,7 @@ import {
 } from '@modules/wallet/walletOrderRollback';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { issuePartCardRefund, markPartCardRefundPending } from '@modules/payments/partCardRefund';
+import { orderReference } from '@modules/orders/orderReference';
 
 export const RTO_CREDIT_NOTE_REASON = 'Returned undelivered (RTO)';
 
@@ -95,7 +96,7 @@ export async function refundReturnedUndeliveredPart(
     transaction.afterCommit(() => {
       void notificationsService.sendRefundProcessed(order.userId, subOrder.id, {
         amount: fromPaise(refundedPaise),
-        orderNumber: order.id.slice(0, 8).toUpperCase(),
+        orderNumber: orderReference(order.id),
       });
     });
   }

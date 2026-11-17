@@ -5,6 +5,8 @@ import { SubOrder } from '@database/models/subOrder.model';
 import { PAYMENT_STATUS, ROLES } from '@core/constants/statuses';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { logger } from '@core/logger';
+import { buildOrderEmailData } from '@modules/notifications/orderEmailData';
+import { orderReference } from '@modules/orders/orderReference';
 
 export async function findVendorOwnerUserId(vendorId: string | null | undefined): Promise<string | null> {
   if (!vendorId) return null;
@@ -67,13 +69,15 @@ export async function notifyOrderConfirmed(orderId: string): Promise<void> {
     });
     if (!order) return;
 
-    const orderNumber = order.id.slice(0, 8).toUpperCase();
+    const orderNumber = orderReference(order.id);
     const total = Number(order.totalAmount ?? 0);
 
+    const rich = await buildOrderEmailData(order.id, { withTotals: true, withAddress: true, withPayment: true });
     await notificationsService.sendOrderConfirmation(order.userId, order.id, {
       orderId: order.id,
       orderNumber,
       total,
+      ...rich,
     });
     // A receipt says money was received, so only for orders that are paid (online
     // or wallet). Cash on delivery has taken nothing yet.
@@ -82,6 +86,9 @@ export async function notifyOrderConfirmed(orderId: string): Promise<void> {
         orderId: order.id,
         orderNumber,
         total,
+        ...rich,
+        items: [],
+        detailsTitle: 'Payment details',
       });
     }
 
@@ -96,6 +103,7 @@ export async function notifyOrderConfirmed(orderId: string): Promise<void> {
         orderId: order.id,
         orderNumber,
         subtotal: Number(sub.subtotal ?? 0),
+        ...(await buildOrderEmailData(order.id, { subOrderId: sub.id })),
       });
     }
   } catch (error) {

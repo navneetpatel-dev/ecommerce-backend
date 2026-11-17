@@ -85,7 +85,7 @@ const envSchema = z.object({
    */
   MAIL_DRIVER: z.enum(['auto', 'console', 'ses', 'smtp']).default('auto'),
   MAIL_FROM_EMAIL: z.string().default('noreply@ecommerce.com'),
-  MAIL_FROM_NAME: z.string().default('Ecommerce'),
+  MAIL_FROM_NAME: z.string().default('Marketplace'),
 
   /** Optional SES configuration set (bounce/complaint events). */
   SES_CONFIGURATION_SET: z.string().optional(),
@@ -167,6 +167,16 @@ const envSchema = z.object({
   DB_POOL_MAX: z.coerce.number().int().positive().default(20),
   EMAIL_TRANSACTIONAL_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(3),
   EMAIL_MARKETING_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(1),
+  /**
+   * Emails each worker queue may send per minute. Gmail SMTP throttles accounts that log in
+   * or send too fast, so the default is deliberately gentle; raise it on a real provider.
+   */
+  MAIL_RATE_PER_MINUTE: z.coerce.number().int().positive().default(20),
+  /** Let mail go to reserved test domains (example.com, *.test). Off by default: they only bounce. */
+  MAIL_ALLOW_TEST_DOMAINS: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
 }).superRefine((data, ctx) => {
   if (data.MAIL_DRIVER === 'smtp') {
     if (!data.SMTP_HOST) {
