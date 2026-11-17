@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ROLE_VALUES } from '@core/constants/statuses';
 
 export const ListNotificationLogsQuerySchema = z.object({
+  search: z.string().trim().optional(),
   type: z.string().trim().min(1).optional(),
   channel: z.enum(['EMAIL', 'SMS', 'PUSH']).optional(),
   status: z.enum(['PENDING', 'SENT', 'FAILED', 'BOUNCED', 'COMPLAINED']).optional(),

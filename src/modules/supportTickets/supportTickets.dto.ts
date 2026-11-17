@@ -46,6 +46,7 @@ export const UpdatePrioritySchema = z.object({
 });
 
 export const AdminTicketListQuerySchema = keysetQuerySchema.extend({
+  search: z.string().trim().optional(),
   status: z.enum(SUPPORT_TICKET_STATUS_VALUES).optional(),
   priority: z.enum(SUPPORT_TICKET_PRIORITY_VALUES).optional(),
   category: z.enum(SUPPORT_TICKET_CATEGORY_VALUES).optional(),
@@ -53,6 +54,7 @@ export const AdminTicketListQuerySchema = keysetQuerySchema.extend({
 });
 
 export const VendorTicketListQuerySchema = keysetQuerySchema.extend({
+  search: z.string().trim().optional(),
   status: z.enum(SUPPORT_TICKET_STATUS_VALUES).optional(),
   priority: z.enum(SUPPORT_TICKET_PRIORITY_VALUES).optional(),
   category: z.enum(SUPPORT_TICKET_CATEGORY_VALUES).optional(),

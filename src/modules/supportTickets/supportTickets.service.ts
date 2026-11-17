@@ -557,6 +557,13 @@ export class SupportTicketsService {
     if (query.status) where.status = query.status;
     if (query.priority) where.priority = query.priority;
     if (query.category) where.category = query.category;
+    if (query.search?.trim()) {
+      const q = `%${query.search.trim()}%`;
+      (where as any)[Op.or] = [
+        { subject: { [Op.iLike]: q } },
+        { ticketNumber: { [Op.iLike]: q } },
+      ];
+    }
     return this.listWithKeyset(where, query, actor);
   }
 
@@ -571,6 +578,13 @@ export class SupportTicketsService {
     if (query.status) extras.status = query.status;
     if (query.priority) extras.priority = query.priority;
     if (query.category) extras.category = query.category;
+    if (query.search?.trim()) {
+      const q = `%${query.search.trim()}%`;
+      (extras as any)[Op.or] = [
+        { subject: { [Op.iLike]: q } },
+        { ticketNumber: { [Op.iLike]: q } },
+      ];
+    }
     const where: WhereOptions =
       Object.keys(extras).length > 0 ? { [Op.and]: [filters, extras] } : filters;
     return this.listWithKeyset(where, query, actor);
@@ -582,6 +596,13 @@ export class SupportTicketsService {
     if (query.priority) where.priority = query.priority;
     if (query.category) where.category = query.category;
     if (query.vendorId) where.relatedVendorId = query.vendorId;
+    if (query.search?.trim()) {
+      const q = `%${query.search.trim()}%`;
+      (where as any)[Op.or] = [
+        { subject: { [Op.iLike]: q } },
+        { ticketNumber: { [Op.iLike]: q } },
+      ];
+    }
     return this.listWithKeyset(where, query, actor);
   }
 

@@ -50,10 +50,20 @@ export class NotificationsService {
     if (filters.channel) where.channel = filters.channel;
     if (filters.status) where.status = filters.status;
 
+    const userInclude: Record<string, unknown> = {
+      model: User,
+      as: 'user',
+      attributes: ['email'],
+    };
+    if (filters.search?.trim()) {
+      userInclude.where = { email: { [Op.iLike]: `%${filters.search.trim()}%` } };
+      userInclude.required = true;
+    }
+
     return NotificationLog.findAll({
       where,
       limit: 100,
-      include: [{ model: User, as: 'user', attributes: ['email'] }],
+      include: [userInclude],
       order: [['createdAt', 'DESC']],
     });
   }

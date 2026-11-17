@@ -57,6 +57,7 @@ export const BugCommentSchema = z.object({
 });
 
 export const AdminBugListQuerySchema = keysetQuerySchema.extend({
+  search: z.string().trim().optional(),
   status: z.enum(BUG_REPORT_STATUS_VALUES).optional(),
   severity: z.enum(BUG_REPORT_SEVERITY_VALUES).optional(),
   affectedModule: z.enum(BUG_AFFECTED_MODULE_VALUES).optional(),
@@ -65,6 +66,7 @@ export const AdminBugListQuerySchema = keysetQuerySchema.extend({
 
 /** Reporter list — status/severity filters only (no admin-only fields). */
 export const MineBugListQuerySchema = keysetQuerySchema.extend({
+  search: z.string().trim().optional(),
   status: z.enum(BUG_REPORT_STATUS_VALUES).optional(),
   severity: z.enum(BUG_REPORT_SEVERITY_VALUES).optional(),
 });

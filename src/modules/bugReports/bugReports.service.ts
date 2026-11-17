@@ -408,6 +408,13 @@ export class BugReportsService {
     const where: WhereOptions = { reporterId: actor.id };
     if (query.status) where.status = query.status;
     if (query.severity) where.severity = query.severity;
+    if (query.search?.trim()) {
+      const q = `%${query.search.trim()}%`;
+      (where as any)[Op.or] = [
+        { title: { [Op.iLike]: q } },
+        { reportNumber: { [Op.iLike]: q } },
+      ];
+    }
     return this.listWithKeyset(where, query);
   }
 
@@ -417,6 +424,13 @@ export class BugReportsService {
     if (query.severity) where.severity = query.severity;
     if (query.affectedModule) where.affectedModule = query.affectedModule;
     if (query.reporterRole) where.reporterRole = query.reporterRole;
+    if (query.search?.trim()) {
+      const q = `%${query.search.trim()}%`;
+      (where as any)[Op.or] = [
+        { title: { [Op.iLike]: q } },
+        { reportNumber: { [Op.iLike]: q } },
+      ];
+    }
     return this.listWithKeyset(where, query);
   }
 
