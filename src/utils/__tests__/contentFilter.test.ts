@@ -80,7 +80,7 @@ describe('screenContent', () => {
     assert.equal(res2.isClean, false);
     assert.ok(res2.flags.includes('PROFANITY'));
 
-    const res3 = screenContent('Chutiya product');
+    const res3 = screenContent('What an absolute bastard');
     assert.equal(res3.isClean, false);
     assert.ok(res3.flags.includes('PROFANITY'));
   });

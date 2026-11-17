@@ -1,11 +1,13 @@
+import filter from 'leo-profanity';
+
 /**
  * Automated safety and content screening filter for User Generated Content (UGC).
  *
- * Screens for:
- * 1. PII: Phone numbers (domestic & international, formatted or spaced) and email addresses.
- * 2. Spam & External Links: URLs, web addresses, domain names.
- * 3. Off-platform transaction solicitations (e.g. WhatsApp, direct payment).
- * 4. Profanity & Abusive Language: Curated list of abusive terms with leetspeak normalization.
+ * Powered by:
+ * - `leo-profanity` (standard open-source profanity detection library based on Shutterstock dictionary)
+ * - PII detectors (phone numbers & email addresses)
+ * - Anti-spam & external URL detectors
+ * - Off-platform solicitation filters (WhatsApp, external UPI/payment prompts)
  */
 
 export type ContentFlag = 'PROFANITY' | 'PII_PHONE' | 'PII_EMAIL' | 'EXTERNAL_LINK' | 'OFF_PLATFORM_SOLICITATION';
@@ -21,7 +23,7 @@ export interface ContentFilterResult {
 const PHONE_PATTERNS = [
   // Standard formatted with country code: +91-9876543210, +1 (555) 123-4567
   /(?:\+|00)\d{1,4}[-.\s]?(?:\(?\d{1,4}\)?[-.\s]?){1,4}\d{1,4}/,
-  // 10-digit mobile starting with 6, 7, 8, 9 (India specific) with optional separators
+  // 10-digit mobile starting with 6, 7, 8, 9 with optional separators
   /\b[6-9]\d{4}[-.\s]?\d{5}\b/,
   /\b[6-9](?:[-.\s]?\d){9}\b/,
   // Common spaced-out or segmented numbers (e.g. "call 9 8 7 6 5 4 3 2 1 0")
@@ -48,89 +50,17 @@ const SOLICITATION_PATTERNS = [
   /\b(?:pay|send money|transfer)\s+(?:via|through|on|to)?\s*(?:gpay|google pay|phonepe|paytm|upi|outside|bank account)\b/i,
 ];
 
-// 5. Profanity & Abusive Blocklist
-// Word-boundary matched to prevent false positives on benign words like "classic", "grape", "hello".
-const PROFANITY_BLOCKLIST = [
-  // Common English profanities
-  'fuck',
-  'fucking',
-  'fucked',
-  'fucker',
-  'fucks',
-  'shit',
-  'shitty',
-  'bullshit',
-  'bitch',
-  'bitches',
-  'bitching',
-  'asshole',
-  'assholes',
-  'bastard',
-  'bastards',
-  'dick',
-  'dicks',
-  'pussy',
-  'cunt',
-  'cunts',
-  'slut',
-  'whore',
-  'nigger',
-  'nigga',
-  'faggot',
-  'fag',
-  // Common Indian/colloquial abusive terms & slurs
-  'chutiya',
-  'chutiye',
-  'chutya',
-  'madarchod',
-  'mc',
-  'bhenchod',
-  'behenchod',
-  'bc',
-  'gandu',
-  'bhosdike',
-  'bhosadike',
-  'bsdk',
-  'harami',
-  'kutta',
-  'kamine',
-  'kamina',
-  'randi',
-  'saala',
-  'suar',
-  'lauda',
-  'loda',
-  'lavda',
-];
-
-// Common masked / asterisk profanity patterns (e.g. f*ck, b*tch, sh*t)
-const MASKED_PROFANITY_PATTERNS = [
-  /\bf[\*_u@#0-9]+ck\b/i,
-  /\bsh[\*_i!#0-9]+t\b/i,
-  /\bb[\*_i!#0-9]+tch\b/i,
-  /\ba[\*_\$@#0-9]+ss(?:hole)?\b/i,
-  /\bd[\*_i!#0-9]+ck\b/i,
-  /\bp[\*_u@#0-9]+ssy\b/i,
-  /\bc[\*_u@#0-9]+nt\b/i,
-];
-
 /**
- * Normalizes leetspeak and special substitutions to plain text before checking.
- * e.g., f*ck -> fuck, b!tch -> bitch, @ss -> ass
+ * Normalizes common leetspeak substitutions (e.g. f*ck -> fuck, @ss -> ass)
+ * so the profanity dictionary can recognize masked variants without hardcoded lists.
  */
-function normalizeLeetspeak(text: string): string {
-  return text
-    .replace(/[@]/g, 'a')
-    .replace(/[$]/g, 's')
-    .replace(/[!|1]/g, 'i')
-    .replace(/[0]/g, 'o')
-    .replace(/[3]/g, 'e')
-    .replace(/[*_]/g, '');
+function normalizeObfuscation(text: string): string {
+  return text.replace(/[*]/g, 'u').replace(/[@]/g, 'a').replace(/[$]/g, 's').replace(/[!]/g, 'i');
 }
 
 /**
- * Screens user-generated text for safety violations.
- * Returns whether the content is clean along with detected flags and explanatory reasons.
+ * Screens user-generated text for safety violations using the established `leo-profanity` library
+ * and pattern detectors for PII and spam.
  */
 export function screenContent(text: string | null | undefined): ContentFilterResult {
   if (!text || !text.trim()) {
@@ -177,28 +107,11 @@ export function screenContent(text: string | null | undefined): ContentFilterRes
     }
   }
 
-  // Check 5: Profanity & Abusive words
-  let profanityDetected = false;
-  for (const pattern of MASKED_PROFANITY_PATTERNS) {
-    if (pattern.test(raw)) {
-      flags.push('PROFANITY');
-      reasons.push('Contains offensive, abusive, or inappropriate language');
-      profanityDetected = true;
-      break;
-    }
-  }
-
-  if (!profanityDetected) {
-    const normalized = normalizeLeetspeak(raw.toLowerCase());
-    for (const word of PROFANITY_BLOCKLIST) {
-      // Exact word boundary check
-      const regex = new RegExp(`\\b${word}\\b`, 'i');
-      if (regex.test(raw) || regex.test(normalized)) {
-        flags.push('PROFANITY');
-        reasons.push('Contains offensive, abusive, or inappropriate language');
-        break;
-      }
-    }
+  // Check 5: Profanity & Abusive language using leo-profanity
+  const normalized = normalizeObfuscation(raw);
+  if (filter.check(raw) || filter.check(normalized)) {
+    flags.push('PROFANITY');
+    reasons.push('Contains offensive, abusive, or inappropriate language');
   }
 
   return {
