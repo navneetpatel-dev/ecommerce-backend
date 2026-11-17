@@ -33,7 +33,10 @@ import { Product } from '@database/models/product.model';
 import { sequelize } from '@database/models';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 
-function serializeQuestion(row: ProductQuestion, opts?: { publishedAnswersOnly?: boolean; previewAnswers?: AnswerRow[] }) {
+function serializeQuestion(
+  row: ProductQuestion,
+  opts?: { publishedAnswersOnly?: boolean; previewAnswers?: AnswerRow[] },
+) {
   const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
   const answers = ((plain.answers ?? []) as Array<Record<string, unknown>>).filter((answer) =>
     opts?.publishedAnswersOnly ? answer.status === PRODUCT_ANSWER_STATUS.PUBLISHED : true,
@@ -53,15 +56,15 @@ function serializeQuestion(row: ProductQuestion, opts?: { publishedAnswersOnly?:
     answers: opts?.previewAnswers
       ? opts.previewAnswers.map(serializeAnswer)
       : answers.map((a: any) => ({
-          id: a.id,
-          answer: a.answer,
-          authorId: a.authorId,
-          authorType: a.authorType,
-          authorName: a.author?.name ?? null,
-          status: a.status,
-          createdAt: a.createdAt,
-          editedAt: a.editedAt ?? null,
-        })),
+        id: a.id,
+        answer: a.answer,
+        authorId: a.authorId,
+        authorType: a.authorType,
+        authorName: a.author?.name ?? null,
+        status: a.status,
+        createdAt: a.createdAt,
+        editedAt: a.editedAt ?? null,
+      })),
   };
 }
 
@@ -102,10 +105,7 @@ export class ProductQnaService {
       ANSWER_PREVIEW_PER_QUESTION,
     );
     const mine = viewerUserId
-      ? await findViewerAnswers(
-          rows.map((row) => row.id),
-          viewerUserId,
-        )
+      ? await findViewerAnswers(rows.map((row) => row.id), viewerUserId)
       : new Map<string, ReturnType<typeof serializeAnswer>>();
     const byQuestion = new Map<string, AnswerRow[]>();
     for (const answer of previews) {
@@ -142,7 +142,11 @@ export class ProductQnaService {
     if (!question || question.status !== PRODUCT_QUESTION_STATUS.PUBLISHED) {
       throw new NotFoundError('ProductQuestion');
     }
-    const { rows, count } = await productQnaRepository.findAnswerPage(questionId, query.limit, paginationOffset(query.page, query.limit));
+    const { rows, count } = await productQnaRepository.findAnswerPage(
+      questionId,
+      query.limit,
+      paginationOffset(query.page, query.limit),
+    );
     return {
       answers: rows.map(serializeAnswer),
       pagination: buildPaginationMeta(count, query.page, query.limit),
@@ -199,7 +203,9 @@ export class ProductQnaService {
 
       const product = (question as any).product as Product | undefined;
       const authorType =
-        vendorId && product?.vendorId === vendorId ? PRODUCT_ANSWER_AUTHOR_TYPE.VENDOR : PRODUCT_ANSWER_AUTHOR_TYPE.CUSTOMER;
+        vendorId && product?.vendorId === vendorId
+          ? PRODUCT_ANSWER_AUTHOR_TYPE.VENDOR
+          : PRODUCT_ANSWER_AUTHOR_TYPE.CUSTOMER;
 
       if (authorType === PRODUCT_ANSWER_AUTHOR_TYPE.VENDOR && actor?.role) {
         const isOwner = actor.role.name === ROLES.VENDOR_OWNER;
@@ -222,9 +228,9 @@ export class ProductQnaService {
           (product as any).vendor ??
           ((t as any)?.LOCK
             ? await Vendor.findByPk(product.vendorId, {
-                attributes: ['id', 'status', 'kycVerified', 'businessName'],
-                transaction: t,
-              }).catch(() => null)
+              attributes: ['id', 'status', 'kycVerified', 'businessName'],
+              transaction: t,
+            }).catch(() => null)
             : null);
 
         if (vendor?.status === VENDOR_STATUS.APPROVED && vendor?.kycVerified === true) {
@@ -272,10 +278,15 @@ export class ProductQnaService {
     const answered = question.pendingRevision
       ? await ProductAnswer.count({ where: { questionId, status: PRODUCT_ANSWER_STATUS.PUBLISHED } })
       : 0;
-    return question.update(moderateQuestionUpdate(question, status === PRODUCT_QUESTION_STATUS.PUBLISHED, answered));
+    return question.update(
+      moderateQuestionUpdate(question, status === PRODUCT_QUESTION_STATUS.PUBLISHED, answered),
+    );
   }
 
-  async deleteAnswer(answerId: string, actor: { id: string; roleId?: string; role: { name: string } }) {
+  async deleteAnswer(
+    answerId: string,
+    actor: { id: string; roleId?: string; role: { name: string } },
+  ) {
     const answer = await ProductAnswer.findByPk(answerId);
     if (!answer) throw new NotFoundError('ProductAnswer');
     const isAuthor = answer.authorId === actor.id;

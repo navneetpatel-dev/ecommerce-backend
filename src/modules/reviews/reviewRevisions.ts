@@ -21,7 +21,12 @@ export interface ReviewEdit {
 export const isLiveReview = (review: Pick<Review, 'status'>) => review.status === REVIEW_STATUS.APPROVED;
 
 /** The columns an owner edit writes. */
-export function reviewEditUpdate(review: Review, edit: ReviewEdit, userId: string, autoApproveEnabled: boolean = true) {
+export function reviewEditUpdate(
+  review: Review,
+  edit: ReviewEdit,
+  userId: string,
+  autoApproveEnabled: boolean = true,
+) {
   const title = edit.title?.trim() ? edit.title : null;
   if (isLiveReview(review)) {
     const revision: ReviewRevision = {
