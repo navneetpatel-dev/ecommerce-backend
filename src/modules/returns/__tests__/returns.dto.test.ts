@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { DisputeReturnSchema, ResolveReturnDisputeSchema } from '../returns.dto';
+import { DisputeReturnSchema, ResolveReturnDisputeSchema, ListReturnsQuerySchema } from '../returns.dto';
 
 describe('returns DTO schemas', () => {
   it('validates DisputeReturnSchema', () => {
@@ -48,5 +48,18 @@ describe('returns DTO schemas', () => {
       }).success,
       false,
     );
+  });
+
+  it('validates ListReturnsQuerySchema', () => {
+    const parsed = ListReturnsQuerySchema.parse({
+      page: '2',
+      limit: '50',
+      status: 'APPROVED',
+      search: 'DEFECT',
+    });
+    assert.equal(parsed.page, 2);
+    assert.equal(parsed.limit, 50);
+    assert.equal(parsed.status, 'APPROVED');
+    assert.equal(parsed.search, 'DEFECT');
   });
 });

@@ -212,6 +212,7 @@ export const ListCouponsQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().positive().max(100).optional(),
   status: z.enum(COUPON_STATUS_VALUES).optional(),
+  search: z.string().trim().optional(),
   vendorId: z.string().uuid().optional(),
   /** When true, only vendor-created coupons; when false, only platform-wide. */
   vendorScoped: z

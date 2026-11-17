@@ -485,10 +485,24 @@ export class ReturnsService {
     return { returns, pagination: buildPaginationMeta(count, query.page, query.limit) };
   }
 
-  async listAll(query: { page: number; limit: number }) {
+  async listAll(query: { page: number; limit: number; status?: string; search?: string }) {
     const slaDays = await refundSlaDays();
     const offset = paginationOffset(query.page, query.limit);
+    const where: Record<string, unknown> = {};
+    if (query.status) {
+      where.status = query.status;
+    }
+    if (query.search?.trim()) {
+      const q = `%${query.search.trim()}%`;
+      const esc = sequelize.escape(q);
+      (where as any)[Op.and] = [
+        sequelize.literal(
+          `("ReturnRequest"."id"::text ILIKE ${esc} OR "ReturnRequest"."reasonCode"::text ILIKE ${esc} OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.id = "ReturnRequest"."orderItemId" AND (oi."productName" ILIKE ${esc} OR oi."sku" ILIKE ${esc})) OR EXISTS (SELECT 1 FROM users u WHERE u.id = "ReturnRequest"."userId" AND u.name ILIKE ${esc}))`,
+        ),
+      ];
+    }
     const { rows, count } = await ReturnRequest.findAndCountAll({
+      where,
       include: returnListInclude,
       order: [['createdAt', 'DESC']],
       limit: query.limit,
@@ -660,9 +674,22 @@ export class ReturnsService {
     return resolvedRow!;
   }
 
-  async listForVendor(vendorId: string, query: { page: number; limit: number }) {
+  async listForVendor(vendorId: string, query: { page: number; limit: number; status?: string; search?: string }) {
     const slaDays = await refundSlaDays();
     const offset = paginationOffset(query.page, query.limit);
+    const where: Record<string, unknown> = {};
+    if (query.status) {
+      where.status = query.status;
+    }
+    if (query.search?.trim()) {
+      const q = `%${query.search.trim()}%`;
+      const esc = sequelize.escape(q);
+      (where as any)[Op.and] = [
+        sequelize.literal(
+          `("ReturnRequest"."id"::text ILIKE ${esc} OR "ReturnRequest"."reasonCode"::text ILIKE ${esc} OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.id = "ReturnRequest"."orderItemId" AND (oi."productName" ILIKE ${esc} OR oi."sku" ILIKE ${esc})) OR EXISTS (SELECT 1 FROM users u WHERE u.id = "ReturnRequest"."userId" AND u.name ILIKE ${esc}))`,
+        ),
+      ];
+    }
     const vendorInclude = returnListInclude.map((inc) =>
       (inc as { as?: string }).as === 'subOrder'
         ? {
@@ -673,6 +700,7 @@ export class ReturnsService {
         : inc,
     );
     const { rows, count } = await ReturnRequest.findAndCountAll({
+      where,
       include: vendorInclude,
       order: [['createdAt', 'DESC']],
       limit: query.limit,

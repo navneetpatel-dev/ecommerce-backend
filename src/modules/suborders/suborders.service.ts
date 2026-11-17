@@ -1,3 +1,4 @@
+import { Op } from 'sequelize';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { assertPartPaidFor, assertSubOrderTransition, VENDOR_VISIBLE_ORDER_WHERE } from './subOrderTransitions';
 import { recordPartShipment } from './partShipment';
@@ -107,6 +108,17 @@ export class SubordersService {
     }
     if (query?.status) {
       where.status = query.status;
+    }
+    if (query?.search?.trim()) {
+      const q = `%${query.search.trim()}%`;
+      const esc = sequelize.escape(q);
+      const searchConditions = [
+        `"SubOrder"."id"::text ILIKE ${esc}`,
+        `"SubOrder"."taxInvoiceNumber" ILIKE ${esc}`,
+        `EXISTS (SELECT 1 FROM order_items oi WHERE oi."subOrderId" = "SubOrder"."id" AND (oi."productName" ILIKE ${esc} OR oi."sku" ILIKE ${esc}))`,
+        `EXISTS (SELECT 1 FROM shipments sh WHERE sh."subOrderId" = "SubOrder"."id" AND sh."trackingNumber" ILIKE ${esc})`,
+      ];
+      (where as any)[Op.and] = [sequelize.literal(`(${searchConditions.join(' OR ')})`)];
     }
 
     const { rows, count } = await SubOrder.findAndCountAll({

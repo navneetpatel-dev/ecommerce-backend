@@ -452,6 +452,13 @@ export class CouponsService {
     if (query.status) where.status = query.status;
     if (query.type) where.type = query.type;
     if (query.batchId) where.batchId = query.batchId;
+    if (query.search?.trim()) {
+      const term = `%${query.search.trim()}%`;
+      (where as any)[Op.or] = [
+        { code: { [Op.iLike]: term } },
+        { name: { [Op.iLike]: term } },
+      ];
+    }
     if (opts.forceVendorId) where.vendorId = opts.forceVendorId;
     else if (query.vendorId) where.vendorId = query.vendorId;
     else if (query.vendorScoped === true) where.vendorId = { [Op.ne]: null };

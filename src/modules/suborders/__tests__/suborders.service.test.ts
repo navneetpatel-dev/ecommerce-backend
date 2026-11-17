@@ -304,4 +304,29 @@ describe('SubordersService cancellation refund split', () => {
     assert.equal(restock.mock.callCount(), 0);
     assert.equal(subOrderUpdates.length, 0);
   });
+
+  it('filters suborders by status and search terms', async () => {
+    let capturedOptions: Record<string, unknown> | undefined;
+    mock.method(SubOrder, 'findAndCountAll', async (options: Record<string, unknown>) => {
+      capturedOptions = options;
+      return {
+        rows: [],
+        count: 0,
+      };
+    });
+
+    const result = await subordersService.list('vendor-1', {
+      page: 1,
+      limit: 10,
+      status: ORDER_STATUS.PROCESSING,
+      search: 'INV-2026',
+    });
+
+    assert.equal(result.pagination.total, 0);
+    assert.ok(capturedOptions);
+    const where = capturedOptions.where as Record<string, unknown>;
+    assert.equal(where.vendorId, 'vendor-1');
+    assert.equal(where.status, ORDER_STATUS.PROCESSING);
+    assert.ok((where as any)[Symbol.for('and') || Object.getOwnPropertySymbols(where)[0]]);
+  });
 });

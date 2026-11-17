@@ -28,7 +28,15 @@ export const ResolveReturnDisputeSchema = z.object({
   notes: z.string().trim().min(3).max(2000),
 });
 
+export const ListReturnsQuerySchema = z.object({
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(100).default(20),
+  status: z.string().trim().optional(),
+  search: z.string().trim().optional(),
+});
+
 export type CreateReturnRequest = z.infer<typeof CreateReturnRequestSchema>;
 export type TransitionReturnRequest = z.infer<typeof TransitionReturnSchema>;
 export type DisputeReturnRequest = z.infer<typeof DisputeReturnSchema>;
 export type ResolveReturnDisputeRequest = z.infer<typeof ResolveReturnDisputeSchema>;
+export type ListReturnsQuery = z.infer<typeof ListReturnsQuerySchema>;

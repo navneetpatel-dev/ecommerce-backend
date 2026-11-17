@@ -8,6 +8,7 @@ import { ERROR_MESSAGES } from '@core/constants/errors';
 import { returnsService } from './returns.service';
 import { cancelReturnByCustomer, notifyReturnRequested } from './returnCustomerActions';
 import { withoutSellerFigures } from '@modules/orders/sellerFigures';
+import { ListReturnsQuerySchema } from './returns.dto';
 
 export const create = asyncHandler(async (req: Request, res: Response) => {
   const created = await returnsService.create(req.user!.id, req.body);
@@ -25,7 +26,7 @@ export const list = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const listAdmin = asyncHandler(async (req: Request, res: Response) => {
-  const query = pageLimitQuerySchema.parse(req.query);
+  const query = ListReturnsQuerySchema.parse(req.query);
   const result = await returnsService.listAll(query);
   res.json(ok(result.returns, { pagination: result.pagination }));
 });
@@ -34,7 +35,7 @@ export const listVendor = asyncHandler(async (req: Request, res: Response) => {
   if (!req.user?.vendorId) {
     throw new ForbiddenError(ERROR_MESSAGES.VENDOR_NOT_LINKED);
   }
-  const query = pageLimitQuerySchema.parse(req.query);
+  const query = ListReturnsQuerySchema.parse(req.query);
   const result = await returnsService.listForVendor(req.user.vendorId, query);
   res.json(ok(result.returns, { pagination: result.pagination }));
 });
