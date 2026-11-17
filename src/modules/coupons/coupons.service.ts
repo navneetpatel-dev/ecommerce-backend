@@ -911,9 +911,13 @@ export class CouponsService {
   ): Promise<
     Array<{
       code: string;
+      name: string;
       type: string;
+      value: number | null;
       discount: number;
       cashbackAmount: number;
+      minOrderValue: number | null;
+      maxDiscountCap: number | null;
       priority: number;
     }>
   > {
@@ -944,8 +948,11 @@ export class CouponsService {
       code: string;
       name: string;
       type: string;
+      value: number | null;
       discount: number;
       cashbackAmount: number;
+      minOrderValue: number | null;
+      maxDiscountCap: number | null;
       priority: number;
     }> = [];
     for (const coupon of candidates) {
@@ -955,14 +962,18 @@ export class CouponsService {
         lines,
         shippingTotal: shipping.total,
         shippingByVendor: shipping.byVendor,
+        skipMinOrderValue: Boolean(opts.productId),
       });
       if (result.valid) {
         eligible.push({
           code: coupon.code,
           name: customerCouponName(coupon),
           type: coupon.type,
+          value: coupon.value != null ? Number(coupon.value) : null,
           discount: result.discount,
           cashbackAmount: result.cashbackAmount,
+          minOrderValue: coupon.minOrderValue != null ? Number(coupon.minOrderValue) : null,
+          maxDiscountCap: coupon.maxDiscountCap != null ? Number(coupon.maxDiscountCap) : null,
           priority: Number(coupon.priority ?? 0),
         });
       }

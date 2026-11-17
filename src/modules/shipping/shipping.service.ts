@@ -280,9 +280,15 @@ export const shippingService = {
     const prefixes = [normalized.slice(0, 3), normalized.slice(0, 2), normalized].filter(Boolean);
     const zones = await ShippingZone.findAll();
     return zones.filter((zone) => {
-      const configuredPrefixes = (zone.pincodePrefixes ?? []).map(String);
+      const configuredPrefixes = (zone.pincodePrefixes ?? [])
+        .map(String)
+        .map((p) => p.trim())
+        .filter(Boolean);
       if (configuredPrefixes.length) {
-        return prefixes.some((prefix) => configuredPrefixes.includes(prefix));
+        return (
+          configuredPrefixes.some((cfg) => normalized.startsWith(cfg)) ||
+          prefixes.some((prefix) => configuredPrefixes.includes(prefix))
+        );
       }
       const normalizedState = state?.trim().toLowerCase();
       return (zone.states ?? []).some(

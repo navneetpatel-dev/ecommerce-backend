@@ -4,12 +4,14 @@ import { Op } from 'sequelize';
 import { Address } from '@database/models/address.model';
 import { ShippingRate } from '@database/models/shippingRate.model';
 import { ShippingZone } from '@database/models/shippingZone.model';
+import { settingsService } from '@modules/settings/settings.service';
 import { resolveCartShippingPreviewForCoupon } from '@modules/cart/cartShippingPreview';
 
 describe('coupon shipping preview', () => {
   afterEach(() => mock.restoreAll());
 
   it('uses the cart vendor weight and delivery zone rate', async () => {
+    mock.method(settingsService, 'getPlatformSettings', async () => ({ freeShippingThreshold: null } as any));
     mock.method(
       Address,
       'findOne',
@@ -67,6 +69,7 @@ describe('coupon shipping preview', () => {
   });
 
   it('keeps distinct weights for variants of the same product', async () => {
+    mock.method(settingsService, 'getPlatformSettings', async () => ({ freeShippingThreshold: null } as any));
     mock.method(
       Address,
       'findOne',

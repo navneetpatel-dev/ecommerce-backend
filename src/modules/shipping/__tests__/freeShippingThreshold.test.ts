@@ -3,6 +3,7 @@ import { afterEach, describe, it, mock } from 'node:test';
 import { Product } from '@database/models/product.model';
 import { ShippingRate } from '@database/models/shippingRate.model';
 import { settingsService } from '@modules/settings/settings.service';
+import { taxService } from '@modules/tax/tax.service';
 import { shippingService } from '../shipping.service';
 import { resolveVendorShippingQuote } from '../vendorShippingQuote';
 
@@ -45,6 +46,10 @@ describe('free-shipping threshold: one definition for product page, cart and che
   it('checkout charges what the product page showed: free above the platform threshold', async () => {
     mockPlatform(500);
     mockRates([{ vendorId: 'vendor-1', method: 'STANDARD', price: 60, freeShippingThreshold: null }]);
+    mock.method(taxService, 'getGstRateRule', async () => ({
+      gstPercentage: 0,
+      gstPriceBand: null,
+    }));
     mock.method(Product, 'scope', () => ({
       findByPk: async () => ({
         vendorId: 'vendor-1',

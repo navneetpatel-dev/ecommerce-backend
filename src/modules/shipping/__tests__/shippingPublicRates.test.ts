@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { afterEach, describe, it, mock } from 'node:test';
 import { Product } from '@database/models/product.model';
 import { settingsService } from '@modules/settings/settings.service';
+import { taxService } from '@modules/tax/tax.service';
 import { shippingService, type ShippingQuoteRate } from '../shipping.service';
 
 describe('shippingService.quotePublicRates', () => {
@@ -18,6 +19,10 @@ describe('shippingService.quotePublicRates', () => {
     mock.method(settingsService, 'getPlatformSettings', async () => ({
       freeShippingThreshold: 1_000,
     }) as Awaited<ReturnType<typeof settingsService.getPlatformSettings>>);
+    mock.method(taxService, 'getGstRateRule', async () => ({
+      gstPercentage: 0,
+      gstPriceBand: null,
+    }));
 
     let resolvedWeight: number | undefined;
     mock.method(shippingService, 'getRatesForQuote', async (params) => {

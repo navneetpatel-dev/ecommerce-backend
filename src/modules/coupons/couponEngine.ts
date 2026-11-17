@@ -46,6 +46,8 @@ export type ValidateCouponInput = {
    * read-only previews (cart/quote) where a lock would serve no purpose.
    */
   transaction?: Transaction;
+  /** When true (e.g. PDP offer preview), don't fail solely on single-item minOrderValue / minQuantity. */
+  skipMinOrderValue?: boolean;
 };
 
 export type ValidateCouponResult = {
@@ -232,10 +234,10 @@ export async function validateCoupon(input: ValidateCouponInput): Promise<Valida
       )
     : shippingTotal;
 
-  if (coupon.minOrderValue != null && eligibleSubtotal < Number(coupon.minOrderValue)) {
+  if (!input.skipMinOrderValue && coupon.minOrderValue != null && eligibleSubtotal < Number(coupon.minOrderValue)) {
     return fail(ERROR_MESSAGES.COUPON_MIN_ORDER, ERROR_CODES.COUPON_MIN_ORDER);
   }
-  if (coupon.minQuantity != null && eligibleQty < Number(coupon.minQuantity)) {
+  if (!input.skipMinOrderValue && coupon.minQuantity != null && eligibleQty < Number(coupon.minQuantity)) {
     return fail(ERROR_MESSAGES.COUPON_MIN_ORDER, ERROR_CODES.COUPON_MIN_ORDER);
   }
 
