@@ -33,6 +33,8 @@ function serializeAuditLog(row: AuditLog) {
     id: plain.id,
     action: plain.action,
     entityType: plain.entityType,
+    entityId: plain.entityId,
+    metadata: plain.metadata ?? null,
     createdAt: plain.createdAt,
     actorName: plain.actor?.name ?? null,
   };
