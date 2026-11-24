@@ -1,5 +1,6 @@
 import { Op } from 'sequelize';
 import { NotFoundError } from '@core/errors/NotFoundError';
+import { ValidationError } from '@core/errors/ValidationError';
 import { assertPartPaidFor, assertSubOrderTransition, VENDOR_VISIBLE_ORDER_WHERE } from './subOrderTransitions';
 import { recordPartShipment } from './partShipment';
 import { User } from '@database/models/user.model';
@@ -46,56 +47,13 @@ import { isReversedPart } from '@modules/pricing/partReversal';
 import { orderReference } from '@modules/orders/orderReference';
 import { buildOrderEmailData } from '@modules/notifications/orderEmailData';
 import { notifySubOrderDelivered } from '@modules/notifications/events/orderEvents';
-
-/** A part's shipment: its carrier, tracking and delivery status. */
-const shipmentInclude = {
-  model: Shipment,
-  as: 'shipment' as const,
-};
-
-/**
- * Read-only visibility into a suborder's return/exchange requests and their status.
- * Vendors can't change return/pickup status here — that lifecycle stays owned by the
- * returns module.
- */
-const returnRequestInclude = {
-  model: ReturnRequest,
-  as: 'returnRequests' as const,
-};
-
-/**
- * Non-wallet (cash/Razorpay/COD) share of a suborder refund. The wallet-funded share
- * goes back to the wallet as the checkout spend it was (returnWalletShareForCancelledPart,
- * or rollbackOrderWalletIfNeeded for the last part) — never as a WALLET_REFUND. The
- * split itself is the one returns use (pricing/refundSplit).
- */
-function suborderCancelCashShare(order: Order, customerRefund: number): number {
-  if (isWalletFundedOrder(order)) return 0;
-  const refundPaise = toPaise(customerRefund);
-  return fromPaise(refundPaise - walletShareOfRefundPaise(order, refundPaise));
-}
-
-function mapSubOrderRow(row: SubOrder) {
-  const plain = (typeof row.get === 'function'
-    ? row.get({ plain: true })
-    : row) as Record<string, unknown> & {
-    order?: { totalAmount?: unknown; walletAmountUsed?: unknown };
-    returnRequests?: unknown[];
-  };
-  const mapped = mapSubOrder(plain);
-  const extra: Record<string, unknown> = {
-    // Vendor visibility only — read-only, matches the existing shipment display pattern.
-    returnRequests: plain.returnRequests ?? [],
-  };
-  if (plain.order) {
-    extra.order = {
-      ...plain.order,
-      totalAmount: roundMoney(plain.order.totalAmount),
-      walletAmountUsed: roundMoney(plain.order.walletAmountUsed),
-    };
-  }
-  return { ...mapped, ...extra };
-}
+import {
+  shipmentInclude,
+  returnRequestInclude,
+  suborderCancelCashShare,
+  mapSubOrderRow,
+  suborderListIncludes,
+} from './suborderInclude';
 
 export class SubordersService {
   async list(vendorId?: string | null, query?: GetSubOrdersQuery) {
@@ -113,29 +71,23 @@ export class SubordersService {
       where.status = query.status;
     }
     if (query?.search?.trim()) {
-      const q = `%${query.search.trim()}%`;
+      const clean = query.search.trim().replace(/^#/, '');
+      const q = `%${clean}%`;
       const esc = sequelize.escape(q);
       const searchConditions = [
         `"SubOrder"."id"::text ILIKE ${esc}`,
         `"SubOrder"."taxInvoiceNumber" ILIKE ${esc}`,
         `EXISTS (SELECT 1 FROM order_items oi WHERE oi."subOrderId" = "SubOrder"."id" AND (oi."productName" ILIKE ${esc} OR oi."sku" ILIKE ${esc}))`,
         `EXISTS (SELECT 1 FROM shipments sh WHERE sh."subOrderId" = "SubOrder"."id" AND sh."trackingNumber" ILIKE ${esc})`,
+        `EXISTS (SELECT 1 FROM orders o WHERE o."id" = "SubOrder"."orderId" AND o."id"::text ILIKE ${esc})`,
       ];
       (where as any)[Op.and] = [sequelize.literal(`(${searchConditions.join(' OR ')})`)];
     }
 
+    const effectiveVendorId = vendorId || query?.vendorId;
     const { rows, count } = await SubOrder.findAndCountAll({
       where,
-      include: [
-        { model: OrderItem, as: 'items' },
-        // A vendor never sees a checkout still awaiting payment: nothing to do on it yet.
-        vendorId
-          ? { model: Order, as: 'order', where: VENDOR_VISIBLE_ORDER_WHERE, required: true }
-          : { model: Order, as: 'order' },
-        { model: Vendor, as: 'vendor' },
-        shipmentInclude,
-        returnRequestInclude,
-      ],
+      include: suborderListIncludes(effectiveVendorId),
       order: [['createdAt', 'DESC']],
       limit,
       offset,
@@ -187,6 +139,9 @@ export class SubordersService {
       const row = await SubOrder.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
       if (!row) throw new NotFoundError('SubOrder');
       assertSubOrderTransition(row.status, status);
+      if (status === ORDER_STATUS.SHIPPED && !trackingId?.trim() && !row.trackingId) {
+        throw new ValidationError({ trackingId: ['Tracking number is required to ship an order'] });
+      }
       assertPartPaidFor(
         await Order.findByPk(row.orderId, { attributes: ['paymentMethod', 'paymentStatus'], transaction }),
       );

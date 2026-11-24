@@ -27,7 +27,8 @@ export class OrdersRepository extends BaseRepository<Order> {
     }
 
     if (filters.search?.trim()) {
-      const q = `%${filters.search.trim()}%`;
+      const clean = filters.search.trim().replace(/^#/, '');
+      const q = `%${clean}%`;
       (where as any)[Op.and] = [
         // EXISTS on users, not the "user" join: with a limit and the sub-orders
         // include, Order is read in a subquery that does not have that join.
@@ -47,6 +48,9 @@ export class OrdersRepository extends BaseRepository<Order> {
         {
           association: 'user',
           attributes: ['id', 'name', 'email'],
+        },
+        {
+          association: 'shippingAddress',
         },
         {
           association: 'subOrders',

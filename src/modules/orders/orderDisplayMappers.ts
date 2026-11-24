@@ -12,6 +12,7 @@ import {
 import { isReversedPart } from '@modules/pricing/partReversal';
 import { REFUND_STATUS } from '@core/constants/statuses';
 import { resolveShippingDisplayKey, resolveTaxDisplayKey } from '@modules/checkout/checkoutOrderTotals';
+import { orderReference } from './orderReference';
 
 /** Primary image for an order line, resolved live from the product catalogue. */
 function orderItemImageUrl(item: Record<string, unknown>): string | null {
@@ -127,6 +128,7 @@ export function mapSubOrder(sub: Record<string, unknown>) {
   return {
     id: sub.id,
     orderId: sub.orderId,
+    orderReference: sub.orderId ? orderReference(String(sub.orderId)) : null,
     vendorId: sub.vendorId,
     vendor: sub.vendor,
     status: sub.status as string,
@@ -251,6 +253,7 @@ export function mapOrderResponse(order: Record<string, unknown>) {
   }
   return {
     id: plain.id,
+    orderReference: plain.id ? orderReference(String(plain.id)) : null,
     userId: plain.userId,
     totalAmount: aggregates.totalAmount,
     discountTotal: roundMoney(plain.discountTotal),
