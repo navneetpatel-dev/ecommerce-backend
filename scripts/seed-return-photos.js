@@ -31,32 +31,61 @@ async function seedReturnPhotos() {
 
   console.log(`Found ${returns.length} return requests.`);
 
+  const now = new Date();
+  const threeDaysAgo = new Date(Date.now() - 3 * 86400000);
+
   let updatedCount = 0;
   for (let i = 0; i < returns.length; i++) {
     const ret = returns[i];
-    // Attach 1 to 3 customer return photos to almost all returns
     const p1 = SAMPLE_RETURN_PHOTOS[i % SAMPLE_RETURN_PHOTOS.length];
     const p2 = SAMPLE_RETURN_PHOTOS[(i + 1) % SAMPLE_RETURN_PHOTOS.length];
     const p3 = SAMPLE_RETURN_PHOTOS[(i + 2) % SAMPLE_RETURN_PHOTOS.length];
     const photos = i % 3 === 0 ? [p1, p2, p3] : [p1, p2];
 
-    const isDisputed = i === 1 || i === 4;
-    const disputeStatus = isDisputed ? 'PENDING' : null;
-    const disputeReason = isDisputed ? 'WRONG_ITEM_RETURNED' : null;
-    const disputeDescription = isDisputed
-      ? 'The buyer returned an empty box / completely different product instead of the original item.'
-      : null;
-    const disputeEvidence = isDisputed
-      ? [SAMPLE_DISPUTE_PHOTOS[i % SAMPLE_DISPUTE_PHOTOS.length], SAMPLE_DISPUTE_PHOTOS[(i + 1) % SAMPLE_DISPUTE_PHOTOS.length]]
-      : [];
+    let disputeStatus = null;
+    let disputeReason = null;
+    let disputeDescription = null;
+    let disputeEvidence = [];
+    let disputedAt = null;
+    let disputeResolvedAt = null;
+    let disputeResolutionNotes = null;
+
+    if (i === 0) {
+      // Return 0: Pending Dispute - Wrong item returned
+      disputeStatus = 'PENDING';
+      disputeReason = 'WRONG_ITEM_RETURNED';
+      disputeDescription = 'Customer returned a completely different counterfeit item inside the box instead of the original product.';
+      disputeEvidence = [SAMPLE_DISPUTE_PHOTOS[0], SAMPLE_DISPUTE_PHOTOS[1]];
+      disputedAt = now;
+    } else if (i === 2) {
+      // Return 2: Pending Dispute - Damaged by buyer
+      disputeStatus = 'PENDING';
+      disputeReason = 'ITEM_DAMAGED_BY_BUYER';
+      disputeDescription = 'Device returned with deep scratches, broken screen, and liquid ingress. Clearly damaged after delivery.';
+      disputeEvidence = [SAMPLE_DISPUTE_PHOTOS[1], SAMPLE_DISPUTE_PHOTOS[2]];
+      disputedAt = now;
+    } else if (i === 5) {
+      // Return 5: Upheld Dispute - Resolved by Admin
+      disputeStatus = 'UPHELD';
+      disputeReason = 'MISSING_PARTS';
+      disputeDescription = 'Package returned without the primary power adapter, cables, and warranty card.';
+      disputeEvidence = [SAMPLE_DISPUTE_PHOTOS[0], SAMPLE_DISPUTE_PHOTOS[2]];
+      disputedAt = threeDaysAgo;
+      disputeResolvedAt = now;
+      disputeResolutionNotes = 'Seller photo evidence verified. Customer claim dismissed; return denied.';
+    }
 
     await sequelize.query(
       `UPDATE return_requests 
        SET "photoUrls" = :photoUrls,
-           "disputeStatus" = COALESCE("disputeStatus", :disputeStatus),
-           "disputeReason" = COALESCE("disputeReason", :disputeReason),
-           "disputeDescription" = COALESCE("disputeDescription", :disputeDescription),
-           "disputeEvidenceUrls" = CASE WHEN :isDisputed THEN :disputeEvidence ELSE "disputeEvidenceUrls" END
+           "disputeStatus" = :disputeStatus,
+           "disputeReason" = :disputeReason,
+           "disputeDescription" = :disputeDescription,
+           "disputeEvidenceUrls" = :disputeEvidence,
+           "disputedAt" = :disputedAt,
+           "disputeResolvedAt" = :disputeResolvedAt,
+           "disputeResolutionNotes" = :disputeResolutionNotes,
+           "receivedAt" = COALESCE("receivedAt", :now)
        WHERE id = :id`,
       {
         replacements: {
@@ -66,14 +95,17 @@ async function seedReturnPhotos() {
           disputeReason,
           disputeDescription,
           disputeEvidence: JSON.stringify(disputeEvidence),
-          isDisputed,
+          disputedAt,
+          disputeResolvedAt,
+          disputeResolutionNotes,
+          now,
         },
       }
     );
     updatedCount++;
   }
 
-  console.log(`✓ Successfully updated ${updatedCount} return requests with photo and dispute evidence URLs.`);
+  console.log(`✓ Successfully updated ${updatedCount} return requests with photos, dispute statuses, and evidence.`);
   await sequelize.close();
 }
 
