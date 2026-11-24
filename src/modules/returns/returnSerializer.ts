@@ -1,6 +1,7 @@
 import { REFUND_STATUS, RETURN_STATUS, RETURN_TYPE } from '@core/constants/statuses';
 import type { ReturnRequest } from '@database/models/returnRequest.model';
 import type { OrderItem } from '@database/models/orderItem.model';
+import { orderReference } from '@modules/orders/orderReference';
 
 /** A return as the API sends it, with the customer-facing refund message. */
 export function serializeReturn(
@@ -10,7 +11,18 @@ export function serializeReturn(
   const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
   const creditNote = plain.CreditNote ?? plain.creditNote ?? null;
   const debitNote = plain.DebitNote ?? plain.debitNote ?? null;
-  const refundStatus = plain.refundStatus ?? REFUND_STATUS.NONE;
+  const rawRefundStatus = plain.refundStatus ?? REFUND_STATUS.NONE;
+  const refundStatus =
+    plain.status === RETURN_STATUS.REFUNDED && rawRefundStatus === REFUND_STATUS.NONE
+      ? REFUND_STATUS.COMPLETED
+      : rawRefundStatus;
+  const orderRef =
+    plain.orderReference != null
+      ? (String(plain.orderReference).startsWith('#') ? plain.orderReference : `#${plain.orderReference}`)
+      : plain.subOrder?.orderId
+        ? `#${orderReference(plain.subOrder.orderId)}`
+        : null;
+  const returnRef = plain.id ? `#RET-${String(plain.id).slice(0, 8).toUpperCase()}` : null;
   let refundCustomerMessage: string | null = null;
   if (refundStatus === REFUND_STATUS.INITIATED) {
     refundCustomerMessage = `Refund initiated — bank posting may take ${slaDays} business days.`;
@@ -27,6 +39,8 @@ export function serializeReturn(
   }
   return {
     id: plain.id,
+    returnReference: returnRef,
+    orderReference: orderRef,
     orderItemId: plain.orderItemId,
     subOrderId: plain.subOrderId ?? null,
     reason: plain.reason,
@@ -38,7 +52,7 @@ export function serializeReturn(
     replacementDeliveredAt: plain.replacementDeliveredAt ?? null,
     photoUrls: Array.isArray(plain.photoUrls) ? plain.photoUrls : [],
     refundMethod: plain.refundMethod ?? null,
-    refundStatus: plain.refundStatus ?? REFUND_STATUS.NONE,
+    refundStatus,
     refundCustomerMessage,
     refundAmount: plain.refundAmount != null ? Number(plain.refundAmount) : null,
     refundTaxAmount: plain.refundTaxAmount != null ? Number(plain.refundTaxAmount) : null,

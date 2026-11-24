@@ -480,6 +480,7 @@ module.exports = {
               status: returnStatus,
               // Like real requests: no refund amount until the return is approved.
               refundAmount: returnStatus === 'APPROVED' || returnStatus === 'REFUNDED' ? itemTotal : null,
+              refundStatus: returnStatus === 'REFUNDED' ? 'COMPLETED' : 'NONE',
               resolvedById: null, resolvedAt: null,
               createdAt: new Date(orderDate.getTime() + randomInt(5, 15) * 24 * 60 * 60 * 1000),
               updatedAt: new Date(orderDate.getTime() + randomInt(5, 15) * 24 * 60 * 60 * 1000),

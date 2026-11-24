@@ -93,7 +93,7 @@ import { notifyReturnEscalated, notifyReturnStatus } from '@modules/notification
 const returnListInclude = [
   { model: OrderItem, as: 'orderItem', required: false, attributes: ['id', 'productName'] },
   { model: User, as: 'user', required: false, attributes: ['id', 'name'] },
-  { model: SubOrder, as: 'subOrder', required: false, attributes: ['id', 'vendorId'] },
+  { model: SubOrder, as: 'subOrder', required: false, attributes: ['id', 'vendorId', 'orderId'] },
   {
     model: CreditNote,
     as: 'creditNote',
