@@ -80,7 +80,7 @@ import {
 } from '@core/s3';
 import { isReversedPart } from '@modules/pricing/partReversal';
 import { retryReturnCardRefund, sendReturnCardRefund, type PendingReturnCardRefund } from './returnCardRefund';
-import { serializeReturn } from './returnSerializer';
+import { serializeReturn, serializeReturnSummary } from './returnSerializer';
 import { withoutSellerFigures } from '@modules/orders/sellerFigures';
 import { isWithinReturnWindow, returnWindowFor } from './returnWindow';
 import {
@@ -483,7 +483,7 @@ export class ReturnsService {
       where: { userId }, include: returnListInclude, order: [['createdAt', 'DESC'], ['id', 'ASC']],
       limit: query.limit, offset: (query.page - 1) * query.limit, distinct: true,
     });
-    const returns = rows.map((row) => serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }, slaDays));
+    const returns = rows.map((row) => serializeReturnSummary(row as ReturnRequest & { orderItem?: OrderItem }, slaDays));
     return { returns, pagination: buildPaginationMeta(count, query.page, query.limit) };
   }
 
@@ -514,7 +514,7 @@ export class ReturnsService {
     });
     return {
       returns: rows.map((row) =>
-        serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }, slaDays),
+        serializeReturnSummary(row as ReturnRequest & { orderItem?: OrderItem }, slaDays),
       ),
       pagination: buildPaginationMeta(count, query.page, query.limit),
     };
@@ -713,7 +713,7 @@ export class ReturnsService {
     });
     return {
       returns: rows.map((row) =>
-        serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }, slaDays),
+        serializeReturnSummary(row as ReturnRequest & { orderItem?: OrderItem }, slaDays),
       ),
       pagination: buildPaginationMeta(count, query.page, query.limit),
     };

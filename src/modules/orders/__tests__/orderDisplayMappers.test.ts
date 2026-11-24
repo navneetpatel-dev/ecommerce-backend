@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { hasPaiseFields, omitPaiseFields } from '../orderSerialize.utils';
-import { mapOrderItem, mapOrderResponse, mapSubOrder } from '../orderDisplayMappers';
+import { mapOrderItem, mapOrderResponse, mapOrderSummaryResponse, mapSubOrder } from '../orderDisplayMappers';
 
 describe('omitPaiseFields', () => {
   it('removes keys ending with Paise', () => {
@@ -87,6 +87,30 @@ describe('mapSubOrder', () => {
     assert.equal(hasPaiseFields(mapped as Record<string, unknown>), false);
     assert.equal(mapped.shippingDisplayKey, 'PAID');
     assert.equal(mapped.taxDisplayKey, 'CGST_SGST');
+  });
+});
+
+describe('mapOrderSummaryResponse', () => {
+  it('returns lean order summary without nested subOrders or shippingAddress', () => {
+    const raw = {
+      id: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+      userId: 'user-1',
+      totalAmount: 499.5,
+      status: 'CONFIRMED',
+      paymentStatus: 'PAID',
+      paymentMethod: 'RAZORPAY',
+      user: { name: 'Bob' },
+      createdAt: '2026-11-24T12:00:00Z',
+      shippingAddress: { line1: '123 Test St', city: 'Mumbai' },
+      subOrders: [{ id: 'sub-1', items: [] }],
+    };
+    const summary = mapOrderSummaryResponse(raw as any) as any;
+    assert.equal(summary.id, 'a1b2c3d4-e5f6-7890-abcd-ef1234567890');
+    assert.equal(summary.customerName, 'Bob');
+    assert.equal(summary.totalAmount, 499.5);
+    assert.equal(summary.status, 'CONFIRMED');
+    assert.equal(summary.shippingAddress, undefined);
+    assert.equal(summary.subOrders, undefined);
   });
 });
 

@@ -14,7 +14,7 @@ import { Shipment } from '@database/models/shipment.model';
 import { ShipmentAttempt } from '@database/models/shipmentAttempt.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { Product } from '@database/models/product.model';
-import { mapOrderResponse } from './orderDisplayMappers';
+import { mapOrderResponse, mapOrderSummaryResponse } from './orderDisplayMappers';
 import { withoutSellerFigures } from './sellerFigures';
 import { cancelPaidOrder } from './ordersCancel.service';
 import type { GetOrdersQuery } from './orders.dto';
@@ -93,7 +93,7 @@ const orderDetailInclude = [
 export class OrdersService {
   async getOrders(userId: string | null, query: GetOrdersQuery) {
     const offset = paginationOffset(query.page, query.limit);
-    const { rows, count } = await ordersRepository.findWithFilters({
+    const { rows, count } = await ordersRepository.findSummaryWithFilters({
       userId: userId ?? undefined,
       status: query.status,
       search: query.search,
@@ -102,10 +102,9 @@ export class OrdersService {
     });
 
     return {
-      orders: rows.map((row) => {
-        const mapped = mapOrderResponse(row as unknown as Record<string, unknown>);
-        return userId ? withoutSellerFigures(mapped) : mapped;
-      }),
+      orders: rows.map((row) =>
+        mapOrderSummaryResponse(row as unknown as Record<string, unknown>),
+      ),
       pagination: buildPaginationMeta(count, query.page, query.limit),
     };
   }

@@ -298,3 +298,20 @@ export function mapOrderResponse(order: Record<string, unknown>) {
     subOrders,
   };
 }
+
+/** Lean order summary for table list views. Excludes heavy subOrders graph and address. */
+export function mapOrderSummaryResponse(order: Record<string, unknown>) {
+  const plain: any =
+    typeof (order as any).get === 'function' ? (order as any).get({ plain: true }) : order;
+  return {
+    id: plain.id,
+    orderReference: plain.id ? orderReference(String(plain.id)) : null,
+    userId: plain.userId,
+    customerName: (plain.user as { name?: string } | undefined)?.name ?? null,
+    status: plain.status,
+    paymentStatus: plain.paymentStatus,
+    paymentMethod: plain.paymentMethod ?? null,
+    totalAmount: roundMoney(plain.totalAmount),
+    createdAt: plain.createdAt,
+  };
+}

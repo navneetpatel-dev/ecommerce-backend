@@ -60,6 +60,50 @@ export class OrdersRepository extends BaseRepository<Order> {
       order: [['createdAt', 'DESC']],
     });
   }
+
+  /** Lean list query for order tables. Omits deep subOrders graph and shipping address. */
+  async findSummaryWithFilters(filters: {
+    userId?: string;
+    status?: string;
+    search?: string;
+    limit: number;
+    offset: number;
+  }) {
+    const where: WhereOptions<Order> = {};
+
+    if (filters.userId) {
+      where.userId = filters.userId;
+    }
+
+    if (filters.status) {
+      where.status = filters.status as any;
+    }
+
+    if (filters.search?.trim()) {
+      const clean = filters.search.trim().replace(/^#/, '');
+      const q = `%${clean}%`;
+      (where as any)[Op.and] = [
+        sequelize.literal(
+          `("Order"."id"::text ILIKE ${sequelize.escape(q)} OR EXISTS (SELECT 1 FROM users u WHERE u.id = "Order"."userId" AND (u.name ILIKE ${sequelize.escape(q)} OR u.email ILIKE ${sequelize.escape(q)})))`,
+        ),
+      ];
+    }
+
+    return this.model.findAndCountAll({
+      where,
+      limit: filters.limit,
+      offset: filters.offset,
+      distinct: true,
+      col: 'id',
+      include: [
+        {
+          association: 'user',
+          attributes: ['id', 'name', 'email'],
+        },
+      ],
+      order: [['createdAt', 'DESC']],
+    });
+  }
 }
 
 export const ordersRepository = new OrdersRepository();

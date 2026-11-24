@@ -88,3 +88,45 @@ export function serializeReturn(
       creditNote?.againstInvoiceNumber ?? debitNote?.againstInvoiceNumber ?? null,
   };
 }
+
+/** Lean summary of a return for table list views. Excludes heavy payloads (photos, dispute logs, detailed clawbacks). */
+export function serializeReturnSummary(
+  row: ReturnRequest | (ReturnRequest & { orderItem?: OrderItem }),
+  _slaDays?: number,
+) {
+  const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
+  const creditNote = plain.CreditNote ?? plain.creditNote ?? null;
+  const debitNote = plain.DebitNote ?? plain.debitNote ?? null;
+  const rawRefundStatus = plain.refundStatus ?? REFUND_STATUS.NONE;
+  const refundStatus =
+    plain.status === RETURN_STATUS.REFUNDED && rawRefundStatus === REFUND_STATUS.NONE
+      ? REFUND_STATUS.COMPLETED
+      : rawRefundStatus;
+  const orderRef =
+    plain.orderReference != null
+      ? (String(plain.orderReference).startsWith('#') ? plain.orderReference : `#${plain.orderReference}`)
+      : plain.subOrder?.orderId
+        ? `#${orderReference(plain.subOrder.orderId)}`
+        : null;
+  const returnRef = plain.id ? `#RET-${String(plain.id).slice(0, 8).toUpperCase()}` : null;
+
+  return {
+    id: plain.id,
+    returnReference: returnRef,
+    orderReference: orderRef,
+    orderItemId: plain.orderItemId,
+    subOrderId: plain.subOrderId ?? null,
+    reasonCode: plain.reasonCode,
+    type: plain.type ?? RETURN_TYPE.REFUND,
+    status: plain.status,
+    refundStatus,
+    refundAmount: plain.refundAmount != null ? Number(plain.refundAmount) : null,
+    photoCount: Array.isArray(plain.photoUrls) ? plain.photoUrls.length : 0,
+    disputeStatus: plain.disputeStatus ?? null,
+    productName: plain.orderItem?.productName ?? null,
+    customerName: plain.user?.name ?? null,
+    creditNoteNumber: creditNote?.number ?? null,
+    debitNoteNumber: debitNote?.number ?? null,
+    createdAt: plain.createdAt,
+  };
+}
