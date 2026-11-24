@@ -481,6 +481,10 @@ module.exports = {
               // Like real requests: no refund amount until the return is approved.
               refundAmount: returnStatus === 'APPROVED' || returnStatus === 'REFUNDED' ? itemTotal : null,
               refundStatus: returnStatus === 'REFUNDED' ? 'COMPLETED' : 'NONE',
+              photoUrls: JSON.stringify([
+                'https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f?w=800&fit=crop',
+                'https://images.unsplash.com/photo-1546868871-7041f2a55e12?w=800&fit=crop',
+              ]),
               resolvedById: null, resolvedAt: null,
               createdAt: new Date(orderDate.getTime() + randomInt(5, 15) * 24 * 60 * 60 * 1000),
               updatedAt: new Date(orderDate.getTime() + randomInt(5, 15) * 24 * 60 * 60 * 1000),
