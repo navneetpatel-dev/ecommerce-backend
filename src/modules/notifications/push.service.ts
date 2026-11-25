@@ -18,6 +18,7 @@ const PUSH_NOTIFICATION_TYPES = new Set<NotificationType>([
   'REFUND_INITIATED',
   'REFUND_PROCESSED',
   'DELIVERY_ATTEMPT_FAILED',
+  'ADMIN_BROADCAST',
 ]);
 
 function isConfigured(): boolean {

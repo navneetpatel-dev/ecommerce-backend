@@ -82,6 +82,8 @@ import { initProductQuestionModel, ProductQuestion } from './productQuestion.mod
 import { initProductAnswerModel, ProductAnswer } from './productAnswer.model';
 import { initExportJobModel, ExportJob } from './exportJob.model';
 import { initShortLinkModel, ShortLink } from './shortLink.model';
+import { initAdminBroadcastModel, AdminBroadcast } from './adminBroadcast.model';
+import { initInAppNotificationModel, InAppNotification } from './inAppNotification.model';
 
 const models = {
   Role: initRoleModel(sequelize),
@@ -158,6 +160,8 @@ const models = {
   GiftCard: initGiftCardModel(sequelize),
   ExportJob: initExportJobModel(sequelize),
   ShortLink: initShortLinkModel(sequelize),
+  AdminBroadcast: initAdminBroadcastModel(sequelize),
+  InAppNotification: initInAppNotificationModel(sequelize),
 };
 
 Object.values(models).forEach((model: any) => {
@@ -197,4 +201,6 @@ export {
   GiftCard,
   ExportJob,
   ShortLink,
+  AdminBroadcast,
+  InAppNotification,
 };

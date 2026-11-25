@@ -165,7 +165,7 @@ export function renderNotificationEmail(
   }
 
   const cta = defaultCta(type, data);
-  const marketing = isMarketingNotification(type);
+  const marketing = isMarketingNotification(type) || data.isMarketing === true;
   const unsubscribeUrl = str(data, 'unsubscribeUrl');
   // The sign-in code is the point of its email: show it large, whether or not the sender built the box.
   const withCode: EmailTemplateData =

@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { notificationsService } from './notifications.service';
+import { broadcastService } from './broadcast.service';
+import { inAppNotificationsService } from './inAppNotifications.service';
 import { pushService } from './push.service';
 import { AppError } from '@core/errors';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
@@ -71,4 +73,45 @@ export const unsubscribePush = asyncHandler(async (req: Request, res: Response) 
 export const unsubscribe = asyncHandler(async (req: Request, res: Response) => {
   const token = String(req.query.token ?? (req.body as { token?: unknown } | undefined)?.token ?? '');
   res.json(ok(await unsubscribeByToken(token)));
+});
+
+export const previewBroadcastTargets = asyncHandler(async (req: Request, res: Response) => {
+  res.json(ok(await broadcastService.previewTargets(req.body)));
+});
+
+export const renderBroadcastPreview = asyncHandler(async (req: Request, res: Response) => {
+  res.json(ok(broadcastService.renderPreview(req.body)));
+});
+
+export const sendBroadcastTest = asyncHandler(async (req: Request, res: Response) => {
+  res.status(201).json(ok(await broadcastService.sendTestToActor(req.user!.id, req.body)));
+});
+
+export const listBroadcasts = asyncHandler(async (req: Request, res: Response) => {
+  const limit = Number(req.query.limit ?? 50);
+  res.json(ok(await broadcastService.listBroadcasts(Number.isFinite(limit) ? limit : 50)));
+});
+
+export const cancelBroadcast = asyncHandler(async (req: Request, res: Response) => {
+  res.json(ok(await broadcastService.cancelScheduled(String(req.params.id))));
+});
+
+export const searchBroadcastUsers = asyncHandler(async (req: Request, res: Response) => {
+  res.json(ok(await broadcastService.searchTargetUsers(String(req.query.q ?? ''))));
+});
+
+export const listInAppNotifications = asyncHandler(async (req: Request, res: Response) => {
+  const limit = Number(req.query.limit ?? 20);
+  const unreadOnly = req.query.unreadOnly === 'true';
+  res.json(ok(await inAppNotificationsService.listForUser(req.user!.id, { limit, unreadOnly })));
+});
+
+export const markInAppRead = asyncHandler(async (req: Request, res: Response) => {
+  await inAppNotificationsService.markRead(req.user!.id, String(req.params.id));
+  res.json(ok({ read: true }));
+});
+
+export const markAllInAppRead = asyncHandler(async (req: Request, res: Response) => {
+  await inAppNotificationsService.markAllRead(req.user!.id);
+  res.json(ok({ readAll: true }));
 });

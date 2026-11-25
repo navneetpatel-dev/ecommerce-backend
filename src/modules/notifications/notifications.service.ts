@@ -16,6 +16,8 @@ function todayBucket(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+import { broadcastService, type BroadcastInput, type BroadcastSendResult } from './broadcast.service';
+
 export class NotificationsService {
   async listLogs(filters: ListNotificationLogsQuery = {}) {
     const where: Record<string | symbol, unknown> = {};
@@ -48,53 +50,9 @@ export class NotificationsService {
    */
   async broadcast(
     actorId: string,
-    params: { role?: RoleName; userIds?: string[]; subject: string; message: string },
-  ): Promise<{ broadcastId: string; targeted: number; queued: number }> {
-    const targets = await this.resolveBroadcastTargets(params.role, params.userIds);
-    const broadcastId = randomUUID();
-    const templateData: EmailTemplateData = { subject: params.subject, message: params.message };
-
-    const results = await Promise.allSettled(
-      targets.map((user) =>
-        this.enqueue({
-          userId: user.id,
-          type: 'ADMIN_BROADCAST',
-          referenceType: 'AdminBroadcast',
-          referenceId: broadcastId,
-          templateData,
-          actorId,
-        }),
-      ),
-    );
-
-    const queued = results.filter(
-      (result) => result.status === 'fulfilled' && result.value != null,
-    ).length;
-    results.forEach((result) => {
-      if (result.status === 'rejected') {
-        logger.warn('Broadcast notification failed for a target user', {
-          broadcastId,
-          error: result.reason instanceof Error ? result.reason.message : result.reason,
-        });
-      }
-    });
-
-    return { broadcastId, targeted: targets.length, queued };
-  }
-
-  private async resolveBroadcastTargets(
-    role: RoleName | undefined,
-    userIds: string[] | undefined,
-  ): Promise<Array<{ id: string }>> {
-    if (role) {
-      const roleRow = await Role.findOne({ where: { name: role } });
-      if (!roleRow) return [];
-      return User.findAll({ where: { roleId: roleRow.id }, attributes: ['id'] });
-    }
-    if (userIds?.length) {
-      return User.findAll({ where: { id: { [Op.in]: userIds } }, attributes: ['id'] });
-    }
-    return [];
+    params: BroadcastInput,
+  ): Promise<BroadcastSendResult> {
+    return broadcastService.sendOrSchedule(actorId, params);
   }
 
   /** Creates (or reuses) a PENDING NotificationLog and queues delivery; see notificationDelivery. */

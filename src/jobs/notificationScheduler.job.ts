@@ -10,6 +10,7 @@ import { Wishlist } from '@database/models/wishlist.model';
 import { WishlistItem } from '@database/models/wishlistItem.model';
 import { ORDER_STATUS } from '@core/constants/statuses';
 import { notificationsService } from '@modules/notifications/notifications.service';
+import { broadcastService } from '@modules/notifications/broadcast.service';
 import { processLowStock } from './lowStockDigest';
 import { runPeriodicEmails } from './periodicEmails';
 import { orderReference } from '@modules/orders/orderReference';
@@ -17,8 +18,10 @@ import { buildCartEmailData, buildOrderEmailData } from '@modules/notifications/
 import { inr } from '@modules/notifications/templates/blocks';
 
 const SCHEDULER_INTERVAL_MS = 60 * 60 * 1000;
+const BROADCAST_POLL_MS = 60 * 1000;
 
 let timer: NodeJS.Timeout | null = null;
+let broadcastTimer: NodeJS.Timeout | null = null;
 
 async function processAbandonedCarts(): Promise<number> {
   const cutoff = new Date(Date.now() - env.ABANDONED_CART_HOURS * 60 * 60 * 1000);
@@ -178,9 +181,13 @@ export async function runNotificationSchedulerTick(): Promise<void> {
 export function startNotificationScheduler(): void {
   if (timer) return;
   void runNotificationSchedulerTick();
+  void broadcastService.processDueScheduledBroadcasts();
   timer = setInterval(() => {
     void runNotificationSchedulerTick();
   }, SCHEDULER_INTERVAL_MS);
+  broadcastTimer = setInterval(() => {
+    void broadcastService.processDueScheduledBroadcasts();
+  }, BROADCAST_POLL_MS);
   logger.info('Notification scheduler started', { intervalMs: SCHEDULER_INTERVAL_MS });
 }
 
@@ -188,5 +195,9 @@ export function stopNotificationScheduler(): void {
   if (timer) {
     clearInterval(timer);
     timer = null;
+  }
+  if (broadcastTimer) {
+    clearInterval(broadcastTimer);
+    broadcastTimer = null;
   }
 }
