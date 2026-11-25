@@ -103,3 +103,72 @@ export async function resendNotification(logId: string, actorId: string): Promis
   if (!queued) throw new EmailUnavailableError();
   return log;
 }
+
+export interface BulkResendParams {
+  ids?: string[];
+  referenceId?: string;
+  type?: string;
+  errorCategory?: string;
+  includeStuckPending?: boolean;
+}
+
+export interface BulkResendResult {
+  attempted: number;
+  requeued: number;
+  skipped: number;
+  errors: string[];
+}
+
+export async function bulkResendNotifications(
+  actorId: string,
+  params: BulkResendParams = {},
+): Promise<BulkResendResult> {
+  const stuckCutoff = new Date(Date.now() - 15 * 60 * 1000);
+  const statusCondition = params.includeStuckPending
+    ? {
+        [Op.or]: [
+          { status: NOTIFICATION_STATUS.FAILED },
+          { status: NOTIFICATION_STATUS.PENDING, createdAt: { [Op.lt]: stuckCutoff } },
+        ],
+      }
+    : { status: NOTIFICATION_STATUS.FAILED };
+
+  const where: Record<string | symbol, unknown> = {
+    ...statusCondition,
+    payload: { [Op.ne]: null },
+  };
+  if (params.ids?.length) where.id = { [Op.in]: params.ids };
+  if (params.referenceId) where.referenceId = params.referenceId;
+  if (params.type) where.type = params.type;
+  if (params.errorCategory) where.errorCategory = params.errorCategory;
+
+  const rows = await NotificationLog.findAll({
+    where: where as Record<string, unknown>,
+    attributes: ['id'],
+    order: [['createdAt', 'DESC']],
+    limit: 500,
+  });
+
+  let requeued = 0;
+  let skipped = 0;
+  const errors: string[] = [];
+
+  for (let i = 0; i < rows.length; i += 20) {
+    const chunk = rows.slice(i, i + 20);
+    const settled = await Promise.allSettled(
+      chunk.map((row) => resendNotification(row.id, actorId)),
+    );
+    for (const res of settled) {
+      if (res.status === 'fulfilled') {
+        requeued += 1;
+      } else {
+        skipped += 1;
+        if (errors.length < 10) {
+          errors.push(res.reason instanceof Error ? res.reason.message : 'Resend failed');
+        }
+      }
+    }
+  }
+
+  return { attempted: rows.length, requeued, skipped, errors };
+}

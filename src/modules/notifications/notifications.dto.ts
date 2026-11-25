@@ -7,8 +7,21 @@ export const ListNotificationLogsQuerySchema = z.object({
   channel: z.enum(['EMAIL', 'SMS', 'PUSH']).optional(),
   status: z.enum(['PENDING', 'SENT', 'FAILED', 'BOUNCED', 'COMPLAINED']).optional(),
   errorCategory: z.enum(['TEMPORARY', 'PERMANENT', 'RENDER', 'RECIPIENT', 'CONFIG', 'UNCERTAIN']).optional(),
+  referenceId: z.string().trim().min(1).optional(),
 });
 export type ListNotificationLogsQuery = z.infer<typeof ListNotificationLogsQuerySchema>;
+
+export const BulkResendLogsSchema = z.object({
+  ids: z.array(z.string().uuid()).max(500).optional(),
+  referenceId: z.string().trim().min(1).optional(),
+  type: z.string().trim().min(1).optional(),
+  errorCategory: z.enum(['TEMPORARY', 'PERMANENT', 'RENDER', 'RECIPIENT', 'CONFIG', 'UNCERTAIN']).optional(),
+  includeStuckPending: z.boolean().optional(),
+});
+
+export const ClearSuppressionSchema = z.object({
+  email: z.string().trim().email(),
+});
 
 const RoleEnum = z.enum(ROLE_VALUES);
 

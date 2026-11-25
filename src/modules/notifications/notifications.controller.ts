@@ -9,7 +9,8 @@ import { AppError } from '@core/errors';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { unsubscribeByToken } from './unsubscribe';
 import { getEmailHealth } from './emailHealth.service';
-import { resendNotification } from './emailRecovery';
+import { bulkResendNotifications, resendNotification } from './emailRecovery';
+import { listSuppressions, unsuppressEmail } from './emailSuppression';
 import { listEmailTemplates, previewEmailTemplate, sendTestEmail } from './templatePreview.service';
 import type { ListNotificationLogsQuery, BroadcastNotificationRequest } from './notifications.dto';
 
@@ -34,6 +35,32 @@ export const health = asyncHandler(async (_req: Request, res: Response) => {
 export const resend = asyncHandler(async (req: Request, res: Response) => {
   const log = await resendNotification(String(req.params.id), req.user!.id);
   res.json(ok({ id: log.id, status: log.status }));
+});
+
+export const bulkResend = asyncHandler(async (req: Request, res: Response) => {
+  res.json(ok(await bulkResendNotifications(req.user!.id, req.body)));
+});
+
+export const retryBroadcastFailed = asyncHandler(async (req: Request, res: Response) => {
+  res.json(ok(await broadcastService.retryFailedForBroadcast(String(req.params.id), req.user!.id)));
+});
+
+export const listEmailSuppressions = asyncHandler(async (req: Request, res: Response) => {
+  const page = Number(req.query.page ?? 1);
+  const limit = Number(req.query.limit ?? 25);
+  res.json(
+    ok(
+      await listSuppressions({
+        search: req.query.search ? String(req.query.search) : undefined,
+        page: Number.isFinite(page) ? page : 1,
+        limit: Number.isFinite(limit) ? limit : 25,
+      }),
+    ),
+  );
+});
+
+export const clearEmailSuppression = asyncHandler(async (req: Request, res: Response) => {
+  res.json(ok(await unsuppressEmail(String(req.body.email))));
 });
 
 export const listTemplates = asyncHandler(async (_req: Request, res: Response) => {

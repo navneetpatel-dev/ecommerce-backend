@@ -11,9 +11,11 @@ import {
 } from '@database/models/adminBroadcast.model';
 import { Address } from '@database/models/address.model';
 import { Category } from '@database/models/category.model';
+import { NotificationLog } from '@database/models/notificationLog.model';
 import { Role } from '@database/models/role.model';
 import { User } from '@database/models/user.model';
 import { Vendor } from '@database/models/vendor.model';
+import { bulkResendNotifications } from './emailRecovery';
 import { enqueueNotification } from './notificationDelivery';
 import { pushService } from './push.service';
 import { renderNotificationEmail, type EmailTemplateData } from './templates/registry';
@@ -290,11 +292,55 @@ export class BroadcastService {
   }
 
   async listBroadcasts(limit = 50) {
-    return AdminBroadcast.findAll({
+    const broadcasts = await AdminBroadcast.findAll({
       order: [['createdAt', 'DESC']],
       limit: Math.min(Math.max(limit, 1), 100),
       include: [{ model: User, as: 'actor', attributes: ['id', 'name', 'email'] }],
     });
+    const ids = broadcasts.map((b) => b.id);
+    if (!ids.length) return [];
+
+    const statRows = (await NotificationLog.findAll({
+      where: { referenceType: 'AdminBroadcast', referenceId: { [Op.in]: ids } },
+      attributes: ['referenceId', 'status', [fn('COUNT', col('id')), 'count']],
+      group: ['referenceId', 'status'],
+      raw: true,
+    })) as unknown as Array<{ referenceId: string; status: string; count: string | number }>;
+
+    const statsMap = new Map<
+      string,
+      { sentCount: number; failedCount: number; bouncedCount: number; pendingCount: number }
+    >();
+    for (const row of statRows) {
+      const cur = statsMap.get(row.referenceId) ?? {
+        sentCount: 0,
+        failedCount: 0,
+        bouncedCount: 0,
+        pendingCount: 0,
+      };
+      const n = Number(row.count) || 0;
+      if (row.status === 'SENT') cur.sentCount += n;
+      else if (row.status === 'FAILED') cur.failedCount += n;
+      else if (row.status === 'BOUNCED' || row.status === 'COMPLAINED') cur.bouncedCount += n;
+      else if (row.status === 'PENDING') cur.pendingCount += n;
+      statsMap.set(row.referenceId, cur);
+    }
+
+    return broadcasts.map((b) => ({
+      ...b.get({ plain: true }),
+      stats: statsMap.get(b.id) ?? {
+        sentCount: 0,
+        failedCount: 0,
+        bouncedCount: 0,
+        pendingCount: 0,
+      },
+    }));
+  }
+
+  async retryFailedForBroadcast(id: string, actorId: string) {
+    const record = await AdminBroadcast.findByPk(id, { attributes: ['id'] });
+    if (!record) throw new AppError('Broadcast not found', 404, ERROR_CODES.NOT_FOUND);
+    return bulkResendNotifications(actorId, { referenceId: id, includeStuckPending: true });
   }
 
   async cancelScheduled(id: string) {

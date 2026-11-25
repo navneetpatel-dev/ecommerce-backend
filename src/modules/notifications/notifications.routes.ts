@@ -9,6 +9,8 @@ import {
   BroadcastNotificationSchema,
   BroadcastPreviewSchema,
   BroadcastRenderPreviewSchema,
+  BulkResendLogsSchema,
+  ClearSuppressionSchema,
 } from './notifications.dto';
 import * as notificationsController from './notifications.controller';
 
@@ -23,6 +25,22 @@ router.get(
 );
 router.get('/health', authenticate, authorize(PERMISSIONS.SETTINGS_MANAGE), notificationsController.health);
 router.post('/logs/:id/resend', authenticate, authorize(PERMISSIONS.SETTINGS_MANAGE), notificationsController.resend);
+router.post(
+  '/logs/bulk-resend',
+  authenticate,
+  authorize(PERMISSIONS.SETTINGS_MANAGE),
+  validate(BulkResendLogsSchema),
+  notificationsController.bulkResend,
+);
+router.post('/broadcasts/:id/retry-failed', authenticate, authorize(PERMISSIONS.SETTINGS_MANAGE), notificationsController.retryBroadcastFailed);
+router.get('/suppressions', authenticate, authorize(PERMISSIONS.SETTINGS_MANAGE), notificationsController.listEmailSuppressions);
+router.post(
+  '/suppressions/clear',
+  authenticate,
+  authorize(PERMISSIONS.SETTINGS_MANAGE),
+  validate(ClearSuppressionSchema),
+  notificationsController.clearEmailSuppression,
+);
 router.get('/templates', authenticate, authorize(PERMISSIONS.SETTINGS_MANAGE), notificationsController.listTemplates);
 router.get('/templates/:type/preview', authenticate, authorize(PERMISSIONS.SETTINGS_MANAGE), notificationsController.previewTemplate);
 router.post('/templates/:type/test', authenticate, authorize(PERMISSIONS.SETTINGS_MANAGE), notificationsController.sendTestTemplate);

@@ -25,6 +25,7 @@ export class NotificationsService {
     if (filters.channel) where.channel = filters.channel;
     if (filters.status) where.status = filters.status;
     if (filters.errorCategory) where.errorCategory = filters.errorCategory;
+    if (filters.referenceId) where.referenceId = filters.referenceId;
 
     const search = filters.search?.trim();
     if (search) {
