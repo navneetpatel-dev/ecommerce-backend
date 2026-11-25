@@ -343,6 +343,20 @@ export class BroadcastService {
     return bulkResendNotifications(actorId, { referenceId: id, includeStuckPending: true });
   }
 
+  async sendTestForBroadcast(id: string, actorId: string): Promise<{ sentTo: string; queued: number }> {
+    const record = await AdminBroadcast.findByPk(id);
+    if (!record) throw new AppError('Broadcast not found', 404, ERROR_CODES.NOT_FOUND);
+    return this.sendTestToActor(actorId, {
+      subject: record.subject,
+      message: record.message,
+      ctaLabel: record.ctaLabel ?? undefined,
+      ctaUrl: record.ctaUrl ?? undefined,
+      classification: record.classification,
+      priority: record.priority,
+      channels: record.channels,
+    });
+  }
+
   async cancelScheduled(id: string) {
     const record = await AdminBroadcast.findByPk(id);
     if (!record) throw new AppError('Broadcast not found', 404, ERROR_CODES.NOT_FOUND);

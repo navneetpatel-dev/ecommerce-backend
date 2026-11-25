@@ -119,10 +119,26 @@ export interface BulkResendResult {
   errors: string[];
 }
 
-export async function bulkResendNotifications(
-  actorId: string,
-  params: BulkResendParams = {},
-): Promise<BulkResendResult> {
+export interface BulkResendPreview {
+  totalEligible: number;
+  failedCount: number;
+  stuckPendingCount: number;
+  skippedNoPayloadCount: number;
+  byCategory: Record<string, number>;
+  byType: Record<string, number>;
+  sampleRows: Array<{
+    id: string;
+    type: string;
+    recipient: string;
+    status: string;
+    errorCategory: string | null;
+    error: string | null;
+    attempts: number;
+    createdAt: Date;
+  }>;
+}
+
+function buildBulkResendWhere(params: BulkResendParams, includePayloadFilter: boolean) {
   const stuckCutoff = new Date(Date.now() - 15 * 60 * 1000);
   const statusCondition = params.includeStuckPending
     ? {
@@ -135,12 +151,92 @@ export async function bulkResendNotifications(
 
   const where: Record<string | symbol, unknown> = {
     ...statusCondition,
-    payload: { [Op.ne]: null },
+    ...(includePayloadFilter ? { payload: { [Op.ne]: null } } : {}),
   };
   if (params.ids?.length) where.id = { [Op.in]: params.ids };
   if (params.referenceId) where.referenceId = params.referenceId;
   if (params.type) where.type = params.type;
   if (params.errorCategory) where.errorCategory = params.errorCategory;
+  return where;
+}
+
+export async function previewBulkResendNotifications(
+  params: BulkResendParams = {},
+): Promise<BulkResendPreview> {
+  const eligibleWhere = buildBulkResendWhere(params, true);
+  const noPayloadWhere = {
+    ...buildBulkResendWhere(params, false),
+    payload: null,
+  };
+
+  const [eligibleRows, skippedNoPayloadCount, sample] = await Promise.all([
+    NotificationLog.findAll({
+      where: eligibleWhere as Record<string, unknown>,
+      attributes: ['id', 'status', 'errorCategory', 'type'],
+      order: [['createdAt', 'DESC']],
+      limit: 500,
+      raw: true,
+    }) as unknown as Array<{ id: string; status: string; errorCategory: string | null; type: string }>,
+    NotificationLog.count({ where: noPayloadWhere as Record<string, unknown> }),
+    NotificationLog.findAll({
+      where: eligibleWhere as Record<string, unknown>,
+      attributes: ['id', 'type', 'recipientEmail', 'status', 'errorCategory', 'error', 'attempts', 'createdAt'],
+      include: [{ model: User, as: 'user', attributes: ['email'], required: false }],
+      order: [['createdAt', 'DESC']],
+      limit: 25,
+      raw: true,
+      nest: true,
+    }) as unknown as Array<{
+      id: string;
+      type: string;
+      recipientEmail: string | null;
+      status: string;
+      errorCategory: string | null;
+      error: string | null;
+      attempts: number;
+      createdAt: Date;
+      user?: { email?: string | null };
+    }>,
+  ]);
+
+  let failedCount = 0;
+  let stuckPendingCount = 0;
+  const byCategory: Record<string, number> = {};
+  const byType: Record<string, number> = {};
+
+  for (const row of eligibleRows) {
+    if (row.status === NOTIFICATION_STATUS.FAILED) failedCount += 1;
+    else stuckPendingCount += 1;
+    const cat = row.errorCategory ?? (row.status === NOTIFICATION_STATUS.PENDING ? 'STUCK_PENDING' : 'UNCATEGORIZED');
+    byCategory[cat] = (byCategory[cat] ?? 0) + 1;
+    byType[row.type] = (byType[row.type] ?? 0) + 1;
+  }
+
+  return {
+    totalEligible: eligibleRows.length,
+    failedCount,
+    stuckPendingCount,
+    skippedNoPayloadCount,
+    byCategory,
+    byType,
+    sampleRows: sample.map((r) => ({
+      id: r.id,
+      type: r.type,
+      recipient: r.user?.email ?? r.recipientEmail ?? 'Unknown recipient',
+      status: r.status,
+      errorCategory: r.errorCategory,
+      error: r.error,
+      attempts: r.attempts ?? 0,
+      createdAt: r.createdAt,
+    })),
+  };
+}
+
+export async function bulkResendNotifications(
+  actorId: string,
+  params: BulkResendParams = {},
+): Promise<BulkResendResult> {
+  const where = buildBulkResendWhere(params, true);
 
   const rows = await NotificationLog.findAll({
     where: where as Record<string, unknown>,

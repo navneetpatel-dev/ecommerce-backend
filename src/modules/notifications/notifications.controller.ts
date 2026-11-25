@@ -9,7 +9,7 @@ import { AppError } from '@core/errors';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { unsubscribeByToken } from './unsubscribe';
 import { getEmailHealth } from './emailHealth.service';
-import { bulkResendNotifications, resendNotification } from './emailRecovery';
+import { bulkResendNotifications, previewBulkResendNotifications, resendNotification } from './emailRecovery';
 import { listSuppressions, unsuppressEmail } from './emailSuppression';
 import { listEmailTemplates, previewEmailTemplate, sendTestEmail } from './templatePreview.service';
 import type { ListNotificationLogsQuery, BroadcastNotificationRequest } from './notifications.dto';
@@ -37,12 +37,20 @@ export const resend = asyncHandler(async (req: Request, res: Response) => {
   res.json(ok({ id: log.id, status: log.status }));
 });
 
+export const previewBulkResend = asyncHandler(async (req: Request, res: Response) => {
+  res.json(ok(await previewBulkResendNotifications(req.body)));
+});
+
 export const bulkResend = asyncHandler(async (req: Request, res: Response) => {
   res.json(ok(await bulkResendNotifications(req.user!.id, req.body)));
 });
 
 export const retryBroadcastFailed = asyncHandler(async (req: Request, res: Response) => {
   res.json(ok(await broadcastService.retryFailedForBroadcast(String(req.params.id), req.user!.id)));
+});
+
+export const sendBroadcastRecordTest = asyncHandler(async (req: Request, res: Response) => {
+  res.status(201).json(ok(await broadcastService.sendTestForBroadcast(String(req.params.id), req.user!.id)));
 });
 
 export const listEmailSuppressions = asyncHandler(async (req: Request, res: Response) => {

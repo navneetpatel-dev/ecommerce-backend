@@ -26,6 +26,13 @@ router.get(
 router.get('/health', authenticate, authorize(PERMISSIONS.SETTINGS_MANAGE), notificationsController.health);
 router.post('/logs/:id/resend', authenticate, authorize(PERMISSIONS.SETTINGS_MANAGE), notificationsController.resend);
 router.post(
+  '/logs/bulk-resend/preview',
+  authenticate,
+  authorize(PERMISSIONS.SETTINGS_MANAGE),
+  validate(BulkResendLogsSchema),
+  notificationsController.previewBulkResend,
+);
+router.post(
   '/logs/bulk-resend',
   authenticate,
   authorize(PERMISSIONS.SETTINGS_MANAGE),
@@ -33,6 +40,7 @@ router.post(
   notificationsController.bulkResend,
 );
 router.post('/broadcasts/:id/retry-failed', authenticate, authorize(PERMISSIONS.SETTINGS_MANAGE), notificationsController.retryBroadcastFailed);
+router.post('/broadcasts/:id/send-test', authenticate, authorize(PERMISSIONS.SETTINGS_MANAGE), notificationsController.sendBroadcastRecordTest);
 router.get('/suppressions', authenticate, authorize(PERMISSIONS.SETTINGS_MANAGE), notificationsController.listEmailSuppressions);
 router.post(
   '/suppressions/clear',
