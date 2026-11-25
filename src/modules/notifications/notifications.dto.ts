@@ -75,6 +75,8 @@ export const BroadcastPreviewSchema = z.object({
   targetConfig: BroadcastTargetConfigSchema,
   classification: z.enum(['operational', 'marketing']).optional(),
   channels: z.array(z.enum(['EMAIL', 'PUSH', 'IN_APP'])).optional(),
+  page: z.number().int().min(1).optional(),
+  limit: z.number().int().min(1).max(100).optional(),
 });
 
 export const BroadcastRenderPreviewSchema = z.object({

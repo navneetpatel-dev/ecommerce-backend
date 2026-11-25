@@ -97,7 +97,47 @@ export const cancelBroadcast = asyncHandler(async (req: Request, res: Response) 
 });
 
 export const searchBroadcastUsers = asyncHandler(async (req: Request, res: Response) => {
-  res.json(ok(await broadcastService.searchTargetUsers(String(req.query.q ?? ''))));
+  const page = Number(req.query.page ?? 1);
+  const limit = Number(req.query.limit ?? 20);
+  res.json(
+    ok(
+      await broadcastService.searchTargetUsers(
+        String(req.query.q ?? ''),
+        Number.isFinite(page) ? page : 1,
+        Number.isFinite(limit) ? limit : 20,
+      ),
+    ),
+  );
+});
+
+export const searchBroadcastCategories = asyncHandler(async (req: Request, res: Response) => {
+  const page = Number(req.query.page ?? 1);
+  const limit = Number(req.query.limit ?? 20);
+  res.json(
+    ok(
+      await broadcastService.searchCategories(
+        String(req.query.q ?? ''),
+        Number.isFinite(page) ? page : 1,
+        Number.isFinite(limit) ? limit : 20,
+      ),
+    ),
+  );
+});
+
+export const searchBroadcastLocations = asyncHandler(async (req: Request, res: Response) => {
+  const field = req.query.field === 'city' ? 'city' : 'state';
+  const page = Number(req.query.page ?? 1);
+  const limit = Number(req.query.limit ?? 20);
+  res.json(
+    ok(
+      await broadcastService.searchLocations(
+        field,
+        String(req.query.q ?? ''),
+        Number.isFinite(page) ? page : 1,
+        Number.isFinite(limit) ? limit : 20,
+      ),
+    ),
+  );
 });
 
 export const listInAppNotifications = asyncHandler(async (req: Request, res: Response) => {

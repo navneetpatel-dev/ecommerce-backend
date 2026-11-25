@@ -100,14 +100,18 @@ async function resolveActivityUserIds(activity: UserActivityFilter): Promise<{ i
   return {};
 }
 
-export async function resolveBroadcastRecipients(
-  config: BroadcastTargetConfig,
-  _opts: { classification?: BroadcastClassification; channels?: BroadcastChannel[] } = {},
-): Promise<ResolvedRecipient[]> {
+interface QueryParts {
+  empty: boolean;
+  where: Record<string | symbol, unknown>;
+  roleWhere: Record<string | symbol, unknown>;
+  vendorWhere: Record<string | symbol, unknown>;
+  requireVendor: boolean;
+}
+
+async function buildUserQueryParts(config: BroadcastTargetConfig): Promise<QueryParts> {
   const roles = config.roles?.length ? config.roles : config.role ? [config.role] : [];
-  const where: Record<string, unknown> = {};
-  const includeIds: Set<string> | null = config.userIds?.length ? new Set(config.userIds) : null;
-  const excludeIds = new Set(config.excludeUserIds ?? []);
+  const where: Record<string | symbol, unknown> = {};
+  const excludeIds = [...new Set(config.excludeUserIds ?? [])];
 
   if (config.userSegment?.status && config.userSegment.status !== 'ALL') {
     where.status = config.userSegment.status;
@@ -127,10 +131,10 @@ export async function resolveBroadcastRecipients(
   if (config.userSegment?.activity) {
     const act = await resolveActivityUserIds(config.userSegment.activity);
     if (act.include) {
-      if (act.include.length === 0) return [];
+      if (act.include.length === 0) return { empty: true, where, roleWhere: {}, vendorWhere: {}, requireVendor: false };
       where.id = { [Op.in]: act.include };
     }
-    if (act.exclude) act.exclude.forEach((id) => excludeIds.add(id));
+    if (act.exclude) excludeIds.push(...act.exclude);
   }
 
   if (config.userSegment?.state || config.userSegment?.city) {
@@ -139,19 +143,21 @@ export async function resolveBroadcastRecipients(
     if (config.userSegment.city) addrWhere.city = { [Op.iLike]: `%${config.userSegment.city.trim()}%` };
     const addrs = await Address.findAll({ where: addrWhere, attributes: ['userId'], raw: true });
     const addrUserIds = [...new Set(addrs.map((a) => a.userId))];
-    if (addrUserIds.length === 0) return [];
+    if (addrUserIds.length === 0) return { empty: true, where, roleWhere: {}, vendorWhere: {}, requireVendor: false };
     where.id = where.id ? { [Op.and]: [where.id, { [Op.in]: addrUserIds }] } : { [Op.in]: addrUserIds };
   }
 
   if (config.emails?.length) {
     where.email = { [Op.in]: config.emails.map((e) => e.trim().toLowerCase()) };
   }
-  if (includeIds) {
-    const arr = [...includeIds];
-    where.id = where.id ? { [Op.and]: [where.id, { [Op.in]: arr }] } : { [Op.in]: arr };
+  if (config.userIds?.length) {
+    where.id = where.id ? { [Op.and]: [where.id, { [Op.in]: config.userIds }] } : { [Op.in]: config.userIds };
+  }
+  if (excludeIds.length) {
+    where.id = where.id ? { [Op.and]: [where.id, { [Op.notIn]: excludeIds }] } : { [Op.notIn]: excludeIds };
   }
 
-  const roleWhere: Record<string, unknown> = {};
+  const roleWhere: Record<string | symbol, unknown> = {};
   if (!config.allUsers && roles.length > 0) {
     roleWhere.name = { [Op.in]: roles };
   }
@@ -161,7 +167,7 @@ export async function resolveBroadcastRecipients(
       : { [Op.notIn]: config.excludeRoles };
   }
 
-  const vendorWhere: Record<string, unknown> = {};
+  const vendorWhere: Record<string | symbol, unknown> = {};
   let requireVendor = config.mode === 'vendor_segment';
   if (config.vendorSegment?.vendorStatus) {
     vendorWhere.status = config.vendorSegment.vendorStatus;
@@ -189,28 +195,54 @@ export async function resolveBroadcastRecipients(
       raw: true,
     });
     const vIds = [...new Set(vcs.map((vc) => vc.vendorId))];
-    if (vIds.length === 0) return [];
+    if (vIds.length === 0) return { empty: true, where, roleWhere, vendorWhere, requireVendor };
     vendorWhere.id = { [Op.in]: vIds };
     requireVendor = true;
   }
 
+  return { empty: false, where, roleWhere, vendorWhere, requireVendor };
+}
+
+export async function resolveBroadcastBatch(
+  config: BroadcastTargetConfig,
+  opts: { afterId?: string; limit?: number } = {},
+): Promise<ResolvedRecipient[]> {
+  const parts = await buildUserQueryParts(config);
+  if (parts.empty) return [];
+
+  const batchWhere = opts.afterId
+    ? { [Op.and]: [parts.where, { id: { [Op.gt]: opts.afterId } }] }
+    : parts.where;
+
   const users = await User.findAll({
-    where,
+    where: batchWhere as Record<string, unknown>,
     attributes: ['id', 'email', 'name', 'emailVerified', 'emailMarketingConsent', 'emailSuppressed'],
     include: [
-      { model: Role, as: 'role', attributes: ['name'], where: Object.keys(roleWhere).length ? roleWhere : undefined, required: true },
-      { model: Vendor, as: 'vendor', attributes: ['businessName', 'city'], where: Object.keys(vendorWhere).length ? vendorWhere : undefined, required: requireVendor },
+      { model: Role, as: 'role', attributes: ['name'], where: Object.keys(parts.roleWhere).length ? parts.roleWhere : undefined, required: true },
+      { model: Vendor, as: 'vendor', attributes: ['businessName', 'city'], where: Object.keys(parts.vendorWhere).length ? parts.vendorWhere : undefined, required: parts.requireVendor },
     ],
-  });
+    order: [['id', 'ASC']],
+    limit: opts.limit ?? 200,
+    raw: true,
+    nest: true,
+  }) as unknown as Array<{
+    id: string;
+    email: string;
+    name: string;
+    emailVerified: boolean;
+    emailMarketingConsent: boolean;
+    emailSuppressed: boolean;
+    role?: { name?: string };
+    vendor?: { businessName?: string; city?: string };
+  }>;
 
-  const filtered = users.filter((u) => !excludeIds.has(u.id));
-  const userIds = filtered.map((u) => u.id);
+  const userIds = users.map((u) => u.id);
   const pushRows = userIds.length
     ? await PushSubscription.findAll({ where: { userId: { [Op.in]: userIds } }, attributes: ['userId'], raw: true })
     : [];
   const pushSet = new Set(pushRows.map((p) => p.userId));
 
-  return filtered.map((u) => ({
+  return users.map((u) => ({
     id: u.id,
     email: u.email,
     name: u.name,
@@ -222,4 +254,67 @@ export async function resolveBroadcastRecipients(
     emailSuppressed: Boolean(u.emailSuppressed),
     hasPush: pushSet.has(u.id),
   }));
+}
+
+export async function previewBroadcastTargetsQuery(
+  config: BroadcastTargetConfig,
+  opts: { classification?: BroadcastClassification; channels?: BroadcastChannel[]; page?: number; limit?: number } = {},
+) {
+  const parts = await buildUserQueryParts(config);
+  const page = Math.max(opts.page ?? 1, 1);
+  const limit = Math.min(Math.max(opts.limit ?? 25, 1), 100);
+  if (parts.empty) {
+    return { total: 0, emailEligible: 0, pushEligible: 0, inAppEligible: 0, sampleRecipients: [], sampleHasMore: false };
+  }
+
+  const classification = opts.classification ?? 'operational';
+  const include = [
+    { model: Role, as: 'role', attributes: ['name'], where: Object.keys(parts.roleWhere).length ? parts.roleWhere : undefined, required: true },
+    { model: Vendor, as: 'vendor', attributes: ['businessName'], where: Object.keys(parts.vendorWhere).length ? parts.vendorWhere : undefined, required: parts.requireVendor },
+  ];
+
+  const [allMatched, sampleRows] = await Promise.all([
+    User.findAll({
+      where: parts.where as Record<string, unknown>,
+      attributes: ['id', 'emailMarketingConsent', 'emailSuppressed'],
+      include,
+      raw: true,
+    }) as unknown as Array<{ id: string; emailMarketingConsent: boolean; emailSuppressed: boolean }>,
+    User.findAll({
+      where: parts.where as Record<string, unknown>,
+      attributes: ['id', 'name', 'email'],
+      include,
+      order: [['createdAt', 'DESC'], ['id', 'ASC']],
+      offset: (page - 1) * limit,
+      limit: limit + 1,
+      raw: true,
+      nest: true,
+    }) as unknown as Array<{ id: string; name: string; email: string; role?: { name?: string }; vendor?: { businessName?: string } }>,
+  ]);
+
+  const ids = allMatched.map((u) => u.id);
+  const pushCount = ids.length
+    ? await PushSubscription.count({ where: { userId: { [Op.in]: ids } }, distinct: true, col: 'userId' })
+    : 0;
+  const emailEligible = allMatched.filter(
+    (r) => !r.emailSuppressed && (classification !== 'marketing' || r.emailMarketingConsent),
+  ).length;
+
+  const sampleHasMore = sampleRows.length > limit;
+  const sampleRecipients = sampleRows.slice(0, limit).map((u) => ({
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    role: u.role?.name ?? 'CUSTOMER',
+    businessName: u.vendor?.businessName ?? null,
+  }));
+
+  return {
+    total: allMatched.length,
+    emailEligible,
+    pushEligible: pushCount,
+    inAppEligible: allMatched.length,
+    sampleRecipients,
+    sampleHasMore,
+  };
 }

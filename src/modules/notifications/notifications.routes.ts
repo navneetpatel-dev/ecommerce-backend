@@ -58,6 +58,8 @@ router.post(
 router.get('/broadcasts', authenticate, authorize(PERMISSIONS.SETTINGS_MANAGE), notificationsController.listBroadcasts);
 router.post('/broadcasts/:id/cancel', authenticate, authorize(PERMISSIONS.SETTINGS_MANAGE), notificationsController.cancelBroadcast);
 router.get('/broadcast-users', authenticate, authorize(PERMISSIONS.SETTINGS_MANAGE), notificationsController.searchBroadcastUsers);
+router.get('/broadcast-categories', authenticate, authorize(PERMISSIONS.SETTINGS_MANAGE), notificationsController.searchBroadcastCategories);
+router.get('/broadcast-locations', authenticate, authorize(PERMISSIONS.SETTINGS_MANAGE), notificationsController.searchBroadcastLocations);
 router.get('/in-app', authenticate, notificationsController.listInAppNotifications);
 router.patch('/in-app/:id/read', authenticate, notificationsController.markInAppRead);
 router.post('/in-app/read-all', authenticate, notificationsController.markAllInAppRead);
