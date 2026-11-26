@@ -6,6 +6,7 @@ import {
   deleteS3ObjectIfReplaced,
   S3_ENTITY_TYPES,
 } from '@core/s3';
+import { invalidateBlockedUserCache } from '@middleware/auth.middleware';
 import { usersRepository } from './users.repository';
 import { addressesRepository } from './addresses.repository';
 import { authRepository } from '../auth/auth.repository';
@@ -416,6 +417,7 @@ export class UsersService {
       );
       await authRepository.deleteRefreshTokensByUser(userId);
       await usersRepository.softDelete(userId, { transaction: t });
+      t.afterCommit(() => invalidateBlockedUserCache(userId));
     }).then(async () => {
       await cascadeDeleteEntityMedia(S3_ENTITY_TYPES.USERS, userId);
     });
@@ -682,7 +684,10 @@ export class UsersService {
       }
 
       await usersRepository.update(userId, data, { transaction: t });
-      t.afterCommit(() => void notifyAccountStatusChange(userId, user.status, data.status));
+      t.afterCommit(() => {
+        invalidateBlockedUserCache(userId);
+        void notifyAccountStatusChange(userId, user.status, data.status);
+      });
 
       if (data.status === USER_STATUS.BLOCKED) {
         await authRepository.deleteRefreshTokensByUser(userId);
@@ -794,6 +799,7 @@ export class UsersService {
 
       await authRepository.deleteRefreshTokensByUser(userId);
       await usersRepository.softDelete(userId, { transaction: t });
+      t.afterCommit(() => invalidateBlockedUserCache(userId));
 
       if (actor) {
         await logAudit({

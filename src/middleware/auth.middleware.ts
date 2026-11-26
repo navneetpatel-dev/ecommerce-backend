@@ -11,9 +11,40 @@ import { sendApiError } from '@core/http/sendApiError';
 import { roleNameOf } from '@utils/userRole';
 import type { JwtPayload } from '@modules/auth/auth.types';
 import { setImpersonatedBy } from '@core/context/requestContext';
+import { redisClient, withRedis } from '@config/redis';
 
 const BLOCKED_USER_CACHE_TTL_MS = 60_000;
+const BLOCKED_USER_INVALIDATE_CHANNEL = 'auth:blocked-user-cache:invalidate';
 const blockedUserCache = new Map<string, { blocked: boolean; expiresAt: number }>();
+
+const blockedCacheSubscriber = redisClient.duplicate();
+blockedCacheSubscriber.on('error', () => {});
+blockedCacheSubscriber.on('message', (channel: string, message: string) => {
+  if (channel === BLOCKED_USER_INVALIDATE_CHANNEL) {
+    if (message) blockedUserCache.delete(message);
+    else blockedUserCache.clear();
+  }
+});
+void (async () => {
+  try {
+    if (blockedCacheSubscriber.status === 'wait' || blockedCacheSubscriber.status === 'end') {
+      await blockedCacheSubscriber.connect();
+    }
+    await blockedCacheSubscriber.subscribe(BLOCKED_USER_INVALIDATE_CHANNEL);
+  } catch {
+    // Redis unavailable — falls back to local per-process invalidation.
+  }
+})();
+
+process.once('beforeExit', () => {
+  blockedCacheSubscriber.disconnect();
+});
+
+export function invalidateBlockedUserCache(userId?: string) {
+  if (userId) blockedUserCache.delete(userId);
+  else blockedUserCache.clear();
+  void withRedis(() => redisClient.publish(BLOCKED_USER_INVALIDATE_CHANNEL, userId ?? ''));
+}
 
 function unauthorized(res: Response, code: ErrorCode, message: string) {
   sendApiError(res, new AppError(message, 401, code));

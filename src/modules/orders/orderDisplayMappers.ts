@@ -303,6 +303,14 @@ export function mapOrderResponse(order: Record<string, unknown>) {
 export function mapOrderSummaryResponse(order: Record<string, unknown>) {
   const plain: any =
     typeof (order as any).get === 'function' ? (order as any).get({ plain: true }) : order;
+  const subOrders = Array.isArray(plain.subOrders) ? plain.subOrders : [];
+  const allItems = subOrders.flatMap((so: any) => (Array.isArray(so?.items) ? so.items : []));
+  const itemNames = allItems.map((it: any) => it?.productName).filter(Boolean) as string[];
+  let itemSummary = 'No items';
+  if (itemNames.length === 1) itemSummary = itemNames[0]!;
+  else if (itemNames.length === 2) itemSummary = `${itemNames[0]} and ${itemNames[1]}`;
+  else if (itemNames.length > 2) itemSummary = `${itemNames[0]} and ${itemNames.length - 1} more`;
+
   return {
     id: plain.id,
     orderReference: plain.id ? orderReference(String(plain.id)) : null,
@@ -312,6 +320,9 @@ export function mapOrderSummaryResponse(order: Record<string, unknown>) {
     paymentStatus: plain.paymentStatus,
     paymentMethod: plain.paymentMethod ?? null,
     totalAmount: roundMoney(plain.totalAmount),
+    sellerCount: subOrders.length,
+    itemCount: allItems.length,
+    itemSummary,
     createdAt: plain.createdAt,
   };
 }

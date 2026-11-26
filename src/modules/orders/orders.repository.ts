@@ -100,6 +100,16 @@ export class OrdersRepository extends BaseRepository<Order> {
           association: 'user',
           attributes: ['id', 'name', 'email'],
         },
+        {
+          association: 'subOrders',
+          attributes: ['id'],
+          include: [
+            {
+              association: 'items',
+              attributes: ['id', 'productName'],
+            },
+          ],
+        },
       ],
       order: [['createdAt', 'DESC']],
     });
