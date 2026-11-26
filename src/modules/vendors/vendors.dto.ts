@@ -70,6 +70,8 @@ export const VendorDirectoryQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(MAX_PAGE_LIMIT).default(DEFAULT_PAGE_LIMIT),
   search: z.string().optional(),
+  /** Look up one approved vendor by id (the picker resolves the name of an already-selected vendor). */
+  id: z.string().uuid().optional(),
 });
 
 export const UploadDocumentSchema = z.object({

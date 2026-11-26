@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
-import { AdjustWalletSchema } from './wallet.admin.dto';
+import { AdjustWalletSchema, WalletUserSearchSchema } from './wallet.admin.dto';
 import { walletAdminService } from './wallet.admin.service';
 
 export const adjustWallet = asyncHandler(async (req: Request, res: Response) => {
@@ -12,4 +12,9 @@ export const adjustWallet = asyncHandler(async (req: Request, res: Response) => 
     body,
   );
   res.json(ok(result));
+});
+
+export const searchUsers = asyncHandler(async (req: Request, res: Response) => {
+  const query = WalletUserSearchSchema.parse(req.query);
+  res.json(ok(await walletAdminService.searchUsers(query)));
 });

@@ -1,4 +1,4 @@
-import { ADMIN_ROLES, ROLES } from '@core/constants/statuses';
+import { ROLES } from '@core/constants/statuses';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { userHasPermission } from '@middleware/rbac.middleware';
 
@@ -15,8 +15,8 @@ export type ShipmentAccessFacts = {
 };
 
 /**
- * Who may see a shipment's details: an admin, the customer who ordered it, or the vendor
- * who shipped it. Never an anonymous viewer: the tracking number alone gets only the
+ * Who may see a shipment's details: staff who manage shipping or orders, the customer who
+ * ordered it, or the vendor who shipped it. Never an anonymous viewer: the tracking number alone gets only the
  * carrier's public status.
  */
 export async function canSeeShipmentDetails(
@@ -24,12 +24,8 @@ export async function canSeeShipmentDetails(
   shipment: ShipmentAccessFacts,
 ): Promise<boolean> {
   if (!viewer) return false;
-  if (
-    (ADMIN_ROLES as readonly string[]).includes(viewer.role.name) ||
-    (await userHasPermission(viewer as never, PERMISSIONS.SHIPPING_MANAGE, PERMISSIONS.ORDER_MANAGE))
-  ) {
-    return true;
-  }
+  // By permission, not by "is an admin role": the Catalog and Finance managers have no shipping job.
+  if (await userHasPermission(viewer as never, PERMISSIONS.SHIPPING_MANAGE, PERMISSIONS.ORDER_MANAGE)) return true;
   if (viewer.role.name === ROLES.CUSTOMER && shipment.subOrder?.order?.userId === viewer.id) return true;
   return viewer.vendorId != null && shipment.subOrder?.vendorId === viewer.vendorId;
 }

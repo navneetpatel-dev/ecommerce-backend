@@ -236,6 +236,7 @@ export class VendorsService {
     const { rows, count } = await vendorsRepository.findWithFilters({
       status: VENDOR_STATUS.APPROVED,
       search: query.search,
+      ...(query.id ? { id: query.id } : {}),
       limit: query.limit,
       offset,
     });

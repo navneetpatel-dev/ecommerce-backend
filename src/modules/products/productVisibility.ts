@@ -1,4 +1,4 @@
-import { ADMIN_ROLES, ROLES } from '@core/constants/statuses';
+import { ROLES } from '@core/constants/statuses';
 import { PERMISSIONS } from '@core/constants/permissions';
 import { userHasPermission } from '@middleware/rbac.middleware';
 
@@ -9,15 +9,16 @@ export type CatalogViewer = {
   role: { name: string };
 };
 
-/** Admin/vendor dashboards stay unscoped; shoppers use customerVisible. */
+/**
+ * Vendor dashboards and catalog admins stay unscoped; shoppers use customerVisible. Admins are
+ * judged by permission, not by being "an admin role": the Order and Finance managers have no
+ * catalog job and see only what shoppers see.
+ */
 export async function isCatalogModerator(viewer: CatalogViewer | null | undefined): Promise<boolean> {
   const role = viewer?.role?.name;
   if (!role) return false;
   if (role === ROLES.VENDOR_OWNER || role === ROLES.VENDOR_STAFF) return true;
-  return (
-    (ADMIN_ROLES as readonly string[]).includes(role) ||
-    await userHasPermission(viewer, PERMISSIONS.PRODUCT_MANAGE)
-  );
+  return userHasPermission(viewer, PERMISSIONS.PRODUCT_MANAGE, PERMISSIONS.PRODUCT_APPROVE);
 }
 
 /**

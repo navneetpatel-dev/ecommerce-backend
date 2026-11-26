@@ -13,10 +13,16 @@ export class VendorsRepository extends BaseRepository<Vendor> {
     /** Only vendors whose KYC documents are all verified (those that can sell). */
     kycVerified?: boolean;
     search?: string;
+    /** Exactly this vendor. */
+    id?: string;
     limit: number;
     offset: number;
   }) {
     const where: any = {};
+
+    if (filters.id) {
+      where.id = filters.id;
+    }
 
     if (filters.status) {
       where.status = filters.status;
