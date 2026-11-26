@@ -76,6 +76,14 @@ export const UpdateCategorySchema = z.object({
   defaultWarrantyType: optionalWarrantyType,
 });
 
+/** The product form's category picker: one page of the tree (or of a search), or one category by id. */
+export const CategoryPickerQuerySchema = z.object({
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(50).default(25),
+  search: z.string().trim().max(100).optional(),
+  id: z.string().uuid().optional(),
+});
+
 export const ReorderCategoriesSchema = z.object({
   orderedIds: z.array(z.string().uuid()).min(1),
 });

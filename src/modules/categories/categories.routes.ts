@@ -5,6 +5,7 @@ import { authorize } from '@middleware/rbac.middleware';
 import { validate } from '@middleware/validate.middleware';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import {
+  CategoryPickerQuerySchema,
   CreateCategoryAttributeSchema,
   CreateCategorySchema,
   ReassignProductsSchema,
@@ -19,6 +20,14 @@ const router = Router();
 // public category browsing (static paths before /:id)
 router.get('/', categoriesController.getCategories);
 router.get('/resolve', categoriesController.resolveCategoryPath);
+// Product form's category picker (before `/:id`): one page at a time, with each category's GST.
+router.get(
+  '/picker',
+  authenticate,
+  authorize(PERMISSIONS.PRODUCT_CREATE, PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE),
+  validate(CategoryPickerQuerySchema, 'query'),
+  categoriesController.getCategoryPicker,
+);
 router.get('/:idOrSlug/facets', categoriesController.getCategoryFacets);
 
 // admin category management (static admin paths before /:id)

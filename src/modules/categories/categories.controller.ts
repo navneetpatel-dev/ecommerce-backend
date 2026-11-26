@@ -2,7 +2,9 @@ import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { categoriesService } from './categories.service';
+import { listCategoriesForPicker } from './categoryPicker';
 import {
+  CategoryPickerQuerySchema,
   CreateCategoryAttributeSchema,
   CreateCategorySchema,
   GetCategoriesPaginatedQuerySchema,
@@ -17,6 +19,13 @@ export const createCategory = asyncHandler(async (req: Request, res: Response) =
   const dto = CreateCategorySchema.parse(req.body);
   const category = await categoriesService.createCategory(dto);
   res.status(201).json(ok(category));
+});
+
+/** Categories for the product form's picker: a page at a time, with each one's GST. */
+export const getCategoryPicker = asyncHandler(async (req: Request, res: Response) => {
+  const query = CategoryPickerQuerySchema.parse(req.query);
+  const result = await listCategoriesForPicker(query);
+  res.json(ok(result.categories, { pagination: result.pagination }));
 });
 
 export const getCategories = asyncHandler(async (req: Request, res: Response) => {

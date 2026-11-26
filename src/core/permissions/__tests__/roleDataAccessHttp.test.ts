@@ -449,4 +449,28 @@ describe('assisted listing over HTTP (nothing here writes: every call is refused
     assert.equal(wildcard.status, 200);
     for (const row of wildcard.data) assert.ok(row.businessName.includes('%'), 'a typed % matches only a literal %');
   });
+
+  it('GET /categories/picker: product roles get the tree a page at a time with GST; others are refused', async () => {
+    for (const role of [ROLES.ADMIN_CATALOG_MANAGER, ROLES.SUPER_ADMIN]) {
+      const first = await call('/api/categories/picker?limit=5&page=1', role);
+      assert.equal(first.status, 200, role);
+      assert.ok(Array.isArray(first.data) && first.data.length > 0 && first.data.length <= 5);
+      for (const row of first.data) {
+        assert.deepEqual(Object.keys(row).sort(), ['depth', 'gstPercentage', 'gstPercentageAbove', 'id', 'imageUrl', 'name', 'path', 'priceBandThreshold']);
+      }
+      const second = await call('/api/categories/picker?limit=5&page=2', role);
+      const ids = [...first.data, ...second.data].map((row: { id: string }) => row.id);
+      assert.equal(new Set(ids).size, ids.length, 'no category on two pages');
+    }
+    const [{ id: firstId, name }] = (await call('/api/categories/picker?limit=1', ROLES.SUPER_ADMIN)).data;
+    const byId = await call(`/api/categories/picker?id=${firstId}`, ROLES.SUPER_ADMIN);
+    assert.deepEqual(byId.data.map((row: { id: string }) => row.id), [firstId]);
+    const found = await call(`/api/categories/picker?search=${encodeURIComponent(String(name).slice(0, 3))}`, ROLES.SUPER_ADMIN);
+    assert.ok(found.data.some((row: { id: string }) => row.id === firstId), 'search finds it');
+    assert.equal((await call('/api/categories/picker?limit=51', ROLES.SUPER_ADMIN)).status, 422, 'page size is capped');
+    for (const role of [ROLES.ADMIN_ORDER_MANAGER, ROLES.ADMIN_FINANCE_MANAGER, ROLES.CUSTOMER]) {
+      assert.equal((await call('/api/categories/picker', role)).status, 403, role);
+    }
+    assert.equal((await call('/api/categories/picker')).status, 401, 'visitors are refused');
+  });
 });

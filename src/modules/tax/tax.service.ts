@@ -137,6 +137,54 @@ export class TaxService {
     return { gstPercentage, gstPriceBand };
   }
 
+  /**
+   * The GST every category carries, for pickers: its own rule, else the nearest ancestor's, else the
+   * platform default (then 18%), the same walk as `resolveEffectiveTaxRule`, done in memory for all
+   * categories at once. A band means the rate changes above a per-piece price.
+   */
+  async categoryGstRates(preloaded?: Array<{ id: string; parentId: string | null }>): Promise<
+    Array<{ categoryId: string; gstPercentage: number; priceBandThreshold: number | null; gstPercentageAbove: number | null }>
+  > {
+    const [rules, categories] = await Promise.all([
+      TaxRule.findAll({ order: [['createdAt', 'ASC'], ['gstPercentage', 'ASC'], ['id', 'ASC']] }),
+      preloaded ?? Category.findAll({ attributes: ['id', 'parentId'] }),
+    ]);
+    // Same pick as the single lookups: the oldest, then lowest-rate, rule wins.
+    const byCategory = new Map<string, TaxRule>();
+    let platformDefault: TaxRule | undefined;
+    for (const rule of rules) {
+      if (rule.categoryId) {
+        if (!byCategory.has(rule.categoryId)) byCategory.set(rule.categoryId, rule);
+      } else if (!platformDefault) {
+        platformDefault = rule;
+      }
+    }
+    const parentOf = new Map(categories.map((category) => [category.id, category.parentId ?? null]));
+    const shape = (rule: TaxRule | undefined) => {
+      if (!rule) return { gstPercentage: 18, priceBandThreshold: null, gstPercentageAbove: null };
+      const threshold = rule.priceBandThreshold != null ? Number(rule.priceBandThreshold) : null;
+      const above = rule.gstPercentageAbove != null ? Number(rule.gstPercentageAbove) : null;
+      const banded = threshold != null && above != null && threshold > 0;
+      return {
+        gstPercentage: Number(rule.gstPercentage),
+        priceBandThreshold: banded ? threshold : null,
+        gstPercentageAbove: banded ? above : null,
+      };
+    };
+    return categories.map((category) => {
+      const seen = new Set<string>();
+      let node: string | null = category.id;
+      let rule: TaxRule | undefined;
+      while (node && !seen.has(node)) {
+        seen.add(node);
+        rule = byCategory.get(node);
+        if (rule) break;
+        node = parentOf.get(node) ?? null;
+      }
+      return { categoryId: category.id, ...shape(rule ?? platformDefault) };
+    });
+  }
+
   async getTaxRules(query: { page: number; limit: number }) {
     const offset = paginationOffset(query.page, query.limit);
     const { rows, count } = await TaxRule.findAndCountAll({
