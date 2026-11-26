@@ -1,12 +1,9 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
-import { ValidationError } from '@core/errors/ValidationError';
-import { ERROR_MESSAGES } from '@core/constants/errors';
 import { taxRepository } from './tax.repository';
 import { TaxRule } from '@database/models/taxRule.model';
 import { Category } from '@database/models/category.model';
-import { sequelize } from '@database/models';
-import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
-import { logAudit } from '@modules/audit/audit.service';
+import { loadCategoryRules } from './taxRuleResolution';
+import { createTaxRule, deleteTaxRule, listTaxRules, updateTaxRule } from './taxRulesAdmin';
 
 import { toPaise, fromPaise } from '@modules/pricing/money';
 import { computeSubOrderBreakdown, type GstPriceBand } from '@modules/pricing/pricing.engine';
@@ -34,19 +31,6 @@ function effectiveRule(rule: TaxRule): {
       threshold != null && above != null && threshold > 0
         ? { thresholdPaise: toPaise(threshold), gstPercentageAbove: above }
         : null,
-  };
-}
-
-function serializeTaxRule(row: TaxRule) {
-  const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
-  return {
-    id: plain.id,
-    hsnCode: plain.hsnCode,
-    gstPercentage: Number(plain.gstPercentage),
-    priceBandThreshold: plain.priceBandThreshold != null ? Number(plain.priceBandThreshold) : null,
-    gstPercentageAbove: plain.gstPercentageAbove != null ? Number(plain.gstPercentageAbove) : null,
-    categoryName: plain.category?.name ?? null,
-    createdAt: plain.createdAt,
   };
 }
 
@@ -137,158 +121,41 @@ export class TaxService {
     return { gstPercentage, gstPriceBand };
   }
 
+  /** Which rule every category gets and why (own, inherited, default, fallback). */
+  resolveAllCategoryRules(preloaded?: Array<{ id: string; parentId: string | null }>) {
+    return loadCategoryRules(preloaded);
+  }
+
   /**
    * The GST every category carries, for pickers: its own rule, else the nearest ancestor's, else the
    * platform default (then 18%), the same walk as `resolveEffectiveTaxRule`, done in memory for all
    * categories at once. A band means the rate changes above a per-piece price.
    */
-  async categoryGstRates(preloaded?: Array<{ id: string; parentId: string | null }>): Promise<
-    Array<{ categoryId: string; gstPercentage: number; priceBandThreshold: number | null; gstPercentageAbove: number | null }>
-  > {
-    const [rules, categories] = await Promise.all([
-      TaxRule.findAll({ order: [['createdAt', 'ASC'], ['gstPercentage', 'ASC'], ['id', 'ASC']] }),
-      preloaded ?? Category.findAll({ attributes: ['id', 'parentId'] }),
-    ]);
-    // Same pick as the single lookups: the oldest, then lowest-rate, rule wins.
-    const byCategory = new Map<string, TaxRule>();
-    let platformDefault: TaxRule | undefined;
-    for (const rule of rules) {
-      if (rule.categoryId) {
-        if (!byCategory.has(rule.categoryId)) byCategory.set(rule.categoryId, rule);
-      } else if (!platformDefault) {
-        platformDefault = rule;
-      }
-    }
-    const parentOf = new Map(categories.map((category) => [category.id, category.parentId ?? null]));
-    const shape = (rule: TaxRule | undefined) => {
-      if (!rule) return { gstPercentage: 18, priceBandThreshold: null, gstPercentageAbove: null };
-      const threshold = rule.priceBandThreshold != null ? Number(rule.priceBandThreshold) : null;
-      const above = rule.gstPercentageAbove != null ? Number(rule.gstPercentageAbove) : null;
-      const banded = threshold != null && above != null && threshold > 0;
-      return {
-        gstPercentage: Number(rule.gstPercentage),
-        priceBandThreshold: banded ? threshold : null,
-        gstPercentageAbove: banded ? above : null,
-      };
-    };
-    return categories.map((category) => {
-      const seen = new Set<string>();
-      let node: string | null = category.id;
-      let rule: TaxRule | undefined;
-      while (node && !seen.has(node)) {
-        seen.add(node);
-        rule = byCategory.get(node);
-        if (rule) break;
-        node = parentOf.get(node) ?? null;
-      }
-      return { categoryId: category.id, ...shape(rule ?? platformDefault) };
-    });
+  async categoryGstRates(preloaded?: Array<{ id: string; parentId: string | null }>) {
+    return (await loadCategoryRules(preloaded)).map((row) => ({
+      categoryId: row.categoryId,
+      gstPercentage: row.gstPercentage,
+      priceBandThreshold: row.priceBandThreshold,
+      gstPercentageAbove: row.gstPercentageAbove,
+    }));
   }
 
-  async getTaxRules(query: { page: number; limit: number }) {
-    const offset = paginationOffset(query.page, query.limit);
-    const { rows, count } = await TaxRule.findAndCountAll({
-      include: [{ model: Category, as: 'category', attributes: ['id', 'name'], required: false }],
-      order: [['createdAt', 'DESC']],
-      limit: query.limit,
-      offset,
-      distinct: true,
-      col: 'id',
-    });
-    return {
-      rules: rows.map((row) => serializeTaxRule(row)),
-      pagination: buildPaginationMeta(count, query.page, query.limit),
-    };
+  /** The rule a category gets, with where it comes from ("inherited from Apparel", "default", ...). */
+  async explainEffectiveTaxRule(categoryId: string) {
+    const category = await Category.findByPk(categoryId, { attributes: ['id', 'name'] });
+    if (!category) throw new NotFoundError('Category');
+    const [resolved] = (await loadCategoryRules()).filter((row) => row.categoryId === categoryId);
+    const from = resolved!.fromCategoryId
+      ? await Category.findByPk(resolved!.fromCategoryId, { attributes: ['id', 'name'] })
+      : null;
+    return { ...resolved!, categoryName: category.name, fromCategoryName: from?.name ?? null };
   }
 
-  async createTaxRule(
-    data: {
-      categoryId?: string;
-      hsnCode?: string;
-      gstPercentage: number;
-      priceBandThreshold?: number | null;
-      gstPercentageAbove?: number | null;
-    },
-    actorId?: string,
-  ) {
-    // One default rule (no category): with several, which GST applied was arbitrary.
-    if (!data.categoryId && (await taxRepository.countDefaults()) > 0) {
-      throw new ValidationError(ERROR_MESSAGES.TAX_DEFAULT_RULE_EXISTS);
-    }
-    return sequelize.transaction(async (t) => {
-      const rule = await TaxRule.create({
-        categoryId: data.categoryId ?? null,
-        hsnCode: data.hsnCode ?? null,
-        gstPercentage: data.gstPercentage,
-        priceBandThreshold: data.priceBandThreshold ?? null,
-        gstPercentageAbove: data.gstPercentageAbove ?? null,
-      }, { transaction: t });
-
-      if (actorId) {
-        await logAudit({
-          actorId,
-          action: 'TAX_RULE_CREATED',
-          entityType: 'TaxRule',
-          entityId: rule.id,
-          metadata: { gstPercentage: data.gstPercentage, categoryId: data.categoryId },
-          transaction: t,
-        });
-      }
-
-      return rule;
-    });
-  }
-
-  async updateTaxRule(
-    id: string,
-    data: {
-      categoryId?: string;
-      hsnCode?: string;
-      gstPercentage?: number;
-      priceBandThreshold?: number | null;
-      gstPercentageAbove?: number | null;
-    },
-    actorId?: string,
-  ) {
-    return sequelize.transaction(async (t) => {
-      const rule = await TaxRule.findByPk(id, { transaction: t });
-      if (!rule) throw new NotFoundError('TaxRule');
-
-      await rule.update(data, { transaction: t });
-
-      if (actorId) {
-        await logAudit({
-          actorId,
-          action: 'TAX_RULE_UPDATED',
-          entityType: 'TaxRule',
-          entityId: id,
-          metadata: { patch: data },
-          transaction: t,
-        });
-      }
-
-      return rule;
-    });
-  }
-
-  async deleteTaxRule(id: string, actorId?: string) {
-    return sequelize.transaction(async (t) => {
-      const rule = await TaxRule.findByPk(id, { transaction: t });
-      if (!rule) throw new NotFoundError('TaxRule');
-
-      await rule.destroy({ transaction: t });
-
-      if (actorId) {
-        await logAudit({
-          actorId,
-          action: 'TAX_RULE_DELETED',
-          entityType: 'TaxRule',
-          entityId: id,
-          transaction: t,
-        });
-      }
-    });
-  }
+  // Rule management (the admin Tax page) lives in `taxRulesAdmin.ts`.
+  getTaxRules = listTaxRules;
+  createTaxRule = createTaxRule;
+  updateTaxRule = updateTaxRule;
+  deleteTaxRule = deleteTaxRule;
 }
 
 export const taxService = new TaxService();

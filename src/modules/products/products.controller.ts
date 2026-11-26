@@ -9,6 +9,7 @@ import { ROLES } from '@core/constants/statuses';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { userHasPermission } from '@middleware/rbac.middleware';
 import { productsService } from './products.service';
+import { previewCustomerPrice } from './productPricePreview';
 import type { ProductActor } from './productChangePolicy';
 import { createProductOnBehalf, submitProductOnBehalf } from './productOnBehalf.service';
 import {
@@ -40,7 +41,14 @@ import {
 /** The GST rate and GST-inclusive price customers see for a pre-GST price (vendor form). */
 export const getGstPreview = asyncHandler(async (req: Request, res: Response) => {
   const query = GstPreviewQuerySchema.parse(req.query);
-  res.json(ok(await productsService.gstPreview(query.categoryId, query.price)));
+  // With an MRP, the preview also carries what the customer page shows for it.
+  res.json(
+    ok(
+      query.compareAtPrice != null || query.variantPrices?.length
+        ? await previewCustomerPrice(query.categoryId, query.price, query.compareAtPrice ?? null, query.variantPrices)
+        : await productsService.gstPreview(query.categoryId, query.price),
+    ),
+  );
 });
 
 /**

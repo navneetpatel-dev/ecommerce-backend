@@ -1,9 +1,14 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
-import { pageLimitQuerySchema } from '@core/http/pagination';
 import { taxService } from './tax.service';
-import { CreateTaxRuleSchema, UpdateTaxRuleSchema } from './tax.dto';
+import {
+  CreateTaxRuleSchema,
+  DeleteTaxRuleQuerySchema,
+  EffectiveRuleQuerySchema,
+  TaxRuleListQuerySchema,
+  UpdateTaxRuleSchema,
+} from './tax.dto';
 
 /**
  * A tax rule change can move the GST on every product below its category, so the
@@ -16,7 +21,7 @@ function refreshDisplayPricesAfterRuleChange(): void {
 }
 
 export const listRules = asyncHandler(async (req: Request, res: Response) => {
-  const query = pageLimitQuerySchema.parse(req.query);
+  const query = TaxRuleListQuerySchema.parse(req.query);
   const result = await taxService.getTaxRules(query);
   res.json(ok(result.rules, { pagination: result.pagination }));
 });
@@ -36,7 +41,14 @@ export const updateRule = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const deleteRule = asyncHandler(async (req: Request, res: Response) => {
-  await taxService.deleteTaxRule(req.params.id!, req.user!.id);
+  const { force } = DeleteTaxRuleQuerySchema.parse(req.query);
+  await taxService.deleteTaxRule(req.params.id!, req.user!.id, force === 'true');
   refreshDisplayPricesAfterRuleChange();
   res.status(204).send();
+});
+
+/** The tax rule a category gets, and where it comes from. */
+export const getEffectiveRule = asyncHandler(async (req: Request, res: Response) => {
+  const { categoryId } = EffectiveRuleQuerySchema.parse(req.query);
+  res.json(ok(await taxService.explainEffectiveTaxRule(categoryId)));
 });

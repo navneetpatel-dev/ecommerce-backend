@@ -5,7 +5,9 @@ import { authorize } from '@middleware/rbac.middleware';
 import { validate } from '@middleware/validate.middleware';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import {
+  AdminCategoriesQuerySchema,
   CategoryPickerQuerySchema,
+  MoveCategorySchema,
   CreateCategoryAttributeSchema,
   CreateCategorySchema,
   ReassignProductsSchema,
@@ -24,10 +26,21 @@ router.get('/resolve', categoriesController.resolveCategoryPath);
 router.get(
   '/picker',
   authenticate,
-  authorize(PERMISSIONS.PRODUCT_CREATE, PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE),
+  authorize(
+    PERMISSIONS.PRODUCT_CREATE,
+    PERMISSIONS.PRODUCT_UPDATE,
+    PERMISSIONS.PRODUCT_MANAGE,
+    PERMISSIONS.CATEGORY_MANAGE,
+    PERMISSIONS.TAX_MANAGE,
+  ),
   validate(CategoryPickerQuerySchema, 'query'),
   categoriesController.getCategoryPicker,
 );
+// Admin category screens: every status, a page of the tree at a time (before `/:id`).
+router.get('/admin', authenticate, authorize(PERMISSIONS.CATEGORY_MANAGE), validate(AdminCategoriesQuerySchema, 'query'), categoriesController.getAdminCategories);
+router.get('/admin/:id', authenticate, authorize(PERMISSIONS.CATEGORY_MANAGE), categoriesController.getAdminCategory);
+router.get('/admin/:id/impact', authenticate, authorize(PERMISSIONS.CATEGORY_MANAGE), categoriesController.getCategoryImpactHandler);
+router.patch('/:id/move', authenticate, authorize(PERMISSIONS.CATEGORY_MANAGE), validate(MoveCategorySchema), categoriesController.moveCategoryHandler);
 router.get('/:idOrSlug/facets', categoriesController.getCategoryFacets);
 
 // admin category management (static admin paths before /:id)

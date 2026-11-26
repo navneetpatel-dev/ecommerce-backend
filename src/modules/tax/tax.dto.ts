@@ -1,10 +1,28 @@
 import { z } from 'zod';
+import { ERROR_MESSAGES } from '@core/constants/errors';
+import { PRODUCT_FIELD_LIMITS } from '@core/constants/product';
+import { HSN_CODE_PATTERN } from '@core/constants/tax';
+import { pageLimitQuerySchema } from '@core/http/pagination';
+
+const emptyToNull = (value: unknown) => (typeof value === 'string' && value.trim() === '' ? null : value);
+
+/** A GST percentage: 0 to 100, at most two decimals (the database keeps two). */
+const gstPercent = z
+  .number()
+  .min(0)
+  .max(100)
+  .refine((value) => Math.abs(value * 100 - Math.round(value * 100)) < 1e-9, 'Use at most two decimals');
+
+const hsnCode = z.preprocess(
+  emptyToNull,
+  z.string().trim().regex(HSN_CODE_PATTERN, ERROR_MESSAGES.TAX_HSN_INVALID).nullable().optional(),
+);
 
 /** Optional per-piece price band: both fields set, or neither. */
 const priceBandFields = {
   /** Per-piece value in ₹ above which `gstPercentageAbove` applies. */
-  priceBandThreshold: z.number().positive().nullable().optional(),
-  gstPercentageAbove: z.number().min(0).max(100).nullable().optional(),
+  priceBandThreshold: z.number().positive().max(PRODUCT_FIELD_LIMITS.PRICE_MAX).nullable().optional(),
+  gstPercentageAbove: gstPercent.nullable().optional(),
 };
 
 function assertPriceBand(
@@ -24,21 +42,40 @@ function assertPriceBand(
 
 export const CreateTaxRuleSchema = z
   .object({
-    categoryId: z.string().uuid().optional(),
-    hsnCode: z.string().optional(),
-    gstPercentage: z.number().min(0).max(100),
+    /** Empty: the platform default rule. */
+    categoryId: z.string().uuid().nullable().optional(),
+    hsnCode,
+    gstPercentage: gstPercent,
     ...priceBandFields,
   })
   .superRefine(assertPriceBand);
 
 export const UpdateTaxRuleSchema = z
   .object({
-    categoryId: z.string().uuid().optional(),
-    hsnCode: z.string().optional(),
-    gstPercentage: z.number().min(0).max(100).optional(),
+    /** `null`: make this the platform default rule. */
+    categoryId: z.string().uuid().nullable().optional(),
+    hsnCode,
+    gstPercentage: gstPercent.optional(),
     ...priceBandFields,
   })
   .superRefine(assertPriceBand);
 
+/** The rules list: server-side filters so totals and pages are right. */
+export const TaxRuleListQuerySchema = pageLimitQuerySchema.extend({
+  search: z.string().trim().max(100).optional(),
+  gstPercentage: z.coerce.number().min(0).max(100).optional(),
+  hasBand: z.enum(['YES', 'NO']).optional(),
+  scope: z.enum(['default', 'category']).optional(),
+  categoryId: z.string().uuid().optional(),
+});
+
+export const EffectiveRuleQuerySchema = z.object({ categoryId: z.string().uuid() });
+
+export const DeleteTaxRuleQuerySchema = z.object({
+  /** Needed to delete the default rule (it changes the GST of every category without its own rule). */
+  force: z.enum(['true', 'false']).optional(),
+});
+
 export type CreateTaxRuleRequest = z.infer<typeof CreateTaxRuleSchema>;
 export type UpdateTaxRuleRequest = z.infer<typeof UpdateTaxRuleSchema>;
+export type TaxRuleListQuery = z.infer<typeof TaxRuleListQuerySchema>;

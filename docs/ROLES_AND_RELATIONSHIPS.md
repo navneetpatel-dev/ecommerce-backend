@@ -277,7 +277,7 @@ This document explains the real-life relationship and roles in this multi-vendor
 - `product.manage` - View, edit and archive all products (deleting needs `product.delete` or Super Admin)
 - `product.create` - Create products
 - `product.approve` - Approve vendor products (not for the approver's own store)
-- `category.manage` - Manage categories
+- `category.manage` - Manage categories (admin tree list, move, archive with cascade, delete; read-only GST per category; audited)
 - `coupon.manage` - Platform coupons within the standard ceilings (`coupon.unlimited` lifts them)
 - `banner.manage` - Homepage banners
 - `review.moderate` - Moderate reviews

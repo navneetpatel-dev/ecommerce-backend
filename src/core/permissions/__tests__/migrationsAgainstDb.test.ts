@@ -440,3 +440,55 @@ describe('20261127000001-product-platform-listing (real SQL, rolled back)', () =
     });
   });
 });
+
+describe('20261128000001-tax-rule-integrity (real SQL, rolled back)', () => {
+  const migration = load('20261128000001-tax-rule-integrity.js');
+  const insertRule = (tx: Transaction, categoryId: string | null, gst: number, createdAt: string) =>
+    sequelize.query(
+      `INSERT INTO tax_rules (id, "categoryId", "gstPercentage", "createdAt", "updatedAt") VALUES (:id, :categoryId, :gst, :createdAt, :createdAt)`,
+      { transaction: tx, replacements: { id: randomUUID(), categoryId, gst, createdAt } },
+    );
+  const live = (tx: Transaction, categoryId: string | null) =>
+    sequelize.query<{ gst: string }>(
+      categoryId
+        ? `SELECT "gstPercentage" AS gst FROM tax_rules WHERE "categoryId" = :categoryId AND "deletedAt" IS NULL`
+        : `SELECT "gstPercentage" AS gst FROM tax_rules WHERE "categoryId" IS NULL AND "deletedAt" IS NULL`,
+      { transaction: tx, type: QueryTypes.SELECT, replacements: { categoryId } },
+    );
+
+  it('keeps the rule that already won (oldest, then lowest rate), removes the extras, then forbids new ones; idempotent; down drops the indexes', async (t) => {
+    if (!dbUp) return t.skip('database not reachable');
+    await inRolledBackTransaction(async (tx, qi) => {
+      const [category] = await sequelize.query<{ id: string }>(`SELECT id FROM categories LIMIT 1`, { transaction: tx, type: QueryTypes.SELECT });
+      if (!category) return;
+      await migration.down(qi); // start without the indexes, whatever the dev database holds
+      await sequelize.query(`UPDATE tax_rules SET "deletedAt" = NOW() WHERE "deletedAt" IS NULL`, { transaction: tx });
+
+      await insertRule(tx, category.id, 28, '2026-01-02');
+      await insertRule(tx, category.id, 12, '2026-01-01'); // oldest: wins
+      await insertRule(tx, null, 18, '2026-01-03');
+      await insertRule(tx, null, 5, '2026-01-04');
+
+      await migration.up(qi);
+      await migration.up(qi);
+      assert.deepEqual((await live(tx, category.id)).map((row) => Number(row.gst)), [12]);
+      assert.deepEqual((await live(tx, null)).map((row) => Number(row.gst)), [18]);
+
+      // A violation aborts a Postgres transaction, so each expected one runs inside a savepoint.
+      const refused = async (attempt: () => Promise<unknown>) => {
+        await sequelize.query('SAVEPOINT expected_violation', { transaction: tx });
+        await assert.rejects(attempt(), /unique/i);
+        await sequelize.query('ROLLBACK TO SAVEPOINT expected_violation', { transaction: tx });
+      };
+      await refused(() => insertRule(tx, category.id, 5, '2026-02-01'));
+      await refused(() => insertRule(tx, null, 5, '2026-02-01'));
+
+      await migration.down(qi);
+      const [{ count }] = await sequelize.query<{ count: string }>(
+        `SELECT COUNT(*) AS count FROM pg_indexes WHERE indexname IN ('tax_rules_one_per_category', 'tax_rules_one_default')`,
+        { transaction: tx, type: QueryTypes.SELECT },
+      );
+      assert.equal(count, '0');
+    });
+  });
+});

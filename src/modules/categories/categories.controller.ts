@@ -2,9 +2,14 @@ import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { categoriesService } from './categories.service';
+import { logAudit } from '@modules/audit/audit.service';
+import { getCategoryImpact, listCategoriesForAdmin } from './categoryAdmin';
+import { moveCategory } from './categoryMove';
 import { listCategoriesForPicker } from './categoryPicker';
 import {
+  AdminCategoriesQuerySchema,
   CategoryPickerQuerySchema,
+  MoveCategorySchema,
   CreateCategoryAttributeSchema,
   CreateCategorySchema,
   GetCategoriesPaginatedQuerySchema,
@@ -15,9 +20,15 @@ import {
   UpdateCategorySchema,
 } from './categories.dto';
 
+/** Every category change is recorded under the admin who made it. */
+function auditCategory(req: Request, action: string, entityId: string, metadata: Record<string, unknown>) {
+  return logAudit({ actorId: req.user!.id, action, entityType: 'Category', entityId, metadata });
+}
+
 export const createCategory = asyncHandler(async (req: Request, res: Response) => {
   const dto = CreateCategorySchema.parse(req.body);
   const category = await categoriesService.createCategory(dto);
+  await auditCategory(req, 'CATEGORY_CREATED', category.id, { name: category.name, parentId: dto.parentId ?? null });
   res.status(201).json(ok(category));
 });
 
@@ -49,8 +60,33 @@ export const resolveCategoryPath = asyncHandler(async (req: Request, res: Respon
 });
 
 export const getCategoryById = asyncHandler(async (req: Request, res: Response) => {
-  const category = await categoriesService.getCategoryById(req.params.id!);
+  // Public: active categories only, without the platform's internal fields.
+  const category = await categoriesService.getCategoryById(req.params.id!, { publicView: true });
   res.json(ok(category));
+});
+
+/** The admin screens: every status, a page of the tree at a time, with products, children and GST. */
+export const getAdminCategories = asyncHandler(async (req: Request, res: Response) => {
+  const query = AdminCategoriesQuerySchema.parse(req.query);
+  const result = await listCategoriesForAdmin(query);
+  res.json(ok(result.categories, { pagination: result.pagination }));
+});
+
+export const getAdminCategory = asyncHandler(async (req: Request, res: Response) => {
+  res.json(ok(await categoriesService.getCategoryById(req.params.id!)));
+});
+
+/** What archiving or deleting a category would touch, shown before the admin confirms. */
+export const getCategoryImpactHandler = asyncHandler(async (req: Request, res: Response) => {
+  res.json(ok(await getCategoryImpact(req.params.id!)));
+});
+
+export const moveCategoryHandler = asyncHandler(async (req: Request, res: Response) => {
+  const dto = MoveCategorySchema.parse(req.body);
+  const result = await moveCategory(req.params.id!, dto);
+  await auditCategory(req, 'CATEGORY_MOVED', req.params.id!, { parentId: result.parentId, reparented: result.reparented, ...dto });
+  if (result.reparented) refreshDisplayPricesAfterCategoryChange('category moved');
+  res.json(ok(result));
 });
 
 export const getCategoryProductCount = asyncHandler(async (req: Request, res: Response) => {
@@ -84,24 +120,31 @@ export const updateCategory = asyncHandler(async (req: Request, res: Response) =
   const category = await categoriesService.updateCategory(req.params.id!, dto);
   // A moved category can fall under another ancestor's tax rule.
   if (dto.parentId !== undefined) refreshDisplayPricesAfterCategoryChange('category moved');
+  const { status, cascade, regenerateSlug: _regenerate, ...rest } = dto;
+  const action = status === 'ARCHIVED' ? 'CATEGORY_ARCHIVED' : status === 'ACTIVE' && !Object.keys(rest).length ? 'CATEGORY_REACTIVATED' : 'CATEGORY_UPDATED';
+  await auditCategory(req, action, req.params.id!, { changedFields: Object.keys(dto), cascade: Boolean(cascade) });
   res.json(ok(category));
 });
 
 export const reorderCategories = asyncHandler(async (req: Request, res: Response) => {
   const dto = ReorderCategoriesSchema.parse(req.body);
   const result = await categoriesService.reorderCategories(dto.orderedIds);
+  await auditCategory(req, 'CATEGORIES_REORDERED', dto.orderedIds[0]!, { orderedIds: dto.orderedIds });
   res.json(ok(result));
 });
 
 export const reassignProducts = asyncHandler(async (req: Request, res: Response) => {
   const dto = ReassignProductsSchema.parse(req.body);
   const result = await categoriesService.reassignProducts(dto.fromCategoryId, dto.toCategoryId);
+  await auditCategory(req, 'CATEGORY_PRODUCTS_REASSIGNED', dto.fromCategoryId, { ...dto, updatedCount: result.updatedCount });
   refreshDisplayPricesAfterCategoryChange('products reassigned');
   res.json(ok(result));
 });
 
 export const deleteCategory = asyncHandler(async (req: Request, res: Response) => {
-  await categoriesService.deleteCategory(req.params.id!);
+  const existing = await categoriesService.getCategoryById(req.params.id!);
+  await categoriesService.deleteCategory(req.params.id!, req.user!.id);
+  await auditCategory(req, 'CATEGORY_DELETED', req.params.id!, { name: existing.name, slug: existing.slug });
   res.status(204).send();
 });
 

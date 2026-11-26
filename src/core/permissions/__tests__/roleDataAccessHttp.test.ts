@@ -473,4 +473,69 @@ describe('assisted listing over HTTP (nothing here writes: every call is refused
     }
     assert.equal((await call('/api/categories/picker')).status, 401, 'visitors are refused');
   });
+
+  it('categories: the public list shows active categories only, without internal fields; the admin list is gated and carries tree, counts and GST', async () => {
+    const publicList = await call('/api/categories?page=1&limit=100');
+    assert.equal(publicList.status, 200);
+    for (const row of publicList.data) {
+      assert.notEqual(row.status, 'ARCHIVED', 'an archived category is never public');
+      for (const field of ['commissionRate', 'createdBy', 'updatedBy']) assert.equal(field in row, false, `public ${field}`);
+    }
+    const tree = await call('/api/categories');
+    assert.equal(JSON.stringify(tree.data).includes('commissionRate'), false);
+
+    for (const role of [ROLES.ADMIN_CATALOG_MANAGER, ROLES.SUPER_ADMIN]) {
+      const admin = await call('/api/categories/admin?limit=5', role);
+      assert.equal(admin.status, 200, role);
+      for (const row of admin.data) {
+        for (const field of ['depth', 'childCount', 'productCount', 'gst', 'status']) assert.ok(field in row, `${field} on admin row`);
+        assert.ok(['own', 'inherited', 'default', 'fallback'].includes(row.gst.source));
+      }
+    }
+    for (const role of [ROLES.ADMIN_ORDER_MANAGER, ROLES.ADMIN_FINANCE_MANAGER, ROLES.CUSTOMER]) {
+      assert.equal((await call('/api/categories/admin', role)).status, 403, role);
+    }
+    assert.equal((await call('/api/categories/admin')).status, 401);
+
+    const first = await call('/api/categories/admin?limit=3&page=1', ROLES.SUPER_ADMIN);
+    const second = await call('/api/categories/admin?limit=3&page=2', ROLES.SUPER_ADMIN);
+    const ids = [...first.data, ...second.data].map((row: { id: string }) => row.id);
+    assert.equal(new Set(ids).size, ids.length, 'no category on two pages');
+
+    const archived = (await q<{ id: string }>(`SELECT id FROM categories WHERE status = 'ARCHIVED' LIMIT 1`))[0];
+    if (archived) assert.equal((await call(`/api/categories/${archived.id}`)).status, 404, 'an archived category by id is not public');
+  });
+
+  it('tax: rules list is Super Admin only with server-side filters and counts; "where does it come from" is open to category managers', async () => {
+    const all = await call('/api/tax/rules?limit=50', ROLES.SUPER_ADMIN);
+    assert.equal(all.status, 200);
+    for (const row of all.data) {
+      for (const field of ['isDefault', 'appliesToCount', 'categoryId']) assert.ok(field in row, field);
+    }
+    const defaults = await call('/api/tax/rules?scope=default', ROLES.SUPER_ADMIN);
+    assert.ok(defaults.data.every((row: { isDefault: boolean }) => row.isDefault));
+    assert.ok(defaults.data.length <= 1, 'at most one default rule');
+    assert.equal((await call('/api/tax/rules?hasBand=MAYBE', ROLES.SUPER_ADMIN)).status, 422);
+    for (const role of [ROLES.ADMIN_CATALOG_MANAGER, ROLES.ADMIN_ORDER_MANAGER, ROLES.ADMIN_FINANCE_MANAGER]) {
+      assert.equal((await call('/api/tax/rules', role)).status, 403, `${role} cannot list rules`);
+    }
+
+    const [category] = await q<{ id: string }>(`SELECT id FROM categories WHERE status = 'ACTIVE' LIMIT 1`);
+    if (category) {
+      for (const role of [ROLES.SUPER_ADMIN, ROLES.ADMIN_CATALOG_MANAGER]) {
+        const effective = await call(`/api/tax/rules/effective?categoryId=${category.id}`, role);
+        assert.equal(effective.status, 200, role);
+        assert.ok(['own', 'inherited', 'default', 'fallback'].includes(effective.data.source));
+        assert.equal(typeof effective.data.gstPercentage, 'number');
+      }
+      assert.equal((await call(`/api/tax/rules/effective?categoryId=${category.id}`, ROLES.ADMIN_ORDER_MANAGER)).status, 403);
+    }
+    assert.equal((await call('/api/tax/rules/effective?categoryId=nope', ROLES.SUPER_ADMIN)).status, 422);
+  });
+
+  it('the category picker is open to the people who manage categories and tax', async () => {
+    for (const role of [ROLES.SUPER_ADMIN, ROLES.ADMIN_CATALOG_MANAGER]) {
+      assert.equal((await call('/api/categories/picker?limit=3', role)).status, 200, role);
+    }
+  });
 });

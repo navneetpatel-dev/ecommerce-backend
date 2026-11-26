@@ -158,7 +158,16 @@ export const TrackRecentlyViewedSchema = z.object({
 /** Vendor form: the customer price (GST included) for a pre-GST price in a category. */
 export const GstPreviewQuerySchema = z.object({
   categoryId: z.string().uuid(),
-  price: z.coerce.number().min(0),
+  price: z.coerce.number().min(0).max(PRODUCT_FIELD_LIMITS.PRICE_MAX),
+  /** The MRP being typed: adds what the customer page would show for it (strikethrough, % off, saving). */
+  compareAtPrice: z.coerce.number().positive().max(PRODUCT_FIELD_LIMITS.PRICE_MAX).optional(),
+  /** Variant prices (comma separated, at most 20), to get what the customer pays for each. */
+  variantPrices: z
+    .preprocess(
+      (value) => (typeof value === 'string' && value.trim() ? value.split(',').map((part) => Number(part)) : value),
+      z.array(z.number().positive().max(PRODUCT_FIELD_LIMITS.PRICE_MAX)).max(20),
+    )
+    .optional(),
 });
 
 export const RejectProductSchema = z.object({

@@ -20,9 +20,12 @@ import type {
   UpdateCategoryRequest,
 } from './categories.dto';
 import { facetOptionValues } from './facetOptions';
+import { assertValidParent } from './categoryHierarchy';
+import { toPublicCategory } from './categoryPublic';
+import { TaxRule } from '@database/models/taxRule.model';
+import { logAudit } from '@modules/audit/audit.service';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 
-const MAX_CATEGORY_DEPTH = 3;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -46,66 +49,6 @@ function isUuid(value: string): boolean {
 
 function escapeSqlString(value: string): string {
   return value.replace(/'/g, "''");
-}
-
-async function getCategoryDepth(categoryId: string | null, transaction?: Transaction): Promise<number> {
-  if (!categoryId) return 0;
-  let depth = 0;
-  let cursor: string | null = categoryId;
-  const seen = new Set<string>();
-  while (cursor) {
-    if (seen.has(cursor)) throw new ValidationError(ERROR_MESSAGES.CATEGORY_INVALID_PARENT);
-    seen.add(cursor);
-    depth += 1;
-    const node = await categoriesRepository.findById(cursor, { transaction });
-    if (!node) throw new NotFoundError('Parent category');
-    cursor = node.parentId;
-  }
-  return depth;
-}
-
-/** Height of a subtree rooted at categoryId (leaf = 1). */
-async function getSubtreeHeight(categoryId: string, transaction?: Transaction): Promise<number> {
-  const children = await Category.findAll({
-    where: { parentId: categoryId },
-    attributes: ['id'],
-    transaction,
-  });
-  if (!children.length) return 1;
-  let maxChild = 0;
-  for (const child of children) {
-    maxChild = Math.max(maxChild, await getSubtreeHeight(child.id, transaction));
-  }
-  return 1 + maxChild;
-}
-
-async function assertValidParent(
-  categoryId: string | null,
-  parentId: string,
-  transaction: Transaction,
-) {
-  if (categoryId && parentId === categoryId) {
-    throw new ValidationError(ERROR_MESSAGES.CATEGORY_INVALID_PARENT);
-  }
-
-  let cursor: string | null = parentId;
-  const seen = new Set<string>(categoryId ? [categoryId] : []);
-
-  while (cursor) {
-    if (seen.has(cursor)) {
-      throw new ValidationError(ERROR_MESSAGES.CATEGORY_INVALID_PARENT);
-    }
-    seen.add(cursor);
-    const node = await categoriesRepository.findById(cursor, { transaction });
-    if (!node) throw new NotFoundError('Parent category');
-    cursor = node.parentId;
-  }
-
-  const parentDepth = await getCategoryDepth(parentId, transaction);
-  const subtreeHeight = categoryId ? await getSubtreeHeight(categoryId, transaction) : 1;
-  if (parentDepth + subtreeHeight > MAX_CATEGORY_DEPTH) {
-    throw new ValidationError(ERROR_MESSAGES.CATEGORY_MAX_DEPTH);
-  }
 }
 
 function serializeCategory(row: Category | Record<string, unknown>) {
@@ -214,7 +157,7 @@ export class CategoriesService {
 
   async getCategories() {
     const rows = await categoriesRepository.findActiveTree();
-    return rows.map((row) => serializeCategory(row));
+    return rows.map((row) => toPublicCategory(serializeCategory(row)));
   }
 
   async getCategoriesPaginated(query: {
@@ -224,10 +167,8 @@ export class CategoriesService {
     status?: string;
   }) {
     const offset = paginationOffset(query.page, query.limit);
-    const where: Record<string, unknown> = {};
-    if (query.status) {
-      where.status = query.status;
-    }
+    // Public listing: only active categories (the admin screens use `listCategoriesForAdmin`).
+    const where: Record<string, unknown> = { status: CATEGORY_STATUS.ACTIVE };
     const search = query.search?.trim();
     if (search) {
       where.name = { [Op.iLike]: `%${search}%` };
@@ -249,7 +190,7 @@ export class CategoriesService {
       col: 'id',
     });
     return {
-      categories: rows.map((row) => serializeCategory(row)),
+      categories: rows.map((row) => toPublicCategory(serializeCategory(row))),
       pagination: buildPaginationMeta(count, query.page, query.limit),
     };
   }
@@ -261,9 +202,14 @@ export class CategoriesService {
     return { categoryId: id, productCount };
   }
 
-  async getCategoryById(id: string) {
-    const category = await categoriesRepository.findWithChildren(id);
+  /** `publicView`: what shoppers may see (active only, no internal fields); the admin screens see all. */
+  async getCategoryById(id: string, options: { publicView?: boolean } = {}) {
+    const category = await categoriesRepository.findWithChildren(id, { activeChildrenOnly: options.publicView });
     if (!category) throw new NotFoundError('Category');
+    if (options.publicView) {
+      if (category.status !== CATEGORY_STATUS.ACTIVE) throw new NotFoundError('Category');
+      return toPublicCategory(serializeCategory(category));
+    }
     return serializeCategory(category);
   }
 
@@ -293,7 +239,7 @@ export class CategoriesService {
     });
     const path = breadcrumb.map((node) => node.slug).join('/');
     return {
-      ...serializeCategory(withAttrs ?? current!),
+      ...toPublicCategory(serializeCategory(withAttrs ?? current!)),
       path,
       breadcrumb: breadcrumb.map((node) => ({
         id: node.id,
@@ -311,13 +257,28 @@ export class CategoriesService {
       const updateData: Record<string, unknown> = {};
 
       if (data.name) {
-        const slug = generateSlug(data.name);
-        const existing = await categoriesRepository.findBySlug(slug);
-        if (existing && existing.id !== id) {
-          throw new ValidationError(ERROR_MESSAGES.CATEGORY_NAME_EXISTS);
-        }
         updateData.name = data.name;
-        updateData.slug = slug;
+        // The URL slug keeps working after a rename unless the admin asks for a new one.
+        if (data.regenerateSlug) {
+          const slug = generateSlug(data.name);
+          const existing = await categoriesRepository.findBySlug(slug);
+          if (existing && existing.id !== id) {
+            throw new ValidationError(ERROR_MESSAGES.CATEGORY_NAME_EXISTS);
+          }
+          updateData.slug = slug;
+        }
+      }
+
+      // Archiving takes subcategories out of the shop too, so it must be said out loud.
+      if (data.status === CATEGORY_STATUS.ARCHIVED && category.status !== CATEGORY_STATUS.ARCHIVED) {
+        const below = (await categoriesRepository.findDescendantIds(id)).filter((childId) => childId !== id);
+        const active = below.length
+          ? await Category.count({ where: { id: { [Op.in]: below }, status: CATEGORY_STATUS.ACTIVE }, transaction: t })
+          : 0;
+        if (active > 0 && !data.cascade) throw new ValidationError(ERROR_MESSAGES.CATEGORY_ARCHIVE_NEEDS_CASCADE);
+        if (active > 0) {
+          await Category.update({ status: CATEGORY_STATUS.ARCHIVED }, { where: { id: { [Op.in]: below } }, transaction: t });
+        }
       }
 
       if (data.parentId !== undefined) {
@@ -357,6 +318,9 @@ export class CategoriesService {
 
   async reorderCategories(orderedIds: string[]) {
     return sequelize.transaction(async (t: Transaction) => {
+      // A whole-list renumbering only makes sense among siblings (use /move for anything else).
+      const parents = new Set((await Category.findAll({ where: { id: { [Op.in]: orderedIds } }, attributes: ['parentId'], transaction: t })).map((row) => row.parentId ?? null));
+      if (parents.size > 1) throw new ValidationError(ERROR_MESSAGES.CATEGORY_REORDER_MIXED_PARENTS);
       for (let index = 0; index < orderedIds.length; index += 1) {
         const id = orderedIds[index]!;
         const row = await categoriesRepository.findById(id, { transaction: t });
@@ -384,7 +348,7 @@ export class CategoriesService {
     });
   }
 
-  async deleteCategory(id: string) {
+  async deleteCategory(id: string, actorId?: string) {
     const imageUrl = await sequelize.transaction(async (t: Transaction) => {
       const category = await categoriesRepository.findWithChildren(id);
       if (!category) throw new NotFoundError('Category');
@@ -397,6 +361,22 @@ export class CategoriesService {
       const productCount = await categoriesRepository.countProducts(id);
       if (productCount > 0) {
         throw new ValidationError(ERROR_MESSAGES.CATEGORY_HAS_PRODUCTS);
+      }
+
+      // Its tax rule goes with it: left behind, the database would turn it into a second default rule.
+      const taxRule = await TaxRule.findOne({ where: { categoryId: id }, transaction: t });
+      if (taxRule) {
+        await taxRule.destroy({ transaction: t });
+        if (actorId) {
+          await logAudit({
+            actorId,
+            action: 'TAX_RULE_DELETED',
+            entityType: 'TaxRule',
+            entityId: taxRule.id,
+            metadata: { categoryName: category.name, gstPercentage: Number(taxRule.gstPercentage), reason: 'category deleted' },
+            transaction: t,
+          });
+        }
       }
 
       const url = category.imageUrl;
