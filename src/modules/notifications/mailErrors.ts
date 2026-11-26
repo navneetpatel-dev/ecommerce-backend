@@ -36,7 +36,7 @@ export function classifyMailError(error: unknown): MailErrorInfo {
   const responseCode = Number(err.responseCode);
 
   if (LOGIN_THROTTLE.test(text)) return { category: 'TEMPORARY', retryable: true, suppress: false, message };
-  if (code === 'EAUTH' || BAD_CREDENTIALS.test(text) || responseCode === 535 || responseCode === 534) {
+  if (code === 'EAUTH' || code === 'ESMTPNOTCONFIGURED' || BAD_CREDENTIALS.test(text) || responseCode === 535 || responseCode === 534) {
     return { category: 'CONFIG', retryable: false, suppress: false, message };
   }
   if (HARD_BOUNCE.test(text) || (code === 'EENVELOPE' && responseCode >= 550 && responseCode <= 553)) {

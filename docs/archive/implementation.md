@@ -53,7 +53,7 @@ Route Layer  →  Controller Layer  →  Service Layer  →  Repository/Sequeliz
 | Payments | Razorpay (Orders + Route for vendor payouts) | Webhook-driven confirmation, supports split payouts to vendors |
 | Validation | Zod | Schema validation at route boundary; `z.infer<>` derives TS types from schemas so validation and types never drift apart |
 | Search | PostgreSQL full-text search only (`tsvector` + GIN + `pg_trgm`) | No external search service — see dedicated section 7 for indexing/optimization strategy |
-| Email | AWS S3 stack pairs naturally with AWS SES; queued via BullMQ, never sent synchronously | See Section 8 for the full trigger matrix and worker design |
+| Email | SMTP via nodemailer (any SMTP server); queued via BullMQ, never sent synchronously | See Section 8 for the full trigger matrix and worker design |
 
 > **Note on "the Rust one":** the new fast TypeScript compiler (TS 7, codename Project Corsa) is actually a **Go** rewrite, not Rust — Microsoft evaluated Rust but chose Go for closer parity with the existing compiler's memory/traversal patterns. It ships as the standard `tsc`/`tsgo` binary once you install `typescript@latest` (TS 7 is GA), giving roughly 8–12x faster type-checking with no config rewrite needed. Section 2.1 below has the concrete setup.
 
@@ -1974,7 +1974,7 @@ Raw SQL via `sequelize.query` (rather than the Sequelize query builder) is inten
 
 ### 8.1 Provider & Architecture
 
-**Provider: AWS SES** — since S3 is already in the stack, staying on AWS keeps IAM/billing/infra in one place, and SES is cost-effective at transactional volume. (If deliverability at scale becomes a pain point later, Resend or Postmark are easy drop-in swaps behind the same adapter interface below — worth knowing as an escape hatch, not a day-1 decision.)
+**Transport: SMTP only** (nodemailer) — any SMTP server works (Gmail, a self-hosted relay, …), configured through `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` / `SMTP_USER` / `SMTP_PASS`. There is exactly one mail transport in the codebase (`src/config/mail.ts`); no other email service or driver switch exists.
 
 **Golden rule: no email is ever sent synchronously inside a request handler.** Every send goes through BullMQ:
 
@@ -1991,7 +1991,7 @@ Controller/Service → enqueue job (email:transactional or email:marketing queue
                 │                        │
                 └───────────┬────────────┘
                             ▼
-                    AWS SES sendEmail()
+                    SMTP sendMail()
                             │
                             ▼
                  Update NotificationLog (SENT/FAILED)
@@ -2156,7 +2156,7 @@ class NotificationsService {
 export const notificationsService = new NotificationsService();
 ```
 
-Callers never touch templates or SES directly — e.g. `checkoutService` just calls `notificationsService.sendOrderConfirmation(order.userId, order.id, { items, total, shippingAddress })` right after the transaction commits.
+Callers never touch templates or the SMTP transport directly — e.g. `checkoutService` just calls `notificationsService.sendOrderConfirmation(order.userId, order.id, { items, total, shippingAddress })` right after the transaction commits.
 
 ### 8.5 Templates — React Email
 
@@ -2209,7 +2209,7 @@ export default function OrderConfirmationEmail({ customerName, orderId, items, t
 // src/modules/notifications/notifications.processor.ts
 import { Worker } from 'bullmq';
 import { render } from '@react-email/render';
-import { sesClient } from '@config/ses';
+import { sendEmail } from '@config/mail'; // SMTP
 import { NotificationLog } from '@database/models/notificationLog.model';
 import { templateRegistry } from './templates/registry'; // maps NotificationType → React component
 
@@ -2227,13 +2227,14 @@ export const transactionalWorker = new Worker('email:transactional', async (job)
     const html = await render(Template(templateData));
     const user = await getUserEmail(userId);
 
-    const result = await sesClient.sendEmail({
-      Destination: { ToAddresses: [user.email] },
-      Message: { Subject: { Data: subjectFor(type, templateData) }, Body: { Html: { Data: html } } },
-      Source: 'orders@yourdomain.com',
+    const result = await sendEmail({
+      to: user.email,
+      subject: subjectFor(type, templateData),
+      html,
+      text: htmlToText(html),
     });
 
-    await log.update({ status: 'SENT', providerMessageId: result.MessageId, sentAt: new Date() });
+    await log.update({ status: 'SENT', providerMessageId: result.messageId, sentAt: new Date() });
   } catch (err) {
     await log.update({ status: 'FAILED', error: (err as Error).message });
     throw err; // rethrow so BullMQ applies its retry/backoff policy
@@ -2243,9 +2244,10 @@ export const transactionalWorker = new Worker('email:transactional', async (job)
 
 ### 8.7 Bounce / Complaint Handling
 
-Configure an SES configuration set with bounce/complaint notifications routed to an SNS topic → a webhook endpoint (`POST /api/webhooks/ses`) that:
-- Marks the `NotificationLog` row `BOUNCED`/`COMPLAINED`
-- Sets a `emailSuppressed: true` flag on the `User` (add this column via a small migration) so future **marketing** sends skip that address automatically — transactional emails (order confirmations, OTPs) still attempt delivery since those are operationally required, not promotional.
+With SMTP there is no asynchronous bounce feed; a bad address is detected from the server's reply at send time:
+- A hard-bounce reply (e.g. `550 5.1.1 user unknown`) is classified as a `RECIPIENT` failure (`mailErrors.ts`), is not retried, and the address is put on the suppression list (`email_suppressions`, 30 days) so future sends skip it until an admin clears it.
+- Throttling and 4xx replies are temporary and retried; a refused login or a missing `SMTP_HOST` is a configuration failure an admin must fix and then resend.
+- The `User.emailSuppressed` flag and the `emailMarketingConsent` flag gate **marketing** sends; transactional emails (order confirmations, OTPs) still attempt delivery since those are operationally required, not promotional.
 
 ### 8.8 Marketing Consent
 
@@ -2257,7 +2259,7 @@ Phone-based OTP (registration/login verification, or an OTP-only login option) i
 
 - **Provider:** any SMS gateway with an India DLT-registered sender ID (e.g. MSG91, Twilio's India routes require DLT registration too) — this is a compliance requirement for transactional SMS in India, not optional infra.
 - **`NotificationLog.channel`** (already `'EMAIL' | 'SMS' | 'PUSH'` in Section 8.2) covers this without a schema change — an OTP send just creates a `channel: 'SMS'` log row instead of `'EMAIL'`.
-- **Separate BullMQ queue** (`sms:transactional`) mirrors the email queue structure from 8.1 — same idempotency-via-`NotificationLog` pattern, same worker-based send-and-log flow, just calling the SMS provider's API instead of SES.
+- **Separate BullMQ queue** (`sms:transactional`) mirrors the email queue structure from 8.1 — same idempotency-via-`NotificationLog` pattern, same worker-based send-and-log flow, just calling the SMS provider's API instead of the SMTP transport.
 - **What actually goes over SMS** (keep this list short — SMS costs money per message and OTP-fatigue is real): phone/login OTP, order-out-for-delivery, and optionally a shipped/delivered ping for customers who've opted into SMS updates. Everything else (order confirmation detail, review requests, marketing) stays email-only.
 
 ```ts
@@ -2381,7 +2383,7 @@ export class ShiprocketAdapter implements CarrierAdapter {
 }
 ```
 
-`ShippingService` depends on `CarrierAdapter`, not `ShiprocketAdapter` directly, injected at module bootstrap — this is the same "swap the implementation without touching callers" pattern used for the SES email provider in Section 8.
+`ShippingService` depends on `CarrierAdapter`, not `ShiprocketAdapter` directly, injected at module bootstrap — this is the same "swap the implementation without touching callers" pattern used for the mail transport in Section 8.
 
 ### 10.3 Tracking Updates
 Carriers push status via webhook (`POST /api/webhooks/shipping/:carrier`) rather than the app polling — verify the webhook signature per carrier's docs, map their status vocabulary to the `Shipment.status` enum, and update `Shipment` + fire `SUBORDER_SHIPPED`/`SUBORDER_DELIVERED` notifications on the relevant transitions. Fall back to a periodic reconciliation job (poll `getTrackingStatus` every few hours) in case a webhook is missed — never trust webhooks as the sole source of truth for something customers are actively waiting on.
@@ -2723,7 +2725,7 @@ export const validate = (schema: ZodSchema, source: 'body' | 'query' | 'params' 
 Sequelize's parameterized queries (the ORM API, and `replacements` in raw `sequelize.query` calls — as used throughout Sections 7 and elsewhere) already prevent injection as long as user input is never string-concatenated into a raw query. Enforce this via code review/lint rule: **any raw SQL with template-literal interpolation of a variable is a blocker**, only `replacements`/`bind` parameters are acceptable.
 
 ### 16.5 Secrets & Environment
-No secret (DB credentials, JWT signing key, Razorpay keys, SES credentials, S3 keys) is ever committed — `.env` is git-ignored, `config/env.ts` validates required vars are present **at boot** (fail fast, not at first use) via a Zod schema over `process.env`, and production secrets are injected via the deployment platform's secret manager (Section 19), not baked into the Docker image.
+No secret (DB credentials, JWT signing key, Razorpay keys, SMTP credentials, S3 keys) is ever committed — `.env` is git-ignored, `config/env.ts` validates required vars are present **at boot** (fail fast, not at first use) via a Zod schema over `process.env`, and production secrets are injected via the deployment platform's secret manager (Section 19), not baked into the Docker image.
 
 ### 16.6 Authentication Hardening
 - `passwordHash` via `bcrypt` with cost factor ≥ 12.
@@ -2828,7 +2830,7 @@ export const logError = (message: string, error: unknown, meta?: Record<string, 
   logger.error(message, { error: error instanceof Error ? { message: error.message, stack: error.stack } : error, ...meta });
 ```
 
-JSON-formatted (not pretty-printed) logs are intentional — in production these feed a log aggregator (CloudWatch Logs if staying in the AWS ecosystem alongside S3/SES, or a hosted option like Better Stack/Datadog) that expects structured fields, not console-formatted text.
+JSON-formatted (not pretty-printed) logs are intentional — in production these feed a log aggregator (CloudWatch Logs if staying in the AWS ecosystem alongside S3, or a hosted option like Better Stack/Datadog) that expects structured fields, not console-formatted text.
 
 ### 18.2 Request Tracing
 Every request gets a `requestId` (via `crypto.randomUUID()`) attached in a first middleware, included in every log line for that request's lifecycle, and returned in the `X-Request-Id` response header — this is what lets support turn "the order confirmation email never arrived" into "grep this one requestId across the checkout, notification-enqueue, and worker logs" instead of guessing.
@@ -2865,7 +2867,7 @@ A few business-specific conditions deserve alerting, distinct from generic error
 - BullMQ dead-letter growth (jobs exhausting retries — payment webhook processing failing repeatedly is a P1, not a warning)
 - Payout batch job failures (Section 6.6/14.4) — money not moving is always urgent
 - Vendor `razorpayAccountId` onboarding stuck >X days for an `APPROVED` vendor
-- SES bounce/complaint rate crossing a threshold (risks the sending domain's reputation)
+- SMTP hard-bounce rate crossing a threshold (risks the sending domain's reputation)
 
 ---
 
@@ -3009,7 +3011,7 @@ With this many modules (auth, vendors, products, coupons, orders, reviews, wishl
 | 8 | Shipping (rate calculation, carrier integration, tracking webhooks) + Returns/RMA workflow |
 | 9 | Vendor dashboard + Admin oversight analytics |
 | 10 | Search (Postgres full-text + trigram indexes), Reviews & Ratings, Wishlist |
-| 11 | Notification system: BullMQ email + SMS queues, React Email templates, SES/SMS gateway integration, bounce/complaint webhook |
+| 11 | Notification system: BullMQ email + SMS queues, React Email templates, SMTP/SMS gateway integration, hard-bounce suppression |
 | 12 | API documentation (OpenAPI from DTOs), structured logging + error tracking |
 | 13 | Hardening: tiered rate limiting, audit logs, security review |
 | 14 | Testing pass (unit + integration coverage across all modules above) + CI/CD pipeline + load testing |

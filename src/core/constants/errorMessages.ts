@@ -54,6 +54,8 @@ export const ERROR_MESSAGES = {
   PRODUCT_SPEC_DUPLICATE_KEY: 'Specification labels must be unique',
   PRODUCT_VARIANT_INVALID: 'Variant does not belong to this product',
   PRODUCT_NOT_DRAFT: 'Product is not in DRAFT status',
+  PRODUCT_PRICING_OWNER_ONLY: 'Only the store owner can change prices, tax codes or payment options, or add variants',
+  PRODUCT_SELF_APPROVAL: 'You cannot approve a product that belongs to your own store',
   PRODUCT_NOT_PENDING_APPROVAL: 'Product is not pending approval',
   PRODUCT_BULK_IMPORT_FILE_REQUIRED: 'A CSV file is required',
   PRODUCT_BULK_IMPORT_EMPTY: 'CSV file has no data rows',

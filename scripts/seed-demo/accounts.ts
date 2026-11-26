@@ -48,8 +48,7 @@ const SHOP_WORDS = [
 ];
 
 const CUSTOM_ROLES: Array<{ name: string; permissions: string[] }> = [
-  { name: 'SUPPORT_AGENT', permissions: ['ticket.manage', 'bug_report.manage', 'order.manage'] },
-  { name: 'FINANCE_ANALYST', permissions: ['analytics.view', 'commission.view', 'payout.view', 'payout.manage'] },
+  { name: 'SUPPORT_AGENT', permissions: ['ticket.manage', 'order.manage'] },
   { name: 'CONTENT_EDITOR', permissions: ['banner.manage', 'category.manage', 'product.update'] },
   { name: 'MARKETING_MANAGER', permissions: ['coupon.manage', 'banner.manage', 'analytics.view'] },
   { name: 'TRUST_AND_SAFETY', permissions: ['review.moderate', 'user.manage', 'vendor.approve'] },
@@ -94,7 +93,7 @@ async function seedAdmins(roleIds: Record<string, string>, passwordHash: string)
     ['catalogmanager2@ecommerce.com', 'Saanvi Iyer', 'ADMIN_CATALOG_MANAGER'],
     ['catalogmanager3@ecommerce.com', 'Farhan Shah', 'ADMIN_CATALOG_MANAGER'],
     ['support.agent@ecommerce.com', 'Divya Menon', 'SUPPORT_AGENT'],
-    ['finance.analyst@ecommerce.com', 'Karan Malhotra', 'FINANCE_ANALYST'],
+    ['finance.analyst@ecommerce.com', 'Karan Malhotra', 'ADMIN_FINANCE_MANAGER'],
   ] as const;
   const have = new Set((await select<{ email: string }>('SELECT email FROM users')).map((row) => row.email));
   await insert(

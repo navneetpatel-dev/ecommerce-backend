@@ -41,7 +41,7 @@ describe('runScheduledWeeklyReports', () => {
     }));
     const sendMailMock = mock.fn(async () => ({
       messageId: 'test-id',
-      provider: 'console',
+      provider: 'smtp',
     }));
 
     const sent = await runScheduledWeeklyReports({
@@ -70,7 +70,7 @@ describe('runScheduledWeeklyReports', () => {
     });
     const sendMailMock = mock.fn(async () => ({
       messageId: 'test-id',
-      provider: 'console',
+      provider: 'smtp',
     }));
 
     const sent = await runScheduledWeeklyReports({
@@ -114,7 +114,7 @@ describe('runScheduledWeeklyReports', () => {
       contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       rowCount: 1,
     }));
-    const sendMailMock = mock.fn(async () => ({ messageId: 'test-id', provider: 'console' }));
+    const sendMailMock = mock.fn(async () => ({ messageId: 'test-id', provider: 'smtp' }));
 
     const sent = await runScheduledWeeklyReports({
       sendMail: sendMailMock,
@@ -142,7 +142,7 @@ describe('runScheduledWeeklyReports', () => {
       actors.push(actor);
       throw new Error('You do not have access to this report');
     });
-    const sendMailMock = mock.fn(async () => ({ messageId: 'test-id', provider: 'console' }));
+    const sendMailMock = mock.fn(async () => ({ messageId: 'test-id', provider: 'smtp' }));
 
     const sent = await runScheduledWeeklyReports({ sendMail: sendMailMock, now: MATCHING_MONDAY_6AM_UTC });
 

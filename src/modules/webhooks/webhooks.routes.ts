@@ -5,6 +5,4 @@ const router = Router();
 
 router.post('/razorpay', controller.handleRazorpay);
 
-router.post('/ses', controller.handleSes);
-
 export default router;

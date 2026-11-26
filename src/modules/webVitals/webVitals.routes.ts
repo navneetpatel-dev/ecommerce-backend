@@ -18,7 +18,7 @@ router.post(
 router.get(
   '/summary',
   authenticate,
-  authorize(PERMISSIONS.ANALYTICS_VIEW),
+  authorize(PERMISSIONS.WEBVITALS_VIEW),
   validate(WebVitalsSummarySchema, 'query'),
   webVitalsController.summary,
 );

@@ -83,7 +83,8 @@ router.post(
   productsController.bulkImportProducts,
 );
 router.patch('/:id', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE), checkOwnership('product'), validate(UpdateProductSchema), productsController.updateProduct);
-router.delete('/:id', authenticate, authorize(PERMISSIONS.PRODUCT_DELETE, PERMISSIONS.PRODUCT_MANAGE), checkOwnership('product'), productsController.deleteProduct);
+// Deleting is owner-or-Super-Admin only: product.manage (Catalog Manager) can archive, not delete.
+router.delete('/:id', authenticate, authorize(PERMISSIONS.PRODUCT_DELETE), checkOwnership('product'), productsController.deleteProduct);
 router.post('/:id/submit', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE), checkOwnership('product'), productsController.submitForApproval);
 
 // Admin product approval
@@ -112,7 +113,7 @@ router.patch(
 router.delete(
   '/variants/:variantId',
   authenticate,
-  authorize(PERMISSIONS.PRODUCT_DELETE, PERMISSIONS.PRODUCT_MANAGE),
+  authorize(PERMISSIONS.PRODUCT_DELETE),
   checkProductVariantOwnership(),
   productsController.deleteVariant,
 );

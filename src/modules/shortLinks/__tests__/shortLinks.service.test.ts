@@ -19,13 +19,14 @@ describe('ShortLinksService', () => {
     assert.equal(created.code.length, 7);
     assert.equal(created.targetUrl, '/products/test-product-share');
     assert.ok(created.shortUrl.includes(`/s/${created.code}`));
-    assert.equal(created.metadata?.name, 'Test Product Share');
+    // Preview text is derived from the catalog, never from the caller: this slug is not a live product.
+    assert.equal(created.metadata, null);
 
     // Resolving the code returns the created short link
     const resolved = await shortLinksService.resolveShortLink(created.code);
     assert.equal(resolved.code, created.code);
     assert.equal(resolved.targetUrl, '/products/test-product-share');
-    assert.equal(resolved.metadata?.name, 'Test Product Share');
+    assert.equal(resolved.metadata, null);
   });
 
   it('is idempotent when requesting the same targetUrl', async () => {

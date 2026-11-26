@@ -3,9 +3,8 @@ import { authenticate } from '@middleware/auth.middleware';
 import { authorize } from '@middleware/rbac.middleware';
 import { validate } from '@middleware/validate.middleware';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
-import { ERROR_MESSAGES } from '@core/constants/errors';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
-import { ROLES, VENDOR_ROLES } from '@core/constants/statuses';
+import { ROLES } from '@core/constants/statuses';
 import {
   CreateCouponSchema,
   UpdateCouponSchema,
@@ -19,14 +18,6 @@ import {
 import * as couponsController from './coupons.controller';
 
 const router = Router();
-
-function requireVendorRole(req: Request, _res: Response, next: NextFunction) {
-  const role = req.user?.role?.name;
-  if (!role || !(VENDOR_ROLES as readonly string[]).includes(role) || !req.user?.vendorId) {
-    return next(new ForbiddenError(ERROR_MESSAGES.AUTH_REQUIRED));
-  }
-  return next();
-}
 
 export function requireVendorOwner(req: Request, _res: Response, next: NextFunction) {
   const role = req.user?.role?.name;
@@ -59,7 +50,7 @@ router.get(
   couponsController.eligibleCouponsPublic,
 );
 
-// Vendor (authenticate + vendorId; no COUPON_MANAGE)
+// Vendor store coupons: owner-only for reads and writes (staff have no coupon access; no COUPON_MANAGE)
 router.post(
   '/vendor',
   authenticate,
@@ -67,11 +58,11 @@ router.post(
   validate(CreateCouponSchema),
   couponsController.createVendorCoupon,
 );
-router.get('/vendor', authenticate, requireVendorRole, couponsController.listVendorCoupons);
+router.get('/vendor', authenticate, requireVendorOwner, couponsController.listVendorCoupons);
 router.get(
   '/vendor/absorbed-summary',
   authenticate,
-  requireVendorRole,
+  requireVendorOwner,
   couponsController.vendorAbsorbedSummary,
 );
 router.patch(
@@ -81,8 +72,8 @@ router.patch(
   validate(UpdateCouponSchema),
   couponsController.updateCoupon,
 );
-router.get('/vendor/:id', authenticate, requireVendorRole, couponsController.getCoupon);
-router.get('/vendor/:id/analytics', authenticate, requireVendorRole, couponsController.couponAnalytics);
+router.get('/vendor/:id', authenticate, requireVendorOwner, couponsController.getCoupon);
+router.get('/vendor/:id/analytics', authenticate, requireVendorOwner, couponsController.couponAnalytics);
 router.patch(
   '/vendor/:id/status',
   authenticate,

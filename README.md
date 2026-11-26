@@ -10,7 +10,7 @@ Multi-vendor e-commerce platform backend built with Node.js, Express, TypeScript
 - 💳 Payment integration (Razorpay)
 - 📦 Order management with vendor splitting
 - 🎟️ Advanced coupon engine
-- 📧 Email notifications (AWS SES)
+- 📧 Email notifications (SMTP)
 - 🔍 Full-text search (PostgreSQL)
 - 📊 Vendor dashboard & analytics
 - 🪙 Commission & payout management
@@ -31,7 +31,7 @@ Multi-vendor e-commerce platform backend built with Node.js, Express, TypeScript
 - **Authentication:** JWT + bcrypt
 - **File Storage:** AWS S3
 - **Payment:** Razorpay
-- **Email:** AWS SES
+- **Email:** SMTP (nodemailer)
 - **Logging:** Winston with daily rotation
 
 ## Quick Start (Docker) 🐳

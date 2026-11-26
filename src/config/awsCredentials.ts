@@ -6,7 +6,7 @@ export type AwsClientConfig = {
 };
 
 /**
- * Shared S3/SES client config, or null when AWS is not configured.
+ * S3 client config, or null when AWS is not configured.
  *
  * - Static keys (AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY) win when both are set.
  * - Otherwise, with AWS_USE_DEFAULT_CREDENTIALS=true, the SDK's default provider

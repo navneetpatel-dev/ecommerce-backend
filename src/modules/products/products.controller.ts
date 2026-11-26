@@ -5,6 +5,8 @@ import { ValidationError } from '@core/errors/ValidationError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { BULK_IMPORT_LIMITS } from '@core/constants/product';
+import { PERMISSIONS } from '@core/permissions/permissionKeys';
+import { userHasPermission } from '@middleware/rbac.middleware';
 import { productsService } from './products.service';
 import { isCatalogModerator, listsUnpublished } from './productVisibility';
 import { parseProductsCsv } from './products.csv';
@@ -26,6 +28,11 @@ export const getGstPreview = asyncHandler(async (req: Request, res: Response) =>
   const query = GstPreviewQuerySchema.parse(req.query);
   res.json(ok(await productsService.gstPreview(query.categoryId, query.price)));
 });
+
+/** Prices, tax codes and variants belong to the store owner (product.create) and platform product admins (product.manage), not vendor staff. */
+function canEditPricing(req: Request): Promise<boolean> {
+  return userHasPermission(req.user, PERMISSIONS.PRODUCT_CREATE, PERMISSIONS.PRODUCT_MANAGE);
+}
 
 export const createProduct = asyncHandler(async (req: Request, res: Response) => {
   const dto = CreateProductSchema.parse(req.body);
@@ -129,7 +136,9 @@ export const getProductBySlug = asyncHandler(async (req: Request, res: Response)
 
 export const updateProduct = asyncHandler(async (req: Request, res: Response) => {
   const dto = UpdateProductSchema.parse(req.body);
-  const product = await productsService.updateProduct(req.params.id!, req.user!.vendorId, dto);
+  const product = await productsService.updateProduct(req.params.id!, req.user!.vendorId, dto, {
+    canEditPricing: await canEditPricing(req),
+  });
   res.json(ok(product));
 });
 
@@ -144,7 +153,7 @@ export const submitForApproval = asyncHandler(async (req: Request, res: Response
 });
 
 export const approveProduct = asyncHandler(async (req: Request, res: Response) => {
-  const product = await productsService.approveProduct(req.params.id!, req.user!.id);
+  const product = await productsService.approveProduct(req.params.id!, req.user!.id, req.user!.vendorId);
   res.json(ok(product));
 });
 
@@ -167,13 +176,13 @@ export const unarchiveProduct = asyncHandler(async (req: Request, res: Response)
 // variants
 export const addVariant = asyncHandler(async (req: Request, res: Response) => {
   const dto = AddVariantSchema.parse(req.body);
-  const variant = await productsService.addVariant(req.params.id!, dto);
+  const variant = await productsService.addVariant(req.params.id!, dto, { canEditPricing: await canEditPricing(req) });
   res.status(201).json(ok(variant));
 });
 
 export const updateVariant = asyncHandler(async (req: Request, res: Response) => {
   const dto = UpdateVariantSchema.parse(req.body);
-  const variant = await productsService.updateVariant(req.params.variantId!, dto);
+  const variant = await productsService.updateVariant(req.params.variantId!, dto, { canEditPricing: await canEditPricing(req) });
   res.json(ok(variant));
 });
 

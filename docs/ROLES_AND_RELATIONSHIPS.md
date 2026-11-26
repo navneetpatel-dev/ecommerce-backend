@@ -258,27 +258,41 @@ This document explains the real-life relationship and roles in this multi-vendor
 
 ## 📋 Role Permissions Summary
 
-### **SUPER_ADMIN (23 permissions)**
+### **SUPER_ADMIN (35 permissions)**
 
 - ALL permissions (full control)
 
-### **ADMIN_ORDER_MANAGER (4 permissions)**
+### **ADMIN_ORDER_MANAGER (6 permissions)**
 
 - `order.manage` - Manage all orders
+- `suborder.manage` - Manage suborders
 - `order.refund` - Process refunds
-- `analytics.view` - View order analytics
-- `audit.view` - View audit logs
+- `shipping.manage` - Shipping zones and rates
+- `analytics.view` - Operational analytics (revenue figures are redacted)
+- `ticket.manage` - Support tickets
 
-### **ADMIN_CATALOG_MANAGER (6 permissions)**
+### **ADMIN_CATALOG_MANAGER (8 permissions)**
 
-- `product.manage` - View all products
-- `product.approve` - Approve vendor products
+- `product.manage` - View, edit and archive all products (deleting needs `product.delete` or Super Admin)
+- `product.create` - Create products
+- `product.approve` - Approve vendor products (not for the approver's own store)
 - `category.manage` - Manage categories
+- `coupon.manage` - Platform coupons within the standard ceilings (`coupon.unlimited` lifts them)
+- `banner.manage` - Homepage banners
 - `review.moderate` - Moderate reviews
-- `analytics.view` - View catalog analytics
-- `audit.view` - View audit logs
+- `analytics.view` - Operational analytics (revenue figures are redacted)
 
-### **VENDOR_OWNER (6 permissions)**
+### **ADMIN_FINANCE_MANAGER (7 permissions)**
+
+- `payout.manage` - Process and settle vendor payouts
+- `commission.view` - Commissions and finance reports
+- `analytics.view` - Analytics
+- `analytics.revenue` - Revenue figures (GMV, AOV, revenue by vendor and category)
+- `wallet.adjust` - Credit or debit wallets
+- `cashback.manage` - Platform cashback offers
+- `gift_card.manage` - Gift card list, liability and deactivation
+
+### **VENDOR_OWNER (7 permissions)**
 
 - `product.create` - Create products
 - `product.update` - Update own products
@@ -286,6 +300,7 @@ This document explains the real-life relationship and roles in this multi-vendor
 - `suborder.manage` - Manage vendor orders
 - `payout.view` - View earnings & payouts
 - `review.respond` - Respond to reviews
+- `team.manage` - List, add and remove store staff
 
 ### **VENDOR_STAFF (2 permissions)**
 

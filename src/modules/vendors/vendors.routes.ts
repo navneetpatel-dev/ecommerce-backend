@@ -6,6 +6,7 @@ import { authenticate } from '@middleware/auth.middleware';
 import { authorize } from '@middleware/rbac.middleware';
 import { validate } from '@middleware/validate.middleware';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
+import { requireVendorContext } from './vendorContext.middleware';
 import {
   RegisterVendorSchema,
   UpdateVendorSchema,
@@ -27,6 +28,11 @@ const vendorDashAuth = authorize(
   PERMISSIONS.SUBORDER_MANAGE,
   PERMISSIONS.PAYOUT_VIEW,
 );
+
+// Owner-only access to the store profile writes and KYC. PAYOUT_VIEW is held by VENDOR_OWNER and
+// not by VENDOR_STAFF; staff keep read access to the store profile (bank details masked) through
+// vendorDashAuth.
+const vendorOwnerAuth = authorize(PERMISSIONS.PAYOUT_VIEW);
 
 // Public storefront — APPROVED vendors only (404 otherwise)
 router.get('/slug/:slug', vendorsController.getPublicVendorBySlug);
@@ -57,51 +63,69 @@ router.get(
 router.post('/register', authenticate, validate(RegisterVendorSchema), vendorsController.registerVendor);
 
 // Vendor dashboard
-router.get('/dashboard/summary', authenticate, vendorDashAuth, vendorsController.getDashboardSummary);
+router.get(
+  '/dashboard/summary',
+  authenticate,
+  vendorDashAuth,
+  requireVendorContext,
+  vendorsController.getDashboardSummary,
+);
 // authenticate only — service scopes strictly to req.user.vendorId (mirrors payouts'
 // /me-style vendor scoping) and 404s when the caller has no vendor context.
 router.get(
   '/dashboard/analytics',
   authenticate,
   authorize(PERMISSIONS.PAYOUT_VIEW),
+  requireVendorContext,
   vendorsController.getDashboardAnalytics,
 );
-router.get('/me', authenticate, vendorDashAuth, vendorsController.getMyVendor);
+router.get('/me', authenticate, vendorDashAuth, requireVendorContext, vendorsController.getMyVendor);
 router.patch(
   '/me',
   authenticate,
-  vendorDashAuth,
+  vendorOwnerAuth,
+  requireVendorContext,
   validate(UpdateVendorSchema),
   vendorsController.updateMyVendor,
 );
-router.get('/me/documents', authenticate, vendorDashAuth, vendorsController.getMyDocuments);
+router.get('/me/documents', authenticate, vendorOwnerAuth, requireVendorContext, vendorsController.getMyDocuments);
 router.post(
   '/me/documents',
   authenticate,
-  vendorDashAuth,
+  vendorOwnerAuth,
+  requireVendorContext,
   validate(UploadDocumentSchema),
   vendorsController.uploadMyDocument,
 );
-router.get('/me/kyc-checklist', authenticate, vendorDashAuth, vendorsController.getMyKycChecklist);
+router.get(
+  '/me/kyc-checklist',
+  authenticate,
+  vendorOwnerAuth,
+  requireVendorContext,
+  vendorsController.getMyKycChecklist,
+);
 
 // Vendor staff management (Vendor Owner only)
 router.get(
   '/me/staff',
   authenticate,
-  authorize(PERMISSIONS.PAYOUT_VIEW),
+  authorize(PERMISSIONS.TEAM_MANAGE),
+  requireVendorContext,
   vendorStaffController.listStaff,
 );
 router.post(
   '/me/staff',
   authenticate,
-  authorize(PERMISSIONS.PAYOUT_VIEW),
+  authorize(PERMISSIONS.TEAM_MANAGE),
+  requireVendorContext,
   validate(AddStaffSchema),
   vendorStaffController.addStaff,
 );
 router.delete(
   '/me/staff/:userId',
   authenticate,
-  authorize(PERMISSIONS.PAYOUT_VIEW),
+  authorize(PERMISSIONS.TEAM_MANAGE),
+  requireVendorContext,
   vendorStaffController.removeStaff,
 );
 
@@ -132,8 +156,7 @@ router.get(
   authorize(
     PERMISSIONS.VENDOR_MANAGE,
     PERMISSIONS.VENDOR_APPROVE,
-    PERMISSIONS.PRODUCT_UPDATE,
-    PERMISSIONS.PRODUCT_CREATE,
+    PERMISSIONS.PAYOUT_VIEW,
   ),
   vendorsController.getDocumentViewUrl,
 );

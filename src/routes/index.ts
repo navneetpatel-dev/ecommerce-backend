@@ -12,7 +12,12 @@ import checkoutRoutes from '@modules/checkout/checkout.routes';
 import ordersRoutes from '@modules/orders/orders.routes';
 import subordersRoutes from '@modules/suborders/suborders.routes';
 import couponsRoutes from '@modules/coupons/coupons.routes';
-import { couponApplyRateLimiter, couponQuoteRateLimiter } from '@middleware/rateLimiter.middleware';
+import {
+  couponApplyRateLimiter,
+  couponQuoteRateLimiter,
+  shortLinkCreateRateLimiter,
+  webVitalsRateLimiter,
+} from '@middleware/rateLimiter.middleware';
 import commissionsRoutes from '@modules/commissions/commissions.routes';
 import payoutsRoutes from '@modules/payouts/payouts.routes';
 import shippingRoutes from '@modules/shipping/shipping.routes';
@@ -57,6 +62,9 @@ router.use(API_MOUNTS.cart, cartRoutes);
 // with the other limiters, so the feature routers don't open a Redis connection.
 router.post(`${API_MOUNTS.coupons}/apply`, couponApplyRateLimiter);
 router.post(`${API_MOUNTS.checkout}/quote`, couponQuoteRateLimiter);
+// Public write endpoints that need no account: bounded here, like the coupon limiters above.
+router.post(API_MOUNTS.shortLinks, shortLinkCreateRateLimiter);
+router.post(API_MOUNTS.webVitals, webVitalsRateLimiter);
 router.use(API_MOUNTS.checkout, checkoutRoutes);
 router.use(API_MOUNTS.orders, ordersRoutes);
 router.use(API_MOUNTS.suborders, subordersRoutes);

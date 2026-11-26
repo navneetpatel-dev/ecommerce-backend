@@ -42,7 +42,7 @@ const envSchema = z.object({
   AWS_SECRET_ACCESS_KEY: z.string().optional(),
   /**
    * Use the AWS SDK default credential chain (ECS task role, instance profile, …)
-   * when no static keys are set. Enabled on ECS so S3/SES need no long-lived keys.
+   * when no static keys are set. Enabled on ECS so S3 needs no long-lived keys.
    */
   AWS_USE_DEFAULT_CREDENTIALS: z
     .union([z.boolean(), z.string()])
@@ -79,18 +79,9 @@ const envSchema = z.object({
   VAPID_PRIVATE_KEY: z.string().min(1).optional(),
   VAPID_SUBJECT: z.string().min(1).optional(),
 
-  /**
-   * Mail driver. Add a MailProvider in mail.providers.ts + register it in mail.ts
-   * when introducing another email system. `auto` resolves: ses → smtp → console.
-   */
-  MAIL_DRIVER: z.enum(['auto', 'console', 'ses', 'smtp']).default('auto'),
+  /** Mail is sent over SMTP only. */
   MAIL_FROM_EMAIL: z.string().default('noreply@ecommerce.com'),
   MAIL_FROM_NAME: z.string().default('Marketplace'),
-
-  /** Optional SES configuration set (bounce/complaint events). */
-  SES_CONFIGURATION_SET: z.string().optional(),
-
-  /** SMTP settings when MAIL_DRIVER=smtp (any SMTP-compatible service). */
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.coerce.number().int().positive().default(587),
   SMTP_SECURE: z
@@ -169,7 +160,7 @@ const envSchema = z.object({
   EMAIL_MARKETING_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(1),
   /**
    * Emails each worker queue may send per minute. Gmail SMTP throttles accounts that log in
-   * or send too fast, so the default is deliberately gentle; raise it on a real provider.
+   * or send too fast, so the default is deliberately gentle; raise it for a mail server with higher limits.
    */
   MAIL_RATE_PER_MINUTE: z.coerce.number().int().positive().default(20),
   /** Let mail go to reserved test domains (example.com, *.test). Off by default: they only bounce. */
@@ -178,26 +169,12 @@ const envSchema = z.object({
     .default('false')
     .transform((value) => value === 'true'),
 }).superRefine((data, ctx) => {
-  if (data.MAIL_DRIVER === 'smtp') {
-    if (!data.SMTP_HOST) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['SMTP_HOST'],
-        message: 'SMTP_HOST is required when MAIL_DRIVER=smtp',
-      });
-    }
-  }
-
-  if (data.MAIL_DRIVER === 'ses') {
-    const hasStaticKeys = Boolean(data.AWS_ACCESS_KEY_ID && data.AWS_SECRET_ACCESS_KEY);
-    if (!hasStaticKeys && !data.AWS_USE_DEFAULT_CREDENTIALS) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['AWS_ACCESS_KEY_ID'],
-        message:
-          'MAIL_DRIVER=ses needs AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY, or AWS_USE_DEFAULT_CREDENTIALS=true',
-      });
-    }
+  if (data.NODE_ENV === 'production' && !data.SMTP_HOST?.trim()) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['SMTP_HOST'],
+      message: 'SMTP_HOST is required in production: SMTP is the only way email is sent',
+    });
   }
 
   const vapidValues = [data.VAPID_PUBLIC_KEY, data.VAPID_PRIVATE_KEY, data.VAPID_SUBJECT];
@@ -210,22 +187,7 @@ const envSchema = z.object({
   }
 });
 
-/** Map legacy EMAIL_TRANSPORT / SES_FROM_EMAIL into the current mail schema. */
-function withMailLegacyAliases(raw: NodeJS.ProcessEnv): Record<string, unknown> {
-  const transport = raw.EMAIL_TRANSPORT;
-  const legacyDriver =
-    transport === 'ses' || transport === 'console' || transport === 'auto'
-      ? transport
-      : undefined;
-
-  return {
-    ...raw,
-    MAIL_DRIVER: raw.MAIL_DRIVER ?? legacyDriver,
-    MAIL_FROM_EMAIL: raw.MAIL_FROM_EMAIL ?? raw.SES_FROM_EMAIL,
-  };
-}
-
-const parsed = envSchema.safeParse(withMailLegacyAliases(process.env));
+const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {
   console.error('❌ Invalid environment variables:');

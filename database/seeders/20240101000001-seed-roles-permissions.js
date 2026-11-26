@@ -15,6 +15,7 @@ const ROLE_NAMES = [
   'SUPER_ADMIN',
   'ADMIN_ORDER_MANAGER',
   'ADMIN_CATALOG_MANAGER',
+  'ADMIN_FINANCE_MANAGER',
   'VENDOR_OWNER',
   'VENDOR_STAFF',
   'CUSTOMER',
@@ -28,20 +29,25 @@ const PERMISSION_KEYS = [
   'audit.view', 'analytics.view', 'product.create', 'product.update', 'product.delete',
   'suborder.manage', 'payout.view', 'review.respond',
   'ticket.manage', 'bug_report.manage', 'wallet.adjust', 'gift_card.manage',
-  'role.manage', 'user.impersonate',
+  'role.manage', 'user.impersonate', 'team.manage', 'cashback.manage', 'webvitals.view',
+  'analytics.revenue', 'coupon.unlimited',
 ];
 
 const ROLE_PERMISSIONS = {
   SUPER_ADMIN: PERMISSION_KEYS,
   ADMIN_ORDER_MANAGER: [
-    'order.manage', 'suborder.manage', 'order.refund', 'shipping.manage', 'analytics.view', 'audit.view',
-    'ticket.manage', 'bug_report.manage', 'wallet.adjust', 'gift_card.manage',
+    'order.manage', 'suborder.manage', 'order.refund', 'shipping.manage', 'analytics.view',
+    'ticket.manage',
   ],
   ADMIN_CATALOG_MANAGER: [
     'product.manage', 'product.create', 'product.approve', 'category.manage', 'coupon.manage', 'banner.manage',
-    'review.moderate', 'analytics.view', 'audit.view',
+    'review.moderate', 'analytics.view',
   ],
-  VENDOR_OWNER: ['product.create', 'product.update', 'product.delete', 'suborder.manage', 'payout.view', 'review.respond'],
+  ADMIN_FINANCE_MANAGER: [
+    'payout.manage', 'commission.view', 'analytics.view', 'analytics.revenue', 'wallet.adjust', 'cashback.manage',
+    'gift_card.manage',
+  ],
+  VENDOR_OWNER: ['product.create', 'product.update', 'product.delete', 'suborder.manage', 'payout.view', 'review.respond', 'team.manage'],
   VENDOR_STAFF: ['product.update', 'suborder.manage'],
   CUSTOMER: [],
 };

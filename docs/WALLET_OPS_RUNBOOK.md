@@ -54,7 +54,7 @@ Migration `20240101000105-wallet-gap-closure.js` adds `cancelRefundStatus`, `exp
 
 ## Manual wallet adjustment
 
-**Permission:** `wallet.adjust` (Admin Order Manager, Super Admin).
+**Permission:** `wallet.adjust` (Super Admin only by default; a custom role can be granted it explicitly).
 
 **UI:** Admin → Finance → Reports → **Manual wallet adjustment** panel.
 

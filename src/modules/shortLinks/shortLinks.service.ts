@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { ShortLink, Product, ProductImage, Category, Vendor } from '@database/models';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { env } from '@config/env';
+import { PRODUCT_STATUS } from '@core/constants/statuses';
 
 const BASE62_CHARS = '23456789abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ';
 
@@ -18,6 +19,7 @@ export interface CreateShortLinkDto {
   targetUrl: string;
   resourceType?: string;
   resourceId?: string;
+  /** Accepted for backward compatibility but ignored: previews are always derived from the catalog. */
   metadata?: {
     name?: string;
     description?: string;
@@ -41,91 +43,105 @@ export interface ShortLinkResponse {
   createdAt: Date;
 }
 
+const MAX_TARGET_LENGTH = 2048;
+// eslint-disable-next-line no-control-regex
+const UNSAFE_PATH_CHARS = /[\u0000-\u001f\u007f\\]/;
+const PLACEHOLDER_ORIGIN = 'https://placeholder.invalid';
+
+/**
+ * Reduces any input to a canonical same-site path (`/…`). A short link is rendered by the web app
+ * as `location.replace(targetUrl)` inside an inline script, so anything that could leave the site
+ * (`//evil.com`, `/\evil.com`, `javascript:…`, another host) collapses to `/`, and the rest is
+ * re-serialised the way a browser reads it, which percent-encodes `<`, `>`, quotes and spaces.
+ * For absolute http(s) URLs only the path and query are kept (the host is dropped).
+ */
+export function safeSitePath(raw: unknown): string {
+  if (typeof raw !== 'string') return '/';
+  let value = raw.trim();
+  if (!value || value.length > MAX_TARGET_LENGTH) return '/';
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      const parsed = new URL(value);
+      value = `${parsed.pathname}${parsed.search}`;
+    } catch {
+      return '/';
+    }
+  }
+  if (!value.startsWith('/') || value.startsWith('//') || UNSAFE_PATH_CHARS.test(value)) return '/';
+  try {
+    const url = new URL(value, PLACEHOLDER_ORIGIN);
+    if (url.origin !== PLACEHOLDER_ORIGIN) return '/';
+    const path = `${url.pathname}${url.search}`;
+    return path.startsWith('/') && !path.startsWith('//') ? path : '/';
+  } catch {
+    return '/';
+  }
+}
+
+const PRODUCT_PATH = /^\/products\/([^/?#]+)/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+type LinkMetadata = NonNullable<ShortLinkResponse['metadata']>;
+
 export class ShortLinksService {
   private getClientBaseUrl(): string {
     return process.env.CLIENT_URL || env.CLIENT_URL || 'http://localhost:5273';
   }
 
-  async createOrGetShortLink(dto: CreateShortLinkDto): Promise<ShortLinkResponse> {
-    const resourceType = dto.resourceType || 'PRODUCT';
-    const resourceId = dto.resourceId || null;
-    let targetUrl = dto.targetUrl?.trim();
-
-    if (!targetUrl) {
-      if (resourceType === 'PRODUCT' && resourceId) {
-        const prod = await Product.findByPk(resourceId);
-        if (prod) {
-          targetUrl = `/products/${prod.slug}`;
-        }
-      }
+  /** The public (LIVE) product a link is about: by id when given, else by the slug in its path. */
+  private async findProduct(resourceId: string | null, targetUrl: string): Promise<Product | null> {
+    const include = [
+      { model: ProductImage, as: 'images' },
+      { model: Category },
+      { model: Vendor, as: 'vendor' },
+    ];
+    if (resourceId && UUID.test(resourceId)) {
+      return Product.findOne({ where: { id: resourceId, status: PRODUCT_STATUS.LIVE }, include });
     }
-
-    if (!targetUrl) {
-      targetUrl = '/';
-    }
-
-    // Strip host if full URL was provided, keep path + query
+    const slug = PRODUCT_PATH.exec(targetUrl)?.[1];
+    if (!slug) return null;
+    let decoded = slug;
     try {
-      if (targetUrl.startsWith('http://') || targetUrl.startsWith('https://')) {
-        const parsed = new URL(targetUrl);
-        targetUrl = `${parsed.pathname}${parsed.search}`;
-      }
+      decoded = decodeURIComponent(slug);
     } catch {
-      // keep as is
+      return null;
     }
+    return Product.findOne({ where: { slug: decoded, status: PRODUCT_STATUS.LIVE }, include });
+  }
 
-    // Check if short link already exists for this resource
-    if (resourceType === 'PRODUCT' && resourceId) {
-      const existing = await ShortLink.findOne({
-        where: { resourceType, resourceId },
-      });
+  /** Preview data always comes from the catalog, never from what a caller sent. */
+  private metadataFor(product: Product | null): LinkMetadata | null {
+    if (!product) return null;
+    const primaryImg = product.images?.find((img) => img.isPrimary)?.url || product.images?.[0]?.url || '';
+    return {
+      name: product.name,
+      description: product.description ? product.description.slice(0, 300) : '',
+      imageUrl: primaryImg,
+      price: product.displayPrice ? Number(product.displayPrice) : Number(product.basePrice),
+      currency: 'INR',
+      brand: product.brand || undefined,
+      category: (product as any).Category?.name || undefined,
+    };
+  }
 
-      if (existing) {
-        // If metadata was provided and wasn't cached before, enrich it
-        if (dto.metadata && (!existing.metadata || Object.keys(existing.metadata).length === 0)) {
-          existing.metadata = { ...dto.metadata };
-          await existing.save();
-        }
-        return this.formatResponse(existing);
-      }
+  async createOrGetShortLink(dto: CreateShortLinkDto): Promise<ShortLinkResponse> {
+    const resourceType = 'PRODUCT';
+    const resourceId = dto.resourceId && UUID.test(dto.resourceId) ? dto.resourceId : null;
+
+    let targetUrl = safeSitePath(dto.targetUrl);
+    const product = await this.findProduct(resourceId, targetUrl);
+    // A link about a product always points at that product, whatever target the caller asked for.
+    if (product && resourceId) {
+      targetUrl = `/products/${product.slug}`;
     }
+    const linkedResourceId = product ? product.id : null;
 
-    // Also check if targetUrl already has an existing short link
-    const existingByUrl = await ShortLink.findOne({
-      where: { targetUrl },
-    });
-    if (existingByUrl) {
-      if (dto.metadata && (!existingByUrl.metadata || Object.keys(existingByUrl.metadata).length === 0)) {
-        existingByUrl.metadata = { ...dto.metadata };
-        await existingByUrl.save();
-      }
-      return this.formatResponse(existingByUrl);
-    }
-
-    // Assemble metadata if missing
-    let finalMetadata = dto.metadata ? { ...dto.metadata } : null;
-    if ((!finalMetadata || !finalMetadata.imageUrl || !finalMetadata.name) && resourceType === 'PRODUCT' && resourceId) {
-      const product = await Product.findByPk(resourceId, {
-        include: [
-          { model: ProductImage, as: 'images' },
-          { model: Category },
-          { model: Vendor, as: 'vendor' },
-        ],
-      });
-
-      if (product) {
-        const primaryImg = product.images?.find((img) => img.isPrimary)?.url || product.images?.[0]?.url || '';
-        finalMetadata = {
-          name: product.name,
-          description: product.description ? product.description.slice(0, 300) : '',
-          imageUrl: primaryImg,
-          price: product.displayPrice ? Number(product.displayPrice) : Number(product.basePrice),
-          currency: 'INR',
-          brand: product.brand || undefined,
-          category: (product as any).Category?.name || undefined,
-          ...finalMetadata,
-        };
-      }
+    // One short link per product, and per target path.
+    const existing =
+      (linkedResourceId ? await ShortLink.findOne({ where: { resourceType, resourceId: linkedResourceId } }) : null) ??
+      (await ShortLink.findOne({ where: { targetUrl } }));
+    if (existing) {
+      return this.formatResponse(existing, { targetUrl: safeSitePath(existing.targetUrl), metadata: this.metadataFor(product) });
     }
 
     // Generate unique code with collision retry
@@ -143,16 +159,17 @@ export class ShortLinksService {
       code = generateShortCode(9);
     }
 
+    const metadata = this.metadataFor(product);
     const shortLink = await ShortLink.create({
       code,
       targetUrl,
       resourceType,
-      resourceId,
-      metadata: finalMetadata,
+      resourceId: linkedResourceId,
+      metadata,
       clicks: 0,
     });
 
-    return this.formatResponse(shortLink);
+    return this.formatResponse(shortLink, { targetUrl, metadata });
   }
 
   async resolveShortLink(code: string): Promise<ShortLinkResponse> {
@@ -162,34 +179,16 @@ export class ShortLinksService {
       // Async click tracking
       link.increment('clicks').catch(() => {});
 
-      // Enrich metadata if missing
-      if (link.resourceType === 'PRODUCT' && link.resourceId && (!link.metadata || !link.metadata.imageUrl)) {
-        const product = await Product.findByPk(link.resourceId, {
-          include: [
-            { model: ProductImage, as: 'images' },
-            { model: Category },
-          ],
-        });
-        if (product) {
-          const primaryImg = product.images?.find((img) => img.isPrimary)?.url || product.images?.[0]?.url || '';
-          link.metadata = {
-            ...(link.metadata || {}),
-            name: product.name,
-            description: product.description ? product.description.slice(0, 300) : '',
-            imageUrl: primaryImg,
-            price: product.displayPrice ? Number(product.displayPrice) : Number(product.basePrice),
-            currency: 'INR',
-          };
-          link.save().catch(() => {});
-        }
-      }
-
-      return this.formatResponse(link);
+      // Rows written before validation existed may hold an off-site target or caller-supplied
+      // preview text, so both are recomputed on every read instead of trusted.
+      const targetUrl = safeSitePath(link.targetUrl);
+      const product = await this.findProduct(link.resourceId, targetUrl);
+      return this.formatResponse(link, { targetUrl, metadata: this.metadataFor(product) });
     }
 
     // Fallback: check if code is a product slug
     const product = await Product.findOne({
-      where: { slug: code },
+      where: { slug: code, status: PRODUCT_STATUS.LIVE },
       include: [
         { model: ProductImage, as: 'images' },
         { model: Category },
@@ -208,16 +207,19 @@ export class ShortLinksService {
     throw new NotFoundError('Short link');
   }
 
-  private formatResponse(link: ShortLink): ShortLinkResponse {
+  private formatResponse(
+    link: ShortLink,
+    override?: { targetUrl: string; metadata: LinkMetadata | null },
+  ): ShortLinkResponse {
     const clientBase = this.getClientBaseUrl();
     return {
       id: link.id,
       code: link.code,
-      targetUrl: link.targetUrl,
+      targetUrl: override ? override.targetUrl : safeSitePath(link.targetUrl),
       shortUrl: `${clientBase}/s/${link.code}`,
       resourceType: link.resourceType,
       resourceId: link.resourceId,
-      metadata: link.metadata,
+      metadata: override ? override.metadata : null,
       clicks: link.clicks,
       createdAt: link.createdAt,
     };

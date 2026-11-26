@@ -120,7 +120,7 @@ module.exports = {
 
     // ─── ROLES ────────────────────────────────────────────────
     console.log('Checking roles...');
-    const roleNames = ['SUPER_ADMIN', 'ADMIN_ORDER_MANAGER', 'ADMIN_CATALOG_MANAGER', 'VENDOR_OWNER', 'VENDOR_STAFF', 'CUSTOMER'];
+    const roleNames = ['SUPER_ADMIN', 'ADMIN_ORDER_MANAGER', 'ADMIN_CATALOG_MANAGER', 'ADMIN_FINANCE_MANAGER', 'VENDOR_OWNER', 'VENDOR_STAFF', 'CUSTOMER'];
     const existingRoles = await queryInterface.sequelize.query(
       `SELECT name FROM roles`, { type: queryInterface.sequelize.QueryTypes.SELECT }
     );
@@ -235,6 +235,7 @@ module.exports = {
     const adminUsers = [
       { id: uuidv4(), email: 'ordermanager@ecommerce.com', passwordHash, name: 'Order Manager', phone: '+919876543210', status: 'ACTIVE', roleId: roleMap.ADMIN_ORDER_MANAGER, vendorId: null, emailVerified: true, emailMarketingConsent: false, emailSuppressed: false, createdAt: now, updatedAt: now },
       { id: uuidv4(), email: 'catalogmanager@ecommerce.com', passwordHash, name: 'Catalog Manager', phone: '+919876543211', status: 'ACTIVE', roleId: roleMap.ADMIN_CATALOG_MANAGER, vendorId: null, emailVerified: true, emailMarketingConsent: false, emailSuppressed: false, createdAt: now, updatedAt: now },
+      { id: uuidv4(), email: 'financemanager@ecommerce.com', passwordHash, name: 'Finance Manager', phone: '+919876543212', status: 'ACTIVE', roleId: roleMap.ADMIN_FINANCE_MANAGER, vendorId: null, emailVerified: true, emailMarketingConsent: false, emailSuppressed: false, createdAt: now, updatedAt: now },
     ];
     const adminIds = adminUsers.map(u => u.id);
     await queryInterface.bulkInsert('users', adminUsers);
@@ -746,6 +747,7 @@ module.exports = {
     console.log('  SUPER_ADMIN:        admin@ecommerce.com');
     console.log('  ORDER_MANAGER:      ordermanager@ecommerce.com');
     console.log('  CATALOG_MANAGER:    catalogmanager@ecommerce.com');
+    console.log('  FINANCE_MANAGER:    financemanager@ecommerce.com');
     console.log('  VENDOR_OWNER:       owner@techworld.com');
     console.log('  VENDOR_STAFF:       staff@techworld.com');
     console.log('  CUSTOMER:           amit.gupta54@example.com\n');

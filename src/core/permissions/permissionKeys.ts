@@ -17,6 +17,7 @@ export const PERMISSIONS = {
   SHIPPING_MANAGE: 'shipping.manage',
   SETTINGS_MANAGE: 'settings.manage',
   BANNER_MANAGE: 'banner.manage',
+  /** Platform-wide audit log. SUPER_ADMIN only by default (it records every admin's actions). */
   AUDIT_VIEW: 'audit.view',
   ANALYTICS_VIEW: 'analytics.view',
   PRODUCT_CREATE: 'product.create',
@@ -26,7 +27,17 @@ export const PERMISSIONS = {
   PAYOUT_VIEW: 'payout.view',
   REVIEW_RESPOND: 'review.respond',
   TICKET_MANAGE: 'ticket.manage',
+  /** Platform revenue figures (GMV, AOV, revenue by vendor/category). SUPER_ADMIN and the Finance Manager only; analytics.view alone shows operational counts. */
+  ANALYTICS_REVENUE: 'analytics.revenue',
+  /** Create or edit platform coupons beyond the standard discount ceilings (see coupons/couponLimits.ts). SUPER_ADMIN only by default. */
+  COUPON_UNLIMITED: 'coupon.unlimited',
+  /** Platform cashback offers (platform-funded wallet liability). SUPER_ADMIN only by default; separate from coupon.manage. */
+  CASHBACK_MANAGE: 'cashback.manage',
+  /** Web Vitals performance telemetry. SUPER_ADMIN only by default; separate from analytics.view. */
+  WEBVITALS_VIEW: 'webvitals.view',
+  /** Triage and fix bug reports. SUPER_ADMIN only by default: anyone can file one, only the person who fixes them manages them. */
   BUG_REPORT_MANAGE: 'bug_report.manage',
+  /** Credit or debit any wallet. SUPER_ADMIN only by default: it moves money with no cap or second approver. */
   WALLET_ADJUST: 'wallet.adjust',
   /** See every gift card, its liability, and deactivate one. */
   GIFT_CARD_MANAGE: 'gift_card.manage',
@@ -34,6 +45,8 @@ export const PERMISSIONS = {
   ROLE_MANAGE: 'role.manage',
   /** Start a support "log in as user" session. SUPER_ADMIN only by default. */
   USER_IMPERSONATE: 'user.impersonate',
+  /** List, add and remove a vendor's staff. VENDOR_OWNER only by default. */
+  TEAM_MANAGE: 'team.manage',
 } as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -48,10 +61,15 @@ export const ROLE_PERMISSIONS: Record<string, readonly PermissionKey[]> = {
     PERMISSIONS.ORDER_REFUND,
     PERMISSIONS.SHIPPING_MANAGE,
     PERMISSIONS.ANALYTICS_VIEW,
-    PERMISSIONS.AUDIT_VIEW,
     PERMISSIONS.TICKET_MANAGE,
-    PERMISSIONS.BUG_REPORT_MANAGE,
+  ],
+  [ROLES.ADMIN_FINANCE_MANAGER]: [
+    PERMISSIONS.PAYOUT_MANAGE,
+    PERMISSIONS.COMMISSION_VIEW,
+    PERMISSIONS.ANALYTICS_VIEW,
+    PERMISSIONS.ANALYTICS_REVENUE,
     PERMISSIONS.WALLET_ADJUST,
+    PERMISSIONS.CASHBACK_MANAGE,
     PERMISSIONS.GIFT_CARD_MANAGE,
   ],
   [ROLES.ADMIN_CATALOG_MANAGER]: [
@@ -63,7 +81,6 @@ export const ROLE_PERMISSIONS: Record<string, readonly PermissionKey[]> = {
     PERMISSIONS.BANNER_MANAGE,
     PERMISSIONS.REVIEW_MODERATE,
     PERMISSIONS.ANALYTICS_VIEW,
-    PERMISSIONS.AUDIT_VIEW,
   ],
   [ROLES.VENDOR_OWNER]: [
     PERMISSIONS.PRODUCT_CREATE,
@@ -72,6 +89,7 @@ export const ROLE_PERMISSIONS: Record<string, readonly PermissionKey[]> = {
     PERMISSIONS.SUBORDER_MANAGE,
     PERMISSIONS.PAYOUT_VIEW,
     PERMISSIONS.REVIEW_RESPOND,
+    PERMISSIONS.TEAM_MANAGE,
   ],
   [ROLES.VENDOR_STAFF]: [PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.SUBORDER_MANAGE],
   [ROLES.CUSTOMER]: [],

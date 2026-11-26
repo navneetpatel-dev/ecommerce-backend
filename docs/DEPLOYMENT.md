@@ -11,7 +11,7 @@ Infrastructure is Terraform in [`infra/terraform`](../infra/terraform).
                          │               worker (BullMQ, schedulers)        ─┼─▶ ElastiCache Redis 7 (TLS + auth)
                          │               migrate (one-off per deploy)        │
                          └───────────────────────────────────────────────────┘
-  S3 media bucket (existing) and SES are reached through the backend task's IAM role — no AWS keys.
+  S3 media bucket (existing) is reached through the backend task's IAM role — no AWS keys.
 ```
 
 | Piece | Where |
@@ -87,11 +87,26 @@ put the key in this secret **with a real value**, add its name to
 `backend_app_secret_keys` in `terraform.tfvars`, `terraform apply`, then redeploy.
 Plain non-secret settings go in `backend_extra_env` instead.
 
-### 5. Email (SES)
+### 5. Email (SMTP)
 
-`mail_driver` defaults to `ses`. In the SES console (eu-north-1): verify the sending
-domain/address used in `mail_from_email`, then request **production access** (until
-then SES only delivers to verified addresses). Set `mail_driver = "console"` to defer this.
+Email is sent over **SMTP only**; there is no other mail service or driver switch. Set the
+SMTP settings on the backend task. `SMTP_HOST` is required in production (the API refuses to
+boot without it); the credentials go in the secret from step 4:
+
+```json
+{
+  "SMTP_USER": "…",
+  "SMTP_PASS": "…"
+}
+```
+
+Plain settings go in `backend_extra_env`: `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_SECURE`
+(`false` for STARTTLS on 587, `true` for 465), `MAIL_FROM_EMAIL`, `MAIL_FROM_NAME`, and
+`MAIL_RATE_PER_MINUTE` (keep it low for Gmail, raise it for a mail server with higher limits).
+
+Bad addresses are handled from the server's reply at send time (hard bounces are not retried and
+go on a 30-day suppression list, visible in the admin Notifications page). There is no
+bounce/complaint webhook.
 
 ### 6. Wire up GitHub
 

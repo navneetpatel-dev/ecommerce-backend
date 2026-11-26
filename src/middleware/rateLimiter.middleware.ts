@@ -69,6 +69,30 @@ export const otpRequestRateLimiter = rateLimit({
   message: ERROR_MESSAGES.OTP_REQUEST_RATE_LIMITED,
 });
 
+/** Public short-link creation: a page view of a shareable product may call it, so it is generous but bounded. */
+export const shortLinkCreateRateLimiter = rateLimit({
+  store: redisRateLimitStore('short-link-create'),
+  passOnStoreError: true,
+  windowMs: 60 * 60 * 1000,
+  limit: isDev ? 1000 : 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: jsonRateLimitHandler,
+  message: ERROR_MESSAGES.RATE_LIMITED,
+});
+
+/** Public web-vitals beacon (one or a few per page view). */
+export const webVitalsRateLimiter = rateLimit({
+  store: redisRateLimitStore('web-vitals'),
+  passOnStoreError: true,
+  windowMs: 60 * 1000,
+  limit: isDev ? 1000 : 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: jsonRateLimitHandler,
+  message: ERROR_MESSAGES.RATE_LIMITED,
+});
+
 export const couponApplyRateLimiter = rateLimit({
   store: redisRateLimitStore('coupon'),
   passOnStoreError: true,

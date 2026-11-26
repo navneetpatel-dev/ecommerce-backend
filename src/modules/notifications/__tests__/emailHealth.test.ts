@@ -10,8 +10,9 @@ describe('judgeEmailHealth', () => {
     assert.equal(judgeEmailHealth({ ...base, sent: 0, failed: 0 }).status, 'OK', 'a quiet store is not an outage');
   });
 
-  it('is down when no provider is configured or the queue is gone', () => {
+  it('is down when SMTP is not configured or the queue is gone', () => {
     assert.equal(judgeEmailHealth({ ...base, configured: false }).status, 'DOWN');
+    assert.match(judgeEmailHealth({ ...base, configured: false }).headline, /SMTP/);
     assert.match(judgeEmailHealth({ ...base, queuesReady: false }).headline, /queue/i);
   });
 

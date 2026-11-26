@@ -4,6 +4,8 @@ import { ok } from '@core/http/ApiResponse';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { VENDOR_ROLES } from '@core/constants/statuses';
+import { PERMISSIONS } from '@core/permissions/permissionKeys';
+import { userHasPermission } from '@middleware/rbac.middleware';
 import { couponsService } from './coupons.service';
 import {
   CreateCouponSchema,
@@ -36,16 +38,23 @@ function vendorScope(req: Request): { forceVendorId?: string | null } {
   return {};
 }
 
+/** Vendor scope, plus the standard discount ceilings for platform coupons unless the actor holds coupon.unlimited. */
+async function writeScope(req: Request): Promise<{ forceVendorId?: string | null; enforceLimits?: boolean }> {
+  const scope = vendorScope(req);
+  if (scope.forceVendorId) return scope;
+  return { ...scope, enforceLimits: !(await userHasPermission(req.user, PERMISSIONS.COUPON_UNLIMITED)) };
+}
+
 export const createCoupon = asyncHandler(async (req: Request, res: Response) => {
   const dto = CreateCouponSchema.parse(req.body);
-  const opts = vendorScope(req);
+  const opts = await writeScope(req);
   const coupon = await couponsService.createCoupon(dto, req.user!.id, opts);
   res.status(201).json(ok(coupon));
 });
 
 export const updateCoupon = asyncHandler(async (req: Request, res: Response) => {
   const dto = UpdateCouponSchema.parse(req.body);
-  const coupon = await couponsService.updateCoupon(req.params.id!, dto, req.user!.id, vendorScope(req));
+  const coupon = await couponsService.updateCoupon(req.params.id!, dto, req.user!.id, await writeScope(req));
   res.json(ok(coupon));
 });
 
@@ -73,7 +82,7 @@ export const setCouponStatus = asyncHandler(async (req: Request, res: Response) 
 
 export const bulkGenerate = asyncHandler(async (req: Request, res: Response) => {
   const dto = BulkGenerateSchema.parse(req.body);
-  const result = await couponsService.bulkGenerate(dto, req.user!.id, vendorScope(req));
+  const result = await couponsService.bulkGenerate(dto, req.user!.id, await writeScope(req));
   res.status(201).json(ok(result));
 });
 

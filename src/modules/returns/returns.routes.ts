@@ -24,7 +24,8 @@ router.get('/:id/credit-note', authenticate, returnsController.downloadCreditNot
 router.get(
   '/:id/debit-note',
   authenticate,
-  authorize(PERMISSIONS.ORDER_REFUND, PERMISSIONS.PAYOUT_VIEW, PERMISSIONS.SUBORDER_MANAGE),
+  // A financial document: platform refund staff and the store owner, not vendor staff.
+  authorize(PERMISSIONS.ORDER_REFUND, PERMISSIONS.PAYOUT_VIEW),
   returnsController.downloadDebitNote,
 );
 router.patch('/:id/transition', authenticate, authorize(PERMISSIONS.ORDER_REFUND), validate(TransitionReturnSchema), returnsController.transition);
@@ -37,7 +38,8 @@ router.post(
 router.post(
   '/:id/dispute',
   authenticate,
-  authorize(PERMISSIONS.ORDER_REFUND, PERMISSIONS.SUBORDER_MANAGE),
+  // Disputing a return puts the customer's refund in question: platform refund staff and the store owner only.
+  authorize(PERMISSIONS.ORDER_REFUND, PERMISSIONS.PAYOUT_VIEW),
   validate(DisputeReturnSchema),
   returnsController.dispute,
 );

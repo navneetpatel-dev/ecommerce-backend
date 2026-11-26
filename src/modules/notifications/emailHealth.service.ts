@@ -38,7 +38,7 @@ type Inputs = {
  * - DEGRADED: a lot of failures among the attempts, or many emails stuck waiting.
  */
 export function judgeEmailHealth(input: Inputs): { status: EmailHealthStatus; headline: string } {
-  if (!input.configured) return { status: 'DOWN', headline: 'No mail provider is configured, so no email can be sent.' };
+  if (!input.configured) return { status: 'DOWN', headline: 'SMTP is not configured, so no email can be sent.' };
   if (!input.queuesReady) return { status: 'DOWN', headline: 'The mail queue is unavailable (Redis is down), so emails are waiting and will be sent when it is back.' };
   if (input.failed >= 3 && input.sent === 0) {
     const why = input.lastFailureCategory === 'CONFIG' ? 'the mail login was refused: check the SMTP username and app password' : 'the mail server is refusing or not answering';

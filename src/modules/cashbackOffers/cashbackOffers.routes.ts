@@ -16,7 +16,7 @@ const router = Router();
 router.get('/live', controller.liveCashbackOffers);
 
 // Platform cashback is a promotion, so it sits with coupons under coupon.manage.
-const manage = [authenticate, authorize(PERMISSIONS.COUPON_MANAGE)];
+const manage = [authenticate, authorize(PERMISSIONS.CASHBACK_MANAGE)];
 router.get('/', ...manage, validate(CashbackOfferListQuerySchema, 'query'), controller.listCashbackOffers);
 router.post('/', ...manage, validate(CreateCashbackOfferSchema), controller.createCashbackOffer);
 router.patch('/:id', ...manage, validate(UpdateCashbackOfferSchema), controller.updateCashbackOffer);

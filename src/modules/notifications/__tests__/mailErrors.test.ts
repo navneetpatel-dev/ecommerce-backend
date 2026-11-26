@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { MailNotConfiguredError } from '@config/mail';
 import { classifyMailError, sanitizeMailError } from '../mailErrors';
 
 const err = (fields: Record<string, unknown>) => Object.assign(new Error(String(fields.message ?? 'x')), fields);
@@ -25,6 +26,14 @@ describe('classifyMailError', () => {
     const info = classifyMailError(err({ code: 'EAUTH', responseCode: 535, message: 'Invalid login: 535-5.7.8 Username and Password not accepted' }));
     assert.equal(info.category, 'CONFIG');
     assert.equal(info.retryable, false);
+  });
+
+  it('files "SMTP is not configured" as a configuration problem: not retried, address not suppressed', () => {
+    const info = classifyMailError(new MailNotConfiguredError());
+    assert.equal(info.category, 'CONFIG');
+    assert.equal(info.retryable, false);
+    assert.equal(info.suppress, false);
+    assert.match(info.message, /SMTP is not configured/);
   });
 
   it('treats a bounced address as a recipient problem: no retry, and the address is suppressed', () => {

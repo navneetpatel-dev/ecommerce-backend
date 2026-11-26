@@ -23,16 +23,16 @@ import {
 
 export type DashboardMetrics = {
   totalOrders: number;
-  totalRevenue: number;
+  totalRevenue: number | null;
   totalVendors: number;
   totalCustomers: number;
   pendingApprovals: number;
 };
 
 export type PlatformAnalytics = {
-  gmv: number;
-  paidGmv: number;
-  aov: number;
+  gmv: number | null;
+  paidGmv: number | null;
+  aov: number | null;
   totalOrders: number;
   totalCustomers: number;
   totalVendors: number;
@@ -42,7 +42,7 @@ export type PlatformAnalytics = {
   pendingVendors: number;
   pendingReviews: number;
   ordersGrowthPct: number;
-  revenueGrowthPct: number;
+  revenueGrowthPct: number | null;
   /** `sharePercent` is the row's share of platform-wide revenue, not of the top 8. */
   topVendors: Array<{
     id: string;
@@ -51,7 +51,7 @@ export type PlatformAnalytics = {
     sharePercent: number;
   }>;
   topCategories: Array<{ id: string; name: string; revenue: number; sharePercent: number }>;
-  orderVolume: Array<{ date: string; count: number; revenue: number }>;
+  orderVolume: Array<{ date: string; count: number; revenue: number | null }>;
   ordersByStatus: Array<{ status: string; count: number }>;
   paymentsByStatus: Array<{ status: string; count: number }>;
   ratingDistribution: Array<{ rating: number; count: number }>;
