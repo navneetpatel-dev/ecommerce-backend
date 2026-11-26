@@ -38,6 +38,9 @@ import { roundMoney, toPaise } from '@modules/pricing/money';
 import { gstRateForPieces } from '@modules/pricing/pricing.engine';
 import { CreateProductSchema } from './products.dto';
 import { submitProductForApproval } from './productSubmission';
+import { assertApproverIndependent } from './productApprovalRules';
+import { assertCanAddImage, assertProductMediaUrl, assertProductMediaUrls } from './productMediaRules';
+import { forViewer, stripInternalProductFields } from './productPublicFields';
 import type {
   CreateProductRequest,
   UpdateProductRequest,
@@ -347,7 +350,8 @@ async function syncSecondaryCategories(
 }
 
 export class ProductsService {
-  async createProduct(vendorId: string | null, data: CreateProductRequest) {
+  /** `by` records who created it (and that the platform listed it for the vendor). */
+  async createProduct(vendorId: string | null, data: CreateProductRequest, by?: { actorId: string; listedByPlatform?: boolean }) {
     return sequelize.transaction(async (t) => {
       const slug = generateSlug(data.name);
       const { secondaryCategoryIds = [], ...productFields } = data;
@@ -357,6 +361,7 @@ export class ProductsService {
         throw new ValidationError(ERROR_MESSAGES.PRODUCT_NAME_EXISTS);
       }
 
+      assertProductMediaUrls(data);
       await categoriesService.assertActiveCategory(data.categoryId, t);
       await assertMrpCoversGstPrices(data.categoryId, [data.basePrice], data.compareAtPrice ?? null);
 
@@ -366,6 +371,7 @@ export class ProductsService {
         vendorId,
         status: PRODUCT_STATUS.DRAFT,
         avgRating: 0,
+        ...(by && { createdBy: by.actorId, updatedBy: by.actorId, listedByPlatform: Boolean(by.listedByPlatform) }),
       }, { transaction: t });
 
       await syncSecondaryCategories(product.id, data.categoryId, secondaryCategoryIds, t);
@@ -483,7 +489,7 @@ export class ProductsService {
       ? await productsRepository.findVisibleList(filters)
       : await productsRepository.findWithFilters(filters);
 
-    const mappedProducts = rows.map((p) => mapProductResponse(p));
+    const mappedProducts = rows.map((p) => forViewer(mapProductResponse(p), options.customerFacing));
 
     return {
       products: mappedProducts,
@@ -521,7 +527,7 @@ export class ProductsService {
     const reviewCount = await Review.count({
       where: { productId: product.id, status: REVIEW_STATUS.APPROVED },
     });
-    return mapDetailResponse(product, reviewCount);
+    return forViewer(await mapDetailResponse(product, reviewCount), options.customerFacing);
   }
 
   async getProductBySlug(slug: string, options: { customerFacing?: boolean } = {}) {
@@ -532,7 +538,7 @@ export class ProductsService {
     const reviewCount = await Review.count({
       where: { productId: product.id, status: REVIEW_STATUS.APPROVED },
     });
-    return mapDetailResponse(product, reviewCount);
+    return forViewer(await mapDetailResponse(product, reviewCount), options.customerFacing);
   }
 
   /** Upserts the caller's view of a product so a repeat view refreshes recency instead of duplicating. */
@@ -563,7 +569,7 @@ export class ProductsService {
     return productIds
       .map((id) => byId.get(id))
       .filter((product): product is Product => Boolean(product))
-      .map((product) => mapProductResponse(product));
+      .map((product) => stripInternalProductFields(mapProductResponse(product)));
   }
 
   /**
@@ -585,7 +591,7 @@ export class ProductsService {
     return relatedIds
       .map((id) => byId.get(id))
       .filter((product): product is Product => Boolean(product))
-      .map((product) => mapProductResponse(product));
+      .map((product) => stripInternalProductFields(mapProductResponse(product)));
   }
 
   /** `canEditPricing: false` (vendor staff) refuses any change to prices, the tax code or COD; unchanged values are fine. */
@@ -593,7 +599,7 @@ export class ProductsService {
     id: string,
     vendorId: string | null,
     data: UpdateProductRequest,
-    opts: { canEditPricing?: boolean } = {},
+    opts: { canEditPricing?: boolean; actorId?: string } = {},
   ) {
     await sequelize.transaction(async (t) => {
       const product = await productsRepository.findById(id, { transaction: t });
@@ -607,12 +613,14 @@ export class ProductsService {
       }
 
       const { secondaryCategoryIds, ...productFields } = data;
+      assertProductMediaUrls(productFields, product);
 
       if (productFields.categoryId) {
         await categoriesService.assertActiveCategory(productFields.categoryId, t);
       }
 
       const updateData: Record<string, unknown> = { ...productFields };
+      if (opts.actorId) updateData.updatedBy = opts.actorId;
 
       const nextBasePrice =
         productFields.basePrice != null ? Number(productFields.basePrice) : Number(product.basePrice);
@@ -705,15 +713,16 @@ export class ProductsService {
     });
   }
 
-  async submitForApproval(id: string, vendorId: string, actorId?: string) {
-    return submitProductForApproval(this, id, vendorId, actorId);
+  async submitForApproval(id: string, vendorId: string | null, actorId?: string, platformOwned = false) {
+    return submitProductForApproval(this, id, vendorId, actorId, undefined, platformOwned);
   }
 
   /**
    * `approverVendorId` is the approving user's own store, if any: nobody approves a product that
    * belongs to their own vendor (separation of duties for custom roles that hold product.approve).
    */
-  async approveProduct(id: string, adminId: string, approverVendorId?: string | null) {
+  async approveProduct(id: string, adminId: string, approverVendorId?: string | null, ownWorkReason?: string) {
+    let ownWork = false as boolean;
     await sequelize.transaction(async (t) => {
       const row = await productsRepository.findById(id, { transaction: t });
       if (!row) throw new NotFoundError('Product');
@@ -721,6 +730,7 @@ export class ProductsService {
       if (approverVendorId && row.vendorId === approverVendorId) {
         throw new ForbiddenError(ERROR_MESSAGES.PRODUCT_SELF_APPROVAL);
       }
+      ownWork = await assertApproverIndependent(row, adminId, ownWorkReason);
 
       if (row.status !== PRODUCT_STATUS.PENDING_APPROVAL) {
         throw new ValidationError(ERROR_MESSAGES.PRODUCT_NOT_PENDING_APPROVAL);
@@ -765,10 +775,10 @@ export class ProductsService {
 
     await logAudit({
       actorId: adminId,
-      action: 'PRODUCT_APPROVED',
+      action: ownWork ? 'PRODUCT_APPROVED_OWN_WORK' : 'PRODUCT_APPROVED',
       entityType: 'Product',
       entityId: id,
-      metadata: { name: product.name },
+      metadata: { name: product.name, ...(ownWork ? { reason: ownWorkReason } : {}) },
     });
 
     if (product.vendorId) {
@@ -966,6 +976,7 @@ export class ProductsService {
       const product = await productsRepository.findById(productId, { transaction: t });
       if (!product) throw new NotFoundError('Product');
 
+      await assertCanAddImage(productId, data.url, t);
       if (data.isPrimary) {
         await ProductImage.update({ isPrimary: false }, { where: { productId }, transaction: t });
       }
@@ -1004,6 +1015,7 @@ export class ProductsService {
       const image = await ProductImage.findByPk(imageId, { transaction: t });
       if (!image) throw new NotFoundError('ProductImage');
 
+      assertProductMediaUrl(data.url, 'images', 'url');
       const previous = image.url;
       if (data.isPrimary) {
         await ProductImage.update(

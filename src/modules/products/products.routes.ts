@@ -24,6 +24,9 @@ import {
   ReplaceImageSchema,
   TrackRecentlyViewedSchema,
   GstPreviewQuerySchema,
+  CreateProductOnBehalfSchema,
+  SubmitOnBehalfSchema,
+  ApproveProductSchema,
 } from './products.dto';
 
 const router = Router();
@@ -74,6 +77,23 @@ router.get('/:id/frequently-bought-together', productsController.getFrequentlyBo
 
 // Vendor product management
 router.post('/', authenticate, authorize(PERMISSIONS.PRODUCT_CREATE), validate(CreateProductSchema), productsController.createProduct);
+// Assisted listing: a platform admin lists a product for an approved vendor (needs both powers, so a
+// vendor owner, who lacks product.manage, cannot reach it) and submits it with the vendor's consent noted.
+router.post(
+  '/on-behalf',
+  authenticate,
+  authorize(PERMISSIONS.PRODUCT_MANAGE),
+  authorize(PERMISSIONS.PRODUCT_CREATE),
+  validate(CreateProductOnBehalfSchema),
+  productsController.createProductForVendor,
+);
+router.post(
+  '/:id/submit-on-behalf',
+  authenticate,
+  authorize(PERMISSIONS.PRODUCT_MANAGE),
+  validate(SubmitOnBehalfSchema),
+  productsController.submitForVendor,
+);
 // Vendor-self CSV bulk import
 router.post(
   '/bulk-import',
@@ -88,7 +108,7 @@ router.delete('/:id', authenticate, authorize(PERMISSIONS.PRODUCT_DELETE), check
 router.post('/:id/submit', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE), checkOwnership('product'), productsController.submitForApproval);
 
 // Admin product approval
-router.post('/:id/approve', authenticate, authorize(PERMISSIONS.PRODUCT_APPROVE), productsController.approveProduct);
+router.post('/:id/approve', authenticate, authorize(PERMISSIONS.PRODUCT_APPROVE), validate(ApproveProductSchema), productsController.approveProduct);
 router.post('/:id/reject', authenticate, authorize(PERMISSIONS.PRODUCT_APPROVE), validate(RejectProductSchema), productsController.rejectProduct);
 router.post('/:id/archive', authenticate, authorize(PERMISSIONS.PRODUCT_MANAGE), productsController.archiveProduct);
 router.post('/:id/unarchive', authenticate, authorize(PERMISSIONS.PRODUCT_MANAGE), productsController.unarchiveProduct);

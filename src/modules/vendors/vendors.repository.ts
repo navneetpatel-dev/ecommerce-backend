@@ -1,3 +1,4 @@
+import { escapeLikePattern } from '@modules/search/search.utils';
 import { BaseRepository } from '@core/repository/BaseRepository';
 import { Vendor } from '@database/models/vendor.model';
 import { Op } from 'sequelize';
@@ -15,6 +16,8 @@ export class VendorsRepository extends BaseRepository<Vendor> {
     search?: string;
     /** Exactly this vendor. */
     id?: string;
+    /** Picker mode: only id and name, sorted by name (stable with the id), so pages never repeat. */
+    light?: boolean;
     limit: number;
     offset: number;
   }) {
@@ -31,10 +34,12 @@ export class VendorsRepository extends BaseRepository<Vendor> {
       where.kycVerified = filters.kycVerified;
     }
 
+    // Wildcards typed by the user are literal characters, not patterns.
+    const like = filters.search ? escapeLikePattern(filters.search) : '';
     if (filters.search) {
       where[Op.or] = [
-        { businessName: { [Op.iLike]: `%${filters.search}%` } },
-        { slug: { [Op.iLike]: `%${filters.search}%` } },
+        { businessName: { [Op.iLike]: `%${like}%` } },
+        { slug: { [Op.iLike]: `%${like}%` } },
       ];
     }
 
@@ -42,7 +47,8 @@ export class VendorsRepository extends BaseRepository<Vendor> {
       where,
       limit: filters.limit,
       offset: filters.offset,
-      order: [['createdAt', 'DESC'], ['id', 'ASC']],
+      ...(filters.light ? { attributes: ['id', 'businessName'] } : {}),
+      order: filters.light ? [['businessName', 'ASC'], ['id', 'ASC']] : [['createdAt', 'DESC'], ['id', 'ASC']],
     });
   }
 

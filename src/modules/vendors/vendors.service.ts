@@ -237,6 +237,7 @@ export class VendorsService {
       status: VENDOR_STATUS.APPROVED,
       search: query.search,
       ...(query.id ? { id: query.id } : {}),
+      light: true,
       limit: query.limit,
       offset,
     });

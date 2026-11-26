@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { PRODUCT_STATUS_VALUES, WARRANTY_TYPE_VALUES } from '@core/constants/statuses';
 import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from '@core/constants/http';
-import { PRODUCT_FIELD_LIMITS } from '@core/constants/product';
+import { ADMIN_NOTE_LIMITS, PRODUCT_FIELD_LIMITS, VARIANT_LIMITS } from '@core/constants/product';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 
 const emptyToNull = (value: unknown) =>
@@ -65,6 +65,9 @@ function assertCompareAtPrice(data: { basePrice?: number; compareAtPrice?: numbe
   }
 }
 
+/** Why a platform admin is changing prices or tax details (kept in the audit trail and sent to the vendor). */
+const changeReasonField = z.string().trim().min(ADMIN_NOTE_LIMITS.MIN).max(ADMIN_NOTE_LIMITS.MAX).optional();
+
 export const CreateProductSchema = z
   .object({
     categoryId: z.string().uuid(),
@@ -72,8 +75,8 @@ export const CreateProductSchema = z
     secondaryCategoryIds: z.array(z.string().uuid()).max(20).default([]),
     name: z.string().trim().min(1).max(PRODUCT_FIELD_LIMITS.NAME_MAX),
     description: z.string().trim().min(1).max(PRODUCT_FIELD_LIMITS.DESCRIPTION_MAX),
-    basePrice: z.number().positive(),
-    compareAtPrice: z.number().positive().nullable().optional(),
+    basePrice: z.number().positive().max(PRODUCT_FIELD_LIMITS.PRICE_MAX),
+    compareAtPrice: z.number().positive().max(PRODUCT_FIELD_LIMITS.PRICE_MAX).nullable().optional(),
     brand: optionalNullableText(PRODUCT_FIELD_LIMITS.BRAND_MAX),
     tags: stringList(PRODUCT_FIELD_LIMITS.TAG_MAX, PRODUCT_FIELD_LIMITS.TAGS_MAX, true),
     highlights: stringList(PRODUCT_FIELD_LIMITS.HIGHLIGHT_MAX, PRODUCT_FIELD_LIMITS.HIGHLIGHTS_MAX, true),
@@ -97,8 +100,8 @@ export const UpdateProductSchema = z
     secondaryCategoryIds: z.array(z.string().uuid()).max(20).optional(),
     name: z.string().trim().min(1).max(PRODUCT_FIELD_LIMITS.NAME_MAX).optional(),
     description: z.string().trim().min(1).max(PRODUCT_FIELD_LIMITS.DESCRIPTION_MAX).optional(),
-    basePrice: z.number().positive().optional(),
-    compareAtPrice: z.number().positive().nullable().optional(),
+    basePrice: z.number().positive().max(PRODUCT_FIELD_LIMITS.PRICE_MAX).optional(),
+    compareAtPrice: z.number().positive().max(PRODUCT_FIELD_LIMITS.PRICE_MAX).nullable().optional(),
     brand: optionalNullableText(PRODUCT_FIELD_LIMITS.BRAND_MAX),
     tags: stringList(PRODUCT_FIELD_LIMITS.TAG_MAX, PRODUCT_FIELD_LIMITS.TAGS_MAX, false),
     highlights: stringList(PRODUCT_FIELD_LIMITS.HIGHLIGHT_MAX, PRODUCT_FIELD_LIMITS.HIGHLIGHTS_MAX, false),
@@ -113,6 +116,8 @@ export const UpdateProductSchema = z
     videoUrl: optionalNullableUrl(2048),
     sizeChartUrl: optionalNullableUrl(2048),
     codEnabled: z.boolean().nullable().optional(),
+    /** Required when a platform admin changes prices or tax details of a live product. */
+    changeReason: changeReasonField,
   })
   .superRefine(assertCompareAtPrice);
 
@@ -156,27 +161,46 @@ export const GstPreviewQuerySchema = z.object({
   price: z.coerce.number().min(0),
 });
 
-export const ApproveProductSchema = z.object({});
-
 export const RejectProductSchema = z.object({
   rejectionNote: z.string().min(1),
 });
 
+const variantAttributes = z
+  .record(
+    z.string().trim().min(1).max(VARIANT_LIMITS.ATTRIBUTE_KEY_MAX),
+    z.string().trim().min(1).max(VARIANT_LIMITS.ATTRIBUTE_VALUE_MAX),
+  )
+  .refine((value) => Object.keys(value).length <= VARIANT_LIMITS.ATTRIBUTES_MAX, {
+    message: `At most ${VARIANT_LIMITS.ATTRIBUTES_MAX} options per variant`,
+  });
+const variantSku = z
+  .string()
+  .trim()
+  .min(1)
+  .max(VARIANT_LIMITS.SKU_MAX)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._/-]*$/, 'SKU may contain letters, digits and . _ / - only');
+const variantPrice = z.number().positive().max(PRODUCT_FIELD_LIMITS.PRICE_MAX);
+const variantStock = z.number().int().nonnegative().max(VARIANT_LIMITS.STOCK_MAX);
+const variantLowStock = z.number().int().nonnegative().max(VARIANT_LIMITS.LOW_STOCK_MAX);
+const variantWeight = z.number().int().positive().max(VARIANT_LIMITS.WEIGHT_GRAMS_MAX);
+
 export const AddVariantSchema = z.object({
-  sku: z.string().min(1),
-  attributes: z.record(z.string(), z.string()).default({}),
-  price: z.number().positive(),
-  stock: z.number().int().nonnegative().default(0),
-  lowStockAt: z.number().int().nonnegative().default(5),
-  weightGrams: z.number().int().positive().optional(),
+  sku: variantSku,
+  attributes: variantAttributes.default({}),
+  price: variantPrice,
+  stock: variantStock.default(0),
+  lowStockAt: variantLowStock.default(5),
+  weightGrams: variantWeight.optional(),
+  changeReason: changeReasonField,
 });
 
 export const UpdateVariantSchema = z.object({
-  attributes: z.record(z.string(), z.string()).optional(),
-  price: z.number().positive().optional(),
-  stock: z.number().int().nonnegative().optional(),
-  lowStockAt: z.number().int().nonnegative().optional(),
-  weightGrams: z.number().int().positive().optional(),
+  attributes: variantAttributes.optional(),
+  price: variantPrice.optional(),
+  stock: variantStock.optional(),
+  lowStockAt: variantLowStock.optional(),
+  weightGrams: variantWeight.optional(),
+  changeReason: changeReasonField,
 });
 
 export const AddImageSchema = z.object({
@@ -210,3 +234,23 @@ export type AddVariantRequest = z.infer<typeof AddVariantSchema>;
 export type UpdateVariantRequest = z.infer<typeof UpdateVariantSchema>;
 export type AddImageRequest = z.infer<typeof AddImageSchema>;
 export type ReplaceImageRequest = z.infer<typeof ReplaceImageSchema>;
+
+/** An admin listing a product for a vendor: the vendor, then the same product fields a vendor sends. */
+/** `vendorId` may be left out only by a Super Admin, to create one of the platform's own products. */
+export const CreateProductOnBehalfSchema = z.object({
+  vendorId: z.string().uuid().optional(),
+  product: CreateProductSchema,
+});
+
+/** Approving: a Super Admin may approve their own work by saying why. */
+export const ApproveProductSchema = z.object({
+  ownWorkReason: z.string().trim().min(ADMIN_NOTE_LIMITS.MIN).max(ADMIN_NOTE_LIMITS.MAX).optional(),
+});
+
+/** How the vendor agreed to the platform submitting their listing (kept on the product and in the audit trail). */
+export const SubmitOnBehalfSchema = z.object({
+  consentNote: z.string().trim().min(ADMIN_NOTE_LIMITS.MIN).max(ADMIN_NOTE_LIMITS.MAX),
+});
+
+export type CreateProductOnBehalfRequest = z.infer<typeof CreateProductOnBehalfSchema>;
+export type SubmitOnBehalfRequest = z.infer<typeof SubmitOnBehalfSchema>;

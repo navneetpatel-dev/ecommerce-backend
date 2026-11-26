@@ -340,6 +340,39 @@ export class NotificationsService {
     });
   }
 
+  /** A draft the platform created for the vendor. */
+  sendProductListedByPlatform(userId: string, productId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({
+      userId,
+      type: 'PRODUCT_LISTED_BY_PLATFORM',
+      referenceType: 'Product',
+      referenceId: productId,
+      templateData,
+    });
+  }
+
+  /** The platform changed the vendor's listing. `changeId` makes each audited change its own email. */
+  sendProductUpdatedByPlatform(userId: string, changeId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({
+      userId,
+      type: 'PRODUCT_UPDATED_BY_PLATFORM',
+      referenceType: 'Product',
+      referenceId: `${changeId}:${userId}`,
+      templateData,
+    });
+  }
+
+  /** The platform submitted the vendor's listing for review, with the recorded consent. */
+  sendProductSubmittedByPlatform(userId: string, productId: string, templateData: EmailTemplateData = {}) {
+    return this.enqueue({
+      userId,
+      type: 'PRODUCT_SUBMITTED_BY_PLATFORM',
+      referenceType: 'Product',
+      referenceId: productId,
+      templateData,
+    });
+  }
+
   sendProductRejected(userId: string, productId: string, templateData: EmailTemplateData = {}) {
     return this.enqueue({
       userId,

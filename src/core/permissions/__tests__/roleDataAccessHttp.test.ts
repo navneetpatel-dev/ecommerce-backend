@@ -358,3 +358,95 @@ describe('the Reports hub: each role finds its own reports and none of another r
     }
   });
 });
+
+describe('assisted listing over HTTP (nothing here writes: every call is refused before the database changes)', () => {
+  let live: { id: string; vendorId: string } | undefined;
+  let pending: { id: string } | undefined;
+
+  before(async () => {
+    [live] = await q<{ id: string; vendorId: string }>(`SELECT id, "vendorId" FROM products WHERE status = 'LIVE' AND "vendorId" IS NOT NULL AND "deletedAt" IS NULL LIMIT 1`);
+    [pending] = await q<{ id: string }>(`SELECT id FROM vendors WHERE status <> 'APPROVED' AND "deletedAt" IS NULL LIMIT 1`);
+  });
+
+  async function send(method: string, path: string, role: string, body: unknown) {
+    const res = await fetch(`${base}${path}`, {
+      method,
+      headers: { Authorization: `Bearer ${tokens[role]}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const parsed = (await res.json().catch(() => ({}))) as { message?: string };
+    return { status: res.status, message: parsed.message ?? '' };
+  }
+
+  const draft = { name: `ZZ never created ${stamp}`, categoryId: randomUUID(), basePrice: 100 };
+
+  it('only product admins reach the on-behalf endpoints: Order and Finance managers and customers get 403', async () => {
+    for (const role of [ROLES.ADMIN_ORDER_MANAGER, ROLES.ADMIN_FINANCE_MANAGER, ROLES.CUSTOMER]) {
+      assert.equal((await send('POST', '/api/products/on-behalf', role, { vendorId: randomUUID(), product: draft })).status, 403, role);
+      assert.equal((await send('POST', `/api/products/${randomUUID()}/submit-on-behalf`, role, { consentNote: 'Vendor agreed by phone' })).status, 403, role);
+    }
+  });
+
+  it('the vendor must be approved: an unknown or not-approved vendor is refused with 422 and nothing is created', async () => {
+    for (const vendorId of [randomUUID(), pending?.id].filter(Boolean) as string[]) {
+      for (const role of [ROLES.ADMIN_CATALOG_MANAGER, ROLES.SUPER_ADMIN]) {
+        assert.equal((await send('POST', '/api/products/on-behalf', role, { vendorId, product: draft })).status, 422, `${role} ${vendorId}`);
+      }
+    }
+    const [{ count }] = await q<{ count: string }>(`SELECT COUNT(*) AS count FROM products WHERE name = :name`, { name: draft.name });
+    assert.equal(count, '0');
+  });
+
+  it('the consent note is required (10 to 500 characters)', async () => {
+    for (const consentNote of [undefined, '', 'short']) {
+      assert.equal((await send('POST', `/api/products/${randomUUID()}/submit-on-behalf`, ROLES.ADMIN_CATALOG_MANAGER, { consentNote })).status, 422, String(consentNote));
+    }
+  });
+
+  it('repricing a live vendor product: the Catalog Manager gets 403; Super Admin needs a reason (422)', async (t) => {
+    if (!live) return t.skip('no live vendor product in the development database');
+    const price = { basePrice: 1 };
+    assert.equal((await send('PATCH', `/api/products/${live.id}`, ROLES.ADMIN_CATALOG_MANAGER, price)).status, 403);
+    assert.equal((await send('PATCH', `/api/products/${live.id}`, ROLES.SUPER_ADMIN, price)).status, 422);
+    assert.equal((await send('PATCH', `/api/products/${live.id}`, ROLES.SUPER_ADMIN, { ...price, changeReason: 'short' })).status, 422);
+    const variant = { sku: `ZZ-${stamp}`, price: 1 };
+    assert.equal((await send('POST', `/api/products/${live.id}/variants`, ROLES.ADMIN_CATALOG_MANAGER, variant)).status, 403, 'adding a variant is a pricing change');
+    assert.equal((await send('POST', `/api/products/${live.id}/variants`, ROLES.SUPER_ADMIN, variant)).status, 422);
+  });
+
+  it('shoppers never see the internal fields, on the list or the detail page', async (t) => {
+    if (!live) return t.skip('no live vendor product in the development database');
+    const internal = ['createdBy', 'updatedBy', 'deletedBy', 'approvedById', 'rejectionNote', 'listedByPlatform', 'vendorConsentNote'];
+    const list = await call('/api/products?limit=5');
+    assert.equal(list.status, 200);
+    for (const product of list.data) for (const field of internal) assert.equal(field in product, false, `list: ${field}`);
+    const detail = await call(`/api/products/${live.id}`);
+    assert.equal(detail.status, 200);
+    for (const field of internal) assert.equal(field in detail.data, false, `detail: ${field}`);
+    // The team's own view keeps them (moderation needs who approved and why it was rejected).
+    const own = await call(`/api/products/${live.id}`, ROLES.ADMIN_CATALOG_MANAGER);
+    assert.equal('listedByPlatform' in own.data, true);
+  });
+
+  it('only a Super Admin may create or approve in the special ways: no vendor, or approving one’s own work', async () => {
+    const productBody = { name: `ZZ never created ${stamp}`, categoryId: randomUUID(), description: 'd', basePrice: 10 };
+    // A vendor-less (platform) product: a Catalog Manager is refused before anything is written.
+    assert.equal((await send('POST', '/api/products/on-behalf', ROLES.ADMIN_CATALOG_MANAGER, { product: productBody })).status, 403);
+    // The own-work reason is validated (10 to 500 characters) before the product is even looked up.
+    assert.equal((await send('POST', `/api/products/${randomUUID()}/approve`, ROLES.SUPER_ADMIN, { ownWorkReason: 'short' })).status, 422);
+    // Publishing a vendor-less product goes through /submit: a Catalog Manager has no store, so it is refused.
+    assert.ok([403, 404].includes((await send('POST', `/api/products/${randomUUID()}/submit`, ROLES.ADMIN_CATALOG_MANAGER, {})).status));
+  });
+
+  it('the vendor picker pages: no vendor repeats across pages, only id and name, wildcards are literal', async () => {
+    const first = await call('/api/vendors/directory?limit=2&page=1', ROLES.SUPER_ADMIN);
+    const second = await call('/api/vendors/directory?limit=2&page=2', ROLES.SUPER_ADMIN);
+    assert.equal(first.status, 200);
+    for (const row of [...first.data, ...second.data]) assert.deepEqual(Object.keys(row).sort(), ['businessName', 'id']);
+    const ids = [...first.data, ...second.data].map((row: { id: string }) => row.id);
+    assert.equal(new Set(ids).size, ids.length, 'no vendor on two pages');
+    const wildcard = await call('/api/vendors/directory?limit=5&search=%25', ROLES.SUPER_ADMIN);
+    assert.equal(wildcard.status, 200);
+    for (const row of wildcard.data) assert.ok(row.businessName.includes('%'), 'a typed % matches only a literal %');
+  });
+});

@@ -30,7 +30,7 @@ const PERMISSION_KEYS = [
   'suborder.manage', 'payout.view', 'review.respond',
   'ticket.manage', 'bug_report.manage', 'wallet.adjust', 'gift_card.manage',
   'role.manage', 'user.impersonate', 'team.manage', 'cashback.manage', 'webvitals.view',
-  'analytics.revenue', 'coupon.unlimited',
+  'analytics.revenue', 'coupon.unlimited', 'product.pricing',
 ];
 
 const ROLE_PERMISSIONS = {

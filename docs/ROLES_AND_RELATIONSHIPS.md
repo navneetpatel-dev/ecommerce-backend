@@ -258,9 +258,10 @@ This document explains the real-life relationship and roles in this multi-vendor
 
 ## 📋 Role Permissions Summary
 
-### **SUPER_ADMIN (35 permissions)**
+### **SUPER_ADMIN (36 permissions)**
 
 - ALL permissions (full control)
+- `product.pricing` is held by no other built-in role: it is what lets an admin change prices, MRP, HSN code, COD or variants of a live vendor product (with a written reason). Without it, admins can still list and edit a vendor's product content, and price platform-listed drafts that are not yet published.
 
 ### **ADMIN_ORDER_MANAGER (6 permissions)**
 

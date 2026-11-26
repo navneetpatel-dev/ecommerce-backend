@@ -23,6 +23,8 @@ export const PERMISSIONS = {
   PRODUCT_CREATE: 'product.create',
   PRODUCT_UPDATE: 'product.update',
   PRODUCT_DELETE: 'product.delete',
+  /** Change prices, MRP, tax code, COD or variants on a live product or one the platform did not list. SUPER_ADMIN only by default. */
+  PRODUCT_PRICING: 'product.pricing',
   SUBORDER_MANAGE: 'suborder.manage',
   PAYOUT_VIEW: 'payout.view',
   REVIEW_RESPOND: 'review.respond',

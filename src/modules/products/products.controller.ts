@@ -5,9 +5,20 @@ import { ValidationError } from '@core/errors/ValidationError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { BULK_IMPORT_LIMITS } from '@core/constants/product';
+import { ROLES } from '@core/constants/statuses';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { userHasPermission } from '@middleware/rbac.middleware';
 import { productsService } from './products.service';
+import type { ProductActor } from './productChangePolicy';
+import { createProductOnBehalf, submitProductOnBehalf } from './productOnBehalf.service';
+import {
+  addImageAs,
+  addVariantAs,
+  changeImageAs,
+  productIdOfImage,
+  updateProductAs,
+  updateVariantAs,
+} from './productAdminChanges';
 import { isCatalogModerator, listsUnpublished } from './productVisibility';
 import { parseProductsCsv } from './products.csv';
 import {
@@ -21,6 +32,9 @@ import {
   ReplaceImageSchema,
   TrackRecentlyViewedSchema,
   GstPreviewQuerySchema,
+  CreateProductOnBehalfSchema,
+  SubmitOnBehalfSchema,
+  ApproveProductSchema,
 } from './products.dto';
 
 /** The GST rate and GST-inclusive price customers see for a pre-GST price (vendor form). */
@@ -29,15 +43,37 @@ export const getGstPreview = asyncHandler(async (req: Request, res: Response) =>
   res.json(ok(await productsService.gstPreview(query.categoryId, query.price)));
 });
 
-/** Prices, tax codes and variants belong to the store owner (product.create) and platform product admins (product.manage), not vendor staff. */
-function canEditPricing(req: Request): Promise<boolean> {
-  return userHasPermission(req.user, PERMISSIONS.PRODUCT_CREATE, PERMISSIONS.PRODUCT_MANAGE);
+/**
+ * Prices, tax codes and variants belong to the store owner (product.create). A platform product admin
+ * (product.manage) may change them only as `productChangePolicy` allows; vendor staff never.
+ */
+async function productActor(req: Request): Promise<ProductActor> {
+  const [canManage, canCreate, canPrice] = await Promise.all([
+    userHasPermission(req.user, PERMISSIONS.PRODUCT_MANAGE),
+    userHasPermission(req.user, PERMISSIONS.PRODUCT_CREATE),
+    userHasPermission(req.user, PERMISSIONS.PRODUCT_PRICING),
+  ]);
+  return { id: req.user!.id, vendorId: req.user!.vendorId ?? null, canManage, canCreate, canPrice };
 }
+
+const isSuperAdmin = (req: Request) => req.user?.role.name === ROLES.SUPER_ADMIN;
 
 export const createProduct = asyncHandler(async (req: Request, res: Response) => {
   const dto = CreateProductSchema.parse(req.body);
-  const product = await productsService.createProduct(req.user!.vendorId, dto);
+  const product = await productsService.createProduct(req.user!.vendorId, dto, { actorId: req.user!.id });
   res.status(201).json(ok(product));
+});
+
+/** A platform admin lists a product for an approved vendor (a draft the vendor can edit and submit). */
+export const createProductForVendor = asyncHandler(async (req: Request, res: Response) => {
+  const dto = CreateProductOnBehalfSchema.parse(req.body);
+  res.status(201).json(ok(await createProductOnBehalf(req.user!.id, dto, isSuperAdmin(req))));
+});
+
+/** A platform admin submits a product it listed, recording the vendor's agreement. */
+export const submitForVendor = asyncHandler(async (req: Request, res: Response) => {
+  const dto = SubmitOnBehalfSchema.parse(req.body);
+  res.json(ok(await submitProductOnBehalf(req.user!.id, req.params.id!, dto.consentNote)));
 });
 
 export const bulkImportProducts = asyncHandler(async (req: Request, res: Response) => {
@@ -136,10 +172,7 @@ export const getProductBySlug = asyncHandler(async (req: Request, res: Response)
 
 export const updateProduct = asyncHandler(async (req: Request, res: Response) => {
   const dto = UpdateProductSchema.parse(req.body);
-  const product = await productsService.updateProduct(req.params.id!, req.user!.vendorId, dto, {
-    canEditPricing: await canEditPricing(req),
-  });
-  res.json(ok(product));
+  res.json(ok(await updateProductAs(await productActor(req), req.params.id!, dto)));
 });
 
 export const deleteProduct = asyncHandler(async (req: Request, res: Response) => {
@@ -148,12 +181,21 @@ export const deleteProduct = asyncHandler(async (req: Request, res: Response) =>
 });
 
 export const submitForApproval = asyncHandler(async (req: Request, res: Response) => {
-  const product = await productsService.submitForApproval(req.params.id!, req.user!.vendorId!, req.user!.id);
+  // The platform's own products have no vendor: a Super Admin publishes them directly.
+  const platformOwned = !req.user!.vendorId && isSuperAdmin(req);
+  const product = await productsService.submitForApproval(req.params.id!, req.user!.vendorId ?? null, req.user!.id, platformOwned);
   res.json(ok(product));
 });
 
 export const approveProduct = asyncHandler(async (req: Request, res: Response) => {
-  const product = await productsService.approveProduct(req.params.id!, req.user!.id, req.user!.vendorId);
+  const { ownWorkReason } = ApproveProductSchema.parse(req.body ?? {});
+  // Only a Super Admin may approve their own work (with a reason); for anyone else the reason is ignored.
+  const product = await productsService.approveProduct(
+    req.params.id!,
+    req.user!.id,
+    req.user!.vendorId,
+    isSuperAdmin(req) ? ownWorkReason : undefined,
+  );
   res.json(ok(product));
 });
 
@@ -176,14 +218,12 @@ export const unarchiveProduct = asyncHandler(async (req: Request, res: Response)
 // variants
 export const addVariant = asyncHandler(async (req: Request, res: Response) => {
   const dto = AddVariantSchema.parse(req.body);
-  const variant = await productsService.addVariant(req.params.id!, dto, { canEditPricing: await canEditPricing(req) });
-  res.status(201).json(ok(variant));
+  res.status(201).json(ok(await addVariantAs(await productActor(req), req.params.id!, dto)));
 });
 
 export const updateVariant = asyncHandler(async (req: Request, res: Response) => {
   const dto = UpdateVariantSchema.parse(req.body);
-  const variant = await productsService.updateVariant(req.params.variantId!, dto, { canEditPricing: await canEditPricing(req) });
-  res.json(ok(variant));
+  res.json(ok(await updateVariantAs(await productActor(req), req.params.variantId!, dto)));
 });
 
 export const deleteVariant = asyncHandler(async (req: Request, res: Response) => {
@@ -194,22 +234,24 @@ export const deleteVariant = asyncHandler(async (req: Request, res: Response) =>
 // Images
 export const addImage = asyncHandler(async (req: Request, res: Response) => {
   const dto = AddImageSchema.parse(req.body);
-  const image = await productsService.addImage(req.params.id!, dto);
-  res.status(201).json(ok(image));
+  res.status(201).json(ok(await addImageAs(await productActor(req), req.params.id!, dto)));
 });
 
 export const deleteImage = asyncHandler(async (req: Request, res: Response) => {
-  await productsService.deleteImage(req.params.imageId!);
+  const imageId = req.params.imageId!;
+  await changeImageAs(await productActor(req), await productIdOfImage(imageId), 'images', () => productsService.deleteImage(imageId));
   res.status(204).send();
 });
 
 export const replaceImage = asyncHandler(async (req: Request, res: Response) => {
   const dto = ReplaceImageSchema.parse(req.body);
-  const image = await productsService.replaceImage(req.params.imageId!, dto);
+  const imageId = req.params.imageId!;
+  const image = await changeImageAs(await productActor(req), await productIdOfImage(imageId), 'images', () => productsService.replaceImage(imageId, dto));
   res.json(ok(image));
 });
 
 export const setPrimaryImage = asyncHandler(async (req: Request, res: Response) => {
-  const image = await productsService.setPrimaryImage(req.params.imageId!);
+  const imageId = req.params.imageId!;
+  const image = await changeImageAs(await productActor(req), await productIdOfImage(imageId), 'primary image', () => productsService.setPrimaryImage(imageId));
   res.json(ok(image));
 });

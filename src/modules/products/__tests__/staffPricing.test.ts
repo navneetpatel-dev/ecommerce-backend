@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { afterEach, describe, it, mock } from 'node:test';
 import { randomUUID } from 'node:crypto';
 import type { Request, Response } from 'express';
+import { AuditLog } from '@database/models/auditLog.model';
 import { ProductVariant } from '@database/models/productVariant.model';
+import { User } from '@database/models/user.model';
 import { clearPermissionCache, setPermissionCache } from '@middleware/rbac.middleware';
 import { ROLE_PERMISSIONS } from '@core/permissions/permissionKeys';
 import { ROLES } from '@core/constants/statuses';
@@ -117,30 +119,52 @@ describe('variants for vendor staff', () => {
   });
 });
 
-describe('the product controller grants pricing rights to exactly owners and platform product admins', () => {
+describe('the product controller applies the pricing policy to who is asking', () => {
   afterEach(() => {
     mock.restoreAll();
     clearPermissionCache();
   });
 
-  async function pricingRightsFor(role: string, permissions: string[]) {
+  /** What happens when this role sends a price change for a live product of vendor v1: the status code, or 200 when it reached the write. */
+  async function priceChangeOutcome(role: string, permissions: string[], body: Record<string, unknown> = { basePrice: 80 }) {
     setPermissionCache(`role-${role}`, permissions);
+    mock.method(productsRepository, 'findById', async () => ({ id: 'p1', name: 'Lamp', vendorId: 'v1', status: 'LIVE', listedByPlatform: false, basePrice: '100.00', get: () => ({}) }) as never);
     const update = mock.method(productsService, 'updateProduct', (async () => ({ id: 'p1' })) as never);
+    mock.method(AuditLog, 'create', async () => ({ id: 'audit-1' }) as never);
+    mock.method(User, 'findAll', async () => [] as never);
     const req = {
       params: { id: 'p1' },
-      body: { name: 'x' },
+      body,
       user: { id: 'u1', roleId: `role-${role}`, role: { name: role }, vendorId: role.startsWith('VENDOR') ? 'v1' : null },
     } as unknown as Request;
     const res = { json: () => res } as unknown as Response;
-    await new Promise<void>((resolve, reject) => {
-      void productsController.updateProduct(req, res, (err?: unknown) => (err ? reject(err) : resolve()));
-      setTimeout(resolve, 50);
+    const status = await new Promise<number>((resolve) => {
+      void productsController.updateProduct(req, res, (err?: unknown) => resolve((err as { statusCode?: number })?.statusCode ?? 500));
+      setTimeout(() => resolve(200), 100);
     });
-    return (update.mock.calls[0]!.arguments[3] as { canEditPricing: boolean }).canEditPricing;
+    return { status, wrote: update.mock.callCount() === 1 };
   }
 
-  it('vendor owner: yes', async () => assert.equal(await pricingRightsFor(ROLES.VENDOR_OWNER, [...ROLE_PERMISSIONS[ROLES.VENDOR_OWNER]!]), true));
-  it('vendor staff: no', async () => assert.equal(await pricingRightsFor(ROLES.VENDOR_STAFF, [...ROLE_PERMISSIONS[ROLES.VENDOR_STAFF]!]), false));
-  it('Catalog Manager (product.manage): yes', async () => assert.equal(await pricingRightsFor(ROLES.ADMIN_CATALOG_MANAGER, [...ROLE_PERMISSIONS[ROLES.ADMIN_CATALOG_MANAGER]!]), true));
-  it('Super Admin: yes', async () => assert.equal(await pricingRightsFor(ROLES.SUPER_ADMIN, [...ROLE_PERMISSIONS[ROLES.SUPER_ADMIN]!]), true));
+  const perms = (role: string) => [...ROLE_PERMISSIONS[role]!];
+
+  it('vendor owner: may reprice their own product', async () => assert.deepEqual(await priceChangeOutcome(ROLES.VENDOR_OWNER, perms(ROLES.VENDOR_OWNER)), { status: 200, wrote: true }));
+  it('vendor staff: may not', async () => assert.deepEqual(await priceChangeOutcome(ROLES.VENDOR_STAFF, perms(ROLES.VENDOR_STAFF)), { status: 403, wrote: false }));
+  it('Catalog Manager: may not reprice a vendor’s live product', async () => assert.deepEqual(await priceChangeOutcome(ROLES.ADMIN_CATALOG_MANAGER, perms(ROLES.ADMIN_CATALOG_MANAGER)), { status: 403, wrote: false }));
+  it('Super Admin: needs a written reason, then may', async () => {
+    assert.deepEqual(await priceChangeOutcome(ROLES.SUPER_ADMIN, perms(ROLES.SUPER_ADMIN)), { status: 422, wrote: false });
+    assert.deepEqual(
+      await priceChangeOutcome(ROLES.SUPER_ADMIN, perms(ROLES.SUPER_ADMIN), { basePrice: 80, changeReason: 'Vendor asked us to fix the price' }),
+      { status: 200, wrote: true },
+    );
+  });
+  it('a custom role with product.manage and product.pricing may, with a reason; product.pricing alone may not', async () => {
+    const reason = { basePrice: 80, changeReason: 'Vendor asked us to fix the price' };
+    assert.deepEqual(await priceChangeOutcome('PRICING_DESK', ['product.manage', 'product.pricing'], reason), { status: 200, wrote: true });
+    assert.deepEqual(await priceChangeOutcome('PRICING_ONLY', ['product.pricing'], reason), { status: 403, wrote: false });
+  });
+  it('non-pricing edits stay open to everyone who could edit before', async () => {
+    for (const role of [ROLES.VENDOR_OWNER, ROLES.VENDOR_STAFF, ROLES.ADMIN_CATALOG_MANAGER, ROLES.SUPER_ADMIN]) {
+      assert.deepEqual(await priceChangeOutcome(role, perms(role), { name: 'x' }), { status: 200, wrote: true }, role);
+    }
+  });
 });

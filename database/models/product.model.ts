@@ -30,6 +30,10 @@ export class Product extends Model<InferAttributes<Product>, InferCreationAttrib
   declare status: ProductStatus;
   declare approvedById: string | null;
   declare rejectionNote: string | null;
+  /** Created by the platform on the vendor's behalf (assisted listing). */
+  declare listedByPlatform: CreationOptional<boolean>;
+  /** How the vendor agreed to a platform submission (recorded when an admin submits on their behalf). */
+  declare vendorConsentNote: string | null;
   declare tags: CreationOptional<string[]>;
   declare avgRating: CreationOptional<number>;
   declare createdBy: string | null;
@@ -110,6 +114,8 @@ export const initProductModel = (sequelize: Sequelize) => {
       },
       approvedById: { type: DataTypes.UUID, allowNull: true },
       rejectionNote: { type: DataTypes.TEXT, allowNull: true },
+      listedByPlatform: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+      vendorConsentNote: { type: DataTypes.TEXT, allowNull: true },
       tags: { type: DataTypes.ARRAY(DataTypes.STRING), defaultValue: [] },
       avgRating: { type: DataTypes.DECIMAL(3, 2), defaultValue: 0 },
       createdBy: { type: DataTypes.UUID, allowNull: true },

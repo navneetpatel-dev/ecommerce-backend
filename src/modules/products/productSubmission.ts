@@ -18,25 +18,39 @@ import { productsRepository } from './products.repository';
  * A vendor submits a draft: it must be complete (a variant, an image, KYC-approved
  * categories), then it waits in the moderation queue, or goes live at once when the
  * platform's "auto-approve products" setting is on.
+ *
+ * `onBehalf` is the platform submitting a draft it listed for the vendor: the vendor's consent is recorded,
+ * a rejected draft may go again, and the auto-approve switch never applies (a different admin approves).
+ * `platformOwned` is a Super Admin publishing the platform's own product (no vendor): it goes live at once.
  */
 export async function submitProductForApproval(
   service: { getProductById(id: string): Promise<{ id: string; name: string }> },
   id: string,
-  vendorId: string,
+  vendorId: string | null,
   actorId?: string,
+  onBehalf?: { consentNote: string },
+  platformOwned = false,
 ) {
   // The platform's "auto-approve products" switch: a submission that passed every check
   // above goes straight live instead of waiting in the moderation queue.
-  const autoApprove = (await settingsService.getPlatformSettings()).autoApproveProducts === true;
+  const autoApprove =
+    platformOwned || (!onBehalf && (await settingsService.getPlatformSettings()).autoApproveProducts === true);
+  let ownerVendorId = vendorId;
   await sequelize.transaction(async (t) => {
     const product = await productsRepository.findById(id, { transaction: t });
     if (!product) throw new NotFoundError('Product');
 
-    if (product.vendorId !== vendorId) {
+    if (platformOwned) {
+      if (product.vendorId) throw new ForbiddenError(ERROR_MESSAGES.PRODUCT_NOT_PLATFORM_OWNED);
+    } else if (onBehalf) {
+      if (!product.listedByPlatform || !product.vendorId) throw new ForbiddenError(ERROR_MESSAGES.PRODUCT_NOT_PLATFORM_LISTED);
+      ownerVendorId = product.vendorId;
+    } else if (product.vendorId !== vendorId) {
       throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_PRODUCT);
     }
 
-    if (product.status !== PRODUCT_STATUS.DRAFT) {
+    const resubmittable = onBehalf && product.status === PRODUCT_STATUS.REJECTED;
+    if (product.status !== PRODUCT_STATUS.DRAFT && !resubmittable) {
       throw new ValidationError(ERROR_MESSAGES.PRODUCT_NOT_DRAFT);
     }
 
@@ -59,13 +73,16 @@ export async function submitProductForApproval(
       product.categoryId,
       ...secondary.map((row) => row.categoryId),
     ].filter(Boolean);
-    await vendorsService.assertCategoriesKycSatisfied(vendorId, categoryIds);
+    if (ownerVendorId) await vendorsService.assertCategoriesKycSatisfied(ownerVendorId, categoryIds);
 
     await productsRepository.update(
       id,
       autoApprove
-        ? { status: PRODUCT_STATUS.LIVE, approvedById: null, rejectionNote: null }
-        : { status: PRODUCT_STATUS.PENDING_APPROVAL },
+        ? { status: PRODUCT_STATUS.LIVE, approvedById: platformOwned ? (actorId ?? null) : null, rejectionNote: null }
+        : {
+            status: PRODUCT_STATUS.PENDING_APPROVAL,
+            ...(onBehalf && { vendorConsentNote: onBehalf.consentNote, rejectionNote: null, ...(actorId && { updatedBy: actorId }) }),
+          },
       { transaction: t },
     );
   });
@@ -78,10 +95,10 @@ export async function submitProductForApproval(
         action: 'PRODUCT_AUTO_APPROVED',
         entityType: 'Product',
         entityId: id,
-        metadata: { name: submitted.name },
+        metadata: { name: submitted.name, ...(platformOwned && { platformOwned: true }) },
       });
     }
-    void User.findAll({ where: { vendorId }, attributes: ['id'] })
+    if (ownerVendorId) void User.findAll({ where: { vendorId: ownerVendorId }, attributes: ['id'] })
       .then((vendorUsers) => {
         for (const vendorUser of vendorUsers) {
           void notificationsService.sendProductApproved(vendorUser.id, submitted.id, {

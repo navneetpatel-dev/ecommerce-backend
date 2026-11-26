@@ -404,3 +404,39 @@ describe('20261126000007-finance-role-and-revenue-permissions (real SQL, rolled 
     });
   });
 });
+
+describe('20261127000001-product-platform-listing (real SQL, rolled back)', () => {
+  const migration = load('20261127000001-product-platform-listing.js');
+  const columns = (tx: Transaction) =>
+    sequelize.query<{ column_name: string; is_nullable: string; column_default: string | null }>(
+      `SELECT column_name, is_nullable, column_default FROM information_schema.columns
+       WHERE table_name = 'products' AND column_name IN ('listedByPlatform', 'vendorConsentNote') ORDER BY column_name`,
+      { transaction: tx, type: QueryTypes.SELECT },
+    );
+
+  it('adds the two columns (not-null false default / nullable text) and product.pricing for SUPER_ADMIN only; idempotent; down reverses it', async (t) => {
+    if (!dbUp) return t.skip('database not reachable');
+    await inRolledBackTransaction(async (tx, qi) => {
+      for (const name of ['SUPER_ADMIN', 'ADMIN_CATALOG_MANAGER']) await ensureRole(tx, name);
+      await sequelize.query(`ALTER TABLE products DROP COLUMN IF EXISTS "listedByPlatform"`, { transaction: tx });
+      await sequelize.query(`ALTER TABLE products DROP COLUMN IF EXISTS "vendorConsentNote"`, { transaction: tx });
+      await sequelize.query(`DELETE FROM "RolePermissions" WHERE "permissionId" IN (SELECT id FROM permissions WHERE key = 'product.pricing')`, { transaction: tx });
+      await sequelize.query(`DELETE FROM permissions WHERE key = 'product.pricing'`, { transaction: tx });
+
+      await migration.up(qi);
+      await migration.up(qi); // idempotent
+      const [listed, consent] = await columns(tx);
+      assert.equal(listed!.column_name, 'listedByPlatform');
+      assert.equal(listed!.is_nullable, 'NO');
+      assert.match(String(listed!.column_default), /false/);
+      assert.equal(consent!.column_name, 'vendorConsentNote');
+      assert.equal(consent!.is_nullable, 'YES');
+      assert.equal(await countPermission(tx, 'product.pricing'), 1);
+      assert.deepEqual(await rolesHolding(tx, 'product.pricing'), ['SUPER_ADMIN']);
+
+      await migration.down(qi);
+      assert.equal((await columns(tx)).length, 0);
+      assert.equal(await countPermission(tx, 'product.pricing'), 0);
+    });
+  });
+});

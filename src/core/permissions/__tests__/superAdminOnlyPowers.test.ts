@@ -20,6 +20,7 @@ const SUPER_ADMIN_ONLY = [
   PERMISSIONS.AUDIT_VIEW,
   PERMISSIONS.USER_IMPERSONATE,
   PERMISSIONS.ROLE_MANAGE,
+  PERMISSIONS.PRODUCT_PRICING,
 ] as const;
 
 /** Money powers: the Super Admin and the Finance Manager, and no operations manager. */
@@ -179,6 +180,53 @@ describe('deleting products and variants', () => {
     const catalog = permsOf(ROLES.ADMIN_CATALOG_MANAGER);
     for (const [method, path] of [['patch', '/:id'], ['post', '/:id/archive'], ['post', '/:id/unarchive'], ['post', '/:id/approve'], ['post', '/:id/reject']] as const) {
       assert.equal(await guardOf(router, method, path, ROLES.ADMIN_CATALOG_MANAGER, catalog), undefined, `${method} ${path}`);
+    }
+  });
+});
+
+describe('assisted listing (admin lists and edits products for a vendor)', () => {
+  let router: Router;
+  before(async () => {
+    router = (await import('@modules/products/products.routes')).default;
+  });
+
+  it('product.pricing is Super Admin only; the Catalog Manager can create, edit, submit and approve but not reprice live products', () => {
+    assert.equal(PERMISSIONS.PRODUCT_PRICING, 'product.pricing');
+    assert.ok(!permsOf(ROLES.ADMIN_CATALOG_MANAGER).includes(PERMISSIONS.PRODUCT_PRICING));
+  });
+
+  /** The route stacks two `authorize` guards (after `authenticate`); both must pass. */
+  async function bothGuards(role: string, permissions: string[]): Promise<unknown> {
+    const layer = (router as unknown as { stack: Layer[] }).stack.find((l) => l.route?.path === '/on-behalf' && l.route.methods.post)!;
+    setPermissionCache(`role-${role}`, permissions);
+    const req = { user: { id: 'u1', roleId: `role-${role}`, role: { name: role }, vendorId: null } } as unknown as Request;
+    for (const index of [1, 2]) {
+      let outcome: unknown;
+      await layer.route!.stack[index]!.handle(req, {} as Response, ((err?: unknown) => {
+        outcome = err;
+      }) as NextFunction);
+      if (outcome) return outcome;
+    }
+    return undefined;
+  }
+
+  it('POST /products/on-behalf needs product.manage AND product.create', async () => {
+    for (const role of [ROLES.SUPER_ADMIN, ROLES.ADMIN_CATALOG_MANAGER]) {
+      assert.equal(await bothGuards(role, permsOf(role)), undefined, role);
+    }
+    for (const role of [ROLES.ADMIN_ORDER_MANAGER, ROLES.ADMIN_FINANCE_MANAGER, ROLES.VENDOR_OWNER, ROLES.VENDOR_STAFF, ROLES.CUSTOMER]) {
+      assert.ok(forbidden(await bothGuards(role, permsOf(role))), role);
+    }
+    assert.ok(forbidden(await bothGuards('ONLY_MANAGE', ['product.manage'])), 'manage alone');
+    assert.ok(forbidden(await bothGuards('ONLY_CREATE', ['product.create'])), 'create alone');
+  });
+
+  it('POST /products/:id/submit-on-behalf is for product.manage only (a vendor owner submits their own product instead)', async () => {
+    for (const role of [ROLES.SUPER_ADMIN, ROLES.ADMIN_CATALOG_MANAGER]) {
+      assert.equal(await guardOf(router, 'post', '/:id/submit-on-behalf', role, permsOf(role)), undefined, role);
+    }
+    for (const role of [ROLES.ADMIN_ORDER_MANAGER, ROLES.ADMIN_FINANCE_MANAGER, ROLES.VENDOR_OWNER, ROLES.VENDOR_STAFF, ROLES.CUSTOMER]) {
+      assert.ok(forbidden(await guardOf(router, 'post', '/:id/submit-on-behalf', role, permsOf(role))), role);
     }
   });
 });

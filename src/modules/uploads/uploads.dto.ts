@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { ERROR_MESSAGES } from '@core/constants/errors';
+import { MAX_PRODUCT_IMAGES } from '@core/constants/product';
 import {
   MAX_BULK_UPLOAD_FILES,
   S3_ENTITY_TYPE_VALUES,
@@ -46,13 +48,20 @@ export const PresignSingleSchema = z.object({
   contentLength: z.number().int().positive(),
 });
 
-export const PresignBulkSchema = z.object({
-  entityType: z.enum(S3_ENTITY_TYPE_VALUES),
-  /** Every uploadable entity has a UUID id; drafts use crypto.randomUUID() on the client. */
-  entityId: z.string().uuid(),
-  purpose: z.enum(S3_PURPOSE_VALUES),
-  files: z.array(PresignFileSchema).min(1).max(MAX_BULK_UPLOAD_FILES),
-});
+export const PresignBulkSchema = z
+  .object({
+    entityType: z.enum(S3_ENTITY_TYPE_VALUES),
+    /** Every uploadable entity has a UUID id; drafts use crypto.randomUUID() on the client. */
+    entityId: z.string().uuid(),
+    purpose: z.enum(S3_PURPOSE_VALUES),
+    files: z.array(PresignFileSchema).min(1).max(MAX_BULK_UPLOAD_FILES),
+  })
+  .superRefine((data, ctx) => {
+    // One request never asks for more product photos than a product may carry.
+    if (data.entityType === 'products' && data.purpose === 'images' && data.files.length > MAX_PRODUCT_IMAGES) {
+      ctx.addIssue({ code: 'custom', path: ['files'], message: ERROR_MESSAGES.PRODUCT_IMAGES_LIMIT });
+    }
+  });
 
 /** A direct-to-S3 upload to check after the client's PUT: the `key` presign returned. */
 export const VerifyUploadSchema = z.object({

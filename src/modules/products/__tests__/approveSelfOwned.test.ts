@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { afterEach, describe, it, mock } from 'node:test';
+import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { randomUUID } from 'node:crypto';
+import { AuditLog } from '@database/models/auditLog.model';
 import { productsRepository } from '../products.repository';
 import { productsService } from '../products.service';
 
@@ -8,6 +9,8 @@ const pending = (vendorId: string | null) =>
   ({ id: 'p1', status: 'PENDING_APPROVAL', vendorId, categoryId: null }) as never;
 
 describe('approving a product', () => {
+  // The independence check reads the audit trail; these products have no platform history.
+  beforeEach(() => mock.method(AuditLog, 'count', async () => 0));
   afterEach(() => mock.restoreAll());
 
   it('is refused when the approver belongs to the product’s own store', async () => {
