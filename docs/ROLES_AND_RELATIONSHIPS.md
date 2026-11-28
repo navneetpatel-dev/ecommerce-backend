@@ -1,6 +1,6 @@
 # Roles and relationships
 
-The marketplace has three roles. The full lifecycle of each is in `ROLE_LIFECYCLES.md` at the project root.
+The marketplace has three roles. The full lifecycle of each is in [ROLE_LIFECYCLES.md](ROLE_LIFECYCLES.md).
 
 | Role | Who it is | What they do |
 |---|---|---|
