@@ -75,12 +75,11 @@ export const ERROR_MESSAGES = {
   PRODUCT_BULK_IMPORT_TOO_MANY_ROWS: `CSV file has too many rows (maximum ${BULK_IMPORT_LIMITS.MAX_ROWS})`,
   CATEGORY_NAME_EXISTS: 'Category name already exists',
   CATEGORY_HAS_SUBCATEGORIES: 'Cannot delete category with subcategories',
-  CATEGORY_HAS_PRODUCTS: 'Cannot delete category while products still use it, deleted ones included. Reassign its products first',
+  CATEGORY_HAS_PRODUCTS: 'Cannot delete a category that products use, deleted products included. Archive it instead',
   CATEGORY_NAME_TAKEN_HERE: 'A category with this name already exists under the same parent',
   CATEGORY_INVALID_PARENT: 'Category cannot be its own parent or descendant',
   CATEGORY_MAX_DEPTH: 'Categories support at most 3 levels (Department → Category → Subcategory)',
   CATEGORY_INACTIVE: 'Category must be active to assign products',
-  CATEGORY_REASSIGN_SAME: 'Source and target categories must be different',
   CATEGORY_ATTRIBUTE_EXISTS: 'An attribute with this name already exists on the category',
   CATEGORY_SECONDARY_INVALID: 'Secondary categories must be active and different from the primary category',
   ITEMS_UNAVAILABLE: 'Some items in your cart are no longer available',
@@ -193,8 +192,6 @@ export const ERROR_MESSAGES = {
   CATEGORY_MOVE_ANCHOR_INVALID: 'The category to place it before or after must be one of the categories under the same parent',
   CATEGORY_ARCHIVE_NEEDS_CASCADE: 'This category has active subcategories. Archive them too, or archive them first',
   ITEM_ABOVE_MRP: 'This option is not on sale right now',
-  CATEGORY_REASSIGN_KYC_BLOCKED:
-    'Nothing was moved: these vendors lack verified documents for the new category',
   CATEGORY_PARENT_ARCHIVED:
     'A category above this one is archived. Reactivate it first, or choose an active parent',
   CATEGORY_REORDER_MIXED_PARENTS: 'Only categories under the same parent can be reordered together',

@@ -152,7 +152,7 @@ export type CategoryImpact = {
   childCount: number;
   activeChildCount: number;
   productCount: number;
-  /** Deleted products still filed here: they block deleting it until reassigned. */
+  /** Deleted products still filed here: they block deleting it. */
   deletedProductCount: number;
   /** Products that list it as a secondary category, and would lose that tag if it were deleted. */
   secondaryCount: number;

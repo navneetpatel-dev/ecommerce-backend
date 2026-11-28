@@ -8,25 +8,23 @@ import { Category } from '@database/models/category.model';
 import { userHasPermission } from '@middleware/rbac.middleware';
 import { assertRateChangeAllowed, recordRateChange } from './categoryChangeGate';
 import { categoryRateImpact, type CategoryChange } from './categoryRateImpact';
-import { reassignBlockers } from './categoryReassign';
 import { newlyAboveMrp } from '@modules/tax/mrpImpact';
 import { RateImpactQuerySchema } from './categories.dto';
 
 const canPrice = (req: Request) => userHasPermission(req.user, PERMISSIONS.PRODUCT_PRICING);
 
 /**
- * Checks a move or reassignment before it runs. Call `record` after it succeeds: it audits and
+ * Checks a move or commission change before it runs. Call `record` after it succeeds: it audits and
  * tells the vendors whose rates changed.
  */
 export async function guardRateChange(req: Request, change: CategoryChange, changeReason: unknown) {
   const impact = await categoryRateImpact(change);
   const reason = assertRateChangeAllowed({ id: req.user!.id, canPrice: await canPrice(req) }, impact, changeReason);
-  const categoryId = change.kind === 'reassign' ? change.toCategoryId : change.categoryId;
   const changes = change.kind === 'edit' ? "commission, because their category's rate was changed" : undefined;
   return {
     impact,
     record: async () => {
-      if (reason) await recordRateChange(req.user!.id, categoryId, impact, reason, changes);
+      if (reason) await recordRateChange(req.user!.id, change.categoryId, impact, reason, changes);
     },
   };
 }
@@ -59,38 +57,29 @@ export async function guardCategoryEdit(
   return parentId === undefined ? null : guardRateChange(req, { kind: 'reparent', categoryId, parentId }, changeReason);
 }
 
-/** What a move or reassignment would charge differently, shown before the admin confirms. */
+/** What a move or commission change would charge differently, shown before the admin confirms. */
 export const getRateImpact = asyncHandler(async (req: Request, res: Response) => {
   const query = RateImpactQuerySchema.parse(req.query);
   const change: CategoryChange =
-    query.kind === 'reassign'
-      ? { kind: 'reassign', fromCategoryId: query.fromCategoryId, toCategoryId: query.toCategoryId }
-      : query.kind === 'reparent'
-        ? { kind: 'reparent', categoryId: query.categoryId, parentId: query.parentId ?? null }
-        : {
-            kind: 'edit',
-            categoryId: query.categoryId,
-            commissionRate: query.commissionRate ?? null,
-            parentId: query.parentId === 'none' ? null : query.parentId,
-          };
-  const impact = await categoryRateImpact(change);
-  // Vendors without the documents for the target stop a reassignment altogether.
-  const blockedVendors =
-    change.kind === 'reassign' ? await reassignBlockers(change.fromCategoryId, change.toCategoryId) : [];
-  // Listings the new category's GST would put above their MRP stop selling.
-  const aboveMrp = await newlyAboveMrp(
-    change.kind === 'reassign'
-      ? { targetOf: (id) => (id === change.fromCategoryId ? change.toCategoryId : id) }
+    query.kind === 'reparent'
+      ? { kind: 'reparent', categoryId: query.categoryId, parentId: query.parentId ?? null }
       : {
-          after: ({ rules, categories }) => ({
-            rules,
-            categories: categories.map((node) =>
-              node.id === change.categoryId && change.parentId !== undefined ? { ...node, parentId: change.parentId } : node,
-            ),
-          }),
-        },
-  );
+          kind: 'edit',
+          categoryId: query.categoryId,
+          commissionRate: query.commissionRate ?? null,
+          parentId: query.parentId === 'none' ? null : query.parentId,
+        };
+  const impact = await categoryRateImpact(change);
+  // Listings the new parent's GST would put above their MRP stop selling.
+  const aboveMrp = await newlyAboveMrp({
+    after: ({ rules, categories }) => ({
+      rules,
+      categories: categories.map((node) =>
+        node.id === change.categoryId && change.parentId !== undefined ? { ...node, parentId: change.parentId } : node,
+      ),
+    }),
+  });
   // A commission edit needs the pricing power even when no product is affected yet.
   const needsPricing = change.kind === 'edit' || impact.productCount > 0;
-  res.json(ok({ ...impact, blockedVendors, aboveMrp, canApply: !needsPricing || (await canPrice(req)) }));
+  res.json(ok({ ...impact, aboveMrp, canApply: !needsPricing || (await canPrice(req)) }));
 });

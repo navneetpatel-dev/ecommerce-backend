@@ -6,7 +6,6 @@ import { logAudit } from '@modules/audit/audit.service';
 import { getCategoryImpact, listCategoriesForAdmin } from './categoryAdmin';
 import { moveCategory } from './categoryMove';
 import { assertMaySetCommission, guardCategoryEdit, guardRateChange } from './categoryChange.controller';
-import { reassignProducts as reassignProductsBetween } from './categoryReassign';
 import { listCategoriesForPicker } from './categoryPicker';
 import {
   AdminCategoriesQuerySchema,
@@ -15,7 +14,6 @@ import {
   CreateCategoryAttributeSchema,
   CreateCategorySchema,
   GetCategoriesPaginatedQuerySchema,
-  ReassignProductsSchema,
   ReorderAttributesSchema,
   ReorderCategoriesSchema,
   UpdateCategoryAttributeSchema,
@@ -139,16 +137,6 @@ export const reorderCategories = asyncHandler(async (req: Request, res: Response
   const dto = ReorderCategoriesSchema.parse(req.body);
   const result = await categoriesService.reorderCategories(dto.orderedIds);
   await auditCategory(req, 'CATEGORIES_REORDERED', dto.orderedIds[0]!, { orderedIds: dto.orderedIds });
-  res.json(ok(result));
-});
-
-export const reassignProducts = asyncHandler(async (req: Request, res: Response) => {
-  const { changeReason, ...dto } = ReassignProductsSchema.parse(req.body);
-  const gate = await guardRateChange(req, { kind: 'reassign', ...dto }, changeReason);
-  const result = await reassignProductsBetween(dto.fromCategoryId, dto.toCategoryId);
-  await gate.record();
-  await auditCategory(req, 'CATEGORY_PRODUCTS_REASSIGNED', dto.fromCategoryId, { ...dto, updatedCount: result.updatedCount });
-  refreshDisplayPricesAfterCategoryChange('products reassigned');
   res.json(ok(result));
 });
 

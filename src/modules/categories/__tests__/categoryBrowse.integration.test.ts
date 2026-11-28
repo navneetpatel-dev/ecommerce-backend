@@ -59,18 +59,17 @@ describe('finding products by category', { skip: SKIP_ON_DEV_DB }, () => {
     assert.deepEqual(saved.data.attributes, { Colour: 'Red', Note: 'x' }, saved.text);
   });
 
-  it('refuses to delete a category holding deleted products until they are moved (M10)', async () => {
-    const from = await world.category();
-    const to = await world.category();
-    const product = await world.draftProduct(world.a, { categoryId: from.id });
+  it('refuses to delete a category holding deleted products, which can still be archived (M10)', async () => {
+    const category = await world.category();
+    const product = await world.draftProduct(world.a, { categoryId: category.id });
     await world.call('DELETE', `/products/${product.id}`, world.a.owner);
 
-    const refused = await world.call('DELETE', `/categories/${from.id}`, world.admin);
+    const refused = await world.call('DELETE', `/categories/${category.id}`, world.admin);
     assert.equal(refused.status, 422, refused.text);
-    const impact = await world.call('GET', `/categories/admin/${from.id}/impact`, world.admin);
+    const impact = await world.call('GET', `/categories/admin/${category.id}/impact`, world.admin);
     assert.equal(impact.data.deletedProductCount, 1, impact.text);
-    world.expectStatus(await world.call('POST', '/categories/reassign-products', world.admin, { fromCategoryId: from.id, toCategoryId: to.id }), 200, 'move');
-    assert.equal((await world.call('DELETE', `/categories/${from.id}`, world.admin)).status, 204);
+    const archived = await world.call('PATCH', `/categories/${category.id}`, world.admin, { status: 'ARCHIVED' });
+    assert.equal(archived.status, 200, archived.text);
   });
 
   it('says how many products use a category as a secondary tag (E7)', async () => {

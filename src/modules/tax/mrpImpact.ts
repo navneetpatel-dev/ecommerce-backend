@@ -36,20 +36,18 @@ async function loadCatalog() {
 
 /**
  * The options of live and pending listings that a change would put above their MRP: `after`
- * gives the rules and tree as they would be, `targetOf` where a product's category would move.
+ * gives the rules and tree as they would be.
  */
 export async function newlyAboveMrp(change: {
   after?: (current: { rules: Rules; categories: Tree }) => { rules: Rules; categories: Tree };
-  targetOf?: (categoryId: string) => string;
 }): Promise<MrpImpact> {
   const current = await loadCatalog();
   const next = change.after?.(current) ?? current;
   const [before, after] = [ruleMap(current.rules, current.categories), ruleMap(next.rules, next.categories)];
-  const target = change.targetOf ?? ((id: string) => id);
   // Only categories whose rate would differ need their products looked at.
   const changed = current.categories
     .map((category) => category.id)
-    .filter((id) => JSON.stringify(before.get(id)) !== JSON.stringify(after.get(target(id))));
+    .filter((id) => JSON.stringify(before.get(id)) !== JSON.stringify(after.get(id)));
   if (changed.length === 0) return { productCount: 0, variantCount: 0, vendorCount: 0 };
 
   const products = (await Product.findAll({
@@ -65,7 +63,7 @@ export async function newlyAboveMrp(change: {
   const impact = { productCount: 0, variantCount: 0 };
   const vendors = new Set<string>();
   for (const product of products) {
-    const [was, willBe] = [before.get(product.categoryId)!, after.get(target(product.categoryId))!];
+    const [was, willBe] = [before.get(product.categoryId)!, after.get(product.categoryId)!];
     const blocked = (product.variants ?? []).filter(
       (variant) =>
         !isAboveMrp(was, variant.price, product.compareAtPrice) && isAboveMrp(willBe, variant.price, product.compareAtPrice),

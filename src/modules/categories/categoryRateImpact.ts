@@ -7,16 +7,14 @@ import { Vendor } from '@database/models/vendor.model';
 import { settingsService } from '@modules/settings/settings.service';
 import { resolveCategoryRules } from '@modules/tax/taxRuleResolution';
 
-/** A change to where products or categories sit, which can change what is charged on them. */
+/** A change to a category, which can change what is charged on the products under it. */
 export type CategoryChange =
-  | { kind: 'reassign'; fromCategoryId: string; toCategoryId: string }
   | { kind: 'reparent'; categoryId: string; parentId: string | null }
   /** A new commission rate on one category; `parentId` is set when the same edit also moves it. */
   | { kind: 'edit'; categoryId: string; commissionRate: number | null; parentId?: string | null };
 
-/** The tree as it will be once `change` is applied (a reassignment leaves the tree alone). */
+/** The tree as it will be once `change` is applied. */
 function treeAfterChange(categories: Node[], change: CategoryChange): Node[] {
-  if (change.kind === 'reassign') return categories;
   const patch = {
     ...(change.parentId !== undefined && { parentId: change.parentId }),
     ...(change.kind === 'edit' && { commissionRate: change.commissionRate }),
@@ -71,11 +69,11 @@ export function compareCategoryRates(input: {
   const vendors = new Map<string, { vendorId: string; businessName: string; products: number }>();
   const result = { productCount: 0, gstChanged: 0, commissionChanged: 0 };
   for (const product of products) {
-    const target = change.kind === 'reassign' ? change.toCategoryId : product.categoryId;
-    const gst = gstBefore.get(product.categoryId) !== gstAfter.get(target);
+    const { categoryId } = product;
+    const gst = gstBefore.get(categoryId) !== gstAfter.get(categoryId);
     const commission =
-      commissionFor(treeBefore!, product.categoryId, product.vendorRate, defaultCommission) !==
-      commissionFor(treeAfter!, target, product.vendorRate, defaultCommission);
+      commissionFor(treeBefore!, categoryId, product.vendorRate, defaultCommission) !==
+      commissionFor(treeAfter!, categoryId, product.vendorRate, defaultCommission);
     if (!gst && !commission) continue;
     result.productCount += 1;
     if (gst) result.gstChanged += 1;
@@ -106,7 +104,7 @@ export async function categoryRateImpact(change: CategoryChange, transaction?: T
     TaxRule.findAll({ order: [['createdAt', 'ASC'], ['gstPercentage', 'ASC'], ['id', 'ASC']], transaction }),
     settingsService.getPlatformSettings(),
   ]);
-  const sources = change.kind === 'reassign' ? [change.fromCategoryId] : subtree(categories, change.categoryId);
+  const sources = subtree(categories, change.categoryId);
   const rows = await Product.findAll({
     where: {
       categoryId: { [Op.in]: sources },

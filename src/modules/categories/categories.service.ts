@@ -358,7 +358,7 @@ export class CategoriesService {
         throw new ValidationError(ERROR_MESSAGES.CATEGORY_HAS_SUBCATEGORIES);
       }
 
-      // Deleted products still point at their category, so they count: reassigning moves them too.
+      // Deleted products still point at their category, so they count too.
       const productCount = await categoriesRepository.countProducts(id);
       if (productCount > 0) {
         throw new ValidationError(ERROR_MESSAGES.CATEGORY_HAS_PRODUCTS);

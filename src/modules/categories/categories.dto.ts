@@ -50,9 +50,8 @@ const optionalWarrantyType = z.preprocess(
 /** Why GST or commission on vendor products is being changed by a move (see `categoryChangeGate`). */
 const changeReason = z.string().trim().min(ADMIN_NOTE_LIMITS.MIN).max(ADMIN_NOTE_LIMITS.MAX).optional();
 
-/** The move or reassignment whose effect on rates is being asked about. */
+/** The move or commission change whose effect on rates is being asked about. */
 export const RateImpactQuerySchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('reassign'), fromCategoryId: z.string().uuid(), toCategoryId: z.string().uuid() }),
   z.object({ kind: z.literal('reparent'), categoryId: z.string().uuid(), parentId: z.string().uuid().optional() }),
   z.object({
     kind: z.literal('edit'),
@@ -147,12 +146,6 @@ export const MoveCategorySchema = z
 
 export const ReorderCategoriesSchema = z.object({
   orderedIds: z.array(z.string().uuid()).min(1),
-});
-
-export const ReassignProductsSchema = z.object({
-  fromCategoryId: z.string().uuid(),
-  toCategoryId: z.string().uuid(),
-  changeReason,
 });
 
 export const CreateCategoryAttributeSchema = z.object({

@@ -11,7 +11,6 @@ import {
   MoveCategorySchema,
   CreateCategoryAttributeSchema,
   CreateCategorySchema,
-  ReassignProductsSchema,
   ReorderAttributesSchema,
   ReorderCategoriesSchema,
   UpdateCategoryAttributeSchema,
@@ -37,7 +36,7 @@ router.get(
   validate(CategoryPickerQuerySchema, 'query'),
   categoriesController.getCategoryPicker,
 );
-// What a move or reassignment would change in GST and commission (before `/:id`).
+// What a move or commission change would alter in GST and commission (before `/:id`).
 router.get('/rate-impact', authenticate, authorize(PERMISSIONS.CATEGORY_MANAGE), getRateImpact);
 // Admin category screens: every status, a page of the tree at a time (before `/:id`).
 router.get('/admin', authenticate, authorize(PERMISSIONS.CATEGORY_MANAGE), validate(AdminCategoriesQuerySchema, 'query'), categoriesController.getAdminCategories);
@@ -54,14 +53,6 @@ router.patch(
   validate(ReorderCategoriesSchema),
   categoriesController.reorderCategories,
 );
-router.post(
-  '/reassign-products',
-  authenticate,
-  authorize(PERMISSIONS.CATEGORY_MANAGE),
-  validate(ReassignProductsSchema),
-  categoriesController.reassignProducts,
-);
-
 router.get(
   '/:categoryId/attributes',
   authenticate,
