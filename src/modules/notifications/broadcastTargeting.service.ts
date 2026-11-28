@@ -9,6 +9,7 @@ import { Vendor } from '@database/models/vendor.model';
 import { VendorCategory } from '@database/models/vendorCategory.model';
 import type { BroadcastChannel, BroadcastClassification } from '@database/models/adminBroadcast.model';
 import type { BroadcastTargetConfig, ResolvedRecipient, UserActivityFilter } from './broadcastTargeting.types';
+import { hasBroadcastTarget } from './broadcastTarget';
 
 export type { BroadcastTargetConfig, ResolvedRecipient, UserActivityFilter } from './broadcastTargeting.types';
 
@@ -66,6 +67,7 @@ async function buildUserQueryParts(config: BroadcastTargetConfig): Promise<Query
   const roles = config.roles?.length ? config.roles : config.role ? [config.role] : [];
   const where: Record<string | symbol, unknown> = {};
   const excludeIds = [...new Set(config.excludeUserIds ?? [])];
+  if (!hasBroadcastTarget(config)) return { empty: true, where, roleWhere: {}, vendorWhere: {}, requireVendor: false };
 
   if (config.userSegment?.status && config.userSegment.status !== 'ALL') {
     where.status = config.userSegment.status;

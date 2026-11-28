@@ -1,6 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { interpolateBroadcastText } from '../broadcastTargeting.service';
+import { sequelize } from '@database/models';
+import { interpolateBroadcastText, previewBroadcastTargetsQuery, resolveBroadcastBatch } from '../broadcastTargeting.service';
+import type { BroadcastTargetConfig } from '../broadcastTargeting.types';
 import { BroadcastNotificationSchema } from '../notifications.dto';
 
 describe('broadcastTargeting & DTO', () => {
@@ -45,5 +47,49 @@ describe('broadcastTargeting & DTO', () => {
       message: 'Body',
     });
     assert.equal(invalid.success, false);
+  });
+});
+
+describe('a targeting that names nobody', () => {
+  const nobody: BroadcastTargetConfig[] = [
+    {},
+    { mode: 'users' },
+    { mode: 'users', userIds: [], emails: [] },
+    { mode: 'roles', allUsers: false, roles: [] },
+    { mode: 'roles', excludeRoles: ['VENDOR_OWNER'] },
+  ];
+
+  it('previews and sends to no one instead of every account', async (t) => {
+    try {
+      await sequelize.authenticate();
+    } catch {
+      return t.skip('database unavailable');
+    }
+    for (const config of nobody) {
+      const preview = await previewBroadcastTargetsQuery(config);
+      assert.equal(preview.total, 0, JSON.stringify(config));
+      assert.deepEqual(preview.sampleRecipients, []);
+      assert.deepEqual(await resolveBroadcastBatch(config), [], JSON.stringify(config));
+    }
+  });
+
+  it('still reaches the people a targeting does name', async (t) => {
+    try {
+      await sequelize.authenticate();
+    } catch {
+      return t.skip('database unavailable');
+    }
+    const everyone = await previewBroadcastTargetsQuery({ mode: 'roles', allUsers: true });
+    if (everyone.total === 0) return t.skip('no accounts in this database');
+    const [first] = everyone.sampleRecipients;
+    const one = await previewBroadcastTargetsQuery({ mode: 'users', userIds: [first!.id] });
+    assert.equal(one.total, 1);
+  });
+
+  it('is refused when sending', () => {
+    for (const config of nobody) {
+      const parsed = BroadcastNotificationSchema.safeParse({ ...config, subject: 'Hello', message: 'Body' });
+      assert.equal(parsed.success, false, JSON.stringify(config));
+    }
   });
 });

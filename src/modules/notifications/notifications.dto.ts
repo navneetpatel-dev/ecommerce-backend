@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ROLE_VALUES } from '@core/constants/statuses';
+import { hasBroadcastTarget } from './broadcastTarget';
 
 export const ListNotificationLogsQuerySchema = z.object({
   search: z.string().trim().optional(),
@@ -68,20 +69,10 @@ export const BroadcastNotificationSchema = BroadcastTargetConfigSchema.extend({
   priority: z.enum(['standard', 'high']).optional(),
   channels: z.array(z.enum(['EMAIL', 'PUSH', 'IN_APP'])).min(1).max(3).optional(),
   scheduledAt: z.string().datetime().nullable().optional(),
-}).refine(
-  (d) =>
-    Boolean(d.allUsers) ||
-    Boolean(d.role) ||
-    Boolean(d.roles?.length) ||
-    Boolean(d.userIds?.length) ||
-    Boolean(d.emails?.length) ||
-    d.mode === 'user_segment' ||
-    d.mode === 'vendor_segment',
-  {
-    message: 'Select a role, specific users, or segment to target.',
-    path: ['role'],
-  },
-);
+}).refine(hasBroadcastTarget, {
+  message: 'Select a role, specific users, or segment to target.',
+  path: ['role'],
+});
 export type BroadcastNotificationRequest = z.infer<typeof BroadcastNotificationSchema>;
 
 export const BroadcastPreviewSchema = z.object({
