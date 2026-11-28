@@ -150,6 +150,10 @@ describe('env: no other mail service can be selected or configured (fresh proces
   it('ignores leftover MAIL_DRIVER / SES_* / EMAIL_TRANSPORT variables: they have no effect', () => {
     const r = runWith(
       {
+        // Optional settings only appear when set, and CI has no .env to set them.
+        SMTP_HOST: 'smtp.example.org',
+        SMTP_USER: 'mailer',
+        SMTP_PASS: 'not-a-real-password',
         MAIL_DRIVER: 'ses',
         EMAIL_TRANSPORT: 'ses',
         SES_CONFIGURATION_SET: 'cfg',
