@@ -5,6 +5,8 @@ import { categoriesService } from './categories.service';
 import { logAudit } from '@modules/audit/audit.service';
 import { getCategoryImpact, listCategoriesForAdmin } from './categoryAdmin';
 import { moveCategory } from './categoryMove';
+import { guardRateChange } from './categoryChange.controller';
+import { reassignProducts as reassignProductsBetween } from './categoryReassign';
 import { listCategoriesForPicker } from './categoryPicker';
 import {
   AdminCategoriesQuerySchema,
@@ -82,8 +84,12 @@ export const getCategoryImpactHandler = asyncHandler(async (req: Request, res: R
 });
 
 export const moveCategoryHandler = asyncHandler(async (req: Request, res: Response) => {
-  const dto = MoveCategorySchema.parse(req.body);
+  const { changeReason, ...dto } = MoveCategorySchema.parse(req.body);
+  const gate = dto.parentId === undefined
+    ? null
+    : await guardRateChange(req, { kind: 'reparent', categoryId: req.params.id!, parentId: dto.parentId }, changeReason);
   const result = await moveCategory(req.params.id!, dto);
+  await gate?.record();
   await auditCategory(req, 'CATEGORY_MOVED', req.params.id!, { parentId: result.parentId, reparented: result.reparented, ...dto });
   if (result.reparented) refreshDisplayPricesAfterCategoryChange('category moved');
   res.json(ok(result));
@@ -116,8 +122,12 @@ function refreshDisplayPricesAfterCategoryChange(trigger: string): void {
 }
 
 export const updateCategory = asyncHandler(async (req: Request, res: Response) => {
-  const dto = UpdateCategorySchema.parse(req.body);
+  const { changeReason, ...dto } = UpdateCategorySchema.parse(req.body);
+  const gate = dto.parentId === undefined
+    ? null
+    : await guardRateChange(req, { kind: 'reparent', categoryId: req.params.id!, parentId: dto.parentId }, changeReason);
   const category = await categoriesService.updateCategory(req.params.id!, dto);
+  await gate?.record();
   // A moved category can fall under another ancestor's tax rule.
   if (dto.parentId !== undefined) refreshDisplayPricesAfterCategoryChange('category moved');
   const { status, cascade, regenerateSlug: _regenerate, ...rest } = dto;
@@ -134,8 +144,10 @@ export const reorderCategories = asyncHandler(async (req: Request, res: Response
 });
 
 export const reassignProducts = asyncHandler(async (req: Request, res: Response) => {
-  const dto = ReassignProductsSchema.parse(req.body);
-  const result = await categoriesService.reassignProducts(dto.fromCategoryId, dto.toCategoryId);
+  const { changeReason, ...dto } = ReassignProductsSchema.parse(req.body);
+  const gate = await guardRateChange(req, { kind: 'reassign', ...dto }, changeReason);
+  const result = await reassignProductsBetween(dto.fromCategoryId, dto.toCategoryId);
+  await gate.record();
   await auditCategory(req, 'CATEGORY_PRODUCTS_REASSIGNED', dto.fromCategoryId, { ...dto, updatedCount: result.updatedCount });
   refreshDisplayPricesAfterCategoryChange('products reassigned');
   res.json(ok(result));

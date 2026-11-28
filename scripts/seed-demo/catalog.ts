@@ -13,7 +13,11 @@ import type { Accounts, VendorRow } from './accounts';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { buildGalleryUrls, resolveGalleryKey } = require('../../database/seeders/lib/product-gallery-images');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { refreshProductDisplayPrices } = require('../../database/seeders/lib/product-display-price');
+const {
+  refreshProductDisplayPrices,
+  alignMrpWithGstPrices,
+  refreshAboveMrpFlags,
+} = require('../../database/seeders/lib/product-display-price');
 
 export const PRODUCTS_PER_VENDOR = scaled(110, 12);
 const MAIN_ROOTS = ['electronics', 'fashion', 'home', 'sports', 'beauty', 'books', 'toys', 'food', 'automotive', 'jewelry'];
@@ -205,9 +209,13 @@ export async function seedCatalog(accounts: Accounts): Promise<Catalog> {
   await seedAttributesAndTax(leaves, now);
   await seedVendorCategories(accounts.vendors, leaves);
   await seedProducts(accounts, leaves);
-  await refreshProductDisplayPrices({ sequelize: (await import('../../database/models')).sequelize });
-  // A product's MRP is never below its GST-inclusive price.
-  await exec(`UPDATE products SET "compareAtPrice" = NULL WHERE "compareAtPrice" IS NOT NULL AND "compareAtPrice" <= "displayPrice"`);
+  const database = { sequelize: (await import('../../database/models')).sequelize };
+  await refreshProductDisplayPrices(database);
+  // The MRP includes GST: it must cover the dearest variant, and shows a discount or nothing.
+  await alignMrpWithGstPrices(database);
+  await exec(`UPDATE products SET "compareAtPrice" = NULL WHERE "compareAtPrice" IS NOT NULL AND "compareAtPrice" <= "displayPrice"
+    AND NOT EXISTS (SELECT 1 FROM product_variants v WHERE v."productId" = products.id AND v.price > products."basePrice")`);
+  await refreshAboveMrpFlags(database);
 
   // Orders, carts and wishlists use only even-priced variants of live products (see header).
   const rows = await select<SellableVariant & { price: string }>(

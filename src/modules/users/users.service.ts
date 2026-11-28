@@ -665,7 +665,7 @@ export class UsersService {
     data: UpdateUserStatusRequest,
     actor?: { id: string; role?: { name: string } },
   ) {
-    return sequelize.transaction(async (t: Transaction) => {
+    await sequelize.transaction(async (t: Transaction) => {
       if (actor?.id === userId) {
         throw new ForbiddenError('Cannot change your own account status — ask another administrator');
       }
@@ -704,8 +704,8 @@ export class UsersService {
         });
       }
 
-      return this.getUserById(userId);
     });
+    return this.getUserById(userId);
   }
 
   async updateUserRole(
@@ -713,7 +713,7 @@ export class UsersService {
     data: UpdateUserRoleRequest,
     actor: { id: string; role: { name: string } },
   ) {
-    return sequelize.transaction(async (t: Transaction) => {
+    await sequelize.transaction(async (t: Transaction) => {
       if (actor.id === userId) {
         throw new ForbiddenError('Cannot change your own role — ask another administrator');
       }
@@ -776,8 +776,8 @@ export class UsersService {
         transaction: t,
       });
 
-      return this.getUserById(userId);
     });
+    return this.getUserById(userId);
   }
 
   async deleteUser(userId: string, actor?: { id: string; role?: { name: string } }) {

@@ -3,7 +3,8 @@ import { ValidationError } from '@core/errors/ValidationError';
 import { wishlistRepository } from './wishlist.repository';
 import { WishlistItem } from '@database/models/wishlistItem.model';
 import { Product } from '@database/models/product.model';
-import { Vendor } from '@database/models/vendor.model';
+import { PURCHASABLE_PRODUCT_INCLUDE } from '@core/catalog/purchasableInclude';
+import { markProductAboveMrp } from '@modules/tax/markAboveMrp';
 import { CartItem } from '@database/models/cartItem.model';
 import { Cart } from '@database/models/cart.model';
 import { sequelize } from '@database/models';
@@ -80,9 +81,12 @@ export class WishlistService {
       include: [{
         model: Product,
         as: 'product',
-        include: ['images', 'variants', { model: Vendor, as: 'vendor' }],
+        include: ['images', 'variants', ...PURCHASABLE_PRODUCT_INCLUDE],
       }],
     });
+
+    // Whether every option of a saved product is above its MRP, by the tax rule as it is now.
+    for (const item of items) await markProductAboveMrp((item as WishlistItem & { product?: Product }).product);
 
     const ruleFor = gstRuleResolver();
     return {
@@ -114,7 +118,7 @@ export class WishlistService {
   async addToWishlist(userId: string, productId: string) {
     return sequelize.transaction(async (t) => {
       const product = await Product.findByPk(productId, {
-        include: [{ model: Vendor, as: 'vendor' }],
+        include: PURCHASABLE_PRODUCT_INCLUDE,
         transaction: t,
       });
       if (!product) throw new NotFoundError('Product');

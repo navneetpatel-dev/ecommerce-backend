@@ -6,9 +6,11 @@ import {
   CreateTaxRuleSchema,
   DeleteTaxRuleQuerySchema,
   EffectiveRuleQuerySchema,
+  TaxRuleImpactSchema,
   TaxRuleListQuerySchema,
   UpdateTaxRuleSchema,
 } from './tax.dto';
+import { taxRuleMrpImpact } from './mrpImpact';
 
 /**
  * A tax rule change can move the GST on every product below its category, so the
@@ -45,6 +47,11 @@ export const deleteRule = asyncHandler(async (req: Request, res: Response) => {
   await taxService.deleteTaxRule(req.params.id!, req.user!.id, force === 'true');
   refreshDisplayPricesAfterRuleChange();
   res.status(204).send();
+});
+
+/** What a rule change would put above its MRP (and so take off sale), before it is saved. */
+export const getRuleImpact = asyncHandler(async (req: Request, res: Response) => {
+  res.json(ok(await taxRuleMrpImpact(TaxRuleImpactSchema.parse(req.body))));
 });
 
 /** The tax rule a category gets, and where it comes from. */

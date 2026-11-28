@@ -31,6 +31,7 @@ const BASE: EmailTemplateData = {
   code: 'SAVE20',
   expiresInMinutes: 5,
   productName: 'Audio Elite 10',
+  productList: 'Audio Elite 10 (1); Travel Mug (2)',
   sku: 'AE-10-BLK',
   stock: 3,
   businessName: 'TechWorld',

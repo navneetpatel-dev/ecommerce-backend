@@ -82,8 +82,9 @@ export class CategoriesRepository extends BaseRepository<Category> {
     });
   }
 
-  async countProducts(categoryId: string) {
-    return Product.count({ where: { categoryId } });
+  /** Every product filed here, deleted ones included (`live` leaves those out). */
+  async countProducts(categoryId: string, options: { live?: boolean } = {}) {
+    return Product.count({ where: { categoryId }, paranoid: Boolean(options.live) });
   }
 
   async findDescendantIds(rootId: string): Promise<string[]> {

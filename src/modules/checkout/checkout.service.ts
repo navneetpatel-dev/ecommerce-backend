@@ -2,16 +2,14 @@ import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { AppError } from '@core/errors/AppError';
-import { Cart } from '@database/models/cart.model';
 import { CartItem } from '@database/models/cartItem.model';
 import { Order } from '@database/models/order.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { OrderItem } from '@database/models/orderItem.model';
-import { ProductVariant } from '@database/models/productVariant.model';
+import { restoreStock } from '@modules/inventory/restoreStock';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { TcsLedger } from '@database/models/tcsLedger.model';
 import { Address } from '@database/models/address.model';
-import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
 import { paymentsService } from '@modules/payments/payments.service';
 import { cartService } from '@modules/cart/cart.service';
@@ -31,7 +29,6 @@ import { catalogItemsForCod, resolveCheckoutCouponCodes, toCouponLines, toPriced
 import { checkoutCashbackOffer, type CheckoutCashbackOffer } from '@modules/cashbackOffers/checkoutCashbackOffer';
 import { clampWalletApply, settleSubMinRazorpayRemainder } from './razorpayWalletRemainder';
 import { RAZORPAY_MIN_AMOUNT_PAISE } from '@core/constants/http';
-import { resolveItemAvailability } from '@core/catalog/customerVisibility';
 import type { CancelCheckoutRequest, CreateCheckoutRequest, CheckoutQuoteRequest } from './checkout.dto';
 import type { Coupon } from '@database/models/coupon.model';
 import { walletService } from '@modules/wallet/wallet.service';
@@ -54,7 +51,8 @@ import { resolveCodForCatalogItems } from '@modules/products/pdpPolicy';
 import { notifyOrderConfirmed } from '@modules/notifications/orderNotifications';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { buildCheckoutOrderTotals, resolveShippingDisplayKey, resolveTaxDisplayKey } from './checkoutOrderTotals';
-import { lockCartVariantsAndAssertStock } from './lockCartStock';
+import { lockAndRecheckCart } from './lockAndRecheckCart';
+import { assertCartItemsAvailable, isLineSellable, loadUserCart, type CartWithItems } from './userCart';
 import { assertExpectedGrandTotal } from './checkoutTotalCheck';
 import { confirmIfPaidAtGateway, paidCannotCancel } from './pendingPaymentGuard';
 import { unpaidOrders } from '@modules/payments/unpaidOrderCancel';
@@ -83,82 +81,13 @@ function resolveGiftWrapFee(giftWrap?: boolean): number {
 /** Moved to pricing/tcsLedger: TCS is recorded at dispatch. Re-exported for callers. */
 export { persistTcsCollectionLedger } from '@modules/pricing/tcsLedger';
 
-type CartWithItems = Cart & {
-  items: (CartItem & { variant: ProductVariant & { product: any } })[];
-};
-
 type OrderForRollback = Order & {
   subOrders?: (SubOrder & { items?: OrderItem[] })[];
 };
 
-async function loadUserCart(userId: string, transaction?: any): Promise<CartWithItems> {
-  const cartResult = await Cart.findOne({
-    where: { userId },
-    include: [
-      {
-        model: CartItem,
-        as: 'items',
-        include: [
-          {
-            model: ProductVariant,
-            as: 'variant',
-            include: [
-              {
-                association: 'product',
-                include: [{ model: Vendor, as: 'vendor' }],
-              },
-            ],
-          },
-        ],
-      },
-    ],
-    transaction,
-  });
-
-  if (!cartResult) {
-    throw new ValidationError(ERROR_MESSAGES.CART_EMPTY);
-  }
-
-  const cart = cartResult as CartWithItems;
-  if (!cart.items || cart.items.length === 0) {
-    throw new ValidationError(ERROR_MESSAGES.CART_EMPTY);
-  }
-
-  return cart;
-}
-
 function assertDeliverablePincode(pincode: string) {
   if (!PINCODE_PATTERN.test(String(pincode ?? '').trim())) {
     throw new AppError(ERROR_MESSAGES.PINCODE_INVALID, 422, ERROR_CODES.PINCODE_INVALID);
-  }
-}
-
-function assertCartItemsAvailable(cart: CartWithItems) {
-  const unavailable = cart.items
-    .map((item) => {
-      const product = item.variant?.product;
-      const vendor = product?.vendor ?? product?.Vendor ?? null;
-      const availability = resolveItemAvailability({
-        product,
-        vendor,
-        stock: Number(item.variant?.stock ?? 0),
-        quantity: Number(item.quantity),
-      });
-      if (availability.isAvailable) return null;
-      return {
-        cartItemId: item.id,
-        variantId: item.variantId,
-        productName: product?.name ?? null,
-        unavailableReason: availability.unavailableReason,
-        availableQuantity: Math.max(0, Number(item.variant?.stock ?? 0)),
-      };
-    })
-    .filter(Boolean);
-
-  if (unavailable.length > 0) {
-    throw new AppError(ERROR_MESSAGES.ITEMS_UNAVAILABLE, 422, ERROR_CODES.ITEMS_UNAVAILABLE, {
-      items: unavailable,
-    });
   }
 }
 
@@ -211,16 +140,7 @@ export class CheckoutService {
     }
     assertDeliverablePincode(shippingAddress.pincode);
 
-    const availableItems = cart.items.filter((item) => {
-      const product = item.variant?.product;
-      const vendor = product?.vendor ?? product?.Vendor ?? null;
-      return resolveItemAvailability({
-        product,
-        vendor,
-        stock: Number(item.variant?.stock ?? 0),
-        quantity: Number(item.quantity),
-      }).isAvailable;
-    });
+    const availableItems = cart.items.filter(isLineSellable);
     const quoteCart = { ...cart, items: availableItems } as CartWithItems;
 
     const settings = await settingsService.getPlatformSettings();
@@ -407,7 +327,7 @@ export class CheckoutService {
       const cart = await loadUserCart(userId, t);
 
       assertCartItemsAvailable(cart);
-      await lockCartVariantsAndAssertStock(cart, t);
+      await lockAndRecheckCart(cart, t);
 
       const shippingAddress = await Address.findOne({
         where: { id: data.shippingAddressId, userId },
@@ -927,11 +847,7 @@ export class CheckoutService {
       for (const subOrder of order.subOrders ?? []) {
         for (const item of subOrder.items ?? []) {
           restoreLines.push({ variantId: item.variantId, quantity: item.quantity });
-          await ProductVariant.increment('stock', {
-            by: item.quantity,
-            where: { id: item.variantId },
-            transaction: t,
-          });
+          await restoreStock(item.variantId, item.quantity, t);
         }
 
         await subOrder.update({ status: ORDER_STATUS.CANCELLED }, { transaction: t });

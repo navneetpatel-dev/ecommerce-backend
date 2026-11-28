@@ -37,7 +37,7 @@ describe('MRP includes GST', () => {
     const create = stub();
     // ₹1,000 + 18% GST is ₹1,180: an MRP of ₹1,100 would be undercut by the price paid.
     await assert.rejects(
-      productsService.createProduct(null, { ...product, compareAtPrice: 1100 } as never),
+      productsService.createProduct('vendor-1', { ...product, compareAtPrice: 1100 } as never),
       (error: unknown) =>
         error instanceof ValidationError && error.message === ERROR_MESSAGES.PRODUCT_COMPARE_AT_BELOW_PRICE_WITH_GST,
     );
@@ -46,7 +46,7 @@ describe('MRP includes GST', () => {
 
   it('accepts an MRP at or above the selling price with GST', async () => {
     const create = stub();
-    await assert.rejects(productsService.createProduct(null, { ...product, compareAtPrice: 1180 } as never), /created/);
+    await assert.rejects(productsService.createProduct('vendor-1', { ...product, compareAtPrice: 1180 } as never), /created/);
     assert.equal(create.mock.callCount(), 1);
   });
 

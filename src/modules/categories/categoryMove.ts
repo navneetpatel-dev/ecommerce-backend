@@ -4,7 +4,9 @@ import { ERROR_MESSAGES } from '@core/constants/errors';
 import { Category } from '@database/models/category.model';
 import { sequelize } from '@database/models';
 import { categoriesRepository } from './categories.repository';
-import { assertValidParent } from './categoryHierarchy';
+import { assertAncestorsActive, assertValidParent } from './categoryHierarchy';
+import { CATEGORY_STATUS } from '@core/constants/statuses';
+import { assertSiblingNameFree } from './categoryNames';
 
 /** Where a moved category goes among its new siblings: before or after one of them, else last. */
 export function placeAmongSiblings(
@@ -36,7 +38,12 @@ export async function moveCategory(
 
     const parentId = input.parentId !== undefined ? input.parentId : category.parentId;
     const reparented = (parentId ?? null) !== (category.parentId ?? null);
-    if (reparented && parentId) await assertValidParent(id, parentId, t);
+    if (reparented && parentId) {
+      await assertValidParent(id, parentId, t);
+      if (category.status === CATEGORY_STATUS.ACTIVE) await assertAncestorsActive(parentId, t);
+    }
+
+    if (reparented) await assertSiblingNameFree(category.name, parentId ?? null, id, t);
 
     const siblings = await Category.findAll({
       where: { parentId: parentId ?? null },

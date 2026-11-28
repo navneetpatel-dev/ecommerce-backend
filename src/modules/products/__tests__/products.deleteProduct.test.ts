@@ -17,7 +17,9 @@ describe('ProductsService.deleteProduct preserves images', () => {
     mock.method(productsRepository, 'findById', async () => ({
       id: 'prod-1',
       vendorId: 'vendor-1',
+      slug: 'mug',
     }));
+    const freed = mock.method(productsRepository, 'update', async () => undefined as never);
     let imageDestroyCalls = 0;
     mock.method(ProductImage, 'destroy', async () => {
       imageDestroyCalls += 1;
@@ -32,5 +34,7 @@ describe('ProductsService.deleteProduct preserves images', () => {
     await productsService.deleteProduct('prod-1', 'vendor-1');
     assert.equal(softDeleted, true);
     assert.equal(imageDestroyCalls, 0);
+    // The name is released for reuse (M7).
+    assert.deepEqual(freed.mock.calls[0]!.arguments[1], { slug: 'mug--deleted-prod-1' });
   });
 });

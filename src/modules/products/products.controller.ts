@@ -6,21 +6,22 @@ import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { BULK_IMPORT_LIMITS } from '@core/constants/product';
 import { ROLES } from '@core/constants/statuses';
-import { PERMISSIONS } from '@core/permissions/permissionKeys';
-import { userHasPermission } from '@middleware/rbac.middleware';
 import { productsService } from './products.service';
 import { previewCustomerPrice } from './productPricePreview';
-import type { ProductActor } from './productChangePolicy';
+import { productActor } from './productActor';
 import { createProductOnBehalf, submitProductOnBehalf } from './productOnBehalf.service';
 import {
   addImageAs,
   addVariantAs,
   changeImageAs,
+  deleteProductAs,
+  deleteVariantAs,
   productIdOfImage,
   updateProductAs,
   updateVariantAs,
 } from './productAdminChanges';
-import { isCatalogModerator, listsUnpublished } from './productVisibility';
+import { canSeeUnpublished, listsUnpublished } from './productVisibility';
+import { productsRepository } from './products.repository';
 import { parseProductsCsv } from './products.csv';
 import {
   CreateProductSchema,
@@ -51,22 +52,11 @@ export const getGstPreview = asyncHandler(async (req: Request, res: Response) =>
   );
 });
 
-/**
- * Prices, tax codes and variants belong to the store owner (product.create). A platform product admin
- * (product.manage) may change them only as `productChangePolicy` allows; vendor staff never.
- */
-async function productActor(req: Request): Promise<ProductActor> {
-  const [canManage, canCreate, canPrice] = await Promise.all([
-    userHasPermission(req.user, PERMISSIONS.PRODUCT_MANAGE),
-    userHasPermission(req.user, PERMISSIONS.PRODUCT_CREATE),
-    userHasPermission(req.user, PERMISSIONS.PRODUCT_PRICING),
-  ]);
-  return { id: req.user!.id, vendorId: req.user!.vendorId ?? null, canManage, canCreate, canPrice };
-}
-
 const isSuperAdmin = (req: Request) => req.user?.role.name === ROLES.SUPER_ADMIN;
 
 export const createProduct = asyncHandler(async (req: Request, res: Response) => {
+  // A product belongs to a store: staff of the platform list one for a vendor through /on-behalf.
+  if (!req.user!.vendorId) throw new ForbiddenError(ERROR_MESSAGES.VENDOR_NOT_LINKED);
   const dto = CreateProductSchema.parse(req.body);
   const product = await productsService.createProduct(req.user!.vendorId, dto, { actorId: req.user!.id });
   res.status(201).json(ok(product));
@@ -75,7 +65,7 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
 /** A platform admin lists a product for an approved vendor (a draft the vendor can edit and submit). */
 export const createProductForVendor = asyncHandler(async (req: Request, res: Response) => {
   const dto = CreateProductOnBehalfSchema.parse(req.body);
-  res.status(201).json(ok(await createProductOnBehalf(req.user!.id, dto, isSuperAdmin(req))));
+  res.status(201).json(ok(await createProductOnBehalf(req.user!.id, dto)));
 });
 
 /** A platform admin submits a product it listed, recording the vendor's agreement. */
@@ -148,9 +138,14 @@ export const getProducts = asyncHandler(async (req: Request, res: Response) => {
   res.json(ok(result.products, { pagination: result.pagination }));
 });
 
+/** Shoppers' view unless the product is the viewer's to manage (its owner's store, or a catalog admin). */
+async function customerFacingFor(req: Request, where: { id: string } | { slug: string }): Promise<boolean> {
+  return !(await canSeeUnpublished(req.user, await productsRepository.findOwnerVendorId(where)));
+}
+
 export const getProductById = asyncHandler(async (req: Request, res: Response) => {
   const product = await productsService.getProductById(req.params.id!, {
-    customerFacing: !(await isCatalogModerator(req.user)),
+    customerFacing: await customerFacingFor(req, { id: req.params.id! }),
   });
   res.json(ok(product));
 });
@@ -173,7 +168,7 @@ export const getFrequentlyBoughtTogether = asyncHandler(async (req: Request, res
 
 export const getProductBySlug = asyncHandler(async (req: Request, res: Response) => {
   const product = await productsService.getProductBySlug(req.params.slug!, {
-    customerFacing: !(await isCatalogModerator(req.user)),
+    customerFacing: await customerFacingFor(req, { slug: req.params.slug! }),
   });
   res.json(ok(product));
 });
@@ -184,14 +179,12 @@ export const updateProduct = asyncHandler(async (req: Request, res: Response) =>
 });
 
 export const deleteProduct = asyncHandler(async (req: Request, res: Response) => {
-  await productsService.deleteProduct(req.params.id!, req.user!.vendorId);
+  await deleteProductAs(await productActor(req), req.params.id!);
   res.status(204).send();
 });
 
 export const submitForApproval = asyncHandler(async (req: Request, res: Response) => {
-  // The platform's own products have no vendor: a Super Admin publishes them directly.
-  const platformOwned = !req.user!.vendorId && isSuperAdmin(req);
-  const product = await productsService.submitForApproval(req.params.id!, req.user!.vendorId ?? null, req.user!.id, platformOwned);
+  const product = await productsService.submitForApproval(req.params.id!, req.user!.vendorId ?? null, req.user!.id);
   res.json(ok(product));
 });
 
@@ -235,7 +228,7 @@ export const updateVariant = asyncHandler(async (req: Request, res: Response) =>
 });
 
 export const deleteVariant = asyncHandler(async (req: Request, res: Response) => {
-  await productsService.deleteVariant(req.params.variantId!);
+  await deleteVariantAs(await productActor(req), req.params.variantId!);
   res.status(204).send();
 });
 

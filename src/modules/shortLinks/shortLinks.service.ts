@@ -1,8 +1,7 @@
 import crypto from 'crypto';
-import { ShortLink, Product, ProductImage, Category, Vendor } from '@database/models';
+import { ShortLink, Product, ProductImage, Category } from '@database/models';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { env } from '@config/env';
-import { PRODUCT_STATUS } from '@core/constants/statuses';
 
 const BASE62_CHARS = '23456789abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ';
 
@@ -88,15 +87,16 @@ export class ShortLinksService {
     return process.env.CLIENT_URL || env.CLIENT_URL || 'http://localhost:5273';
   }
 
-  /** The public (LIVE) product a link is about: by id when given, else by the slug in its path. */
+  /** The product on sale that a link is about: by id when given, else by the slug in its path. */
   private async findProduct(resourceId: string | null, targetUrl: string): Promise<Product | null> {
     const include = [
       { model: ProductImage, as: 'images' },
       { model: Category },
-      { model: Vendor, as: 'vendor' },
     ];
+    // The shop's own visibility rule: a link never previews something shoppers cannot open.
+    const onSale = () => Product.scope('customerVisible');
     if (resourceId && UUID.test(resourceId)) {
-      return Product.findOne({ where: { id: resourceId, status: PRODUCT_STATUS.LIVE }, include });
+      return onSale().findOne({ where: { id: resourceId }, include });
     }
     const slug = PRODUCT_PATH.exec(targetUrl)?.[1];
     if (!slug) return null;
@@ -106,7 +106,7 @@ export class ShortLinksService {
     } catch {
       return null;
     }
-    return Product.findOne({ where: { slug: decoded, status: PRODUCT_STATUS.LIVE }, include });
+    return onSale().findOne({ where: { slug: decoded }, include });
   }
 
   /** Preview data always comes from the catalog, never from what a caller sent. */
@@ -187,13 +187,7 @@ export class ShortLinksService {
     }
 
     // Fallback: check if code is a product slug
-    const product = await Product.findOne({
-      where: { slug: code, status: PRODUCT_STATUS.LIVE },
-      include: [
-        { model: ProductImage, as: 'images' },
-        { model: Category },
-      ],
-    });
+    const product = await this.findProduct(null, `/products/${encodeURIComponent(code)}`);
 
     if (product) {
       // Auto-create short link for this product

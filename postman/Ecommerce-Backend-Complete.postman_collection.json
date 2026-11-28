@@ -2040,7 +2040,7 @@
                 "description": "Update variant stock",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"stock\": 50,\n  \"operation\": \"SET\"\n}",
+                  "raw": "{\n  \"stock\": 50,\n  \"expectedStock\": 40\n}",
                   "options": {
                     "raw": {
                       "language": "json"

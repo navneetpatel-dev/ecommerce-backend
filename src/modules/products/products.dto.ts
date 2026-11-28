@@ -207,9 +207,14 @@ export const UpdateVariantSchema = z.object({
   attributes: variantAttributes.optional(),
   price: variantPrice.optional(),
   stock: variantStock.optional(),
+  /** Required with `stock`: the figure the editor showed (see `lockedStockEdit`). */
+  expectedStock: z.number().int().nonnegative().optional(),
   lowStockAt: variantLowStock.optional(),
   weightGrams: variantWeight.optional(),
   changeReason: changeReasonField,
+}).refine((data) => data.stock === undefined || data.expectedStock !== undefined, {
+  path: ['expectedStock'],
+  message: 'Send expectedStock (the stock you saw) with a stock change',
 });
 
 export const AddImageSchema = z.object({
@@ -245,9 +250,8 @@ export type AddImageRequest = z.infer<typeof AddImageSchema>;
 export type ReplaceImageRequest = z.infer<typeof ReplaceImageSchema>;
 
 /** An admin listing a product for a vendor: the vendor, then the same product fields a vendor sends. */
-/** `vendorId` may be left out only by a Super Admin, to create one of the platform's own products. */
 export const CreateProductOnBehalfSchema = z.object({
-  vendorId: z.string().uuid().optional(),
+  vendorId: z.string().uuid(),
   product: CreateProductSchema,
 });
 

@@ -4,10 +4,12 @@ import { ProductVariant } from '@database/models/productVariant.model';
 import { Product } from '@database/models/product.model';
 import { User } from '@database/models/user.model';
 import { notificationsService } from '@modules/notifications/notifications.service';
+import { lowStockQuery } from '@modules/inventory/lowStockWhere';
 
 /** Variants a seller has already been told about; cleared once restocked above the threshold. */
 const ALERTED_SET = 'low-stock:alerted';
 const MAX_LINES = 10;
+const BATCH = 500;
 
 type LowVariant = ProductVariant & { product?: Product };
 
@@ -38,18 +40,24 @@ async function clearRestocked(): Promise<void> {
  */
 export async function processLowStock(): Promise<number> {
   await clearRestocked();
-  const low = (await ProductVariant.findAll({
-    where: Sequelize.where(Sequelize.col('stock'), Op.lte, Sequelize.col('lowStockAt')),
-    include: [{ model: Product, as: 'product', required: true, attributes: ['id', 'name', 'vendorId'] }],
-    limit: 500,
-  })) as LowVariant[];
   const alerted = new Set((await withRedis(() => redisClient.smembers(ALERTED_SET))) ?? []);
 
+  // Every low variant, a batch at a time: a single capped query filled up with ones already
+  // alerted, and anything past the cap was never mailed.
   const byVendor = new Map<string, LowVariant[]>();
-  for (const variant of low) {
-    const vendorId = variant.product?.vendorId;
-    if (!vendorId || alerted.has(variant.id)) continue;
-    byVendor.set(vendorId, [...(byVendor.get(vendorId) ?? []), variant]);
+  for (let offset = 0; ; offset += BATCH) {
+    const low = (await ProductVariant.findAll({
+      ...lowStockQuery(),
+      order: [['id', 'ASC']],
+      limit: BATCH,
+      offset,
+    })) as LowVariant[];
+    for (const variant of low) {
+      const vendorId = variant.product?.vendorId;
+      if (!vendorId || alerted.has(variant.id)) continue;
+      byVendor.set(vendorId, [...(byVendor.get(vendorId) ?? []), variant]);
+    }
+    if (low.length < BATCH) break;
   }
 
   let sent = 0;

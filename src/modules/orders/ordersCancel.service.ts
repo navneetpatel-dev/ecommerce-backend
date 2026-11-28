@@ -6,7 +6,7 @@ import { User } from '@database/models/user.model';
 import { Order } from '@database/models/order.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { OrderItem } from '@database/models/orderItem.model';
-import { ProductVariant } from '@database/models/productVariant.model';
+import { restoreStock } from '@modules/inventory/restoreStock';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { TcsLedger } from '@database/models/tcsLedger.model';
 import {
@@ -130,11 +130,7 @@ export async function cancelPaidOrder(
     for (const subOrder of order.subOrders ?? []) {
       for (const item of subOrder.items ?? []) {
         restoreLines.push({ variantId: item.variantId, quantity: item.quantity });
-        await ProductVariant.increment('stock', {
-          by: item.quantity,
-          where: { id: item.variantId },
-          transaction: t,
-        });
+        await restoreStock(item.variantId, item.quantity, t);
       }
       await subOrder.update(
         {

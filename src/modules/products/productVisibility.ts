@@ -10,9 +10,10 @@ export type CatalogViewer = {
 };
 
 /**
- * Vendor dashboards and catalog admins stay unscoped; shoppers use customerVisible. Admins are
- * judged by permission, not by being "an admin role": the Order and Finance managers have no
- * catalog job and see only what shoppers see.
+ * Whether the viewer works on a catalog at all (a vendor on its own, an admin on any). Whether
+ * a particular product is theirs to see is `canSeeUnpublished`. Admins are judged by
+ * permission, not by being "an admin role": the Order and Finance managers have no catalog job
+ * and see only what shoppers see.
  */
 export async function isCatalogModerator(viewer: CatalogViewer | null | undefined): Promise<boolean> {
   const role = viewer?.role?.name;
@@ -22,17 +23,20 @@ export async function isCatalogModerator(viewer: CatalogViewer | null | undefine
 }
 
 /**
- * Whether a product listing may include unpublished products. A vendor sees every status
- * only in its own shop (the dashboard asks with its vendorId); anywhere else, including
+ * Whether the viewer gets the team's view of products belonging to `ownerVendorId`: every
+ * status and the internal fields. A vendor only for its own shop; anywhere else, including
  * other shops, a vendor sees what customers see.
  */
-export async function listsUnpublished(
+export async function canSeeUnpublished(
   viewer: CatalogViewer | null | undefined,
-  vendorId: string | undefined,
+  ownerVendorId: string | null | undefined,
 ): Promise<boolean> {
   const role = viewer?.role?.name;
   if (role === ROLES.VENDOR_OWNER || role === ROLES.VENDOR_STAFF) {
-    return Boolean(viewer?.vendorId) && vendorId === viewer?.vendorId;
+    return Boolean(viewer?.vendorId) && ownerVendorId === viewer?.vendorId;
   }
   return isCatalogModerator(viewer);
 }
+
+/** Whether a product listing (filtered to `vendorId`, if any) may include unpublished products. */
+export const listsUnpublished = canSeeUnpublished;

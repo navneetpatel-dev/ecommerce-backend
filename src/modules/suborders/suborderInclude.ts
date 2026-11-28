@@ -11,6 +11,7 @@ import { Vendor } from '@database/models/vendor.model';
 import { fromPaise, roundMoney, toPaise } from '@modules/pricing/money';
 import { isWalletFundedOrder, walletShareOfRefundPaise } from '@modules/pricing/refundSplit';
 import { mapSubOrder } from '@modules/orders/orderDisplayMappers';
+import { ORDER_VENDOR_ATTRIBUTES } from '@modules/orders/orderPublicAttributes';
 import { VENDOR_VISIBLE_ORDER_WHERE } from './subOrderTransitions';
 
 export const shipmentInclude = {
@@ -75,12 +76,14 @@ export function suborderListIncludes(vendorId?: string | null) {
           model: ProductVariant,
           as: 'variant',
           required: false,
+          // Order history keeps showing a variant the vendor has since removed.
+          paranoid: false,
           include: [{ model: Product, as: 'product', required: false, paranoid: false, include: ['images'] }],
         },
       ],
     },
     orderInclude,
-    { model: Vendor, as: 'vendor' },
+    { model: Vendor, as: 'vendor', attributes: ORDER_VENDOR_ATTRIBUTES },
     shipmentInclude,
     returnRequestInclude,
   ];

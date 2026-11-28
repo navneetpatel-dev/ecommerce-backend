@@ -3,6 +3,7 @@ import { logger } from '@core/logger';
 import { Vendor } from '@database/models/vendor.model';
 import { Product } from '@database/models/product.model';
 import { ProductVariant } from '@database/models/productVariant.model';
+import { lowStockQuery } from '@modules/inventory/lowStockWhere';
 import { SubOrder } from '@database/models/subOrder.model';
 import { OrderItem } from '@database/models/orderItem.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
@@ -51,7 +52,7 @@ export async function processVendorWeeklySummaries(now: Date = new Date()): Prom
       if (!ownerId) continue;
       const [returnsOpen, lowStock, topRow] = await Promise.all([
         ReturnRequest.count({ include: [{ model: SubOrder, as: 'subOrder', required: true, where: { vendorId: vendor.id }, attributes: [] }], where: { status: RETURN_STATUS.REQUESTED } }),
-        ProductVariant.count({ include: [{ model: Product, as: 'product', required: true, where: { vendorId: vendor.id }, attributes: [] }], where: Sequelize.where(Sequelize.col('ProductVariant.stock'), Op.lte, Sequelize.col('ProductVariant.lowStockAt')) }),
+        ProductVariant.count({ ...lowStockQuery({ vendorId: vendor.id }), distinct: true, col: 'id' }),
         OrderItem.findOne({
           attributes: ['productName', [Sequelize.fn('SUM', Sequelize.col('quantity')), 'sold']],
           include: [{ model: SubOrder, as: 'subOrder', required: true, attributes: [], where: { vendorId: vendor.id, createdAt: { [Op.gte]: from }, status: { [Op.ne]: ORDER_STATUS.CANCELLED } } }],

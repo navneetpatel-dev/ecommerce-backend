@@ -1,7 +1,7 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
-import { changedPricingFields, variantPriceChanged } from './productPricingRules';
+import { changedPricingFields } from './productPricingRules';
 import { AppError } from '@core/errors/AppError';
 import { PRODUCT_STATUS, REVIEW_STATUS } from '@core/constants/statuses';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
@@ -11,7 +11,6 @@ import {
   deleteS3ObjectIfReplaced,
 } from '@core/s3';
 import { productsRepository } from './products.repository';
-import { logger } from '@core/logger';
 import { Category } from '@database/models/category.model';
 import { Vendor } from '@database/models/vendor.model';
 import { ProductVariant } from '@database/models/productVariant.model';
@@ -24,7 +23,6 @@ import { RecentlyViewedItem } from '@database/models/recentlyViewedItem.model';
 import { ProductAffinity } from '@database/models/productAffinity.model';
 import { sequelize } from '@database/models';
 import { categoriesService } from '@modules/categories/categories.service';
-import { inventoryService } from '@modules/inventory/inventory.service';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { vendorsService } from '@modules/vendors/vendors.service';
 import { shippingService } from '@modules/shipping/shipping.service';
@@ -33,21 +31,27 @@ import type { Transaction } from 'sequelize';
 import { resolvePdpPolicy, resolveCodEligibleAtPrice, type PdpPolicy } from './pdpPolicy';
 import { productDiscountPercent, productShowMrp, taxInclusivePrice } from '@modules/pricing/displayMoney';
 import { taxService } from '@modules/tax/tax.service';
-import { gstRuleResolver, priceWithRuleGst } from '@modules/tax/gstPricing';
+import { isAboveMrp, priceWithRuleGst } from '@modules/tax/gstPricing';
 import { roundMoney, toPaise } from '@modules/pricing/money';
 import { gstRateForPieces } from '@modules/pricing/pricing.engine';
 import { CreateProductSchema } from './products.dto';
 import { submitProductForApproval } from './productSubmission';
 import { assertApproverIndependent } from './productApprovalRules';
 import { assertCanAddImage, assertProductMediaUrl, assertProductMediaUrls } from './productMediaRules';
-import { forViewer, stripInternalProductFields } from './productPublicFields';
+import {
+  assertMrpCoversGstPrices,
+  refreshProductDisplayPrice,
+  sellingPrices,
+  syncProductBasePrice,
+} from './productPricingState';
+import { addVariant, deleteVariant, updateVariant } from './productVariants.service';
+import { assertNotLastOfListing, deletedSlug } from './listingRules';
+import { forViewer, toShopperProduct, TEAM_VENDOR_ATTRIBUTES } from './productPublicFields';
 import type {
   CreateProductRequest,
   UpdateProductRequest,
   GetProductsQuery,
   RejectProductRequest,
-  AddVariantRequest,
-  UpdateVariantRequest,
   AddImageRequest,
   BulkImportRowResult,
 } from './products.dto';
@@ -182,6 +186,7 @@ async function mapDetailResponse(product: Product, reviewCount = 0) {
           : false,
         ...pdpTaxAtPrice(policy, variant.price),
         ...display,
+        aboveMrp: isAboveMrp(policy, variant.price, mapped.compareAtPrice),
       };
     }),
   );
@@ -216,118 +221,8 @@ async function mapDetailResponse(product: Product, reviewCount = 0) {
   };
 }
 
-/**
- * A product's listed price is the lowest price any of its variants sells at, so the
- * card, search, price filter and price sort never show a figure nobody can buy at.
- * Kept in step whenever variants change; a product with no variants keeps its own.
- */
-export async function syncProductBasePrice(productId: string, transaction: Transaction): Promise<void> {
-  const lowest = await ProductVariant.min<number, ProductVariant>('price', {
-    where: { productId },
-    transaction,
-  });
-  if (lowest != null && Number.isFinite(Number(lowest))) {
-    const product = await Product.findByPk(productId, { attributes: ['id', 'basePrice'], transaction });
-    if (product && roundMoney(product.basePrice) !== roundMoney(lowest)) {
-      await product.update({ basePrice: roundMoney(lowest) }, { transaction });
-    }
-  }
-  await refreshProductDisplayPrice(productId, transaction);
-}
-
-/**
- * The price customers see for a product: its listed (lowest) price with GST at its
- * category's rate — the band rate for that price when the rule has one. Stored so the
- * price filter and sort work on the same figure the cards show.
- */
-export async function productDisplayPrice(categoryId: string | null, basePrice: unknown): Promise<number> {
-  return priceWithRuleGst(await taxService.getGstRateRule(categoryId ?? undefined), basePrice);
-}
-
 export { gstRuleResolver, priceWithRuleGst, type GstRateRule } from '@modules/tax/gstPricing';
-
-/**
- * The MRP includes GST and is printed for the product, so no piece may sell above it:
- * every price it is sold at (each variant's, or the product's own without variants),
- * with GST at the category's rate — the band rate for a piece above the band — must be
- * within it.
- */
-async function assertMrpCoversGstPrices(
-  categoryId: string | null,
-  prices: unknown[],
-  compareAtPrice: number | null,
-  message: string = ERROR_MESSAGES.PRODUCT_COMPARE_AT_BELOW_PRICE_WITH_GST,
-): Promise<void> {
-  if (compareAtPrice == null || prices.length === 0) return;
-  const rule = await taxService.getGstRateRule(categoryId ?? undefined);
-  const mrpPaise = toPaise(roundMoney(compareAtPrice));
-  if (prices.some((price) => toPaise(priceWithRuleGst(rule, price)) > mrpPaise)) {
-    throw new ValidationError(message);
-  }
-}
-
-/** The prices a product sells at: its variants', or its own when it has none. */
-async function sellingPrices(productId: string, ownPrice: unknown, transaction: Transaction): Promise<unknown[]> {
-  const variants = await ProductVariant.findAll({ where: { productId }, attributes: ['price'], transaction });
-  return variants.length > 0 ? variants.map((variant) => variant.price) : [ownPrice];
-}
-
-export async function refreshProductDisplayPrice(productId: string, transaction?: Transaction): Promise<void> {
-  const product = await Product.findByPk(productId, {
-    attributes: ['id', 'categoryId', 'basePrice', 'displayPrice'],
-    transaction,
-  });
-  if (!product) return;
-  const displayPrice = await productDisplayPrice(product.categoryId ?? null, product.basePrice);
-  if (product.displayPrice == null || roundMoney(product.displayPrice) !== displayPrice) {
-    await product.update({ displayPrice }, { transaction });
-  }
-}
-
-/**
- * Recompute every product's displayed price — after a tax rule changes, which can move
- * the GST on any category below it. Rules are resolved once per category.
- */
-export async function refreshAllProductDisplayPrices(): Promise<number> {
-  const ruleFor = gstRuleResolver();
-  let changed = 0;
-  let offset = 0;
-  const pageSize = 500;
-  for (;;) {
-    const page = await Product.unscoped().findAll({
-      attributes: ['id', 'categoryId', 'basePrice', 'displayPrice'],
-      order: [['id', 'ASC']],
-      limit: pageSize,
-      offset,
-    });
-    if (page.length === 0) break;
-    for (const product of page) {
-      const displayPrice = priceWithRuleGst(await ruleFor(product.categoryId), product.basePrice);
-      if (product.displayPrice == null || roundMoney(product.displayPrice) !== displayPrice) {
-        await product.update({ displayPrice });
-        changed += 1;
-      }
-    }
-    offset += page.length;
-  }
-  return changed;
-}
-
-/**
- * Refresh every product's GST-inclusive price without holding up the request — after a
- * change that can move the GST rule a product falls under (a tax rule edited, a category
- * moved, products moved to another category). Never throws.
- */
-export function refreshAllProductDisplayPricesInBackground(trigger: string): void {
-  void refreshAllProductDisplayPrices()
-    .then((changed) => logger.info('Product display prices refreshed', { trigger, changed }))
-    .catch((error) =>
-      logger.error('Refreshing product display prices failed', {
-        trigger,
-        reason: error instanceof Error ? error.message : String(error),
-      }),
-    );
-}
+export * from './productPricingState';
 
 async function syncSecondaryCategories(
   productId: string,
@@ -352,7 +247,9 @@ async function syncSecondaryCategories(
 export class ProductsService {
   /** `by` records who created it (and that the platform listed it for the vendor). */
   async createProduct(vendorId: string | null, data: CreateProductRequest, by?: { actorId: string; listedByPlatform?: boolean }) {
-    return sequelize.transaction(async (t) => {
+    // Every product has a seller: orders, invoices, commission and payouts are all filed under one.
+    if (!vendorId) throw new ValidationError(ERROR_MESSAGES.PRODUCT_VENDOR_REQUIRED);
+    const id = await sequelize.transaction(async (t) => {
       const slug = generateSlug(data.name);
       const { secondaryCategoryIds = [], ...productFields } = data;
 
@@ -377,8 +274,10 @@ export class ProductsService {
       await syncSecondaryCategories(product.id, data.categoryId, secondaryCategoryIds, t);
       await refreshProductDisplayPrice(product.id, t);
 
-      return this.getProductById(product.id);
+      return product.id;
     });
+    // Read after the commit: a read outside the transaction cannot see its rows.
+    return this.getProductById(id);
   }
 
   /**
@@ -520,7 +419,7 @@ export class ProductsService {
               through: { attributes: [] },
               required: false,
             },
-            { model: Vendor, as: 'vendor' },
+            { model: Vendor, as: 'vendor', attributes: TEAM_VENDOR_ATTRIBUTES },
           ],
         });
     if (!product) throw new NotFoundError('Product');
@@ -569,7 +468,7 @@ export class ProductsService {
     return productIds
       .map((id) => byId.get(id))
       .filter((product): product is Product => Boolean(product))
-      .map((product) => stripInternalProductFields(mapProductResponse(product)));
+      .map((product) => toShopperProduct(mapProductResponse(product)));
   }
 
   /**
@@ -591,7 +490,7 @@ export class ProductsService {
     return relatedIds
       .map((id) => byId.get(id))
       .filter((product): product is Product => Boolean(product))
-      .map((product) => stripInternalProductFields(mapProductResponse(product)));
+      .map((product) => toShopperProduct(mapProductResponse(product)));
   }
 
   /** `canEditPricing: false` (vendor staff) refuses any change to prices, the tax code or COD; unchanged values are fine. */
@@ -662,8 +561,10 @@ export class ProductsService {
       }
       // A product with variants lists its lowest variant price, whatever was sent.
       if (updateData.basePrice !== undefined) await syncProductBasePrice(id, t);
-      // A new category can mean a different GST rate on the displayed price.
-      else if (updateData.categoryId !== undefined) await refreshProductDisplayPrice(id, t);
+      // A new category can mean a different GST rate; that and a new MRP decide what may be sold.
+      else if (updateData.categoryId !== undefined || updateData.compareAtPrice !== undefined) {
+        await refreshProductDisplayPrice(id, t);
+      }
 
       const primaryCategoryId = productFields.categoryId ?? product.categoryId;
       if (secondaryCategoryIds !== undefined) {
@@ -709,12 +610,13 @@ export class ProductsService {
       // Soft-delete the product only. Keep ProductImage rows and S3 objects so
       // historical order views can still live-join thumbnails. Hard-delete/GC
       // of orphaned media is out of scope for this path.
+      await productsRepository.update(id, { slug: deletedSlug(product) }, { transaction: t });
       await productsRepository.softDelete(id, { transaction: t });
     });
   }
 
-  async submitForApproval(id: string, vendorId: string | null, actorId?: string, platformOwned = false) {
-    return submitProductForApproval(this, id, vendorId, actorId, undefined, platformOwned);
+  async submitForApproval(id: string, vendorId: string | null, actorId?: string) {
+    return submitProductForApproval(this, id, vendorId, actorId);
   }
 
   /**
@@ -838,7 +740,7 @@ export class ProductsService {
   }
 
   async archiveProduct(id: string, actorId?: string) {
-    return sequelize.transaction(async (t) => {
+    await sequelize.transaction(async (t) => {
       const product = await productsRepository.findById(id, { transaction: t });
       if (!product) throw new NotFoundError('Product');
 
@@ -854,13 +756,12 @@ export class ProductsService {
           transaction: t,
         });
       }
-
-      return this.getProductById(id);
     });
+    return this.getProductById(id);
   }
 
   async unarchiveProduct(id: string, actorId?: string) {
-    return sequelize.transaction(async (t) => {
+    await sequelize.transaction(async (t) => {
       const product = await productsRepository.findById(id, { transaction: t });
       if (!product) throw new NotFoundError('Product');
       if (product.status !== PRODUCT_STATUS.ARCHIVED) {
@@ -879,96 +780,14 @@ export class ProductsService {
           transaction: t,
         });
       }
-
-      return this.getProductById(id);
     });
+    return this.getProductById(id);
   }
 
-  // Variant management
-  /** Adding a variant sets a price, so `canEditPricing: false` (vendor staff) refuses it. */
-  async addVariant(productId: string, data: AddVariantRequest, opts: { canEditPricing?: boolean } = {}) {
-    if (opts.canEditPricing === false) throw new ForbiddenError(ERROR_MESSAGES.PRODUCT_PRICING_OWNER_ONLY);
-    return sequelize.transaction(async (t) => {
-      const product = await productsRepository.findById(productId, { transaction: t });
-      if (!product) throw new NotFoundError('Product');
-
-      const existing = await ProductVariant.findOne({ where: { sku: data.sku } });
-      if (existing) {
-        throw new ValidationError('SKU already exists');
-      }
-
-      // A piece may not sell above the product's MRP (which includes GST).
-      await assertMrpCoversGstPrices(
-        product.categoryId,
-        [data.price],
-        product.compareAtPrice == null ? null : Number(product.compareAtPrice),
-        ERROR_MESSAGES.PRODUCT_VARIANT_ABOVE_MRP,
-      );
-
-      const variant = await ProductVariant.create({
-        productId,
-        ...data,
-      }, { transaction: t });
-      await syncProductBasePrice(productId, t);
-
-      return variant;
-    });
-  }
-
-  async updateVariant(variantId: string, data: UpdateVariantRequest, opts: { canEditPricing?: boolean } = {}) {
-    let shouldNotifyRestock = false;
-    let notifyProductId = '';
-    const variant = await sequelize.transaction(async (t) => {
-      const row = await ProductVariant.findByPk(variantId, { transaction: t });
-      if (!row) throw new NotFoundError('ProductVariant');
-
-      if (opts.canEditPricing === false && variantPriceChanged(row.price, data.price)) {
-        throw new ForbiddenError(ERROR_MESSAGES.PRODUCT_PRICING_OWNER_ONLY);
-      }
-
-      const previousStock = Number(row.stock ?? 0);
-
-      if (data.price !== undefined) {
-        const product = await Product.findByPk(row.productId, {
-          attributes: ['id', 'categoryId', 'compareAtPrice'],
-          transaction: t,
-        });
-        await assertMrpCoversGstPrices(
-          product?.categoryId ?? null,
-          [data.price],
-          product?.compareAtPrice == null ? null : Number(product.compareAtPrice),
-          ERROR_MESSAGES.PRODUCT_VARIANT_ABOVE_MRP,
-        );
-      }
-
-      await row.update(data, { transaction: t });
-      if (data.price !== undefined) await syncProductBasePrice(row.productId, t);
-
-      if (data.stock !== undefined && previousStock <= 0 && data.stock > 0) {
-        shouldNotifyRestock = true;
-        notifyProductId = row.productId;
-      }
-
-      return row;
-    });
-
-    if (shouldNotifyRestock && notifyProductId) {
-      void inventoryService.notifyBackInStock(notifyProductId, variantId);
-    }
-
-    return variant;
-  }
-
-  async deleteVariant(variantId: string) {
-    return sequelize.transaction(async (t) => {
-      const variant = await ProductVariant.findByPk(variantId, { transaction: t });
-      if (!variant) throw new NotFoundError('ProductVariant');
-
-      // Hard delete variants - they're detail records
-      await variant.destroy({ transaction: t });
-      await syncProductBasePrice(variant.productId, t);
-    });
-  }
+  // Variant management (see `productVariants.service.ts`).
+  addVariant = addVariant;
+  updateVariant = updateVariant;
+  deleteVariant = deleteVariant;
 
   // Image management
   async addImage(productId: string, data: AddImageRequest) {
@@ -1003,6 +822,7 @@ export class ProductsService {
     const image = await sequelize.transaction(async (t) => {
       const row = await ProductImage.findByPk(imageId, { transaction: t });
       if (!row) throw new NotFoundError('ProductImage');
+      await assertNotLastOfListing(row.productId, 'image', t);
       await row.destroy({ transaction: t });
       return row;
     });

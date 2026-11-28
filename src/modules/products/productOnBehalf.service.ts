@@ -1,5 +1,3 @@
-import { ForbiddenError } from '@core/errors/ForbiddenError';
-import { logAudit } from '@modules/audit/audit.service';
 import { AppError } from '@core/errors/AppError';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
@@ -15,14 +13,7 @@ import type { CreateProductOnBehalfRequest } from './products.dto';
  * The platform lists a product for an approved vendor. It starts as a draft the vendor can see, edit and
  * submit themselves; nothing is published until a different admin approves it.
  */
-export async function createProductOnBehalf(actorId: string, dto: CreateProductOnBehalfRequest, isSuperAdmin = false) {
-  if (!dto.vendorId) {
-    // The platform's own product: no vendor to act for, so only a Super Admin may create it.
-    if (!isSuperAdmin) throw new ForbiddenError(ERROR_MESSAGES.PRODUCT_PLATFORM_OWNED_SUPER_ADMIN_ONLY);
-    const own = await productsService.createProduct(null, dto.product, { actorId });
-    await logAudit({ actorId, action: 'PRODUCT_CREATED_BY_PLATFORM', entityType: 'Product', entityId: own.id, metadata: { name: own.name } });
-    return own;
-  }
+export async function createProductOnBehalf(actorId: string, dto: CreateProductOnBehalfRequest) {
   const vendor = await Vendor.findByPk(dto.vendorId);
   if (!vendor || vendor.status !== VENDOR_STATUS.APPROVED) {
     throw new AppError(ERROR_MESSAGES.VENDOR_UNAVAILABLE, 422, ERROR_CODES.VENDOR_UNAVAILABLE);

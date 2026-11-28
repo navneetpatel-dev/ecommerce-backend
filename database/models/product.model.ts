@@ -13,6 +13,8 @@ export class Product extends Model<InferAttributes<Product>, InferCreationAttrib
   declare basePrice: number;
   /** basePrice with GST at the category's rate (price band included): what customers see. */
   declare displayPrice: CreationOptional<number | null>;
+  /** Every price it sells at is above the MRP once GST is added: hidden from the shop. */
+  declare aboveMrp: CreationOptional<boolean>;
   declare compareAtPrice: number | null;
   declare brand: string | null;
   declare specs: CreationOptional<Record<string, string>>;
@@ -63,6 +65,8 @@ export class Product extends Model<InferAttributes<Product>, InferCreationAttrib
       where: {
         status: PRODUCT_STATUS.LIVE,
         name: { [Op.notILike]: 'Seed %' },
+        // False while at least one price it sells at is within the MRP.
+        aboveMrp: false,
         // A column condition, not raw SQL on "Product": Sequelize qualifies it with
         // whatever alias the query uses (reviews include products as "product").
         categoryId: {
@@ -76,7 +80,7 @@ export class Product extends Model<InferAttributes<Product>, InferCreationAttrib
           required: true,
           // Sellable vendors only: APPROVED with every KYC document verified.
           where: { status: VENDOR_STATUS.APPROVED, kycVerified: true },
-          attributes: ['id', 'businessName', 'slug', 'logoUrl', 'commissionRate', 'performanceScore', 'returnShippingFee', 'codEnabled', 'status', 'kycVerified'],
+          attributes: ['id', 'businessName', 'slug', 'logoUrl', 'performanceScore', 'returnShippingFee', 'codEnabled', 'status', 'kycVerified'],
         },
       ],
     });
@@ -94,6 +98,7 @@ export const initProductModel = (sequelize: Sequelize) => {
       description: { type: DataTypes.TEXT, allowNull: false },
       basePrice: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
       displayPrice: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+      aboveMrp: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
       compareAtPrice: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       brand: { type: DataTypes.STRING, allowNull: true },
       specs: { type: DataTypes.JSONB, allowNull: false, defaultValue: {} },

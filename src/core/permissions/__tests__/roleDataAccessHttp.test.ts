@@ -430,11 +430,13 @@ describe('assisted listing over HTTP (nothing here writes: every call is refused
 
   it('only a Super Admin may create or approve in the special ways: no vendor, or approving one’s own work', async () => {
     const productBody = { name: `ZZ never created ${stamp}`, categoryId: randomUUID(), description: 'd', basePrice: 10 };
-    // A vendor-less (platform) product: a Catalog Manager is refused before anything is written.
-    assert.equal((await send('POST', '/api/products/on-behalf', ROLES.ADMIN_CATALOG_MANAGER, { product: productBody })).status, 403);
+    // Every product has a vendor: a vendor-less one is refused for everyone before anything is written.
+    for (const role of [ROLES.ADMIN_CATALOG_MANAGER, ROLES.SUPER_ADMIN]) {
+      assert.equal((await send('POST', '/api/products/on-behalf', role, { product: productBody })).status, 422);
+    }
     // The own-work reason is validated (10 to 500 characters) before the product is even looked up.
     assert.equal((await send('POST', `/api/products/${randomUUID()}/approve`, ROLES.SUPER_ADMIN, { ownWorkReason: 'short' })).status, 422);
-    // Publishing a vendor-less product goes through /submit: a Catalog Manager has no store, so it is refused.
+    // /submit is the vendor's own: a Catalog Manager has no store, so it is refused.
     assert.ok([403, 404].includes((await send('POST', `/api/products/${randomUUID()}/submit`, ROLES.ADMIN_CATALOG_MANAGER, {})).status));
   });
 

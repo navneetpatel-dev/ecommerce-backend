@@ -1,10 +1,10 @@
 import type { Transaction } from 'sequelize';
 import { NotFoundError } from '@core/errors/NotFoundError';
-import { assertStockFor } from './cartStock';
+import { loadAddableVariant } from './assertAddable';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { type UnavailableReason } from '@core/constants/statuses';
-import { resolveItemAvailability } from '@core/catalog/customerVisibility';
+import { isRemoved, resolveItemAvailability } from '@core/catalog/customerVisibility';
 import { lineSubtotal } from '@modules/pricing/displayMoney';
 import { fromPaise, roundMoney, sumRupees } from '@modules/pricing/money';
 import { computeVendorShippingWeightsByVendor } from '@modules/shipping/shippingWeight';
@@ -15,7 +15,8 @@ import { Cart } from '@database/models/cart.model';
 import { CartItem } from '@database/models/cartItem.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { Product } from '@database/models/product.model';
-import { Vendor } from '@database/models/vendor.model';
+import { PURCHASABLE_PRODUCT_INCLUDE } from '@core/catalog/purchasableInclude';
+import { markAboveMrp } from '@modules/tax/markAboveMrp';
 import { sequelize } from '@database/models';
 import type { AddToCartRequest, UpdateCartItemRequest } from './cart.dto';
 import { gstRuleResolver, priceWithRuleGst } from '@modules/tax/gstPricing';
@@ -120,6 +121,8 @@ function mapCartItem(item: CartItem & { variant?: ProductVariant & { product?: a
     vendor,
     stock,
     quantity,
+    aboveMrp: variant?.aboveMrp,
+    removed: isRemoved(variant),
   });
 
   return {
@@ -199,17 +202,20 @@ export class CartService {
         {
           model: ProductVariant,
           as: 'variant',
+          paranoid: false,
           include: [
             {
               model: Product,
               as: 'product',
-              include: ['images', { model: Vendor, as: 'vendor' }],
+              paranoid: false,
+              include: ['images', ...PURCHASABLE_PRODUCT_INCLUDE],
             },
           ],
         },
       ],
     })) as (CartItem & { variant: ProductVariant & { product: any } })[];
 
+    await markAboveMrp(items.map((item) => item.variant));
     // Prices as the customer sees them (GST included) — the cart shows the same figures
     // as the product cards; the lines being bought get their exact totals below.
     const ruleFor = gstRuleResolver();
@@ -448,20 +454,7 @@ export class CartService {
 
   async addToCart(userId: string | null, sessionId: string | null, data: AddToCartRequest): Promise<CartView> {
     await sequelize.transaction(async (t) => {
-      const variant = await ProductVariant.findByPk(data.variantId, {
-        include: [{ model: Product, as: 'product', include: [{ model: Vendor, as: 'vendor' }] }],
-        transaction: t,
-      });
-      if (!variant) throw new NotFoundError('ProductVariant');
-
-      const product = (variant as any).product;
-      const vendor = product?.vendor ?? product?.Vendor ?? null;
-      // Hidden product → 404; stock gets its own answer (see assertStockFor).
-      const stock = Number(variant.stock);
-      if (!resolveItemAvailability({ product, vendor, stock: Math.max(stock, 1), quantity: 1 }).isAvailable) {
-        throw new NotFoundError('Product');
-      }
-      assertStockFor(data.quantity, stock);
+      const variant = await loadAddableVariant(data.variantId, data.quantity, t);
 
       const quantity = clampQuantity(data.quantity, variant.stock);
       if (quantity < 1) {

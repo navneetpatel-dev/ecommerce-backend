@@ -52,6 +52,16 @@ export const errorHandlerMiddleware: ErrorRequestHandler = (
     return;
   }
 
+  // Two requests creating the same thing at once: the database's unique rule refused the second.
+  if ((err as { name?: string }).name === 'SequelizeUniqueConstraintError') {
+    logError('Duplicate value refused', err, { requestId: req.requestId, path: req.path, method: req.method });
+    res.status(409).json({
+      success: false,
+      error: { code: ERROR_CODES.ALREADY_EXISTS, message: ERROR_MESSAGES.ALREADY_EXISTS },
+    });
+    return;
+  }
+
   logError('Unhandled error', err, {
     requestId: req.requestId,
     path: req.path,

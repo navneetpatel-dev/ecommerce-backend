@@ -84,7 +84,11 @@ export const UNAVAILABLE_REASON = {
   /** Some stock is left, but less than the line's quantity (B-66). */
   LOW_STOCK: 'LOW_STOCK',
   PRODUCT_UNPUBLISHED: 'PRODUCT_UNPUBLISHED',
+  /** The price with GST is above the product's MRP, so it may not be sold until corrected. */
+  PRICE_ABOVE_MRP: 'PRICE_ABOVE_MRP',
   VENDOR_UNAVAILABLE: 'VENDOR_UNAVAILABLE',
+  /** The vendor has removed the variant or the whole product. */
+  VARIANT_REMOVED: 'VARIANT_REMOVED',
 } as const;
 export type UnavailableReason = (typeof UNAVAILABLE_REASON)[keyof typeof UNAVAILABLE_REASON];
 

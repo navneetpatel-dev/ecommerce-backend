@@ -81,6 +81,18 @@ export const shortLinkCreateRateLimiter = rateLimit({
   message: ERROR_MESSAGES.RATE_LIMITED,
 });
 
+/** "Notify me" takes a typed email address and sends to it, so it is bounded per caller. */
+export const stockAlertRateLimiter = rateLimit({
+  store: redisRateLimitStore('stock-alert'),
+  passOnStoreError: true,
+  windowMs: 15 * 60 * 1000,
+  limit: isDev ? 500 : 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: jsonRateLimitHandler,
+  message: ERROR_MESSAGES.RATE_LIMITED,
+});
+
 /** Public web-vitals beacon (one or a few per page view). */
 export const webVitalsRateLimiter = rateLimit({
   store: redisRateLimitStore('web-vitals'),

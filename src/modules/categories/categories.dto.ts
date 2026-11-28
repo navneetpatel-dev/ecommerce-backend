@@ -5,6 +5,7 @@ import {
   WARRANTY_TYPE_VALUES,
 } from '@core/constants/statuses';
 import { pageLimitQuerySchema } from '@core/http/pagination';
+import { ADMIN_NOTE_LIMITS } from '@core/constants/product';
 
 const optionalImageUrl = z.preprocess(
   (value) => (typeof value === 'string' && value.trim() === '' ? null : value),
@@ -46,6 +47,15 @@ const optionalWarrantyType = z.preprocess(
   z.enum(WARRANTY_TYPE_VALUES).nullable().optional(),
 );
 
+/** Why GST or commission on vendor products is being changed by a move (see `categoryChangeGate`). */
+const changeReason = z.string().trim().min(ADMIN_NOTE_LIMITS.MIN).max(ADMIN_NOTE_LIMITS.MAX).optional();
+
+/** The move or reassignment whose effect on rates is being asked about. */
+export const RateImpactQuerySchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('reassign'), fromCategoryId: z.string().uuid(), toCategoryId: z.string().uuid() }),
+  z.object({ kind: z.literal('reparent'), categoryId: z.string().uuid(), parentId: z.string().uuid().optional() }),
+]);
+
 /** Category and attribute name limits. Keep in sync with the web category form. */
 export const CATEGORY_NAME_MAX = 100;
 export const ATTRIBUTE_NAME_MAX = 60;
@@ -85,6 +95,7 @@ export const UpdateCategorySchema = z.object({
   regenerateSlug: z.boolean().optional(),
   /** Archiving a category with active subcategories needs this: it archives them too. */
   cascade: z.boolean().optional(),
+  changeReason,
   parentId: optionalParentId,
   imageUrl: optionalImageUrl,
   status: z.enum(CATEGORY_STATUS_VALUES).optional(),
@@ -122,6 +133,7 @@ export const MoveCategorySchema = z
     parentId: z.string().uuid().nullable().optional(),
     beforeId: z.string().uuid().optional(),
     afterId: z.string().uuid().optional(),
+    changeReason,
   })
   .refine((value) => !(value.beforeId && value.afterId), { message: 'Give beforeId or afterId, not both' });
 
@@ -132,6 +144,7 @@ export const ReorderCategoriesSchema = z.object({
 export const ReassignProductsSchema = z.object({
   fromCategoryId: z.string().uuid(),
   toCategoryId: z.string().uuid(),
+  changeReason,
 });
 
 export const CreateCategoryAttributeSchema = z.object({

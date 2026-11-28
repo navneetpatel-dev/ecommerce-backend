@@ -1,9 +1,9 @@
 /**
- * Fields that set what a product costs the customer or how it is taxed and paid for. Vendor staff
- * keep editing everything else (name, description, images, stock, tags…); changing these is
+ * Fields that set what a product costs the customer or how it is taxed and paid for (the category
+ * sets the GST rate and commission). Vendor staff keep editing everything else (name, description, images, stock, tags…); changing these is
  * owner-only (and platform-admin).
  */
-export const PRICING_PRODUCT_FIELDS = ['basePrice', 'compareAtPrice', 'hsnCode', 'codEnabled'] as const;
+export const PRICING_PRODUCT_FIELDS = ['basePrice', 'compareAtPrice', 'categoryId', 'hsnCode', 'codEnabled'] as const;
 
 type PricingField = (typeof PRICING_PRODUCT_FIELDS)[number];
 
@@ -13,6 +13,8 @@ const isEmpty = (v: unknown) => v === null || v === undefined || v === '';
 const COMPARE: Record<PricingField, (a: unknown, b: unknown) => boolean> = {
   basePrice: (a, b) => Number(a) === Number(b),
   compareAtPrice: (a, b) => Number(a) === Number(b),
+  // The category decides the GST rate and the commission.
+  categoryId: (a, b) => String(a) === String(b),
   hsnCode: (a, b) => String(a).trim() === String(b).trim(),
   codEnabled: (a, b) => Boolean(a) === Boolean(b),
 };

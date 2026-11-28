@@ -18,7 +18,7 @@ describe('isVendorSellable', () => {
 
   it('hides products and blocks checkout for a vendor with unverified documents', () => {
     const vendor = { status: VENDOR_STATUS.APPROVED, kycVerified: false };
-    const product = { status: PRODUCT_STATUS.LIVE };
+    const product = { status: PRODUCT_STATUS.LIVE, Category: { status: 'ACTIVE' } };
     assert.equal(isProductCustomerVisible(product, vendor), false);
     assert.deepEqual(resolveItemAvailability({ product, vendor, stock: 5, quantity: 1 }), {
       isAvailable: false,
@@ -33,7 +33,7 @@ describe('isVendorSellable', () => {
 });
 
 describe('resolveItemAvailability stock reasons (B-66)', () => {
-  const product = { status: PRODUCT_STATUS.LIVE };
+  const product = { status: PRODUCT_STATUS.LIVE, Category: { status: 'ACTIVE' } };
   const vendor = { status: VENDOR_STATUS.APPROVED, kycVerified: true };
 
   it('calls a line LOW_STOCK when some stock is left but less than the quantity', () => {
@@ -48,5 +48,25 @@ describe('resolveItemAvailability stock reasons (B-66)', () => {
       resolveItemAvailability({ product, vendor, stock: 0, quantity: 1 }).unavailableReason,
       UNAVAILABLE_REASON.OUT_OF_STOCK,
     );
+  });
+});
+
+describe('a product is off sale outside an active category', () => {
+  const vendor = { status: VENDOR_STATUS.APPROVED, kycVerified: true };
+  const live = { status: PRODUCT_STATUS.LIVE, name: 'Mug', Category: { status: 'ACTIVE' } };
+
+  it('refuses an archived category, a missing one and a seed placeholder', () => {
+    assert.equal(isProductCustomerVisible(live, vendor), true);
+    for (const product of [
+      { ...live, Category: { status: 'ARCHIVED' } },
+      { ...live, Category: undefined },
+      { ...live, name: 'Seed Mug' },
+    ]) {
+      assert.equal(isProductCustomerVisible(product, vendor), false);
+      assert.equal(
+        resolveItemAvailability({ product, vendor, stock: 5, quantity: 1 }).unavailableReason,
+        UNAVAILABLE_REASON.PRODUCT_UNPUBLISHED,
+      );
+    }
   });
 });

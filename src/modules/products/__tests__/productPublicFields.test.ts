@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { forViewer, stripInternalProductFields } from '../productPublicFields';
+import { forViewer, toShopperProduct } from '../productPublicFields';
 
 const product = {
   id: 'p1',
@@ -17,12 +17,23 @@ const product = {
 
 describe('what shoppers never get to see on a product', () => {
   it('removes who created, changed or approved it, the moderator note and the platform-listing details', () => {
-    assert.deepEqual(stripInternalProductFields(product), { id: 'p1', name: 'Shirt', basePrice: 499 });
+    assert.deepEqual(toShopperProduct(product), { id: 'p1', name: 'Shirt', basePrice: 499 });
   });
 
   it('does not change the original object', () => {
-    stripInternalProductFields(product);
+    toShopperProduct(product);
     assert.equal(product.createdBy, 'admin-1');
+  });
+
+  it('removes the commission the platform takes, from the seller and from every category', () => {
+    const view = toShopperProduct({
+      id: 'p1',
+      vendor: { id: 'v', businessName: 'Store', commissionRate: '16.00' },
+      category: { id: 'c', commissionRate: '12.50', parent: { id: 'r', commissionRate: '8.00', parent: null } },
+      Category: { id: 'c', commissionRate: '12.50', createdBy: 'admin-1' },
+    });
+    assert.doesNotMatch(JSON.stringify(view), /commissionRate|createdBy/);
+    assert.equal(view.vendor.businessName, 'Store');
   });
 
   it('customer-facing views are stripped; the team’s own views keep every field', () => {

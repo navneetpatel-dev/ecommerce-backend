@@ -146,6 +146,9 @@ export async function updateTaxRule(
     const rule = await TaxRule.findByPk(id, { transaction: t });
     if (!rule) throw new NotFoundError('TaxRule');
     const before = ruleSnapshot(rule);
+    // Moving the default to a category would leave no default: deleting it asks to be confirmed,
+    // and this would do the same without asking.
+    if (!rule.categoryId && data.categoryId) throw new ValidationError(ERROR_MESSAGES.TAX_DEFAULT_RULE_MOVE);
 
     if (data.categoryId !== undefined && (data.categoryId ?? null) !== (rule.categoryId ?? null)) {
       await assertRuleUnique(data.categoryId ?? null, id, t);

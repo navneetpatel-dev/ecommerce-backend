@@ -33,6 +33,7 @@ const VENDOR_PAGE_BY_TYPE: Record<string, string> = {
   PRODUCT_REJECTED: 'products',
   PRODUCT_LISTED_BY_PLATFORM: 'products',
   PRODUCT_UPDATED_BY_PLATFORM: 'products',
+  PRODUCT_ABOVE_MRP: 'products',
   PRODUCT_SUBMITTED_BY_PLATFORM: 'products',
   PAYOUT_PROCESSED: 'payouts',
   PAYOUT_PAID: 'payouts',

@@ -105,6 +105,7 @@ describe('syncProductBasePrice', () => {
       },
     };
     mock.method(ProductModel, 'findByPk', async () => product as never);
+    mock.method(ProductVariant, 'findAll', async () => [] as never);
     mock.method(taxService, 'getGstRateRule', async () => ({ gstPercentage: 18, gstPriceBand: null }));
     return updates;
   }
@@ -113,7 +114,7 @@ describe('syncProductBasePrice', () => {
     mock.method(ProductVariant, 'min', async () => 549 as never);
     const updates = stubProduct({ id: 'p', categoryId: 'c', basePrice: 499, displayPrice: 588.82 });
     await syncProductBasePrice('p', {} as never);
-    assert.deepEqual(updates, [{ basePrice: 549 }, { displayPrice: 647.82 }]);
+    assert.deepEqual(updates, [{ basePrice: 549 }, { displayPrice: 647.82, aboveMrp: false }]);
   });
 
   it('leaves a product without variants on its own price', async () => {

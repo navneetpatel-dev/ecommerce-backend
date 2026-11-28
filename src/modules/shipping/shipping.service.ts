@@ -5,6 +5,7 @@ import { ShippingZone } from '@database/models/shippingZone.model';
 import { Shipment } from '@database/models/shipment.model';
 import { Product } from '@database/models/product.model';
 import { ProductVariant } from '@database/models/productVariant.model';
+import { restoreStock } from '@modules/inventory/restoreStock';
 import { SubOrder } from '@database/models/subOrder.model';
 import { Order } from '@database/models/order.model';
 import { WebhookEvent } from '@database/models/webhookEvent.model';
@@ -181,11 +182,7 @@ async function cascadeRtoDeliveredAndSettle(subOrderId: string, transaction: Tra
   for (const item of subOrder.items ?? []) {
     const variantId = (item as any).variantId ?? (item as any).productVariantId;
     if (variantId) {
-      await ProductVariant.increment('stock', {
-        by: item.quantity,
-        where: { id: variantId },
-        transaction,
-      });
+      await restoreStock(variantId, item.quantity, transaction);
     }
   }
 

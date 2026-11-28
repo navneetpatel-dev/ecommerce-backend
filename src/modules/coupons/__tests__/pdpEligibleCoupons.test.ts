@@ -26,6 +26,7 @@ describe('couponsService.eligibleCoupons on PDP', () => {
     basePrice: 500,
     status: PRODUCT_STATUS.LIVE,
     vendor: mockVendor,
+    Category: { status: 'ACTIVE' },
     variants: [{ id: 'var-1', price: 500, stock: 10, weightGrams: 200 }],
   };
 

@@ -128,3 +128,34 @@ export async function productIdOfImage(imageId: string): Promise<string> {
   if (!image) throw new NotFoundError('ProductImage');
   return image.productId;
 }
+
+/** A platform edit of stock from the inventory screen. */
+export async function recordStockEdit(actor: ProductActor, variantId: string, before: number, after: number) {
+  const variant = await ProductVariant.findByPk(variantId, { attributes: ['id', 'sku', 'productId'] });
+  if (!variant) return;
+  const product = await loadProduct(variant.productId);
+  if (before === after) return;
+  await record(actor, product, {
+    action: 'PRODUCT_STOCK_UPDATED_ON_BEHALF',
+    changedFields: ['variant stock'],
+    metadata: { sku: variant.sku, before: { stock: before }, after: { stock: after } },
+  });
+}
+
+export async function deleteVariantAs(actor: ProductActor, variantId: string) {
+  const variant = await ProductVariant.findByPk(variantId);
+  if (!variant) throw new NotFoundError('ProductVariant');
+  const product = await loadProduct(variant.productId);
+  await productsService.deleteVariant(variantId);
+  await record(actor, product, {
+    action: 'PRODUCT_VARIANT_DELETED_ON_BEHALF',
+    changedFields: ['variant removed'],
+    metadata: { sku: variant.sku, price: Number(variant.price), stock: Number(variant.stock) },
+  });
+}
+
+export async function deleteProductAs(actor: ProductActor, id: string) {
+  const product = await loadProduct(id);
+  await productsService.deleteProduct(id, actor.vendorId);
+  await record(actor, product, { action: 'PRODUCT_DELETED_ON_BEHALF', changedFields: ['listing deleted'] });
+}

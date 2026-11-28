@@ -98,4 +98,37 @@ async function alignMrpWithGstPrices(queryInterface) {
   return result?.rowCount ?? 0;
 }
 
-module.exports = { refreshProductDisplayPrices, alignMrpWithGstPrices };
+/**
+ * Marks what may not be sold: each variant whose price with GST is above the product's MRP, and
+ * the product when every price it sells at is above. The same rule as `applyPricingState` in the
+ * app (`modules/products/productPricingState.ts`). Needs the `aboveMrp` columns.
+ */
+async function refreshAboveMrpFlags(queryInterface) {
+  const above = (price) =>
+    `(p."compareAtPrice" IS NOT NULL AND ${withGstPaiseSql(price, 'r')} > ROUND(p."compareAtPrice" * 100))`;
+  await queryInterface.sequelize.query(`
+    WITH RECURSIVE ${PRODUCT_RULE_CTES}
+    UPDATE product_variants v
+    SET "aboveMrp" = ${above('v.price')}
+    FROM products p
+    INNER JOIN product_rule r ON r.pid = p.id
+    WHERE p.id = v."productId" AND v."aboveMrp" IS DISTINCT FROM ${above('v.price')}
+  `);
+  await queryInterface.sequelize.query(`
+    WITH RECURSIVE ${PRODUCT_RULE_CTES},
+    state AS (
+      SELECT p.id,
+        COALESCE(
+          (SELECT bool_and(v."aboveMrp") FROM product_variants v WHERE v."productId" = p.id AND v."deletedAt" IS NULL),
+          ${above('p."basePrice"')}
+        ) AS above
+      FROM products p
+      INNER JOIN product_rule r ON r.pid = p.id
+    )
+    UPDATE products p SET "aboveMrp" = s.above
+    FROM state s
+    WHERE s.id = p.id AND p."aboveMrp" IS DISTINCT FROM s.above
+  `);
+}
+
+module.exports = { refreshProductDisplayPrices, alignMrpWithGstPrices, refreshAboveMrpFlags };

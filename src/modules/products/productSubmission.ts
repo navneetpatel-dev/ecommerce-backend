@@ -15,13 +15,13 @@ import { logAudit } from '@modules/audit/audit.service';
 import { productsRepository } from './products.repository';
 
 /**
- * A vendor submits a draft: it must be complete (a variant, an image, KYC-approved
- * categories), then it waits in the moderation queue, or goes live at once when the
- * platform's "auto-approve products" setting is on.
+ * A vendor submits a draft, or resubmits a listing the moderator rejected: it must be complete
+ * (a variant, an image, KYC-approved categories), then it waits in the moderation queue. A first
+ * submission goes live at once when the platform's "auto-approve products" setting is on; a
+ * resubmission always goes back to a moderator.
  *
- * `onBehalf` is the platform submitting a draft it listed for the vendor: the vendor's consent is recorded,
- * a rejected draft may go again, and the auto-approve switch never applies (a different admin approves).
- * `platformOwned` is a Super Admin publishing the platform's own product (no vendor): it goes live at once.
+ * `onBehalf` is the platform submitting a listing it prepared for the vendor: the vendor's consent is
+ * recorded and the auto-approve switch never applies (a different admin approves).
  */
 export async function submitProductForApproval(
   service: { getProductById(id: string): Promise<{ id: string; name: string }> },
@@ -29,30 +29,28 @@ export async function submitProductForApproval(
   vendorId: string | null,
   actorId?: string,
   onBehalf?: { consentNote: string },
-  platformOwned = false,
 ) {
-  // The platform's "auto-approve products" switch: a submission that passed every check
-  // above goes straight live instead of waiting in the moderation queue.
-  const autoApprove =
-    platformOwned || (!onBehalf && (await settingsService.getPlatformSettings()).autoApproveProducts === true);
+  // The platform's "auto-approve products" switch: a first submission that passes every check
+  // goes straight live instead of waiting in the moderation queue.
+  const autoApproveOn = !onBehalf && (await settingsService.getPlatformSettings()).autoApproveProducts === true;
+  let autoApprove = false;
   let ownerVendorId = vendorId;
   await sequelize.transaction(async (t) => {
     const product = await productsRepository.findById(id, { transaction: t });
     if (!product) throw new NotFoundError('Product');
 
-    if (platformOwned) {
-      if (product.vendorId) throw new ForbiddenError(ERROR_MESSAGES.PRODUCT_NOT_PLATFORM_OWNED);
-    } else if (onBehalf) {
+    if (onBehalf) {
       if (!product.listedByPlatform || !product.vendorId) throw new ForbiddenError(ERROR_MESSAGES.PRODUCT_NOT_PLATFORM_LISTED);
       ownerVendorId = product.vendorId;
-    } else if (product.vendorId !== vendorId) {
+    } else if (!vendorId || product.vendorId !== vendorId) {
       throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_PRODUCT);
     }
 
-    const resubmittable = onBehalf && product.status === PRODUCT_STATUS.REJECTED;
-    if (product.status !== PRODUCT_STATUS.DRAFT && !resubmittable) {
+    const resubmission = product.status === PRODUCT_STATUS.REJECTED;
+    if (product.status !== PRODUCT_STATUS.DRAFT && !resubmission) {
       throw new ValidationError(ERROR_MESSAGES.PRODUCT_NOT_DRAFT);
     }
+    autoApprove = autoApproveOn && !resubmission;
 
     const variantCount = await ProductVariant.count({ where: { productId: id }, transaction: t });
     if (variantCount === 0) {
@@ -78,10 +76,11 @@ export async function submitProductForApproval(
     await productsRepository.update(
       id,
       autoApprove
-        ? { status: PRODUCT_STATUS.LIVE, approvedById: platformOwned ? (actorId ?? null) : null, rejectionNote: null }
+        ? { status: PRODUCT_STATUS.LIVE, approvedById: null, rejectionNote: null }
         : {
             status: PRODUCT_STATUS.PENDING_APPROVAL,
-            ...(onBehalf && { vendorConsentNote: onBehalf.consentNote, rejectionNote: null, ...(actorId && { updatedBy: actorId }) }),
+            rejectionNote: null,
+            ...(onBehalf && { vendorConsentNote: onBehalf.consentNote, ...(actorId && { updatedBy: actorId }) }),
           },
       { transaction: t },
     );
@@ -95,7 +94,7 @@ export async function submitProductForApproval(
         action: 'PRODUCT_AUTO_APPROVED',
         entityType: 'Product',
         entityId: id,
-        metadata: { name: submitted.name, ...(platformOwned && { platformOwned: true }) },
+        metadata: { name: submitted.name },
       });
     }
     if (ownerVendorId) void User.findAll({ where: { vendorId: ownerVendorId }, attributes: ['id'] })

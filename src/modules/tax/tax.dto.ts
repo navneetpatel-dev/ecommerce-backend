@@ -76,6 +76,14 @@ export const DeleteTaxRuleQuerySchema = z.object({
   force: z.enum(['true', 'false']).optional(),
 });
 
+/** A rule change being considered, to show what it would take off sale before it is saved. */
+export const TaxRuleImpactSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('create'), rule: CreateTaxRuleSchema }),
+  z.object({ action: z.literal('update'), ruleId: z.string().uuid(), rule: UpdateTaxRuleSchema }),
+  z.object({ action: z.literal('delete'), ruleId: z.string().uuid() }),
+]);
+export type TaxRuleImpactRequest = z.infer<typeof TaxRuleImpactSchema>;
+
 export type CreateTaxRuleRequest = z.infer<typeof CreateTaxRuleSchema>;
 export type UpdateTaxRuleRequest = z.infer<typeof UpdateTaxRuleSchema>;
 export type TaxRuleListQuery = z.infer<typeof TaxRuleListQuerySchema>;

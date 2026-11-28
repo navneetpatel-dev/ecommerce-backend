@@ -1,65 +1,45 @@
 import { ProductVariant } from '@database/models/productVariant.model';
 import { Product } from '@database/models/product.model';
-import { WishlistItem } from '@database/models/wishlistItem.model';
-import { Wishlist } from '@database/models/wishlist.model';
-import { StockAlert } from '@database/models/stockAlert.model';
 import { sequelize } from '@config/db';
-import { Op, Sequelize } from 'sequelize';
+import type { OrderItem as SortItem } from 'sequelize';
+import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
+import { lowStockQuery } from './lowStockWhere';
+import type { LowStockQuery } from './inventory.dto';
 import { NotFoundError } from '@core/errors/NotFoundError';
-import { ForbiddenError } from '@core/errors/ForbiddenError';
-import { ValidationError } from '@core/errors/ValidationError';
-import { notificationsService } from '@modules/notifications/notifications.service';
-import { env } from '@config/env';
+import { lockedStockEdit } from './applyStockEdit';
+import { notifyBackInStock } from './backInStock';
+import { createStockAlert, deleteStockAlert } from './stockAlerts.service';
 
 export class InventoryService {
-  async getLowStock(threshold?: number, vendorId?: string) {
-    const productInclude = {
-      model: Product,
-      as: 'product' as const,
-      ...(vendorId ? { where: { vendorId }, required: true as const } : {}),
-    };
-
-    if (threshold != null) {
-      return ProductVariant.findAll({
-        where: { stock: { [Op.lte]: threshold } },
-        include: [productInclude],
-        order: [['stock', 'ASC']],
-      });
-    }
-    return ProductVariant.findAll({
-      where: Sequelize.where(Sequelize.col('stock'), Op.lte, Sequelize.col('lowStockAt')),
-      include: [productInclude],
-      order: [['stock', 'ASC']],
+  /** One page of low-stock variants (see `lowStockQuery`), emptiest first unless asked otherwise. */
+  async getLowStock(query: LowStockQuery & { vendorId?: string }) {
+    const sortBy: SortItem =
+      query.sort === 'name_asc'
+        ? [{ model: Product, as: 'product' }, 'name', 'ASC']
+        : ['stock', query.sort === 'stock_desc' ? 'DESC' : 'ASC'];
+    const { rows, count } = await ProductVariant.findAndCountAll({
+      ...lowStockQuery(query),
+      order: [sortBy, ['id', 'ASC']],
+      limit: query.limit,
+      offset: paginationOffset(query.page, query.limit),
+      distinct: true,
+      col: 'id',
+      subQuery: false,
     });
+    return { rows, pagination: buildPaginationMeta(count, query.page, query.limit) };
   }
 
   async updateStock(variantId: string, requestedStock: number, updatedBy: string, expectedStock?: number) {
-    let stock = requestedStock;
-    // Row-locked so concurrent edits serialise (oversell guard); back-in-stock
-    // notifications run after commit so the lock is not held during fan-out.
-    const { updated, previousStock } = await sequelize.transaction(async (t) => {
-      // Postgres rejects FOR UPDATE on the nullable side of an outer join (it failed every
-      // edit): lock the variant alone, then load its product.
-      await ProductVariant.findByPk(variantId, { attributes: ['id'], transaction: t, lock: t.LOCK.UPDATE });
+    // Back-in-stock notifications run after commit so the lock is not held during fan-out.
+    const { updated, previousStock, stock } = await sequelize.transaction(async (t) => {
+      const edit = await lockedStockEdit(variantId, requestedStock, expectedStock, t);
       const variant = await ProductVariant.findByPk(variantId, {
         include: [{ model: Product, as: 'product' }],
         transaction: t,
       });
       if (!variant) throw new NotFoundError('ProductVariant');
-
-      const previous = Number(variant.stock ?? 0);
-      // Orders take and give back stock while the editor is open (an order placed, an
-      // unpaid one expiring). Writing the typed number over that would undo them, e.g.
-      // counting units an unpaid order still holds as free. So the edit is the change
-      // from what the editor showed, applied to the stock as it is now.
-      if (expectedStock != null && expectedStock !== previous) {
-        stock = Math.max(0, previous + (requestedStock - expectedStock));
-      }
-      const row = await variant.update(
-        { stock, updatedBy },
-        { transaction: t },
-      );
-      return { updated: row, previousStock: previous };
+      const row = await variant.update({ stock: edit.next, updatedBy }, { transaction: t });
+      return { updated: row, previousStock: edit.previous, stock: edit.next };
     });
 
     if (previousStock <= 0 && stock > 0) {
@@ -72,78 +52,10 @@ export class InventoryService {
     return updated;
   }
 
-  async notifyBackInStock(productId: string, variantId: string) {
-    const productPageUrl = (slug: string) => `${env.CLIENT_URL.replace(/\/$/, '')}/products/${slug}`;
-    const product = await Product.findByPk(productId);
-    if (!product) return;
-
-    const wishlistItems = await WishlistItem.findAll({
-      where: { productId: product.id },
-      include: [{ model: Wishlist, required: true }],
-      limit: 200,
-    });
-    for (const item of wishlistItems) {
-      const wishlist = (item as WishlistItem & { Wishlist?: Wishlist }).Wishlist;
-      if (!wishlist?.userId) continue;
-      void notificationsService.sendBackInStock(wishlist.userId, product.id, {
-        productName: product.name,
-        productUrl: productPageUrl(product.slug),
-      });
-    }
-
-    // Explicit subscribe/unsubscribe stock alerts (variant-scoped)
-    const stockAlerts = await StockAlert.findAll({
-      where: { variantId, notifiedAt: null },
-      limit: 500,
-    });
-    for (const alert of stockAlerts) {
-      if (alert.userId) {
-        void notificationsService.sendBackInStock(alert.userId, product.id, {
-          productName: product.name,
-          productUrl: productPageUrl(product.slug),
-        });
-      }
-    }
-    if (stockAlerts.length) {
-      await StockAlert.update(
-        { notifiedAt: new Date() },
-        { where: { id: { [Op.in]: stockAlerts.map((a) => a.id) } } },
-      );
-    }
-  }
-
-  async createStockAlert(variantId: string, userId: string | null, guestEmail?: string) {
-    if (!userId && !guestEmail) {
-      throw new ValidationError('Either an authenticated user or a guestEmail is required.');
-    }
-    const variant = await ProductVariant.findByPk(variantId);
-    if (!variant) throw new NotFoundError('ProductVariant');
-
-    const where = userId ? { variantId, userId } : { variantId, guestEmail };
-    const [alert] = await StockAlert.findOrCreate({
-      where,
-      defaults: { variantId, userId: userId ?? null, guestEmail: userId ? null : guestEmail ?? null },
-    });
-    return alert;
-  }
-
-  async deleteStockAlert(
-    id: string,
-    requester: { userId?: string; isAdmin?: boolean; guestEmail?: string },
-  ) {
-    const alert = await StockAlert.findByPk(id);
-    if (!alert) throw new NotFoundError('StockAlert');
-
-    const isOwner = requester.userId && alert.userId === requester.userId;
-    const isMatchingGuest =
-      !alert.userId && alert.guestEmail && requester.guestEmail === alert.guestEmail;
-
-    if (!requester.isAdmin && !isOwner && !isMatchingGuest) {
-      throw new ForbiddenError('You cannot remove this stock alert.');
-    }
-
-    await alert.destroy();
-  }
+  // Back-in-stock alerts (see `backInStock.ts` and `stockAlerts.service.ts`).
+  notifyBackInStock = notifyBackInStock;
+  createStockAlert = createStockAlert;
+  deleteStockAlert = deleteStockAlert;
 }
 
 export const inventoryService = new InventoryService();

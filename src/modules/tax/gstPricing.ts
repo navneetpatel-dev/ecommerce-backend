@@ -17,6 +17,15 @@ export function priceWithRuleGst(rule: GstRateRule, price: unknown): number {
   return priceWithGst(price, rate);
 }
 
+/**
+ * Whether a pre-GST `price` for one piece sells above the MRP once GST is added. The MRP includes
+ * GST, so such a piece may not be sold. Without an MRP nothing is above it.
+ */
+export function isAboveMrp(rule: GstRateRule, price: unknown, mrp: unknown): boolean {
+  if (mrp === null || mrp === undefined || mrp === '') return false;
+  return toPaise(priceWithRuleGst(rule, price)) > toPaise(roundMoney(mrp));
+}
+
 /** Resolves GST rules per category once — for pages and jobs that price many products. */
 export function gstRuleResolver(): (categoryId: string | null | undefined) => Promise<GstRateRule> {
   const cache = new Map<string, Promise<GstRateRule>>();

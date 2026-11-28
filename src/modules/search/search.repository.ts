@@ -11,6 +11,7 @@ import {
 } from '@core/constants/search';
 import type { SearchSuggestionDto } from './search.dto';
 import { buildAutocompleteLikePatterns } from './search.utils';
+import { inSelectedCategorySql } from '@modules/categories/categoryMembership';
 
 export interface SearchParams {
   term: string;
@@ -71,10 +72,9 @@ interface CategoryAutocompleteRow {
   path: string;
   imageUrl: string;
 }
-
 const liveProductFilters = `
   p."deletedAt" IS NULL
-  AND p.name NOT ILIKE 'Seed %'
+  AND p.name NOT ILIKE 'Seed %' AND p."aboveMrp" = false
   AND p.status = :liveStatus
   AND v.status = :approvedStatus
   AND v."kycVerified" = true
@@ -109,7 +109,7 @@ const defaultVariantLateral = `
     SELECT json_build_object('id', sv.id, 'stock', sv.stock) AS variant
     FROM product_variants sv
     WHERE sv."productId" = p.id
-      AND sv."deletedAt" IS NULL
+      AND sv."deletedAt" IS NULL AND sv."aboveMrp" = false
     ORDER BY sv."createdAt" ASC
     LIMIT 1
   ) dv ON true
@@ -145,10 +145,10 @@ export class SearchRepository {
           OR ${skuMatchExists}
         )
         AND ${liveProductFilters}
-        AND (:categoryId::uuid IS NULL OR p."categoryId" = :categoryId::uuid)
+        AND (:categoryId::uuid IS NULL OR ${inSelectedCategorySql})
         AND (:vendorId::uuid IS NULL OR p."vendorId" = :vendorId::uuid)
         AND (:minPrice::numeric IS NULL OR ${displayPriceSql} >= :minPrice::numeric)
-        AND (:maxPrice::numeric IS NULL OR ${displayPriceSql} <= :maxPrice::numeric) AND (:inStock::boolean IS NOT TRUE OR EXISTS (SELECT 1 FROM product_variants iv WHERE iv."productId" = p.id AND iv."deletedAt" IS NULL AND iv.stock > 0))
+        AND (:maxPrice::numeric IS NULL OR ${displayPriceSql} <= :maxPrice::numeric) AND (:inStock::boolean IS NOT TRUE OR EXISTS (SELECT 1 FROM product_variants iv WHERE iv."productId" = p.id AND iv."deletedAt" IS NULL AND iv.stock > 0 AND iv."aboveMrp" = false))
       `,
       {
         replacements: this.searchReplacements(params, prefixPattern),
@@ -214,10 +214,10 @@ export class SearchRepository {
           OR ${skuMatchExists}
         )
         AND ${liveProductFilters}
-        AND (:categoryId::uuid IS NULL OR p."categoryId" = :categoryId::uuid)
+        AND (:categoryId::uuid IS NULL OR ${inSelectedCategorySql})
         AND (:vendorId::uuid IS NULL OR p."vendorId" = :vendorId::uuid)
         AND (:minPrice::numeric IS NULL OR ${displayPriceSql} >= :minPrice::numeric)
-        AND (:maxPrice::numeric IS NULL OR ${displayPriceSql} <= :maxPrice::numeric) AND (:inStock::boolean IS NOT TRUE OR EXISTS (SELECT 1 FROM product_variants iv WHERE iv."productId" = p.id AND iv."deletedAt" IS NULL AND iv.stock > 0))
+        AND (:maxPrice::numeric IS NULL OR ${displayPriceSql} <= :maxPrice::numeric) AND (:inStock::boolean IS NOT TRUE OR EXISTS (SELECT 1 FROM product_variants iv WHERE iv."productId" = p.id AND iv."deletedAt" IS NULL AND iv.stock > 0 AND iv."aboveMrp" = false))
       ORDER BY rank DESC, p.name ASC, p.id ASC
       LIMIT :limit OFFSET :offset
       `,

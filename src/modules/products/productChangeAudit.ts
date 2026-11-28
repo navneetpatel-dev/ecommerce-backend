@@ -11,9 +11,17 @@ export const ON_BEHALF_ACTIONS = [
   'PRODUCT_VARIANT_UPDATED_ON_BEHALF',
   'PRODUCT_IMAGE_CHANGED_ON_BEHALF',
   'PRODUCT_SUBMITTED_ON_BEHALF',
+  'PRODUCT_VARIANT_DELETED_ON_BEHALF',
 ] as const;
 
-export type OnBehalfAction = (typeof ON_BEHALF_ACTIONS)[number];
+/**
+ * Also recorded and told to the vendor, but not "preparing the listing": a stock correction or a
+ * deletion does not stop the same admin approving it later.
+ */
+export type OnBehalfAction =
+  | (typeof ON_BEHALF_ACTIONS)[number]
+  | 'PRODUCT_STOCK_UPDATED_ON_BEHALF'
+  | 'PRODUCT_DELETED_ON_BEHALF';
 
 const isNumeric = (value: unknown) => typeof value === 'number' || (typeof value === 'string' && value.trim() !== '' && !Number.isNaN(Number(value)));
 
@@ -23,7 +31,9 @@ const same = (a: unknown, b: unknown) =>
 
 /** The keys of `update` whose value differs from the stored product (a form re-sending unchanged fields is not a change). */
 export function changedFieldNames(before: Record<string, unknown>, update: Record<string, unknown>): string[] {
-  return Object.keys(update).filter((key) => key !== 'changeReason' && update[key] !== undefined && !same(before[key], update[key]));
+  // `changeReason` and `expectedStock` describe the edit; they are not fields of the record.
+  const meta = new Set(['changeReason', 'expectedStock']);
+  return Object.keys(update).filter((key) => !meta.has(key) && update[key] !== undefined && !same(before[key], update[key]));
 }
 
 /** Old and new values of the given fields, for the audit trail of a pricing change. */

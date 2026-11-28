@@ -3,6 +3,7 @@ import { NotFoundError } from '@core/errors/NotFoundError';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { Category } from '@database/models/category.model';
 import { Product } from '@database/models/product.model';
+import { ProductCategory } from '@database/models/productCategory.model';
 import { TaxRule } from '@database/models/taxRule.model';
 import { loadCategoryRules, type ResolvedCategoryRule } from '@modules/tax/taxRuleResolution';
 
@@ -151,6 +152,10 @@ export type CategoryImpact = {
   childCount: number;
   activeChildCount: number;
   productCount: number;
+  /** Deleted products still filed here: they block deleting it until reassigned. */
+  deletedProductCount: number;
+  /** Products that list it as a secondary category, and would lose that tag if it were deleted. */
+  secondaryCount: number;
   ownTaxRule: { id: string; gstPercentage: number } | null;
   /** The GST this category would get if its own rule went away (null when it has none of its own). */
   gstAfterRuleRemoved: number | null;
@@ -169,6 +174,12 @@ export async function getCategoryImpact(categoryId: string): Promise<CategoryImp
     childCount: kids.length,
     activeChildCount: kids.filter((row) => row.status === 'ACTIVE').length,
     productCount: productCounts.get(categoryId) ?? 0,
+    deletedProductCount:
+      (await Product.count({ where: { categoryId }, paranoid: false })) - (productCounts.get(categoryId) ?? 0),
+    secondaryCount: await ProductCategory.count({
+      where: { categoryId },
+      include: [{ model: Product, as: 'product', required: true, attributes: [] }],
+    }),
     ownTaxRule: taxRule ? { id: taxRule.id, gstPercentage: Number(taxRule.gstPercentage) } : null,
     gstAfterRuleRemoved: gst && gst.source === 'own' ? null : (gst?.gstPercentage ?? null),
   };

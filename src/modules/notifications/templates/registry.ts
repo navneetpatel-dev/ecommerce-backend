@@ -167,6 +167,8 @@ export function renderNotificationEmail(
   const cta = defaultCta(type, data);
   const marketing = isMarketingNotification(type) || data.isMarketing === true;
   const unsubscribeUrl = str(data, 'unsubscribeUrl');
+  // An alert a shopper asked for carries its own cancel link (a guest has no settings page).
+  const cancelAlertUrl = str(data, 'cancelAlertUrl');
   // The sign-in code is the point of its email: show it large, whether or not the sender built the box.
   const withCode: EmailTemplateData =
     type === 'LOGIN_OTP' && str(data, 'code') && !data.codeBox
@@ -186,7 +188,9 @@ export function renderNotificationEmail(
       : SECURITY_TYPES.has(type)
         ? EMAIL_COPY.footerSecurity
         : EMAIL_COPY.footerHelp,
-    footerLink: (marketing || type === 'NEWSLETTER_WELCOME') && unsubscribeUrl ? { label: EMAIL_COPY.unsubscribeLink, url: unsubscribeUrl } : undefined,
+    footerLink: cancelAlertUrl
+      ? { label: EMAIL_COPY.cancelAlertLink, url: cancelAlertUrl }
+      : (marketing || type === 'NEWSLETTER_WELCOME') && unsubscribeUrl ? { label: EMAIL_COPY.unsubscribeLink, url: unsubscribeUrl } : undefined,
     supportEmail: str(data, 'supportEmail') || undefined,
     supportHours: str(data, 'supportHours') || undefined,
     theme: options.theme,

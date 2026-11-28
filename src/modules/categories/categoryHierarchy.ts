@@ -1,6 +1,7 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
+import { CATEGORY_STATUS } from '@core/constants/statuses';
 import { Category } from '@database/models/category.model';
 import type { Transaction } from 'sequelize';
 import { categoriesRepository } from './categories.repository';
@@ -68,3 +69,16 @@ export async function assertValidParent(
   }
 }
 
+
+/** Shoppers reach an active category only through active ones: every category above it must be. */
+export async function assertAncestorsActive(parentId: string | null, transaction: Transaction): Promise<void> {
+  const seen = new Set<string>();
+  let cursor = parentId;
+  while (cursor && !seen.has(cursor)) {
+    seen.add(cursor);
+    const node = await categoriesRepository.findById(cursor, { transaction });
+    if (!node) throw new NotFoundError('Parent category');
+    if (node.status !== CATEGORY_STATUS.ACTIVE) throw new ValidationError(ERROR_MESSAGES.CATEGORY_PARENT_ARCHIVED);
+    cursor = node.parentId;
+  }
+}

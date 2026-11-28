@@ -20,8 +20,10 @@ import type {
   UpdateCategoryRequest,
 } from './categories.dto';
 import { facetOptionValues } from './facetOptions';
-import { assertValidParent } from './categoryHierarchy';
+import { assertAncestorsActive, assertValidParent } from './categoryHierarchy';
 import { toPublicCategory } from './categoryPublic';
+import { inCategoriesSql } from './categoryMembership';
+import { assertSiblingNameFree } from './categoryNames';
 import { TaxRule } from '@database/models/taxRule.model';
 import { logAudit } from '@modules/audit/audit.service';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
@@ -50,6 +52,10 @@ function isUuid(value: string): boolean {
 function escapeSqlString(value: string): string {
   return value.replace(/'/g, "''");
 }
+
+/** Shoppers' products under these categories, by primary or secondary category. */
+const inCategories = (ids: string[]) =>
+  Sequelize.literal(inCategoriesSql('"Product"', ids.map((id) => sequelize.escape(id)).join(', ')));
 
 function serializeCategory(row: Category | Record<string, unknown>) {
   const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
@@ -131,7 +137,9 @@ export class CategoriesService {
 
       if (data.parentId) {
         await assertValidParent(null, data.parentId, t);
+        if (data.status !== CATEGORY_STATUS.ARCHIVED) await assertAncestorsActive(data.parentId, t);
       }
+      await assertSiblingNameFree(data.name, data.parentId ?? null, null, t);
 
       const created = await categoriesRepository.create(
         {
@@ -250,7 +258,7 @@ export class CategoriesService {
   }
 
   async updateCategory(id: string, data: UpdateCategoryRequest) {
-    return sequelize.transaction(async (t: Transaction) => {
+    await sequelize.transaction(async (t: Transaction) => {
       const category = await categoriesRepository.findById(id, { transaction: t });
       if (!category) throw new NotFoundError('Category');
 
@@ -287,6 +295,16 @@ export class CategoriesService {
         }
         updateData.parentId = data.parentId;
       }
+      if (data.name !== undefined || data.parentId !== undefined) {
+        const parentId = data.parentId !== undefined ? data.parentId : category.parentId;
+        await assertSiblingNameFree(data.name ?? category.name, parentId ?? null, id, t);
+      }
+
+      // Becoming active, or moving while active, needs active categories above.
+      const nextStatus = data.status ?? category.status;
+      if (nextStatus === CATEGORY_STATUS.ACTIVE && (data.status !== undefined || data.parentId !== undefined)) {
+        await assertAncestorsActive(data.parentId !== undefined ? data.parentId : category.parentId, t);
+      }
 
       if (data.imageUrl !== undefined) {
         updateData.imageUrl = data.imageUrl?.trim() ? data.imageUrl.trim() : null;
@@ -311,9 +329,8 @@ export class CategoriesService {
         const nextUrl = data.imageUrl?.trim() ? data.imageUrl.trim() : null;
         await deleteS3ObjectIfReplaced(category.imageUrl, nextUrl);
       }
-
-      return this.getCategoryById(id);
     });
+    return this.getCategoryById(id);
   }
 
   async reorderCategories(orderedIds: string[]) {
@@ -331,23 +348,6 @@ export class CategoriesService {
     });
   }
 
-  async reassignProducts(fromCategoryId: string, toCategoryId: string) {
-    if (fromCategoryId === toCategoryId) {
-      throw new ValidationError(ERROR_MESSAGES.CATEGORY_REASSIGN_SAME);
-    }
-    return sequelize.transaction(async (t: Transaction) => {
-      await this.assertActiveCategory(toCategoryId, t);
-      const from = await categoriesRepository.findById(fromCategoryId, { transaction: t });
-      if (!from) throw new NotFoundError('Category');
-
-      const [updatedCount] = await Product.update(
-        { categoryId: toCategoryId },
-        { where: { categoryId: fromCategoryId }, transaction: t },
-      );
-      return { fromCategoryId, toCategoryId, updatedCount };
-    });
-  }
-
   async deleteCategory(id: string, actorId?: string) {
     const imageUrl = await sequelize.transaction(async (t: Transaction) => {
       const category = await categoriesRepository.findWithChildren(id);
@@ -358,6 +358,7 @@ export class CategoriesService {
         throw new ValidationError(ERROR_MESSAGES.CATEGORY_HAS_SUBCATEGORIES);
       }
 
+      // Deleted products still point at their category, so they count: reassigning moves them too.
       const productCount = await categoriesRepository.countProducts(id);
       if (productCount > 0) {
         throw new ValidationError(ERROR_MESSAGES.CATEGORY_HAS_PRODUCTS);
@@ -560,20 +561,19 @@ export class CategoriesService {
       if (!attr) continue;
       const name = escapeSqlString(attr.name);
       const vals = values.map((value) => `'${escapeSqlString(value.toLowerCase())}'`).join(', ');
+      // Option names match whatever the capitals; a value is a string or a list of strings.
       literals.push(
         Sequelize.literal(`EXISTS (
-          SELECT 1 FROM product_variants pv
+          SELECT 1 FROM product_variants pv,
+            jsonb_each(CASE WHEN jsonb_typeof(pv.attributes) = 'object' THEN pv.attributes ELSE '{}'::jsonb END) opt
           WHERE pv."productId" = "Product"."id"
             AND pv."deletedAt" IS NULL
+            AND LOWER(opt.key) = LOWER('${name}')
             AND (
-              LOWER(pv.attributes ->> '${name}') IN (${vals})
+              LOWER(opt.value #>> '{}') IN (${vals})
               OR EXISTS (
                 SELECT 1 FROM jsonb_array_elements_text(
-                  CASE
-                    WHEN jsonb_typeof(pv.attributes -> '${name}') = 'array'
-                    THEN pv.attributes -> '${name}'
-                    ELSE '[]'::jsonb
-                  END
+                  CASE WHEN jsonb_typeof(opt.value) = 'array' THEN opt.value ELSE '[]'::jsonb END
                 ) elem
                 WHERE LOWER(elem) IN (${vals})
               )
@@ -605,10 +605,7 @@ export class CategoriesService {
 
     const rows = await Product.scope('customerVisible').findAll({
       attributes: ['id'],
-      where: {
-        categoryId: { [Op.in]: categoryIds },
-        [Op.and]: literals,
-      },
+      where: { [Op.and]: [inCategories(categoryIds), ...literals] },
     });
     return rows.map((row) => row.id);
   }
@@ -625,10 +622,7 @@ export class CategoriesService {
     const literals = this.attributeFilterLiterals(attributes, effective);
 
     return Product.scope('customerVisible').count({
-      where: {
-        categoryId: { [Op.in]: categoryIds },
-        ...(literals.length ? { [Op.and]: literals } : {}),
-      },
+      where: { [Op.and]: [inCategories(categoryIds), ...literals] },
       distinct: true,
       col: 'Product.id',
     });

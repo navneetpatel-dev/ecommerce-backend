@@ -10,7 +10,7 @@ import { Order } from '@database/models/order.model';
 import { OrderItem } from '@database/models/orderItem.model';
 import { Shipment } from '@database/models/shipment.model';
 import { ReturnRequest } from '@database/models/returnRequest.model';
-import { ProductVariant } from '@database/models/productVariant.model';
+import { restoreStock } from '@modules/inventory/restoreStock';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { TcsLedger } from '@database/models/tcsLedger.model';
 import { sequelize } from '@database/models';
@@ -185,11 +185,7 @@ export class SubordersService {
         for (const item of subOrderWithItems?.items ?? []) {
           const variantId = (item as any).variantId ?? (item as any).productVariantId;
           if (variantId) {
-            await ProductVariant.increment('stock', {
-              by: item.quantity,
-              where: { id: variantId },
-              transaction,
-            });
+            await restoreStock(variantId, item.quantity, transaction);
           }
         }
 

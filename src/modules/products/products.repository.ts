@@ -5,6 +5,8 @@ import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
 import { Op } from 'sequelize';
 import { REVIEW_STATUS, type ProductStatus } from '@core/constants/statuses';
+import { TEAM_VENDOR_ATTRIBUTES } from './productPublicFields';
+import { inCategoriesSql } from '@modules/categories/categoryMembership';
 
 /** The GST-inclusive price customers see; filter and sort by it so they match the cards. */
 const displayPriceColumn = sequelize.fn('COALESCE', sequelize.col('Product.displayPrice'), sequelize.col('Product.basePrice'));
@@ -30,6 +32,8 @@ type ProductListFilters = {
   minPrice?: number;
   maxPrice?: number;
   inStock?: boolean;
+  /** Shopper lists: "in stock" counts only variants that may be sold (within the MRP). */
+  sellableOnly?: boolean;
   rating?: number;
   sort?: string;
   excludeProductId?: string;
@@ -66,10 +70,14 @@ function buildListWhere(filters: ProductListFilters) {
   if (filters.productIds?.length) {
     where.id = { [Op.in]: filters.productIds };
   }
-  if (filters.categoryIds?.length) {
-    where.categoryId = { [Op.in]: filters.categoryIds };
-  } else if (filters.categoryId) {
-    where.categoryId = filters.categoryId;
+  const categoryIds = filters.categoryIds?.length ? filters.categoryIds : filters.categoryId ? [filters.categoryId] : [];
+  if (categoryIds.length && filters.sellableOnly) {
+    // Shoppers find secondary tags too. A condition of its own, so the shop's rule that the
+    // primary category is active still applies (a `categoryId` filter would replace it).
+    const ids = categoryIds.map((id) => sequelize.escape(id)).join(', ');
+    where[Op.and] = [sequelize.literal(inCategoriesSql('"Product"', ids))];
+  } else if (categoryIds.length) {
+    where.categoryId = { [Op.in]: categoryIds };
   }
   if (filters.vendorId) where.vendorId = filters.vendorId;
   if (filters.status) where.status = filters.status;
@@ -102,7 +110,9 @@ function buildListWhere(filters: ProductListFilters) {
     where[Op.and] = [
       ...(where[Op.and] ?? []),
       sequelize.literal(
-        'EXISTS (SELECT 1 FROM product_variants pv WHERE pv."productId" = "Product"."id" AND pv."deletedAt" IS NULL AND pv.stock > 0)',
+        `EXISTS (SELECT 1 FROM product_variants pv WHERE pv."productId" = "Product"."id" AND pv."deletedAt" IS NULL AND pv.stock > 0${
+          filters.sellableOnly ? ' AND pv."aboveMrp" = false' : ''
+        })`,
       ),
     ];
   }
@@ -142,7 +152,7 @@ export class ProductsRepository extends BaseRepository<Product> {
       include: [
         categoryWithAncestors as any,
         secondaryCategoriesInclude as any,
-        { model: Vendor, as: 'vendor' },
+        { model: Vendor, as: 'vendor', attributes: TEAM_VENDOR_ATTRIBUTES },
         'variants',
         'images',
       ],
@@ -155,7 +165,7 @@ export class ProductsRepository extends BaseRepository<Product> {
    * Do not use for admin/vendor dashboards.
    */
   async findVisibleList(filters: Omit<ProductListFilters, 'status'>) {
-    const where = buildListWhere({ ...filters });
+    const where = buildListWhere({ ...filters, sellableOnly: true });
     // Scope already enforces LIVE; never let a client override status here.
     delete (where as { status?: ProductStatus }).status;
 
@@ -176,6 +186,12 @@ export class ProductsRepository extends BaseRepository<Product> {
     });
   }
 
+  /** Whose product it is: null for none, undefined when there is no such product. */
+  async findOwnerVendorId(where: { id: string } | { slug: string }): Promise<string | null | undefined> {
+    const row = await this.model.findOne({ where, attributes: ['vendorId'] });
+    return row ? row.vendorId : undefined;
+  }
+
   async findBySlug(slug: string) {
     return this.model.findOne({
       where: { slug },
@@ -183,7 +199,7 @@ export class ProductsRepository extends BaseRepository<Product> {
       include: [
         categoryWithAncestors as any,
         secondaryCategoriesInclude as any,
-        { model: Vendor, as: 'vendor' },
+        { model: Vendor, as: 'vendor', attributes: TEAM_VENDOR_ATTRIBUTES },
         'variants',
         'images',
       ],

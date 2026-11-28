@@ -21,6 +21,5 @@ export const EMAIL_VERIFY_EXPIRY = '2d';
 
 export const DEFAULT_PAGE_LIMIT = 20;
 export const MAX_PAGE_LIMIT = 100;
-export const DEFAULT_LOW_STOCK_THRESHOLD = 10;
 export const RAZORPAY_MIN_AMOUNT_PAISE = 100;
 export const MAX_AVATAR_BYTES = 1.5 * 1024 * 1024;

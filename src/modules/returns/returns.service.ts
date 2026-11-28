@@ -57,6 +57,7 @@ import {
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { Product } from '@database/models/product.model';
 import { ProductVariant } from '@database/models/productVariant.model';
+import { restoreStock } from '@modules/inventory/restoreStock';
 import { settingsService } from '@modules/settings/settings.service';
 import { Address } from '@database/models/address.model';
 import { isIntraStateSupply } from '@modules/pricing/gstPlaceOfSupply';
@@ -569,7 +570,7 @@ export class ReturnsService {
         throw new ValidationError({ status: ['This return has already been restocked'] });
       }
       const quantity = Number(row.returnQuantity ?? orderItem.quantity);
-      await ProductVariant.increment('stock', { by: quantity, where: { id: orderItem.variantId }, transaction: t });
+      await restoreStock(orderItem.variantId, quantity, t);
       await row.update({ restockedAt: new Date(), restockedBy: actor.id, updatedBy: actor.id }, { transaction: t });
       await logAudit({
         actorId: actor.id,
