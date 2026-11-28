@@ -24,7 +24,7 @@ Infrastructure is Terraform in [`infra/terraform`](../infra/terraform).
 | ECS helper | `.github/scripts/ecs-deploy.sh` (same file in both repos) |
 | Infrastructure | `ecommerce-backend/infra/terraform` |
 
-Until step 5 below is done, the deploy jobs are **skipped** (they check for the
+Until step 6 below is done, the deploy jobs are **skipped** (they check for the
 `AWS_DEPLOY_ROLE_ARN` variable), so pushes to `main` still run CI and nothing else.
 
 ---
@@ -34,7 +34,8 @@ Until step 5 below is done, the deploy jobs are **skipped** (they check for the
 ### 1. Prerequisites
 
 - AWS CLI v2, logged in as an admin of the target account (`aws sts get-caller-identity`).
-- Terraform ≥ 1.6.
+- Terraform ≥ 1.7 (≥ 1.10 to use the remote state lock below).
+- An SMTP server and login for outgoing email.
 - A domain for the storefront and one for the API, e.g. `shop.example.com` and
   `api.shop.example.com`. Easiest if the zone is in Route 53 (Terraform then issues
   the certificate and DNS records).
@@ -55,7 +56,7 @@ Then uncomment the `backend "s3"` block in `infra/terraform/versions.tf` and fil
 
 ```bash
 cd infra/terraform
-cp terraform.tfvars.example terraform.tfvars   # fill in domains, bucket, mail sender
+cp terraform.tfvars.example terraform.tfvars   # fill in domains, bucket, SMTP server and mail sender
 terraform init
 terraform plan
 terraform apply                                 # ~15–20 min, mostly RDS + ElastiCache
@@ -78,9 +79,13 @@ Terraform generates the DB password, JWT keys and Redis URL itself
 {
   "RAZORPAY_KEY_ID": "rzp_live_…",
   "RAZORPAY_KEY_SECRET": "…",
-  "RAZORPAY_WEBHOOK_SECRET": "…"
+  "RAZORPAY_WEBHOOK_SECRET": "…",
+  "SMTP_USER": "…",
+  "SMTP_PASS": "…"
 }
 ```
+
+Keep all five keys: a task fails to start if a listed key is missing from the secret.
 
 To add more (e.g. `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`, `SENTRY_DSN`, `VAPID_*`):
 put the key in this secret **with a real value**, add its name to
@@ -89,20 +94,17 @@ Plain non-secret settings go in `backend_extra_env` instead.
 
 ### 5. Email (SMTP)
 
-Email is sent over **SMTP only**; there is no other mail service or driver switch. Set the
-SMTP settings on the backend task. `SMTP_HOST` is required in production (the API refuses to
-boot without it); the credentials go in the secret from step 4:
+Email is sent over **SMTP only**; there is no other mail service or driver switch. The login
+goes in the secret from step 4 (leave both values empty for a server without login). The rest
+is set in `terraform.tfvars`:
 
-```json
-{
-  "SMTP_USER": "…",
-  "SMTP_PASS": "…"
-}
-```
-
-Plain settings go in `backend_extra_env`: `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_SECURE`
-(`false` for STARTTLS on 587, `true` for 465), `MAIL_FROM_EMAIL`, `MAIL_FROM_NAME`, and
-`MAIL_RATE_PER_MINUTE` (keep it low for Gmail, raise it for a mail server with higher limits).
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `smtp_host` | none, required | The API refuses to boot in production without it. |
+| `smtp_port` | `587` | AWS restricts outbound port 25. |
+| `smtp_secure` | `false` | `false` for STARTTLS on 587, `true` for 465. |
+| `mail_from_email`, `mail_from_name` | placeholders | The sender customers see. |
+| `mail_rate_per_minute` | `20` | Keep it low for Gmail; raise it for a server with higher limits. |
 
 Bad addresses are handled from the server's reply at send time (hard bounces are not retried and
 go on a 30-day suppression list, visible in the admin Notifications page). There is no

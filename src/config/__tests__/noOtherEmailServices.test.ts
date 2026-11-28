@@ -103,6 +103,18 @@ describe('only SMTP exists', () => {
     assert.match(read('README.md'), /Email:\*\* SMTP/);
   });
 
+  it('the deployment code sets up no other email service', () => {
+    const hits = walk(path.join(root, 'infra'))
+      .filter((file) => !file.split(path.sep).includes('.terraform') && /\.(tf|hcl|tfvars\.example|json|md)$/.test(file))
+      .flatMap((file) => {
+        const text = fs.readFileSync(file, 'utf8');
+        const m = OTHER_MAIL_SERVICES.exec(text) ?? AMAZON_SES_WORD.exec(text) ?? /\bses:[A-Za-z*]+/.exec(text);
+        return m ? [`${path.relative(root, file)}: ${m[0]}`] : [];
+      });
+    assert.deepEqual(hits, []);
+    assert.match(read('infra/terraform/ecs.tf'), /SMTP_HOST/);
+  });
+
   it('the backend does not expose a provider webhook route or error code for another email service', () => {
     const routes = read('src/modules/webhooks/webhooks.routes.ts');
     assert.match(routes, /\/razorpay/);
