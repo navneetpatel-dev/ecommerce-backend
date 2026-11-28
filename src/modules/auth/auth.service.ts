@@ -13,7 +13,7 @@ import { logger } from '@core/logger';
 import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { redisClient, withRedis } from '@config/redis';
 import { REFRESH_TOKEN_TTL_MS } from '@core/constants/http';
-import { ADMIN_ROLES, ROLES, USER_STATUS } from '@core/constants/statuses';
+import { ROLES, USER_STATUS } from '@core/constants/statuses';
 import { ERROR_MESSAGES, ERROR_CODES } from '@core/constants/errors';
 import { roleNameOf } from '@utils/userRole';
 import { notifyPasswordChanged, notifyWelcome } from '@modules/notifications/events/accountEvents';
@@ -554,16 +554,7 @@ export class AuthService {
     }
 
     if (actingAdminRoleName !== ROLES.SUPER_ADMIN) {
-      const isTargetStaffOrAdmin =
-        (ADMIN_ROLES as readonly string[]).includes(roleName) ||
-        roleName.startsWith('ADMIN_') ||
-        ((await resolvePermissionsForUser({ roleId: target.roleId, role: { name: roleName } })).length > 0 &&
-          roleName !== ROLES.CUSTOMER &&
-          roleName !== ROLES.VENDOR_OWNER &&
-          roleName !== ROLES.VENDOR_STAFF);
-      if (isTargetStaffOrAdmin) {
-        throw new ForbiddenError('Only super administrators can impersonate administrative staff accounts');
-      }
+      throw new ForbiddenError('Only the super admin can impersonate an account');
     }
 
     const payload: JwtPayload = {

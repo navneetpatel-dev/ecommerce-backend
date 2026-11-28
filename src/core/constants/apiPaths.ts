@@ -40,7 +40,6 @@ export const API_MOUNTS = {
   giftCards: '/gift-cards',
   cashbackOffers: '/cashback-offers',
   payments: '/payments',
-  roles: '/roles',
   exports: '/exports',
   shortLinks: '/short-links',
 } as const;

@@ -6,7 +6,7 @@ import { Order } from '@database/models/order.model';
 import { RETURN_STATUS } from '@core/constants/statuses';
 import { orderReference } from '@modules/orders/orderReference';
 import { notificationsService } from '../notifications.service';
-import { findSuperAdminUserIds, findVendorStaffUserId } from '../orderNotifications';
+import { findSuperAdminUserIds, findVendorOwnerUserId } from '../orderNotifications';
 import type { NotificationType } from '@database/models/notificationLog.model';
 
 type Loaded = { ret: ReturnRequest; item: OrderItem | null; order: Order | null; vendorId: string | null };
@@ -78,7 +78,7 @@ export async function notifyReturnRequestedEvent(returnId: string): Promise<void
       referenceId: returnId,
       templateData: data,
     });
-    const sellerId = await findVendorStaffUserId(loaded.vendorId);
+    const sellerId = await findVendorOwnerUserId(loaded.vendorId);
     if (sellerId) {
       await notificationsService.enqueue({
         userId: sellerId,

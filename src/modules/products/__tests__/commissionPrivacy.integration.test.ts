@@ -36,20 +36,20 @@ describe('what the platform charges is never shown to shoppers', { skip: SKIP_ON
     ];
     const signedIn = ['/cart', '/wishlist', '/products/recently-viewed'];
     let read = 0;
-    for (const who of [null, world.customer, world.orders, world.b.owner]) {
+    for (const who of [null, world.customer, world.b.owner]) {
       for (const path of [...paths, ...(who === world.customer ? signedIn : [])]) {
         const reply = await world.call('GET', path, who);
         if (reply.status === 200) read += 1;
         assert.doesNotMatch(reply.text, /"commissionRate":\s*"?\d/, `${path} as ${who?.email ?? 'guest'}`);
       }
     }
-    assert.ok(read > 30, `only ${read} responses were readable`);
+    assert.ok(read > 25, `only ${read} responses were readable`);
   });
 
-  it('the owning store and the catalog team still see it', async () => {
+  it('the owning store and the platform still see it', async () => {
     const category = await world.category({ commissionRate: 11 });
     const product = await world.liveProduct(world.a, { categoryId: category.id });
-    for (const who of [world.a.owner, world.catalog]) {
+    for (const who of [world.a.owner, world.admin]) {
       assert.match((await world.call('GET', `/products/${product.id}`, who)).text, /"commissionRate":"11\.00"/);
     }
   });

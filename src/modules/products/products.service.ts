@@ -1,7 +1,6 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ForbiddenError } from '@core/errors/ForbiddenError';
-import { changedPricingFields } from './productPricingRules';
 import { AppError } from '@core/errors/AppError';
 import { PRODUCT_STATUS, REVIEW_STATUS } from '@core/constants/statuses';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
@@ -493,12 +492,11 @@ export class ProductsService {
       .map((product) => toShopperProduct(mapProductResponse(product)));
   }
 
-  /** `canEditPricing: false` (vendor staff) refuses any change to prices, the tax code or COD; unchanged values are fine. */
   async updateProduct(
     id: string,
     vendorId: string | null,
     data: UpdateProductRequest,
-    opts: { canEditPricing?: boolean; actorId?: string } = {},
+    opts: { actorId?: string } = {},
   ) {
     await sequelize.transaction(async (t) => {
       const product = await productsRepository.findById(id, { transaction: t });
@@ -506,9 +504,6 @@ export class ProductsService {
 
       if (vendorId && product.vendorId !== vendorId) {
         throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_PRODUCT);
-      }
-      if (opts.canEditPricing === false && changedPricingFields(product, data).length > 0) {
-        throw new ForbiddenError(ERROR_MESSAGES.PRODUCT_PRICING_OWNER_ONLY);
       }
 
       const { secondaryCategoryIds, ...productFields } = data;

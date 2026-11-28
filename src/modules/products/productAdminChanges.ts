@@ -17,7 +17,7 @@ import type { AddImageRequest, AddVariantRequest, UpdateProductRequest, UpdateVa
 
 /**
  * Edits go through here so that one place decides who may change what and records platform edits:
- * pricing needs the owner or `product.pricing` (with a written reason), and everything a platform admin
+ * pricing needs the vendor or `product.pricing` (with a written reason), and everything a platform admin
  * does to a vendor's product is audited "on behalf" and told to the vendor.
  */
 const today = () => new Date().toISOString().slice(0, 10);
@@ -63,7 +63,7 @@ export async function updateProductAs(actor: ProductActor, id: string, dto: Upda
   const snapshot = before.get({ plain: true }) as Record<string, unknown>;
   const changedFields = changedFieldNames(snapshot, changes as Record<string, unknown>);
 
-  const updated = await productsService.updateProduct(id, actor.vendorId, changes, { canEditPricing: true, actorId: actor.id });
+  const updated = await productsService.updateProduct(id, actor.vendorId, changes, { actorId: actor.id });
   if (changedFields.length) {
     await recordVendorLiveEdit(actor, before.get({ plain: true }) as typeof before, changedFields, changes);
     await record(actor, before, {
@@ -80,7 +80,7 @@ export async function addVariantAs(actor: ProductActor, productId: string, dto: 
   const { changeReason, ...variantFields } = dto;
   const product = await loadProduct(productId);
   const reason = assertPricingChangeAllowed(actor, product, changeReason);
-  const variant = await productsService.addVariant(productId, variantFields, { canEditPricing: true });
+  const variant = await productsService.addVariant(productId, variantFields);
   await record(actor, product, {
     action: 'PRODUCT_VARIANT_ADDED_ON_BEHALF',
     changedFields: ['variant'],
@@ -100,7 +100,7 @@ export async function updateVariantAs(actor: ProductActor, variantId: string, dt
   const snapshot = row.get({ plain: true }) as Record<string, unknown>;
   const changedFields = changedFieldNames(snapshot, changes as Record<string, unknown>);
 
-  const variant = await productsService.updateVariant(variantId, changes, { canEditPricing: true });
+  const variant = await productsService.updateVariant(variantId, changes);
   if (changedFields.length) {
     await record(actor, product, {
       action: 'PRODUCT_VARIANT_UPDATED_ON_BEHALF',

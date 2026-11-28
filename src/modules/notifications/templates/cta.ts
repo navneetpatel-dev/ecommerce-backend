@@ -30,7 +30,7 @@ const VENDOR_TYPES = new Set<NotificationType>([
   'VENDOR_APPROVED', 'VENDOR_NEW_ORDER', 'LOW_STOCK_ALERT', 'PAYOUT_PROCESSED', 'PAYOUT_PAID', 'PAYOUT_FAILED',
   'PRODUCT_APPROVED', 'PRODUCT_REJECTED', 'PRODUCT_LISTED_BY_PLATFORM', 'PRODUCT_UPDATED_BY_PLATFORM',
   'PRODUCT_SUBMITTED_BY_PLATFORM', 'PRODUCT_ABOVE_MRP', 'COUPON_USAGE_LIMIT', 'COUPON_EXPIRING', 'KYC_DOCUMENT_RECEIVED',
-  'KYC_DOCUMENT_APPROVED', 'KYC_PENDING_REMINDER', 'VENDOR_STAFF_ROLE_CHANGED', 'VENDOR_RETURN_REQUESTED',
+  'KYC_DOCUMENT_APPROVED', 'KYC_PENDING_REMINDER', 'VENDOR_RETURN_REQUESTED',
   'VENDOR_NEW_QUESTION', 'VENDOR_NEW_REVIEW', 'COMMISSION_INVOICE_READY', 'VENDOR_WEEKLY_SUMMARY',
 ]);
 
@@ -103,8 +103,6 @@ export function defaultCta(type: NotificationType, data: EmailTemplateData): { l
       return { label: EMAIL_COPY.ctaViewWishlist, url: action(`${base}/wishlist`) };
     case 'DELIVERY_ATTEMPT_FAILED':
       return { label: EMAIL_COPY.ctaTrackShipment, url: action(`${base}/orders/tracking`) };
-    case 'VENDOR_STAFF_INVITE':
-      return { label: EMAIL_COPY.ctaAcceptInvite, url: action(`${base}/login`) };
     case 'ADMIN_NEW_VENDOR_PENDING':
       return { label: EMAIL_COPY.ctaOpenAdmin, url: action(`${base}/admin/vendors`) };
     case 'ADMIN_RETURN_ESCALATION':

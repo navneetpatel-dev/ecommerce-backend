@@ -40,7 +40,7 @@ Merchant operations - create and manage own products:
 - **Inventory** (2) - Track product stock levels
 - **Reviews** (2) - View product reviews
 
-### Admin (Order & Catalog Managers) - 18 endpoints
+### Admin (Orders, Coupons, Moderation) - 18 endpoints
 Administrative operations - approve and moderate:
 - **Orders** (4) - Manage all orders and process refunds
 - **Coupons** (4) - Create and manage discount coupons
@@ -103,8 +103,8 @@ baseUrl = https://your-api-domain.com
 
 **Super Admin** (after running `npm run db:seed`):
 ```
-Email: admin@ecommerce.com
-Password: Admin@123
+Email:    the super admin in backend/seed-accounts.local.csv
+Password: its password in the same file
 ```
 
 **Customer** (register new):
@@ -159,7 +159,7 @@ Navigate to the folder matching your role and start testing!
 
 ### Admin Journey (Order & Coupon Management)
 ```
-1. Common → Authentication → Login - Admin (Order Manager role)
+1. Common → Authentication → Login - Admin (Super Admin)
 2. Customer → Orders → Get All Orders (admin view)
 3. Customer → Orders → Update Order Status
 4. Admin → Coupons → Create Coupon

@@ -7,6 +7,7 @@ coverage
 .git
 .github
 .env
+seed-accounts.local.*
 .env.*
 !.env.example
 *.log

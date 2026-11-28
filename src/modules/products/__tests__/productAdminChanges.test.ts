@@ -11,11 +11,11 @@ import { productsService } from '../products.service';
 import { addVariantAs, updateProductAs, updateVariantAs } from '../productAdminChanges';
 import type { ProductActor } from '../productChangePolicy';
 
-const actor = (over: Partial<ProductActor>): ProductActor => ({ id: 'u1', vendorId: null, canManage: false, canCreate: false, canPrice: false, ...over });
-const owner = actor({ id: 'owner-1', vendorId: 'v1', canCreate: true });
-const staff = actor({ id: 'staff-1', vendorId: 'v1' });
-const catalogManager = actor({ id: 'cm-1', canManage: true, canCreate: true });
-const superAdmin = actor({ id: 'sa-1', canManage: true, canCreate: true, canPrice: true });
+const actor = (over: Partial<ProductActor>): ProductActor => ({ id: 'u1', vendorId: null, canManage: false, canPrice: false, ...over });
+const owner = actor({ id: 'owner-1', vendorId: 'v1' });
+/** A platform product admin without product.pricing. */
+const productAdmin = actor({ id: 'cm-1', canManage: true });
+const superAdmin = actor({ id: 'sa-1', canManage: true, canPrice: true });
 
 const status = (e: unknown) => (e as { statusCode?: number }).statusCode;
 const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -56,8 +56,8 @@ describe('edits through the admin change layer', () => {
   afterEach(() => mock.restoreAll());
 
   describe('updateProductAs', () => {
-    it('a content edit by the Catalog Manager is allowed, audited under the vendor, and told to the vendor', async () => {
-      await updateProductAs(catalogManager, 'p1', { description: 'New text' } as never);
+    it('a content edit by the product admin is allowed, audited under the vendor, and told to the vendor', async () => {
+      await updateProductAs(productAdmin, 'p1', { description: 'New text' } as never);
       await flush();
       assert.equal(audits.length, 1);
       assert.equal(audits[0]!.action, 'PRODUCT_UPDATED_ON_BEHALF');
@@ -71,13 +71,13 @@ describe('edits through the admin change layer', () => {
     });
 
     it('a form re-sending unchanged values changes nothing, so records nothing', async () => {
-      await updateProductAs(catalogManager, 'p1', { description: 'Old', basePrice: 100, codEnabled: true } as never);
+      await updateProductAs(productAdmin, 'p1', { description: 'Old', basePrice: 100, codEnabled: true } as never);
       assert.equal(audits.length, 0);
       assert.equal(emails.length, 0);
     });
 
-    it('repricing a live product: the Catalog Manager is refused (403), nothing is written', async () => {
-      await assert.rejects(updateProductAs(catalogManager, 'p1', { basePrice: 80, changeReason: reason } as never), (e) => status(e) === 403);
+    it('repricing a live product: the product admin is refused (403), nothing is written', async () => {
+      await assert.rejects(updateProductAs(productAdmin, 'p1', { basePrice: 80, changeReason: reason } as never), (e) => status(e) === 403);
       assert.equal(updateCalls.length, 0);
       assert.equal(audits.length, 0);
     });
@@ -96,19 +96,18 @@ describe('edits through the admin change layer', () => {
       assert.equal('changeReason' in sent, false, 'the reason is not stored on the product row');
     });
 
-    it('a platform-listed draft can be priced freely by the Catalog Manager (still audited)', async () => {
+    it('a platform-listed draft can be priced freely by the product admin (still audited)', async () => {
       Object.assign(stored, { status: 'DRAFT', listedByPlatform: true });
-      await updateProductAs(catalogManager, 'p1', { basePrice: 80 } as never);
+      await updateProductAs(productAdmin, 'p1', { basePrice: 80 } as never);
       assert.equal(updateCalls.length, 1);
       assert.equal(audits[0]!.action, 'PRODUCT_PRICING_CHANGED_ON_BEHALF');
     });
 
-    it('vendor owner: free to price, nothing audited as on behalf, no email; staff: pricing refused, other edits fine', async () => {
+    it('the vendor is free to price their own product: nothing audited as on behalf, no email', async () => {
       await updateProductAs(owner, 'p1', { basePrice: 80 } as never);
       assert.equal(audits.length, 0);
       assert.equal(emails.length, 0);
-      await assert.rejects(updateProductAs(staff, 'p1', { basePrice: 70 } as never), (e) => status(e) === 403);
-      await updateProductAs(staff, 'p1', { description: 'Staff edit' } as never);
+      await updateProductAs(owner, 'p1', { description: 'Vendor edit' } as never);
       await flush();
       assert.equal(updateCalls.length, 2);
       // New text on a live listing is recorded as the vendor's own edit; the vendor is not emailed.
@@ -118,22 +117,22 @@ describe('edits through the admin change layer', () => {
 
     it('the platform’s own product (no vendor) is edited without any vendor audit or email', async () => {
       stored.vendorId = null;
-      await updateProductAs(catalogManager, 'p1', { basePrice: 80 } as never);
+      await updateProductAs(productAdmin, 'p1', { basePrice: 80 } as never);
       assert.equal(updateCalls.length, 1);
       assert.equal(audits.length, 0);
     });
 
     it('a missing product is a 404', async () => {
       mock.method(productsRepository, 'findById', async () => null as never);
-      await assert.rejects(updateProductAs(catalogManager, 'nope', {} as never), (e) => status(e) === 404);
+      await assert.rejects(updateProductAs(productAdmin, 'nope', {} as never), (e) => status(e) === 404);
     });
   });
 
   describe('variants', () => {
-    it('adding a variant is a pricing change: refused for the Catalog Manager on a live product, reason needed from Super Admin', async () => {
+    it('adding a variant is a pricing change: refused for the product admin on a live product, reason needed from Super Admin', async () => {
       const add = mock.method(productsService, 'addVariant', (async () => ({ id: 'var1' })) as never);
       const variant = { sku: 'S1', price: 90, stock: 5 } as never;
-      await assert.rejects(addVariantAs(catalogManager, 'p1', variant), (e) => status(e) === 403);
+      await assert.rejects(addVariantAs(productAdmin, 'p1', variant), (e) => status(e) === 403);
       await assert.rejects(addVariantAs(superAdmin, 'p1', variant), (e) => status(e) === 422);
       assert.equal(add.mock.callCount(), 0);
       await addVariantAs(superAdmin, 'p1', { ...(variant as object), changeReason: reason } as never);
@@ -143,24 +142,20 @@ describe('edits through the admin change layer', () => {
       assert.equal(audits[0]!.metadata.vendorId, 'v1');
     });
 
-    it('the Catalog Manager prepares variants on a platform-listed draft freely', async () => {
+    it('the product admin prepares variants on a platform-listed draft freely', async () => {
       Object.assign(stored, { status: 'DRAFT', listedByPlatform: true });
       mock.method(productsService, 'addVariant', (async () => ({ id: 'var1' })) as never);
-      await addVariantAs(catalogManager, 'p1', { sku: 'S1', price: 90 } as never);
+      await addVariantAs(productAdmin, 'p1', { sku: 'S1', price: 90 } as never);
       assert.equal(audits[0]!.action, 'PRODUCT_VARIANT_ADDED_ON_BEHALF');
-    });
-
-    it('vendor staff may not add a variant (unchanged)', async () => {
-      await assert.rejects(addVariantAs(staff, 'p1', { sku: 'S1', price: 90 } as never), (e) => status(e) === 403);
     });
 
     it('a stock change is content; a price change is pricing (before/after audited)', async () => {
       mock.method(ProductVariant, 'findByPk', async () => ({ id: 'var1', productId: 'p1', sku: 'S1', price: '90.00', stock: 5, get: () => ({ price: '90.00', stock: 5 }) }) as never);
       const update = mock.method(productsService, 'updateVariant', (async () => ({ id: 'var1' })) as never);
-      await updateVariantAs(catalogManager, 'var1', { stock: 20 } as never);
+      await updateVariantAs(productAdmin, 'var1', { stock: 20 } as never);
       assert.equal(audits[0]!.action, 'PRODUCT_VARIANT_UPDATED_ON_BEHALF');
       assert.deepEqual(audits[0]!.metadata.changedFields, ['variant stock']);
-      await assert.rejects(updateVariantAs(catalogManager, 'var1', { price: 70 } as never), (e) => status(e) === 403);
+      await assert.rejects(updateVariantAs(productAdmin, 'var1', { price: 70 } as never), (e) => status(e) === 403);
       await updateVariantAs(superAdmin, 'var1', { price: 70, changeReason: reason } as never);
       assert.deepEqual(audits[1]!.metadata.before, { price: '90.00' });
       assert.deepEqual(audits[1]!.metadata.after, { price: 70 });

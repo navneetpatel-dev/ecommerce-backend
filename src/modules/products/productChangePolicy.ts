@@ -6,12 +6,10 @@ import { ERROR_MESSAGES } from '@core/constants/errors';
 /** Who is changing a product, in the terms the policy needs. Built once per request in the controller. */
 export type ProductActor = {
   id: string;
-  /** The actor's own store (owner or staff), null for platform staff. */
+  /** The actor's own store; null for the platform. */
   vendorId: string | null;
   /** Platform product admin (`product.manage`, or Super Admin). */
   canManage: boolean;
-  /** Store owner (`product.create`, or Super Admin). Vendor staff lack it. */
-  canCreate: boolean;
   /** `product.pricing`, or Super Admin. */
   canPrice: boolean;
 };
@@ -25,7 +23,7 @@ export type ProductFacts = {
 export const CHANGE_REASON_MIN = 10;
 export const CHANGE_REASON_MAX = 500;
 
-/** The actor works inside the vendor's own store (owner or staff). */
+/** The actor is the product's own vendor. */
 export function actsInOwnStore(actor: ProductActor, product: ProductFacts): boolean {
   return actor.vendorId != null && actor.vendorId === product.vendorId;
 }
@@ -48,19 +46,17 @@ export function isUnpublishedPlatformListing(product: ProductFacts): boolean {
 
 export type PricingDecision =
   | { allowed: true; requiresReason: boolean }
-  | { allowed: false; reason: 'OWNER_ONLY' | 'PRICING_RESTRICTED' };
+  | { allowed: false; reason: 'PRICING_RESTRICTED' };
 
 /**
  * May this actor change what the product costs or how it is taxed and paid for (price, MRP, HSN code,
  * COD, a variant's price, adding a variant)?
- *  - The store owner: yes. Vendor staff: no.
+ *  - The vendor, on their own products: yes.
  *  - A platform admin: freely on a platform-listed product that is still unpublished; otherwise only
  *    with `product.pricing`, and then a written reason is required.
  */
 export function decidePricingChange(actor: ProductActor, product: ProductFacts): PricingDecision {
-  if (actsInOwnStore(actor, product)) {
-    return actor.canCreate ? { allowed: true, requiresReason: false } : { allowed: false, reason: 'OWNER_ONLY' };
-  }
+  if (actsInOwnStore(actor, product)) return { allowed: true, requiresReason: false };
   if (!actor.canManage) return { allowed: false, reason: 'PRICING_RESTRICTED' };
   // The platform's own products (no vendor) are its catalog to price; the restriction protects a vendor's pricing.
   if (product.vendorId == null || isUnpublishedPlatformListing(product)) return { allowed: true, requiresReason: false };
@@ -80,9 +76,7 @@ export function assertPricingChangeAllowed(
 ): string | null {
   const decision = decidePricingChange(actor, product);
   if (!decision.allowed) {
-    throw new ForbiddenError(
-      decision.reason === 'OWNER_ONLY' ? ERROR_MESSAGES.PRODUCT_PRICING_OWNER_ONLY : ERROR_MESSAGES.PRODUCT_PRICING_RESTRICTED,
-    );
+    throw new ForbiddenError(ERROR_MESSAGES.PRODUCT_PRICING_RESTRICTED);
   }
   if (decision.requiresReason && !isValidReason(changeReason)) {
     throw new ValidationError(ERROR_MESSAGES.PRODUCT_CHANGE_REASON_REQUIRED);

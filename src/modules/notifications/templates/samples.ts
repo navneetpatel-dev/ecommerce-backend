@@ -118,8 +118,6 @@ const OVERRIDES: Partial<Record<NotificationType, EmailTemplateData>> = {
   KYC_DOCUMENT_RECEIVED: { documentName: 'GST certificate' },
   KYC_DOCUMENT_APPROVED: { documentName: 'GST certificate', progress: '2 of 3 documents are approved.' },
   KYC_PENDING_REMINDER: { bullets: ['PAN card — not uploaded', 'Cancelled cheque — rejected, upload a clearer copy'] },
-  VENDOR_STAFF_INVITE: { inviterName: 'Ravi Kumar', roleName: 'Catalog staff', details: [{ label: 'Sign in with', value: 'staff@techworld.com' }, { label: 'Temporary password', value: 'Shown once — change it after signing in' }] },
-  VENDOR_STAFF_ROLE_CHANGED: { roleName: 'Owner' },
   VENDOR_RETURN_REQUESTED: { details: [{ label: 'Item', value: 'Audio Elite 10 × 1' }, { label: 'Reason', value: 'Item not as described' }] },
   VENDOR_NEW_QUESTION: { questionText: 'Does it support multipoint pairing?' },
   VENDOR_NEW_REVIEW: { rating: '5', details: [{ label: 'Review', value: '“Great sound for the price.”' }] },

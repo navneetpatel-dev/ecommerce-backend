@@ -86,7 +86,7 @@ New migrations in this plan must be dated after the most recent existing migrati
 
 ## 7. Permissions
 
-`backend/src/core/permissions/permissionKeys.ts` defines every `PERMISSIONS.*` string key (dot-notation, e.g. `'order.refund'`, `'suborder.manage'`) and which `ROLES.*` each is granted to, in one central file. **Never hardcode a role check inline where a `PERMISSIONS` key already exists for the concept** — F-05's new vendor-returns endpoint reuses the already-vendor-granted `PERMISSIONS.SUBORDER_MANAGE` (confirmed already granted to `VENDOR_OWNER`/`VENDOR_STAFF`) rather than inventing a new permission key. If a genuinely new capability needs gating and no existing key fits, add it to this same central file — never a module-local ad hoc check.
+`backend/src/core/permissions/permissionKeys.ts` defines every `PERMISSIONS.*` string key (dot-notation, e.g. `'order.refund'`, `'suborder.manage'`) and which `ROLES.*` each is granted to, in one central file. **Never hardcode a role check inline where a `PERMISSIONS` key already exists for the concept** — F-05's new vendor-returns endpoint reuses the already-vendor-granted `PERMISSIONS.SUBORDER_MANAGE` (confirmed already granted to `VENDOR_OWNER`) rather than inventing a new permission key. If a genuinely new capability needs gating and no existing key fits, add it to this same central file — never a module-local ad hoc check.
 
 ## 8. Row locking & transactions
 

@@ -4,7 +4,7 @@ import { assertClose, assertEqual, assertTrue, check } from '../lib/assert';
 import { recomputeSubOrder } from '../lib/pricingRecompute';
 import { runReport, findRowBy } from '../lib/reportClient';
 import { postPaymentCaptured, postRefundProcessed } from '../lib/razorpayWebhook';
-import { CUSTOMERS, CUSTOMER_PASSWORD, PRODUCTS, VENDORS } from '../lib/testData';
+import { CUSTOMERS, CUSTOMER_PASSWORD, VENDOR_PASSWORD, PRODUCTS, VENDORS } from '../lib/testData';
 import type { Preconditions } from './00-preconditions';
 
 const SCENARIO = '02-online-cancel';
@@ -59,7 +59,7 @@ export async function runOnlineCancelReversal(ctx: Preconditions) {
   assertClose(SCENARIO, 'sub-order taxAmount matches recompute', subOrder.taxAmount, expected.taxTotal);
 
   // ---- Before snapshot ----
-  const vendorToken = await loginAs(VENDORS.fashionhub.email, CUSTOMER_PASSWORD);
+  const vendorToken = await loginAs(VENDORS.fashionhub.email, VENDOR_PASSWORD);
   const { status: commissionsStatusBefore, json: commissionsBefore } = await get('/api/commissions', vendorToken);
   const beforeRow = (commissionsBefore?.data?.rows ?? commissionsBefore?.data ?? []).find(
     (r: any) => r.subOrderId === subOrder.id,

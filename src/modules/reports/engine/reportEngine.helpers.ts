@@ -1,6 +1,6 @@
 import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
-import { PERMISSIONS, type PermissionKey } from '@core/permissions/permissionKeys';
+import type { PermissionKey } from '@core/permissions/permissionKeys';
 import { ROLES, VENDOR_ROLES } from '@core/constants/statuses';
 import { normalizeReportFilters } from './queryHelpers';
 import type { ReportDefinition, ReportFilters } from './types';
@@ -34,27 +34,17 @@ export function actorCanSeeAudience(
   return !actor.vendorId && !NON_ADMIN_ROLES.includes(actor.roleName);
 }
 
-/** Audience, permission and vendor-staff gates every report run and export passes. */
+/** Audience and permission gates every report run and export passes. */
 export function assertActorMayRunReport(
   actor: Pick<ReportActor, 'roleName' | 'vendorId' | 'permissions'>,
-  def: Pick<ReportDefinition, 'audience' | 'permissions' | 'financial'>,
+  def: Pick<ReportDefinition, 'audience' | 'permissions'>,
 ): void {
   if (
     !actorCanSeeAudience(actor, def.audience) ||
-    !actorCanAccess(actor.permissions, actor.roleName, def.permissions) ||
-    (isVendorStaff(actor.permissions, actor.roleName) && def.financial)
+    !actorCanAccess(actor.permissions, actor.roleName, def.permissions)
   ) {
     throw new ForbiddenError(ERROR_MESSAGES.REPORT_FORBIDDEN);
   }
-}
-
-export function isVendorStaff(permissions: PermissionKey[], roleName: string): boolean {
-  if (roleName === ROLES.SUPER_ADMIN || roleName === ROLES.VENDOR_OWNER) return false;
-  const hasOwnerFinance = permissions.includes(PERMISSIONS.PAYOUT_VIEW);
-  const hasStaffOps =
-    permissions.includes(PERMISSIONS.SUBORDER_MANAGE) ||
-    permissions.includes(PERMISSIONS.PRODUCT_UPDATE);
-  return !hasOwnerFinance && hasStaffOps;
 }
 
 export function resolveFiltersForActor(

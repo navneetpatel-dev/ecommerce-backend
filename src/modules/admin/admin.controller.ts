@@ -2,25 +2,20 @@ import { Request, Response } from 'express';
 import { asyncHandler } from '@core/http/asyncHandler';
 import { ok } from '@core/http/ApiResponse';
 import { sendDownload } from '@core/http/sendDownload';
-import { resolvePermissionsForUser, userHasPermission } from '@middleware/rbac.middleware';
+import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
 import { roleNameOf } from '@utils/userRole';
 import { reportEngine, type ReportActor } from '@modules/reports/engine/reportEngine';
 import { assertReportRange } from '@modules/reports/engine/queryHelpers';
-import { PERMISSIONS, type PermissionKey } from '@core/permissions/permissionKeys';
+import type { PermissionKey } from '@core/permissions/permissionKeys';
 import { adminService } from './admin.service';
-import { redactDashboardRevenue, redactPlatformRevenue } from './adminRevenueRedaction';
 import { AnalyticsExportSchema } from './admin.dto';
 
-export const getDashboard = asyncHandler(async (req: Request, res: Response) => {
-  const metrics = await adminService.getDashboardMetrics();
-  const canSeeRevenue = await userHasPermission(req.user, PERMISSIONS.ANALYTICS_REVENUE);
-  res.json(ok(canSeeRevenue ? metrics : redactDashboardRevenue(metrics)));
+export const getDashboard = asyncHandler(async (_req: Request, res: Response) => {
+  res.json(ok(await adminService.getDashboardMetrics()));
 });
 
-export const getPlatformAnalytics = asyncHandler(async (req: Request, res: Response) => {
-  const analytics = await adminService.getPlatformAnalytics();
-  const canSeeRevenue = await userHasPermission(req.user, PERMISSIONS.ANALYTICS_REVENUE);
-  res.json(ok(canSeeRevenue ? analytics : redactPlatformRevenue(analytics)));
+export const getPlatformAnalytics = asyncHandler(async (_req: Request, res: Response) => {
+  res.json(ok(await adminService.getPlatformAnalytics()));
 });
 
 async function analyticsActor(req: Request): Promise<ReportActor> {

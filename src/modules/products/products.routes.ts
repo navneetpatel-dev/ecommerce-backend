@@ -78,7 +78,7 @@ router.get('/:id/frequently-bought-together', productsController.getFrequentlyBo
 // Vendor product management
 router.post('/', authenticate, authorize(PERMISSIONS.PRODUCT_CREATE), validate(CreateProductSchema), productsController.createProduct);
 // Assisted listing: a platform admin lists a product for an approved vendor (needs both powers, so a
-// vendor owner, who lacks product.manage, cannot reach it) and submits it with the vendor's consent noted.
+// vendor, who lacks product.manage, cannot reach it) and submits it with the vendor's consent noted.
 router.post(
   '/on-behalf',
   authenticate,
@@ -103,7 +103,7 @@ router.post(
   productsController.bulkImportProducts,
 );
 router.patch('/:id', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.PRODUCT_MANAGE), checkOwnership('product'), validate(UpdateProductSchema), productsController.updateProduct);
-// Deleting is owner-or-Super-Admin only: product.manage (Catalog Manager) can archive, not delete.
+// Deleting takes product.delete (the vendor and the Super Admin); product.manage alone can only archive.
 router.delete('/:id', authenticate, authorize(PERMISSIONS.PRODUCT_DELETE), checkOwnership('product'), productsController.deleteProduct);
 router.post('/:id/submit', authenticate, authorize(PERMISSIONS.PRODUCT_UPDATE), checkOwnership('product'), productsController.submitForApproval);
 

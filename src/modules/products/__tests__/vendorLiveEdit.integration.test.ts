@@ -33,7 +33,7 @@ describe("a vendor's edit of a live listing", { skip: SKIP_ON_DEV_DB }, () => {
   it('is published at once, recorded with the old and new text, and the reviewers are told', async () => {
     const product = await world.liveProduct(world.a);
     const name = `Renamed ${unique()}`;
-    const reply = await world.call('PATCH', `/products/${product.id}`, world.a.staff, { name });
+    const reply = await world.call('PATCH', `/products/${product.id}`, world.a.owner, { name });
     assert.equal(reply.status, 200, reply.text);
     assert.equal(reply.data.status, 'LIVE');
 
@@ -43,23 +43,22 @@ describe("a vendor's edit of a live listing", { skip: SKIP_ON_DEV_DB }, () => {
     assert.equal(audit?.metadata.before?.name, product.name);
     assert.equal(audit?.metadata.after?.name, name);
 
-    const told = await mailsOnceQueued(product.id, world.catalog.id);
-    assert.ok(told.some((mail) => mail.userId === world.catalog.id), 'Catalog Manager');
+    const told = await mailsOnceQueued(product.id, world.admin.id);
     assert.ok(told.some((mail) => mail.userId === world.admin.id), 'Super Admin');
-    assert.ok(!told.some((mail) => [world.orders.id, world.a.owner.id, world.customer.id].includes(mail.userId)));
+    assert.ok(!told.some((mail) => [world.a.owner.id, world.customer.id].includes(mail.userId)));
   });
 
   it('covers images, and emails once a day per product', async () => {
     const product = await world.liveProduct(world.a);
     const added = await world.call('POST', `/products/${product.id}/images`, world.a.owner, { url: 'https://example.invalid/b.jpg' });
     assert.equal(added.status, 201, added.text);
-    await mailsOnceQueued(product.id, world.catalog.id);
+    await mailsOnceQueued(product.id, world.admin.id);
     assert.equal((await world.call('PATCH', `/products/images/${added.data.id}/primary`, world.a.owner)).status, 200);
     assert.equal((await world.call('DELETE', `/products/images/${product.imageId}`, world.a.owner)).status, 204);
 
     assert.deepEqual((await audits(product.id)).map((row) => row.metadata.changedFields), [['images'], ['primary image'], ['images']]);
     await new Promise((resolve) => setTimeout(resolve, 500));
-    assert.equal((await mails(product.id)).filter((mail) => mail.userId === world.catalog.id).length, 1);
+    assert.equal((await mails(product.id)).filter((mail) => mail.userId === world.admin.id).length, 1);
   });
 
   it('says nothing about drafts, other fields, unchanged text or platform edits', async () => {
@@ -67,7 +66,7 @@ describe("a vendor's edit of a live listing", { skip: SKIP_ON_DEV_DB }, () => {
     await world.call('PATCH', `/products/${draft.id}`, world.a.owner, { name: `Draft ${unique()}` });
     const live = await world.liveProduct(world.a);
     assert.equal((await world.call('PATCH', `/products/${live.id}`, world.a.owner, { basePrice: 120, name: live.name })).status, 200);
-    assert.equal((await world.call('PATCH', `/products/${live.id}`, world.catalog, { description: 'tidied by the platform' })).status, 200);
+    assert.equal((await world.call('PATCH', `/products/${live.id}`, world.admin, { description: 'tidied by the platform' })).status, 200);
 
     assert.equal((await audits(draft.id)).length, 0);
     assert.equal((await audits(live.id)).length, 0);

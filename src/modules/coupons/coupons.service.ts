@@ -38,7 +38,6 @@ import {
 import { customerCouponName, generateCouponCode } from './coupon.utils';
 import { loadCartLines, loadProductPreviewLines } from './couponCartLines';
 import { assertCouponCodeFree, assertCouponEditAllowed } from './couponEditRules';
-import { assertCouponWithinLimits, assertEditedCouponWithinLimits } from './couponLimits';
 import { sqlKeptCouponDiscountPaise } from './couponDiscountSql';
 import { listCouponBatchViews, type CouponBatchView } from './couponBatchViews';
 
@@ -190,9 +189,8 @@ export class CouponsService {
   async createCoupon(
     dto: CreateCouponRequest,
     actorId: string,
-    opts: { forceVendorId?: string | null; enforceLimits?: boolean } = {},
+    opts: { forceVendorId?: string | null } = {},
   ): Promise<CouponResponse> {
-    if (opts.enforceLimits && !opts.forceVendorId) assertCouponWithinLimits(dto);
     if (opts.forceVendorId) {
       const vendor = await Vendor.findByPk(opts.forceVendorId);
       if (!vendor || vendor.status !== VENDOR_STATUS.APPROVED) {
@@ -250,7 +248,7 @@ export class CouponsService {
     id: string,
     dto: UpdateCouponRequest,
     actorId: string,
-    opts: { forceVendorId?: string | null; enforceLimits?: boolean } = {},
+    opts: { forceVendorId?: string | null } = {},
   ): Promise<CouponResponse> {
     const coupon = await Coupon.findByPk(id);
     if (!coupon) throw new NotFoundError('Coupon');
@@ -259,7 +257,6 @@ export class CouponsService {
     }
     await assertCouponEditAllowed(coupon, dto, { vendorScoped: Boolean(opts.forceVendorId) });
 
-    if (opts.enforceLimits && !opts.forceVendorId) assertEditedCouponWithinLimits(coupon, dto);
     const patch: Record<string, unknown> = { updatedBy: actorId };
     if (dto.code != null) patch.code = dto.code.toUpperCase();
     if (dto.type != null) patch.type = dto.type;
@@ -458,9 +455,8 @@ export class CouponsService {
   async bulkGenerate(
     dto: BulkGenerateRequest,
     actorId: string,
-    opts: { forceVendorId?: string | null; enforceLimits?: boolean } = {},
+    opts: { forceVendorId?: string | null } = {},
   ): Promise<{ batch: CouponBatch; coupons: Coupon[] }> {
-    if (opts.enforceLimits && !opts.forceVendorId) assertCouponWithinLimits(dto.template);
     return sequelize.transaction(async (t) => {
       const template = dto.template;
       const defaults = resolveCreateDefaults(

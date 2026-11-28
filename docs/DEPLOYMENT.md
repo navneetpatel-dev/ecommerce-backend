@@ -164,6 +164,9 @@ aws ecs run-task --cluster $CLUSTER --task-definition ecommerce-production-migra
 ```
 
 Add any other reference-data seeders you rely on (e.g. `20260930000010-seed-platform-shipping-fallback.js`).
+Do not run `npm run db:seed` in production: it also loads the demo accounts and catalog (and refuses to).
+
+**Upgrading to three roles:** migration `20261130000001-three-roles` turns every account that is not a super admin, vendor owner or customer into a customer (unlinked from its store and signed out). Check who holds those roles before deploying.
 Output: `aws logs tail /ecs/ecommerce-production/backend --log-stream-names-prefix migrate --since 10m`.
 
 Finally, point the Razorpay webhook at `https://<api_domain>/api/webhooks/razorpay`

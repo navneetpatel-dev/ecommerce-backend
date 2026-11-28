@@ -46,10 +46,10 @@ describe('the approve and publish endpoints, by who is asking', () => {
   it('approve: the own-work reason reaches the service only for a Super Admin', async () => {
     const approve = mock.method(productsService, 'approveProduct', (async () => ({ id: 'p1' })) as never);
     await call(productsController.approveProduct, ROLES.SUPER_ADMIN, null, { ownWorkReason: reason });
-    await call(productsController.approveProduct, ROLES.ADMIN_CATALOG_MANAGER, null, { ownWorkReason: reason });
+    await call(productsController.approveProduct, ROLES.VENDOR_OWNER, 'v9', { ownWorkReason: reason });
     await call(productsController.approveProduct, ROLES.SUPER_ADMIN, null, {});
     assert.equal(approve.mock.calls[0]!.arguments[3], reason);
-    assert.equal(approve.mock.calls[1]!.arguments[3], undefined, 'Catalog Manager cannot use the override');
+    assert.equal(approve.mock.calls[1]!.arguments[3], undefined, 'only the Super Admin can use the override');
     assert.equal(approve.mock.calls[2]!.arguments[3], undefined);
   });
 

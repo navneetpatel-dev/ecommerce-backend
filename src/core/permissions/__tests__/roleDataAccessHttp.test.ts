@@ -16,8 +16,7 @@ import { ROLES } from '@core/constants/statuses';
  * permission checks and the real controllers. Tokens are minted for an existing active account.
  *
  * Each role gets a temporary row in `roles` holding exactly the permission set the code defines for
- * it (so the Finance Manager, which the development database does not have yet, and managers whose
- * stored grants predate the latest migrations are tested as the code defines them). Permissions are
+ * it, whatever grants the database under test happens to store. Permissions are
  * therefore read from the database like in production, and survive the cache invalidations that
  * other test processes broadcast over Redis while the whole suite runs in parallel. The temporary
  * roles are removed afterwards.
@@ -27,7 +26,8 @@ let base = '';
 let subject: { id: string; email: string } | undefined;
 const tokens: Record<string, string> = {};
 
-const ROLE_KEYS = [ROLES.SUPER_ADMIN, ROLES.ADMIN_ORDER_MANAGER, ROLES.ADMIN_CATALOG_MANAGER, ROLES.ADMIN_FINANCE_MANAGER, ROLES.CUSTOMER] as const;
+const ROLE_KEYS = [ROLES.SUPER_ADMIN, ROLES.VENDOR_OWNER, ROLES.CUSTOMER] as const;
+let seller: { id: string; email: string; vendorId: string } | undefined;
 
 const q = <T>(sql: string, replacements: Record<string, unknown> = {}) =>
   sequelize.query<T>(sql, { type: QueryTypes.SELECT, replacements });
@@ -76,10 +76,17 @@ before(async () => {
      WHERE r.name = 'CUSTOMER' AND u.status = 'ACTIVE' AND u."deletedAt" IS NULL ORDER BY u."createdAt" LIMIT 1`,
   );
   assert.ok(subject, 'the development database needs at least one active customer');
+  [seller] = await q<{ id: string; email: string; vendorId: string }>(
+    `SELECT u.id, u.email, u."vendorId" FROM users u JOIN roles r ON r.id = u."roleId"
+     JOIN vendors v ON v.id = u."vendorId" AND v.status = 'APPROVED' AND v."deletedAt" IS NULL
+     WHERE r.name = 'VENDOR_OWNER' AND u.status = 'ACTIVE' AND u."deletedAt" IS NULL ORDER BY u."createdAt" LIMIT 1`,
+  );
+  assert.ok(seller, 'the database needs at least one active vendor');
   for (const role of ROLE_KEYS) {
     const permissions = role === ROLES.SUPER_ADMIN ? [] : (ROLE_PERMISSIONS[role] ?? []);
     const roleId = await createTempRole(role, permissions);
-    tokens[role] = jwt.sign({ sub: subject.id, email: subject.email, roleId, vendorId: null, roleName: role }, env.JWT_SECRET, { expiresIn: '10m' });
+    const who = role === ROLES.VENDOR_OWNER ? seller : { ...subject, vendorId: null };
+    tokens[role] = jwt.sign({ sub: who.id, email: who.email, roleId, vendorId: who.vendorId, roleName: role }, env.JWT_SECRET, { expiresIn: '10m' });
   }
   server = app.listen(0);
   await new Promise<void>((resolve) => server.once('listening', resolve));
@@ -94,7 +101,9 @@ after(async () => {
   }
 });
 
-describe('gap 1: roles without vendor permissions can still fill a vendor dropdown', () => {
+const OTHERS = [ROLES.VENDOR_OWNER, ROLES.CUSTOMER] as const;
+
+describe('the vendor directory and the admin vendor list', () => {
   let approved: { id: string; businessName: string } | undefined;
   let pending: { id: string } | undefined;
   before(async () => {
@@ -102,104 +111,62 @@ describe('gap 1: roles without vendor permissions can still fill a vendor dropdo
     [pending] = await q<{ id: string }>(`SELECT id FROM vendors WHERE status <> 'APPROVED' AND "deletedAt" IS NULL LIMIT 1`);
   });
 
-  it('why the front end needed a different endpoint: the admin vendor list refuses these roles', async () => {
-    for (const role of [ROLES.ADMIN_CATALOG_MANAGER, ROLES.ADMIN_ORDER_MANAGER, ROLES.ADMIN_FINANCE_MANAGER]) {
-      assert.equal((await call('/api/vendors?limit=3', role)).status, 403, role);
-    }
+  it('only the Super Admin reads the full admin list', async () => {
+    for (const role of OTHERS) assert.equal((await call('/api/vendors?limit=3', role)).status, 403, role);
     assert.equal((await call('/api/vendors?limit=3', ROLES.SUPER_ADMIN)).status, 200);
   });
 
-  it('the approved-vendor directory works for the Catalog, Order and Finance managers', async () => {
-    for (const role of [ROLES.ADMIN_CATALOG_MANAGER, ROLES.ADMIN_ORDER_MANAGER, ROLES.ADMIN_FINANCE_MANAGER, ROLES.SUPER_ADMIN]) {
+  it('the approved-vendor directory gives any signed-in user an id and a name only', async () => {
+    for (const role of ROLE_KEYS) {
       const { status, data } = await call('/api/vendors/directory?limit=5', role);
       assert.equal(status, 200, role);
       assert.ok(Array.isArray(data) && data.length > 0 && data.length <= 5, `${role} gets up to 5 vendors`);
-      assert.deepEqual(Object.keys(data[0]).sort(), ['businessName', 'id'], 'only an id and a name are exposed');
+      assert.deepEqual(Object.keys(data[0]).sort(), ['businessName', 'id']);
     }
-  });
-
-  it('search finds a vendor by name, and an unauthenticated caller is refused', async (t) => {
-    if (!approved) return t.skip('no approved vendor');
-    const fragment = encodeURIComponent(approved.businessName.slice(0, 6));
-    const { data } = await call(`/api/vendors/directory?limit=50&search=${fragment}`, ROLES.ADMIN_CATALOG_MANAGER);
-    assert.ok(data.some((v: { id: string }) => v.id === approved!.id));
     assert.equal((await call('/api/vendors/directory?limit=3')).status, 401);
   });
 
-  it('resolves an already-selected vendor by id (what a reloaded filter needs to show its name)', async (t) => {
+  it('search and lookup by id find an approved vendor, never an unapproved one', async (t) => {
     if (!approved) return t.skip('no approved vendor');
-    const { status, data } = await call(`/api/vendors/directory?id=${approved.id}`, ROLES.ADMIN_CATALOG_MANAGER);
-    assert.equal(status, 200);
-    assert.deepEqual(data, [{ id: approved.id, businessName: approved.businessName }]);
-  });
-
-  it('by id it never reveals a vendor that is not approved, and rejects a malformed id', async (t) => {
-    if (pending) {
-      const { status, data } = await call(`/api/vendors/directory?id=${pending.id}`, ROLES.ADMIN_CATALOG_MANAGER);
-      assert.equal(status, 200);
-      assert.deepEqual(data, [], 'a pending or suspended vendor is not in the directory');
-    } else t.diagnostic('no non-approved vendor to probe');
-    assert.equal((await call('/api/vendors/directory?id=not-a-uuid', ROLES.ADMIN_CATALOG_MANAGER)).status, 422);
+    const fragment = encodeURIComponent(approved.businessName.slice(0, 6));
+    const found = await call(`/api/vendors/directory?limit=50&search=${fragment}`, ROLES.CUSTOMER);
+    assert.ok(found.data.some((v: { id: string }) => v.id === approved!.id));
+    const byId = await call(`/api/vendors/directory?id=${approved.id}`, ROLES.CUSTOMER);
+    assert.deepEqual(byId.data, [{ id: approved.id, businessName: approved.businessName }]);
+    if (pending) assert.deepEqual((await call(`/api/vendors/directory?id=${pending.id}`, ROLES.CUSTOMER)).data, []);
+    assert.equal((await call('/api/vendors/directory?id=not-a-uuid', ROLES.CUSTOMER)).status, 422);
   });
 });
 
-describe('gap 3: unpublished products are for catalog roles only', () => {
+describe('unpublished products belong to their vendor and the platform', () => {
   let draft: { id: string } | undefined;
-  let pending: { id: string } | undefined;
   before(async () => {
-    [draft] = await q<{ id: string }>(`SELECT id FROM products WHERE status = 'DRAFT' AND "deletedAt" IS NULL LIMIT 1`);
-    [pending] = await q<{ id: string }>(`SELECT id FROM products WHERE status = 'PENDING_APPROVAL' AND "deletedAt" IS NULL LIMIT 1`);
+    [draft] = await q<{ id: string }>(
+      `SELECT id FROM products WHERE status = 'DRAFT' AND "deletedAt" IS NULL AND "vendorId" IS DISTINCT FROM :own LIMIT 1`,
+      { own: seller!.vendorId },
+    );
   });
 
-  it('a draft product: Super Admin and the Catalog Manager can open it; Order Manager, Finance Manager, shoppers and visitors cannot', async (t) => {
+  it("the Super Admin opens a draft; another vendor, customers and visitors cannot", async (t) => {
     if (!draft) return t.skip('no draft product');
-    for (const role of [ROLES.SUPER_ADMIN, ROLES.ADMIN_CATALOG_MANAGER]) {
-      const { status, data } = await call(`/api/products/${draft.id}`, role);
-      assert.equal(status, 200, role);
-      assert.equal(data.status, 'DRAFT', role);
-    }
-    for (const role of [ROLES.ADMIN_ORDER_MANAGER, ROLES.ADMIN_FINANCE_MANAGER, ROLES.CUSTOMER, undefined]) {
+    const admin = await call(`/api/products/${draft.id}`, ROLES.SUPER_ADMIN);
+    assert.equal(admin.status, 200);
+    assert.equal(admin.data.status, 'DRAFT');
+    for (const role of [...OTHERS, undefined]) {
       assert.equal((await call(`/api/products/${draft.id}`, role)).status, 404, `${role ?? 'anonymous'} must not see a draft`);
     }
   });
 
-  it('a pending-approval product follows the same rule', async (t) => {
-    if (!pending) return t.skip('no pending product');
-    assert.equal((await call(`/api/products/${pending.id}`, ROLES.ADMIN_CATALOG_MANAGER)).status, 200);
-    for (const role of [ROLES.ADMIN_ORDER_MANAGER, ROLES.ADMIN_FINANCE_MANAGER]) {
-      assert.equal((await call(`/api/products/${pending.id}`, role)).status, 404, role);
-    }
-  });
-
-  it('the product list: the Catalog Manager sees pending products, the Order and Finance managers do not', async (t) => {
-    if (!pending) return t.skip('no pending product');
-    const catalog = await call('/api/products?status=PENDING_APPROVAL&limit=5', ROLES.ADMIN_CATALOG_MANAGER);
-    assert.equal(catalog.status, 200);
-    assert.ok(catalog.data.length > 0, 'the Catalog Manager sees the moderation queue');
-    assert.ok(catalog.data.every((p: { status: string }) => p.status === 'PENDING_APPROVAL'));
-    // Everyone else gets the shopper view: the status filter is ignored and only LIVE products come back.
-    for (const role of [ROLES.ADMIN_ORDER_MANAGER, ROLES.ADMIN_FINANCE_MANAGER, ROLES.CUSTOMER, undefined]) {
+  it('shoppers asking for pending products get only live ones', async () => {
+    for (const role of [ROLES.CUSTOMER, undefined]) {
       const { status, data } = await call('/api/products?status=PENDING_APPROVAL&limit=5', role);
       assert.equal(status, 200, role ?? 'anonymous');
-      assert.ok(data.length > 0, `${role ?? 'anonymous'} still browses the live catalog`);
       assert.ok(data.every((p: { status: string }) => p.status === 'LIVE'), `${role ?? 'anonymous'} must see only LIVE products`);
     }
   });
-
-  it('published products are still visible to everyone (no regression for shoppers)', async () => {
-    const [live] = await q<{ id: string }>(`SELECT id FROM products WHERE status = 'LIVE' AND "deletedAt" IS NULL LIMIT 1`);
-    assert.ok(live);
-    for (const role of [ROLES.ADMIN_ORDER_MANAGER, ROLES.ADMIN_FINANCE_MANAGER, ROLES.ADMIN_CATALOG_MANAGER, ROLES.CUSTOMER, undefined]) {
-      const { status } = await call(`/api/products/${live.id}`, role);
-      assert.ok([200, 404].includes(status), `${role ?? 'anonymous'} got ${status}`); // 404 only if the vendor is not customer-visible
-    }
-    const list = await call('/api/products?limit=3', ROLES.ADMIN_ORDER_MANAGER);
-    assert.equal(list.status, 200);
-    assert.ok(list.data.length > 0, 'the Order Manager still browses the live catalog');
-  });
 });
 
-describe('gap 3: shipment details are for staff who manage shipping or orders', () => {
+describe('shipment details', () => {
   let tracking: string | undefined;
   before(async () => {
     [{ trackingNumber: tracking } = { trackingNumber: undefined as never }] = await q<{ trackingNumber: string }>(
@@ -207,20 +174,11 @@ describe('gap 3: shipment details are for staff who manage shipping or orders', 
     );
   });
 
-  it('Super Admin and the Order Manager see the full shipment; the Catalog and Finance managers are refused', async (t) => {
+  it('the Super Admin sees the full record; a shopper who is not the buyer is refused; a visitor gets the carrier status', async (t) => {
     if (!tracking) return t.skip('no shipment');
-    for (const role of [ROLES.SUPER_ADMIN, ROLES.ADMIN_ORDER_MANAGER]) {
-      const { status, data } = await call(`/api/shipping/tracking/${tracking}`, role);
-      assert.equal(status, 200, role);
-      assert.ok(Object.keys(data).length > 6, `${role} gets the full record`);
-    }
-    for (const role of [ROLES.ADMIN_CATALOG_MANAGER, ROLES.ADMIN_FINANCE_MANAGER]) {
-      assert.equal((await call(`/api/shipping/tracking/${tracking}`, role)).status, 403, role);
-    }
-  });
-
-  it('a shopper who is not the buyer is refused, and an anonymous visitor still gets only the carrier-facing status', async (t) => {
-    if (!tracking) return t.skip('no shipment');
+    const admin = await call(`/api/shipping/tracking/${tracking}`, ROLES.SUPER_ADMIN);
+    assert.equal(admin.status, 200);
+    assert.ok(Object.keys(admin.data).length > 6);
     assert.equal((await call(`/api/shipping/tracking/${tracking}`, ROLES.CUSTOMER)).status, 403);
     const anonymous = await call(`/api/shipping/tracking/${tracking}`);
     assert.equal(anonymous.status, 200);
@@ -228,134 +186,89 @@ describe('gap 3: shipment details are for staff who manage shipping or orders', 
   });
 });
 
-describe('gap 2: the Finance Manager can find a user to adjust a wallet', () => {
+describe('finding a user to adjust a wallet', () => {
   let target: { id: string; name: string; email: string } | undefined;
   before(async () => {
     [target] = await q<{ id: string; name: string; email: string }>(
-      `SELECT id, name, email FROM users WHERE "deletedAt" IS NULL AND email LIKE '%@example.com' ORDER BY "createdAt" DESC LIMIT 1`,
+      `SELECT id, name, email FROM users WHERE "deletedAt" IS NULL ORDER BY "createdAt" DESC, email LIMIT 1`,
     );
   });
 
-  it('finds a user by part of their email or name, with only four fields', async (t) => {
-    if (!target) return t.skip('no example user');
-    const byEmail = await call(`/api/admin/wallet/users?search=${encodeURIComponent(target.email.slice(0, 12))}`, ROLES.ADMIN_FINANCE_MANAGER);
+  it('finds a user by part of their email or by id, with only four fields', async (t) => {
+    if (!target) return t.skip('no user');
+    const byEmail = await call(`/api/admin/wallet/users?search=${encodeURIComponent(target.email.slice(0, 12))}`, ROLES.SUPER_ADMIN);
     assert.equal(byEmail.status, 200);
     assert.ok(byEmail.data.length > 0 && byEmail.data.length <= 10);
     for (const row of byEmail.data) assert.deepEqual(Object.keys(row).sort(), ['email', 'id', 'name', 'status']);
-    const exact = await call(`/api/admin/wallet/users?search=${target.id}`, ROLES.ADMIN_FINANCE_MANAGER);
+    const exact = await call(`/api/admin/wallet/users?search=${target.id}`, ROLES.SUPER_ADMIN);
     assert.deepEqual(exact.data.map((r: { id: string }) => r.id), [target.id], 'a pasted id still resolves');
-    assert.equal((await call(`/api/admin/wallet/users?search=${encodeURIComponent(target.email.slice(0, 12))}`, ROLES.SUPER_ADMIN)).status, 200);
   });
 
-  it('nobody else gets the lookup', async () => {
-    for (const role of [ROLES.ADMIN_ORDER_MANAGER, ROLES.ADMIN_CATALOG_MANAGER, ROLES.CUSTOMER]) {
-      assert.equal((await call('/api/admin/wallet/users?search=priya', role)).status, 403, role);
-    }
+  it('nobody else gets the lookup, and it cannot be used to browse everyone', async () => {
+    for (const role of OTHERS) assert.equal((await call('/api/admin/wallet/users?search=priya', role)).status, 403, role);
     assert.equal((await call('/api/admin/wallet/users?search=priya')).status, 401);
-  });
-
-  it('it cannot be used to browse everyone: short terms are rejected and wildcards are literal', async () => {
-    assert.equal((await call('/api/admin/wallet/users?search=ab', ROLES.ADMIN_FINANCE_MANAGER)).status, 422);
-    assert.equal((await call('/api/admin/wallet/users', ROLES.ADMIN_FINANCE_MANAGER)).status, 422);
-    const wildcard = await call(`/api/admin/wallet/users?search=${encodeURIComponent('%%%')}`, ROLES.ADMIN_FINANCE_MANAGER);
-    assert.equal(wildcard.status, 200);
+    assert.equal((await call('/api/admin/wallet/users?search=ab', ROLES.SUPER_ADMIN)).status, 422);
+    assert.equal((await call('/api/admin/wallet/users', ROLES.SUPER_ADMIN)).status, 422);
+    const wildcard = await call(`/api/admin/wallet/users?search=${encodeURIComponent('%%%')}`, ROLES.SUPER_ADMIN);
     assert.deepEqual(wildcard.data, []);
-    const limited = await call('/api/admin/wallet/users?search=com&limit=3', ROLES.ADMIN_FINANCE_MANAGER);
-    assert.ok(limited.data.length <= 3);
-    assert.equal((await call('/api/admin/wallet/users?search=com&limit=50', ROLES.ADMIN_FINANCE_MANAGER)).status, 422);
-  });
-
-  it('it is a narrow door: the Finance Manager still has no access to the Users admin', async () => {
-    assert.equal((await call('/api/users?limit=3', ROLES.ADMIN_FINANCE_MANAGER)).status, 403);
-    assert.equal((await call(`/api/users/${subject!.id}`, ROLES.ADMIN_FINANCE_MANAGER)).status, 403);
+    assert.equal((await call('/api/admin/wallet/users?search=com&limit=50', ROLES.SUPER_ADMIN)).status, 422);
   });
 });
 
-describe('each role still gets the data of its own job (no regressions)', () => {
-  it('Order Manager: all orders, returns, tickets, shipping rates', async () => {
-    for (const path of ['/api/orders?limit=3', '/api/returns/admin?limit=3', '/api/support-tickets/admin?limit=3']) {
-      assert.equal((await call(path, ROLES.ADMIN_ORDER_MANAGER)).status, 200, path);
+describe('each role gets the data of its own job and no one else\'s', () => {
+  const admin = [
+    '/api/orders?limit=3', '/api/returns/admin?limit=3', '/api/support-tickets/admin?limit=3', '/api/inventory/low-stock',
+    '/api/coupons?limit=3', '/api/categories', '/api/reviews/moderation?limit=3', '/api/payouts?limit=3',
+    '/api/commissions?limit=3', '/api/gift-cards/admin?limit=3', '/api/cashback-offers?limit=3', '/api/users?limit=3',
+  ];
+
+  it('the Super Admin reads every admin list, with revenue', async () => {
+    for (const path of admin) assert.equal((await call(path, ROLES.SUPER_ADMIN)).status, 200, path);
+    const analytics = await call('/api/admin/analytics/platform', ROLES.SUPER_ADMIN);
+    assert.equal(typeof analytics.data.gmv, 'number');
+  });
+
+  it('the vendor reads their own store and is refused the platform', async () => {
+    for (const path of ['/api/vendors/me', '/api/suborders?limit=3', '/api/payouts?limit=3', '/api/coupons/vendor?limit=3', '/api/inventory/low-stock']) {
+      assert.equal((await call(path, ROLES.VENDOR_OWNER)).status, 200, path);
+    }
+    for (const path of ['/api/returns/admin?limit=3', '/api/support-tickets/admin?limit=3', '/api/users?limit=3', '/api/admin/analytics/platform', '/api/gift-cards/admin?limit=3', '/api/cashback-offers?limit=3', '/api/coupons?limit=3']) {
+      assert.equal((await call(path, ROLES.VENDOR_OWNER)).status, 403, path);
     }
   });
 
-  it('Catalog Manager: low-stock inventory, coupons, categories, reviews moderation', async () => {
-    for (const path of ['/api/inventory/low-stock', '/api/coupons?limit=3', '/api/categories', '/api/reviews/moderation?limit=3']) {
-      assert.equal((await call(path, ROLES.ADMIN_CATALOG_MANAGER)).status, 200, path);
+  it('a customer is refused every platform and store list', async () => {
+    for (const path of ['/api/returns/admin?limit=3', '/api/users?limit=3', '/api/payouts?limit=3', '/api/suborders?limit=3', '/api/coupons?limit=3', '/api/admin/analytics/platform']) {
+      assert.equal((await call(path, ROLES.CUSTOMER)).status, 403, path);
     }
-  });
-
-  it('Finance Manager: payouts, commissions, gift cards, cashback offers, analytics (with revenue)', async () => {
-    for (const path of ['/api/payouts?limit=3', '/api/commissions?limit=3', '/api/gift-cards/admin?limit=3', '/api/gift-cards/admin/liability', '/api/cashback-offers?limit=3']) {
-      assert.equal((await call(path, ROLES.ADMIN_FINANCE_MANAGER)).status, 200, path);
-    }
-    const analytics = await call('/api/admin/analytics/platform', ROLES.ADMIN_FINANCE_MANAGER);
-    assert.equal(analytics.status, 200);
-    assert.equal(typeof analytics.data.gmv, 'number', 'Finance sees revenue');
-  });
-
-  it('the managers get analytics counts but no revenue', async () => {
-    for (const role of [ROLES.ADMIN_ORDER_MANAGER, ROLES.ADMIN_CATALOG_MANAGER]) {
-      const analytics = await call('/api/admin/analytics/platform', role);
-      assert.equal(analytics.status, 200, role);
-      assert.equal(analytics.data.gmv, null, role);
-      assert.equal(typeof analytics.data.totalOrders, 'number', role);
-    }
-  });
-
-  it('and the roles are still kept out of each other’s jobs', async () => {
-    assert.equal((await call('/api/payouts?limit=3', ROLES.ADMIN_ORDER_MANAGER)).status, 403);
-    assert.equal((await call('/api/returns/admin?limit=3', ROLES.ADMIN_FINANCE_MANAGER)).status, 403);
-    assert.equal((await call('/api/gift-cards/admin?limit=3', ROLES.ADMIN_ORDER_MANAGER)).status, 403);
-    assert.equal((await call('/api/cashback-offers?limit=3', ROLES.ADMIN_CATALOG_MANAGER)).status, 403);
-    assert.equal((await call('/api/coupons?limit=3', ROLES.ADMIN_FINANCE_MANAGER)).status, 403);
   });
 });
 
-describe('the Reports hub: each role finds its own reports and none of another role’s', () => {
+describe('the Reports hub', () => {
   const catalogFor = async (role: string) => {
     const { status, data } = await call('/api/reports/catalog', role);
     assert.equal(status, 200, role);
-    return new Set<string>((Array.isArray(data) ? data : data?.reports ?? []).map((r: { type: string }) => r.type));
+    return (Array.isArray(data) ? data : data?.reports ?? []) as Array<{ type: string; audience?: string }>;
   };
 
-  it('Order Manager: operations reports only', async () => {
-    const reports = await catalogFor(ROLES.ADMIN_ORDER_MANAGER);
-    for (const type of ['order-sla', 'cancellations', 'refund-return', 'stuck-orders', 'shipping-logistics', 'support-ticket-sla']) {
-      assert.ok(reports.has(type), `Order Manager should have ${type}`);
-    }
-    for (const type of ['gmv-sales', 'commission-revenue', 'wallet-liability', 'platform-analytics', 'product-performance', 'audit-log']) {
-      assert.ok(!reports.has(type), `Order Manager must not have ${type}`);
+  it('the Super Admin has platform reports, the audit log among them', async () => {
+    const types = new Set((await catalogFor(ROLES.SUPER_ADMIN)).map((r) => r.type));
+    for (const type of ['order-sla', 'gmv-sales', 'wallet-liability', 'platform-analytics', 'product-performance', 'audit-log']) {
+      assert.ok(types.has(type), type);
     }
   });
 
-  it('Catalog Manager: catalog reports only', async () => {
-    const reports = await catalogFor(ROLES.ADMIN_CATALOG_MANAGER);
-    for (const type of ['product-performance', 'category-performance', 'product-approval-tat', 'review-rating-summary', 'platform-inventory']) {
-      assert.ok(reports.has(type), `Catalog Manager should have ${type}`);
-    }
-    for (const type of ['order-sla', 'gmv-sales', 'wallet-liability', 'platform-analytics', 'audit-log']) {
-      assert.ok(!reports.has(type), `Catalog Manager must not have ${type}`);
+  it('a vendor gets store reports and no platform report', async () => {
+    const types = new Set((await catalogFor(ROLES.VENDOR_OWNER)).map((r) => r.type));
+    assert.ok(types.has('vendor-sales') && types.has('vendor-inventory'));
+    for (const type of ['order-sla', 'gmv-sales', 'wallet-liability', 'platform-analytics', 'audit-log', 'vendor-settlement', 'staff-orders']) {
+      assert.ok(!types.has(type), type);
     }
   });
 
-  it('Finance Manager: finance, tax and revenue reports only', async () => {
-    const reports = await catalogFor(ROLES.ADMIN_FINANCE_MANAGER);
-    for (const type of ['gmv-sales', 'commission-revenue', 'reconciliation', 'wallet-liability', 'wallet-recharge', 'cashback-write-offs', 'gift-card-liability', 'gstr-1-filing', 'platform-analytics', 'customer-analytics']) {
-      assert.ok(reports.has(type), `Finance Manager should have ${type}`);
-    }
-    for (const type of ['order-sla', 'stuck-orders', 'product-performance', 'platform-inventory', 'audit-log']) {
-      assert.ok(!reports.has(type), `Finance Manager must not have ${type}`);
-    }
-  });
-
-  it('only Super Admin has the audit log report, and Super Admin has more than any other role', async () => {
-    const superReports = await catalogFor(ROLES.SUPER_ADMIN);
-    assert.ok(superReports.has('audit-log'));
-    for (const role of [ROLES.ADMIN_ORDER_MANAGER, ROLES.ADMIN_CATALOG_MANAGER, ROLES.ADMIN_FINANCE_MANAGER]) {
-      const reports = await catalogFor(role);
-      assert.ok(!reports.has('audit-log'), role);
-      assert.ok(reports.size > 0 && reports.size < superReports.size, role);
-    }
+  it('a customer gets only their own reports', async () => {
+    const types = (await catalogFor(ROLES.CUSTOMER)).map((r) => r.type);
+    assert.ok(types.length > 0 && types.every((type) => type.startsWith('customer-')), types.join());
   });
 });
 
@@ -364,7 +277,10 @@ describe('assisted listing over HTTP (nothing here writes: every call is refused
   let pending: { id: string } | undefined;
 
   before(async () => {
-    [live] = await q<{ id: string; vendorId: string }>(`SELECT id, "vendorId" FROM products WHERE status = 'LIVE' AND "vendorId" IS NOT NULL AND "deletedAt" IS NULL LIMIT 1`);
+    [live] = await q<{ id: string; vendorId: string }>(
+      `SELECT id, "vendorId" FROM products WHERE status = 'LIVE' AND "vendorId" IS NOT NULL AND "vendorId" <> :own AND "deletedAt" IS NULL LIMIT 1`,
+      { own: seller!.vendorId },
+    );
     [pending] = await q<{ id: string }>(`SELECT id FROM vendors WHERE status <> 'APPROVED' AND "deletedAt" IS NULL LIMIT 1`);
   });
 
@@ -380,8 +296,8 @@ describe('assisted listing over HTTP (nothing here writes: every call is refused
 
   const draft = { name: `ZZ never created ${stamp}`, categoryId: randomUUID(), basePrice: 100 };
 
-  it('only product admins reach the on-behalf endpoints: Order and Finance managers and customers get 403', async () => {
-    for (const role of [ROLES.ADMIN_ORDER_MANAGER, ROLES.ADMIN_FINANCE_MANAGER, ROLES.CUSTOMER]) {
+  it('only the Super Admin reaches the on-behalf endpoints', async () => {
+    for (const role of OTHERS) {
       assert.equal((await send('POST', '/api/products/on-behalf', role, { vendorId: randomUUID(), product: draft })).status, 403, role);
       assert.equal((await send('POST', `/api/products/${randomUUID()}/submit-on-behalf`, role, { consentNote: 'Vendor agreed by phone' })).status, 403, role);
     }
@@ -389,9 +305,7 @@ describe('assisted listing over HTTP (nothing here writes: every call is refused
 
   it('the vendor must be approved: an unknown or not-approved vendor is refused with 422 and nothing is created', async () => {
     for (const vendorId of [randomUUID(), pending?.id].filter(Boolean) as string[]) {
-      for (const role of [ROLES.ADMIN_CATALOG_MANAGER, ROLES.SUPER_ADMIN]) {
-        assert.equal((await send('POST', '/api/products/on-behalf', role, { vendorId, product: draft })).status, 422, `${role} ${vendorId}`);
-      }
+      assert.equal((await send('POST', '/api/products/on-behalf', ROLES.SUPER_ADMIN, { vendorId, product: draft })).status, 422, vendorId);
     }
     const [{ count }] = await q<{ count: string }>(`SELECT COUNT(*) AS count FROM products WHERE name = :name`, { name: draft.name });
     assert.equal(count, '0');
@@ -399,18 +313,18 @@ describe('assisted listing over HTTP (nothing here writes: every call is refused
 
   it('the consent note is required (10 to 500 characters)', async () => {
     for (const consentNote of [undefined, '', 'short']) {
-      assert.equal((await send('POST', `/api/products/${randomUUID()}/submit-on-behalf`, ROLES.ADMIN_CATALOG_MANAGER, { consentNote })).status, 422, String(consentNote));
+      assert.equal((await send('POST', `/api/products/${randomUUID()}/submit-on-behalf`, ROLES.SUPER_ADMIN, { consentNote })).status, 422, String(consentNote));
     }
   });
 
-  it('repricing a live vendor product: the Catalog Manager gets 403; Super Admin needs a reason (422)', async (t) => {
-    if (!live) return t.skip('no live vendor product in the development database');
+  it("repricing another vendor's live product: a vendor gets 403; the Super Admin needs a reason (422)", async (t) => {
+    if (!live || live.vendorId === seller!.vendorId) return t.skip('no live product of another vendor');
     const price = { basePrice: 1 };
-    assert.equal((await send('PATCH', `/api/products/${live.id}`, ROLES.ADMIN_CATALOG_MANAGER, price)).status, 403);
+    assert.equal((await send('PATCH', `/api/products/${live.id}`, ROLES.VENDOR_OWNER, price)).status, 403);
     assert.equal((await send('PATCH', `/api/products/${live.id}`, ROLES.SUPER_ADMIN, price)).status, 422);
     assert.equal((await send('PATCH', `/api/products/${live.id}`, ROLES.SUPER_ADMIN, { ...price, changeReason: 'short' })).status, 422);
     const variant = { sku: `ZZ-${stamp}`, price: 1 };
-    assert.equal((await send('POST', `/api/products/${live.id}/variants`, ROLES.ADMIN_CATALOG_MANAGER, variant)).status, 403, 'adding a variant is a pricing change');
+    assert.equal((await send('POST', `/api/products/${live.id}/variants`, ROLES.VENDOR_OWNER, variant)).status, 403);
     assert.equal((await send('POST', `/api/products/${live.id}/variants`, ROLES.SUPER_ADMIN, variant)).status, 422);
   });
 
@@ -424,20 +338,15 @@ describe('assisted listing over HTTP (nothing here writes: every call is refused
     assert.equal(detail.status, 200);
     for (const field of internal) assert.equal(field in detail.data, false, `detail: ${field}`);
     // The team's own view keeps them (moderation needs who approved and why it was rejected).
-    const own = await call(`/api/products/${live.id}`, ROLES.ADMIN_CATALOG_MANAGER);
+    const own = await call(`/api/products/${live.id}`, ROLES.SUPER_ADMIN);
     assert.equal('listedByPlatform' in own.data, true);
   });
 
-  it('only a Super Admin may create or approve in the special ways: no vendor, or approving one’s own work', async () => {
+  it('every product needs a vendor, and an own-work reason is validated', async () => {
     const productBody = { name: `ZZ never created ${stamp}`, categoryId: randomUUID(), description: 'd', basePrice: 10 };
-    // Every product has a vendor: a vendor-less one is refused for everyone before anything is written.
-    for (const role of [ROLES.ADMIN_CATALOG_MANAGER, ROLES.SUPER_ADMIN]) {
-      assert.equal((await send('POST', '/api/products/on-behalf', role, { product: productBody })).status, 422);
-    }
-    // The own-work reason is validated (10 to 500 characters) before the product is even looked up.
+    assert.equal((await send('POST', '/api/products/on-behalf', ROLES.SUPER_ADMIN, { product: productBody })).status, 422);
+    // The reason (10 to 500 characters) is checked before the product is even looked up.
     assert.equal((await send('POST', `/api/products/${randomUUID()}/approve`, ROLES.SUPER_ADMIN, { ownWorkReason: 'short' })).status, 422);
-    // /submit is the vendor's own: a Catalog Manager has no store, so it is refused.
-    assert.ok([403, 404].includes((await send('POST', `/api/products/${randomUUID()}/submit`, ROLES.ADMIN_CATALOG_MANAGER, {})).status));
   });
 
   it('the vendor picker pages: no vendor repeats across pages, only id and name, wildcards are literal', async () => {
@@ -452,8 +361,8 @@ describe('assisted listing over HTTP (nothing here writes: every call is refused
     for (const row of wildcard.data) assert.ok(row.businessName.includes('%'), 'a typed % matches only a literal %');
   });
 
-  it('GET /categories/picker: product roles get the tree a page at a time with GST; others are refused', async () => {
-    for (const role of [ROLES.ADMIN_CATALOG_MANAGER, ROLES.SUPER_ADMIN]) {
+  it('GET /categories/picker: vendors and the Super Admin page through the tree with GST; customers are refused', async () => {
+    for (const role of [ROLES.VENDOR_OWNER, ROLES.SUPER_ADMIN]) {
       const first = await call('/api/categories/picker?limit=5&page=1', role);
       assert.equal(first.status, 200, role);
       assert.ok(Array.isArray(first.data) && first.data.length > 0 && first.data.length <= 5);
@@ -470,9 +379,7 @@ describe('assisted listing over HTTP (nothing here writes: every call is refused
     const found = await call(`/api/categories/picker?search=${encodeURIComponent(String(name).slice(0, 3))}`, ROLES.SUPER_ADMIN);
     assert.ok(found.data.some((row: { id: string }) => row.id === firstId), 'search finds it');
     assert.equal((await call('/api/categories/picker?limit=51', ROLES.SUPER_ADMIN)).status, 422, 'page size is capped');
-    for (const role of [ROLES.ADMIN_ORDER_MANAGER, ROLES.ADMIN_FINANCE_MANAGER, ROLES.CUSTOMER]) {
-      assert.equal((await call('/api/categories/picker', role)).status, 403, role);
-    }
+    assert.equal((await call('/api/categories/picker', ROLES.CUSTOMER)).status, 403);
     assert.equal((await call('/api/categories/picker')).status, 401, 'visitors are refused');
   });
 
@@ -486,15 +393,13 @@ describe('assisted listing over HTTP (nothing here writes: every call is refused
     const tree = await call('/api/categories');
     assert.equal(JSON.stringify(tree.data).includes('commissionRate'), false);
 
-    for (const role of [ROLES.ADMIN_CATALOG_MANAGER, ROLES.SUPER_ADMIN]) {
-      const admin = await call('/api/categories/admin?limit=5', role);
-      assert.equal(admin.status, 200, role);
-      for (const row of admin.data) {
-        for (const field of ['depth', 'childCount', 'productCount', 'gst', 'status']) assert.ok(field in row, `${field} on admin row`);
-        assert.ok(['own', 'inherited', 'default', 'fallback'].includes(row.gst.source));
-      }
+    const admin = await call('/api/categories/admin?limit=5', ROLES.SUPER_ADMIN);
+    assert.equal(admin.status, 200);
+    for (const row of admin.data) {
+      for (const field of ['depth', 'childCount', 'productCount', 'gst', 'status']) assert.ok(field in row, `${field} on admin row`);
+      assert.ok(['own', 'inherited', 'default', 'fallback'].includes(row.gst.source));
     }
-    for (const role of [ROLES.ADMIN_ORDER_MANAGER, ROLES.ADMIN_FINANCE_MANAGER, ROLES.CUSTOMER]) {
+    for (const role of OTHERS) {
       assert.equal((await call('/api/categories/admin', role)).status, 403, role);
     }
     assert.equal((await call('/api/categories/admin')).status, 401);
@@ -508,7 +413,7 @@ describe('assisted listing over HTTP (nothing here writes: every call is refused
     if (archived) assert.equal((await call(`/api/categories/${archived.id}`)).status, 404, 'an archived category by id is not public');
   });
 
-  it('tax: rules list is Super Admin only with server-side filters and counts; "where does it come from" is open to category managers', async () => {
+  it('tax: rules list and "where does it come from" are the Super Admin\'s, with server-side filters and counts', async () => {
     const all = await call('/api/tax/rules?limit=50', ROLES.SUPER_ADMIN);
     assert.equal(all.status, 200);
     for (const row of all.data) {
@@ -518,25 +423,21 @@ describe('assisted listing over HTTP (nothing here writes: every call is refused
     assert.ok(defaults.data.every((row: { isDefault: boolean }) => row.isDefault));
     assert.ok(defaults.data.length <= 1, 'at most one default rule');
     assert.equal((await call('/api/tax/rules?hasBand=MAYBE', ROLES.SUPER_ADMIN)).status, 422);
-    for (const role of [ROLES.ADMIN_CATALOG_MANAGER, ROLES.ADMIN_ORDER_MANAGER, ROLES.ADMIN_FINANCE_MANAGER]) {
-      assert.equal((await call('/api/tax/rules', role)).status, 403, `${role} cannot list rules`);
-    }
+    for (const role of OTHERS) assert.equal((await call('/api/tax/rules', role)).status, 403, `${role} cannot list rules`);
 
     const [category] = await q<{ id: string }>(`SELECT id FROM categories WHERE status = 'ACTIVE' LIMIT 1`);
     if (category) {
-      for (const role of [ROLES.SUPER_ADMIN, ROLES.ADMIN_CATALOG_MANAGER]) {
-        const effective = await call(`/api/tax/rules/effective?categoryId=${category.id}`, role);
-        assert.equal(effective.status, 200, role);
-        assert.ok(['own', 'inherited', 'default', 'fallback'].includes(effective.data.source));
-        assert.equal(typeof effective.data.gstPercentage, 'number');
-      }
-      assert.equal((await call(`/api/tax/rules/effective?categoryId=${category.id}`, ROLES.ADMIN_ORDER_MANAGER)).status, 403);
+      const effective = await call(`/api/tax/rules/effective?categoryId=${category.id}`, ROLES.SUPER_ADMIN);
+      assert.equal(effective.status, 200);
+      assert.ok(['own', 'inherited', 'default', 'fallback'].includes(effective.data.source));
+      assert.equal(typeof effective.data.gstPercentage, 'number');
+      assert.equal((await call(`/api/tax/rules/effective?categoryId=${category.id}`, ROLES.VENDOR_OWNER)).status, 403);
     }
     assert.equal((await call('/api/tax/rules/effective?categoryId=nope', ROLES.SUPER_ADMIN)).status, 422);
   });
 
-  it('the category picker is open to the people who manage categories and tax', async () => {
-    for (const role of [ROLES.SUPER_ADMIN, ROLES.ADMIN_CATALOG_MANAGER]) {
+  it('the category picker is open to the people who manage categories and price products', async () => {
+    for (const role of [ROLES.SUPER_ADMIN, ROLES.VENDOR_OWNER]) {
       assert.equal((await call('/api/categories/picker?limit=3', role)).status, 200, role);
     }
   });

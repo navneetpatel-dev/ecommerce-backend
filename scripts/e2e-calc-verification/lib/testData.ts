@@ -1,36 +1,37 @@
+import { loadCredentials } from '../../seed/credentials';
+
+/** Logins from the seed's credentials file. The vendor, product and coupon ids below must be
+ *  pointed at rows of the database under test before a run: a reseed gives rows new ids. */
+const accounts = loadCredentials();
+
 export const CREDENTIALS = {
-  // orderadmin@ecommerce.com / catalogadmin@ecommerce.com from docs/TEST_CREDENTIALS.md do NOT
-  // exist in this seeded DB (verified via direct query) — superAdmin has every permission
-  // (ROLE_PERMISSIONS[SUPER_ADMIN] = PERMISSION_KEYS, all of them) so it's used for every
-  // admin-level action in this script instead of a separate ADMIN_ORDER_MANAGER identity.
-  superAdmin: { email: 'admin@ecommerce.com', password: 'Admin@123' },
+  superAdmin: { email: accounts.superAdmin, password: accounts.passwords.superAdmin },
 };
 
-// docs/TEST_CREDENTIALS.md's `customerN@example.com` pattern does not exist in this seeded DB
-// (verified via direct query) — real seeded customers use `<firstname>.<lastname><n>@example.com`.
 // One dedicated customer per scenario, so report deltas stay easy to attribute.
 export const CUSTOMERS = {
-  codSweep: 'amit.das23@example.com',
-  onlineCancel: 'amit.gupta54@example.com',
-  walletOnly: 'amit.joshi29@example.com',
-  hybrid: 'amit.joshi68@example.com',
-  multiVendor: 'amit.kumar80@example.com',
-  coupon: 'amit.nair2@example.com',
+  codSweep: accounts.customers[50]!,
+  onlineCancel: accounts.customers[51]!,
+  walletOnly: accounts.customers[52]!,
+  hybrid: accounts.customers[53]!,
+  multiVendor: accounts.customers[54]!,
+  coupon: accounts.customers[55]!,
 };
-export const CUSTOMER_PASSWORD = 'Test@123';
+export const CUSTOMER_PASSWORD = accounts.passwords.customer;
+export const VENDOR_PASSWORD = accounts.passwords.vendor;
 
 // Vendors with confirmed distinct states, for the intra-/inter-state scenario.
 // commissionRatePercent values are read live from vendors.commissionRate (verified via direct
 // DB query) — do not assume a uniform platform default, each vendor can have its own override.
 export const VENDORS = {
   techworld: {
-    email: 'owner@techworld.com',
+    email: accounts.vendors[0]!,
     id: '695ca6a7-3164-4bd9-a14f-a552bd069f29',
     state: 'Karnataka',
     commissionRatePercent: 12,
   },
   fashionhub: {
-    email: 'owner@fashionhub.com',
+    email: accounts.vendors[1]!,
     id: '7123bd69-5447-4004-9782-3a8f663378b0',
     state: 'Maharashtra',
     commissionRatePercent: 12.5,
@@ -41,7 +42,7 @@ export const VENDORS = {
   // returned "No shipping rate is available" — a real shipping-config data gap, unrelated
   // to tax/commission calculation, so scenario 05 routes around it rather than chasing it).
   homestyle: {
-    email: 'owner@homestyle.com',
+    email: accounts.vendors[2]!,
     id: 'c3b413cc-e799-4ea7-99ca-4acd4aada30e',
     state: 'Delhi',
     commissionRatePercent: 18,

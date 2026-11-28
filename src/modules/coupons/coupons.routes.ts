@@ -25,7 +25,7 @@ export function requireVendorOwner(req: Request, _res: Response, next: NextFunct
     return next();
   }
   if (role !== ROLES.VENDOR_OWNER || !req.user?.vendorId) {
-    return next(new ForbiddenError('Only vendor owners can create or manage store coupons'));
+    return next(new ForbiddenError('Only vendors can create or manage store coupons'));
   }
   return next();
 }
@@ -50,7 +50,7 @@ router.get(
   couponsController.eligibleCouponsPublic,
 );
 
-// Vendor store coupons: owner-only for reads and writes (staff have no coupon access; no COUPON_MANAGE)
+// Vendor store coupons: the vendor's own (no COUPON_MANAGE)
 router.post(
   '/vendor',
   authenticate,

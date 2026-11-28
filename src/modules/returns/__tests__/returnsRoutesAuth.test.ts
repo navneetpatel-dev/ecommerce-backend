@@ -29,34 +29,23 @@ async function guard(method: string, path: string, role: string): Promise<unknow
 
 const forbidden = (o: unknown) => (o as { statusCode?: number } | undefined)?.statusCode === 403;
 
-describe('vendor returns: staff run the warehouse, owners run the money', () => {
-  it('disputing a return: the store owner and platform refund staff pass; vendor staff do not', async () => {
-    for (const role of [ROLES.VENDOR_OWNER, ROLES.ADMIN_ORDER_MANAGER, ROLES.SUPER_ADMIN]) {
-      assert.equal(await guard('post', '/:id/dispute', role), undefined, role);
-    }
-    for (const role of [ROLES.VENDOR_STAFF, ROLES.ADMIN_CATALOG_MANAGER, ROLES.ADMIN_FINANCE_MANAGER, ROLES.CUSTOMER]) {
-      assert.ok(forbidden(await guard('post', '/:id/dispute', role)), `${role} should get 403`);
+describe('vendor returns', () => {
+  it('disputing a return and the debit note: the vendor and the Super Admin pass, customers do not', async () => {
+    for (const [method, path] of [['post', '/:id/dispute'], ['get', '/:id/debit-note']] as const) {
+      for (const role of [ROLES.VENDOR_OWNER, ROLES.SUPER_ADMIN]) assert.equal(await guard(method, path, role), undefined, role);
+      assert.ok(forbidden(await guard(method, path, ROLES.CUSTOMER)), `${method} ${path}`);
     }
   });
 
-  it('the debit note (a financial document): owner and refund staff pass; vendor staff do not', async () => {
-    for (const role of [ROLES.VENDOR_OWNER, ROLES.ADMIN_ORDER_MANAGER, ROLES.SUPER_ADMIN]) {
-      assert.equal(await guard('get', '/:id/debit-note', role), undefined, role);
-    }
-    assert.ok(forbidden(await guard('get', '/:id/debit-note', ROLES.VENDOR_STAFF)));
+  it('restocking and listing the store’s returns stay open to the vendor', async () => {
+    assert.equal(await guard('post', '/:id/restock', ROLES.VENDOR_OWNER), undefined);
+    assert.equal(await guard('get', '/vendor/me', ROLES.VENDOR_OWNER), undefined);
   });
 
-  it('restocking and listing the store’s returns stay open to vendor staff (no regression)', async () => {
-    for (const role of [ROLES.VENDOR_OWNER, ROLES.VENDOR_STAFF]) {
-      assert.equal(await guard('post', '/:id/restock', role), undefined, `restock ${role}`);
-      assert.equal(await guard('get', '/vendor/me', role), undefined, `list ${role}`);
-    }
-  });
-
-  it('resolving a dispute and refunds stay with platform refund staff only', async () => {
+  it('resolving a dispute and refunds stay with the platform', async () => {
     for (const path of ['/:id/resolve-dispute', '/:id/retry-refund']) {
-      assert.equal(await guard('post', path, ROLES.ADMIN_ORDER_MANAGER), undefined, path);
-      for (const role of [ROLES.VENDOR_OWNER, ROLES.VENDOR_STAFF]) assert.ok(forbidden(await guard('post', path, role)), `${role} ${path}`);
+      assert.equal(await guard('post', path, ROLES.SUPER_ADMIN), undefined, path);
+      assert.ok(forbidden(await guard('post', path, ROLES.VENDOR_OWNER)), path);
     }
   });
 });

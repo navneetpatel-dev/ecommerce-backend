@@ -4,14 +4,13 @@ import { userHasPermission } from '@middleware/rbac.middleware';
 import type { ProductActor } from './productChangePolicy';
 
 /**
- * Prices, tax codes and variants belong to the store owner (product.create). A platform product admin
- * (product.manage) may change them only as `productChangePolicy` allows; vendor staff never.
+ * A vendor prices their own products freely. A platform product admin (product.manage) may change
+ * pricing on a vendor's product only as `productChangePolicy` allows.
  */
 export async function productActor(req: Request): Promise<ProductActor> {
-  const [canManage, canCreate, canPrice] = await Promise.all([
+  const [canManage, canPrice] = await Promise.all([
     userHasPermission(req.user, PERMISSIONS.PRODUCT_MANAGE),
-    userHasPermission(req.user, PERMISSIONS.PRODUCT_CREATE),
     userHasPermission(req.user, PERMISSIONS.PRODUCT_PRICING),
   ]);
-  return { id: req.user!.id, vendorId: req.user!.vendorId ?? null, canManage, canCreate, canPrice };
+  return { id: req.user!.id, vendorId: req.user!.vendorId ?? null, canManage, canPrice };
 }

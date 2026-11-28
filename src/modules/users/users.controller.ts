@@ -6,7 +6,6 @@ import {
   UpdateUserProfileSchema,
   GetUsersQuerySchema,
   UpdateUserStatusSchema,
-  UpdateUserRoleSchema,
   CreateAddressSchema,
   UpdateAddressSchema,
   ListAssigneesQuerySchema,
@@ -91,12 +90,6 @@ export const getUserAddresses = asyncHandler(async (req: Request, res: Response)
 export const updateUserStatus = asyncHandler(async (req: Request, res: Response) => {
   const dto = UpdateUserStatusSchema.parse(req.body);
   const user = await usersService.updateUserStatus(req.params.id!, dto, req.user!);
-  res.json(ok(user));
-});
-
-export const updateUserRole = asyncHandler(async (req: Request, res: Response) => {
-  const dto = UpdateUserRoleSchema.parse(req.body);
-  const user = await usersService.updateUserRole(req.params.id!, dto, req.user!);
   res.json(ok(user));
 });
 

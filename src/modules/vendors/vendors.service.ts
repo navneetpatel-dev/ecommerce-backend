@@ -301,26 +301,9 @@ export class VendorsService {
     return this.getVendorById(userVendorId);
   }
 
-  async updateMyVendor(
-    userVendorId: string | null | undefined,
-    data: UpdateVendorRequest,
-    actor?: { id: string; role: { name: string }; roleId?: string },
-  ) {
+  async updateMyVendor(userVendorId: string | null | undefined, data: UpdateVendorRequest) {
     if (!userVendorId) {
       throw new ForbiddenError(ERROR_MESSAGES.VENDOR_NOT_LINKED);
-    }
-    if (actor && actor.role?.name === ROLES.VENDOR_STAFF) {
-      const isMutatingSensitiveFields =
-        data.bankDetails !== undefined ||
-        data.payoutFrequency !== undefined ||
-        data.returnShippingFee !== undefined ||
-        data.codEnabled !== undefined ||
-        data.entityType !== undefined ||
-        data.businessName !== undefined ||
-        data.gstNumber !== undefined;
-      if (isMutatingSensitiveFields) {
-        throw new ForbiddenError('Only vendor owners can update store bank details, legal settings, and financials');
-      }
     }
     // commissionRate is admin-only (set via approval or PATCH /vendors/:id) — strip it
     // here so a vendor owner can't self-set their own commission via PATCH /vendors/me.
@@ -607,16 +590,9 @@ export class VendorsService {
     return VendorDocument.findAll({ where: { vendorId } });
   }
 
-  async uploadMyDocument(
-    userVendorId: string | null | undefined,
-    data: UploadDocumentRequest,
-    actor?: { id: string; role: { name: string }; roleId?: string },
-  ) {
+  async uploadMyDocument(userVendorId: string | null | undefined, data: UploadDocumentRequest) {
     if (!userVendorId) {
       throw new ForbiddenError(ERROR_MESSAGES.VENDOR_NOT_LINKED);
-    }
-    if (actor && actor.role?.name === ROLES.VENDOR_STAFF) {
-      throw new ForbiddenError('Only vendor owners can upload KYC verification documents');
     }
     return this.uploadDocument(userVendorId, data);
   }

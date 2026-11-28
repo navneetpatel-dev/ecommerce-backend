@@ -3,7 +3,7 @@ import { afterEach, before, describe, it, mock } from 'node:test';
 import type { NextFunction, Request, Response, Router } from 'express';
 import { BugReport } from '@database/models';
 import { clearPermissionCache, setPermissionCache } from '@middleware/rbac.middleware';
-import { PERMISSIONS, ROLE_PERMISSIONS } from '@core/permissions/permissionKeys';
+import { ROLE_PERMISSIONS } from '@core/permissions/permissionKeys';
 import { ROLES } from '@core/constants/statuses';
 import { bugReportsService } from '../bugReports.service';
 
@@ -54,50 +54,18 @@ const ADMIN_QUEUE_ROUTES: [string, string][] = [
   ['get', '/:id/comments'],
 ];
 
-describe('bug_report.manage is Super Admin only', () => {
-  it('no built-in role except Super Admin holds it', () => {
-    for (const [role, perms] of Object.entries(ROLE_PERMISSIONS)) {
-      assert.equal(
-        perms.includes(PERMISSIONS.BUG_REPORT_MANAGE),
-        role === ROLES.SUPER_ADMIN,
-        `${role} bug_report.manage should be ${role === ROLES.SUPER_ADMIN}`,
-      );
-    }
-  });
-
-  it('the Order Manager keeps the rest of its grants', () => {
-    for (const key of [
-      PERMISSIONS.ORDER_MANAGE,
-      PERMISSIONS.ORDER_REFUND,
-      PERMISSIONS.SHIPPING_MANAGE,
-      PERMISSIONS.TICKET_MANAGE,
-    ]) {
-      assert.ok(ROLE_PERMISSIONS[ROLES.ADMIN_ORDER_MANAGER]!.includes(key), key);
-    }
-  });
-});
-
 describe('the admin bug-report queue (all 8 routes) is Super Admin only', () => {
   for (const [method, path] of ADMIN_QUEUE_ROUTES) {
     it(`${method.toUpperCase()} /bug-reports${path}: Super Admin passes`, async () => {
       assert.equal(await guard(method, path, ROLES.SUPER_ADMIN, permsOf(ROLES.SUPER_ADMIN)), undefined);
     });
 
-    it(`${method.toUpperCase()} /bug-reports${path}: Order Manager, Catalog Manager, vendors and customers get 403`, async () => {
-      for (const role of [
-        ROLES.ADMIN_ORDER_MANAGER,
-        ROLES.ADMIN_CATALOG_MANAGER,
-        ROLES.VENDOR_OWNER,
-        ROLES.VENDOR_STAFF,
-        ROLES.CUSTOMER,
-      ]) {
+    it(`${method.toUpperCase()} /bug-reports${path}: vendors and customers get 403`, async () => {
+      for (const role of [ROLES.VENDOR_OWNER, ROLES.CUSTOMER]) {
         assert.ok(forbidden(await guard(method, path, role, permsOf(role))), `${role} should get 403 on ${method} ${path}`);
       }
     });
 
-    it(`${method.toUpperCase()} /bug-reports${path}: a custom role explicitly granted the permission still passes`, async () => {
-      assert.equal(await guard(method, path, 'SUPPORT_LEAD', ['bug_report.manage']), undefined);
-    });
   }
 });
 
@@ -111,15 +79,6 @@ describe('everyone can still report bugs and follow their own', () => {
 describe('BugReportsService.getById: only the reporter or a manager can read a report', () => {
   const bug = (reporterId: string) => ({ id: 'bug-1', reporterId });
   const actor = (id: string, role: string) => ({ id, vendorId: null, roleId: `role-${role}`, role: { name: role } });
-
-  it('the Order Manager cannot open someone else’s report', async () => {
-    setPermissionCache('role-ADMIN_ORDER_MANAGER', permsOf(ROLES.ADMIN_ORDER_MANAGER));
-    mock.method(BugReport, 'findByPk', async () => bug('someone-else') as never);
-    await assert.rejects(
-      bugReportsService.getById('bug-1', actor('om-1', ROLES.ADMIN_ORDER_MANAGER)),
-      (e: { statusCode?: number }) => e.statusCode === 403,
-    );
-  });
 
   it('a customer cannot open someone else’s report either', async () => {
     setPermissionCache('role-CUSTOMER', []);

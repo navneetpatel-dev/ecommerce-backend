@@ -17,7 +17,7 @@ export const SKIP_ON_DEV_DB: false | string =
   env.DB_NAME === 'ecommerce_dev' ? 'writes data: point DB_NAME at a throwaway database' : false;
 
 export type Actor = { id: string; email: string; token: string; vendorId: string | null };
-export type TestVendor = { id: string; owner: Actor; staff: Actor };
+export type TestVendor = { id: string; owner: Actor };
 export type Reply = { status: number; data: any; error: any; text: string };
 export type TestCategory = { id: string; name: string; slug: string };
 
@@ -37,7 +37,7 @@ async function createActor(role: RoleName, vendorId: string | null = null): Prom
   return { id: user.id, email, token, vendorId };
 }
 
-/** An approved, KYC-verified vendor (with bank details, so leaks are detectable) and its two users. */
+/** An approved, KYC-verified vendor (with bank details, so leaks are detectable) and its login. */
 async function createVendor(): Promise<TestVendor> {
   const tag = unique();
   const vendor = await Vendor.create({
@@ -66,7 +66,6 @@ async function createVendor(): Promise<TestVendor> {
   return {
     id: vendor.id,
     owner: await createActor(ROLES.VENDOR_OWNER, vendor.id),
-    staff: await createActor(ROLES.VENDOR_STAFF, vendor.id),
   };
 }
 
@@ -92,12 +91,10 @@ export async function startCatalogWorld() {
     return { status: res.status, data: json?.data, error: json?.error, text };
   }
 
-  const [a, b, admin, catalog, orders, customer] = await Promise.all([
+  const [a, b, admin, customer] = await Promise.all([
     createVendor(),
     createVendor(),
     createActor(ROLES.SUPER_ADMIN),
-    createActor(ROLES.ADMIN_CATALOG_MANAGER),
-    createActor(ROLES.ADMIN_ORDER_MANAGER),
     createActor(ROLES.CUSTOMER),
   ]);
   const address = await Address.create({
@@ -146,7 +143,7 @@ export async function startCatalogWorld() {
   }
 
   return {
-    base, call, a, b, admin, catalog, orders, customer, addressId: String(address.id),
+    base, call, a, b, admin, customer, addressId: String(address.id),
     category, draftProduct, liveProduct, expectStatus, createActor, createVendor,
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
     requestId: () => randomUUID(),

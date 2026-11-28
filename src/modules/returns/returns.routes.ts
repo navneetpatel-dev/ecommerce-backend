@@ -24,7 +24,7 @@ router.get('/:id/credit-note', authenticate, returnsController.downloadCreditNot
 router.get(
   '/:id/debit-note',
   authenticate,
-  // A financial document: platform refund staff and the store owner, not vendor staff.
+  // A financial document: the platform's refund permission, or the vendor's payout access.
   authorize(PERMISSIONS.ORDER_REFUND, PERMISSIONS.PAYOUT_VIEW),
   returnsController.downloadDebitNote,
 );
@@ -38,7 +38,7 @@ router.post(
 router.post(
   '/:id/dispute',
   authenticate,
-  // Disputing a return puts the customer's refund in question: platform refund staff and the store owner only.
+  // Disputing a return puts the customer's refund in question: same gate as the debit note.
   authorize(PERMISSIONS.ORDER_REFUND, PERMISSIONS.PAYOUT_VIEW),
   validate(DisputeReturnSchema),
   returnsController.dispute,

@@ -5,7 +5,6 @@ import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { ROLES } from '@core/constants/statuses';
-import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { resolveReportExportSource } from '../reportExportSource';
 import type { ExportActor } from '@core/export';
 
@@ -33,16 +32,11 @@ describe('resolveReportExportSource', () => {
     );
   });
 
-  it('forbids vendor staff from financial report types', async () => {
-    const staff: ExportActor = {
-      id: 'staff-1',
-      vendorId: 'vendor-1',
-      roleName: ROLES.VENDOR_STAFF,
-      permissions: [PERMISSIONS.PRODUCT_UPDATE, PERMISSIONS.SUBORDER_MANAGE],
-    };
+  it('forbids a customer from vendor report types', async () => {
+    const customer: ExportActor = { id: 'customer-1', vendorId: null, roleName: ROLES.CUSTOMER, permissions: [] };
     await assert.rejects(
       () =>
-        resolveReportExportSource(staff, 'vendor-sales', {
+        resolveReportExportSource(customer, 'vendor-sales', {
           from: '2025-01-01',
           to: '2025-12-31',
         }),

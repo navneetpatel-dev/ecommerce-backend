@@ -18,7 +18,7 @@ describe('UsersService.deleteOwnAccount', () => {
 
   function stubTransaction() {
     mock.method(sequelize, 'transaction', async (callback: (t: unknown) => Promise<unknown>) => {
-      return callback({ LOCK: { UPDATE: 'UPDATE' } });
+      return callback({ LOCK: { UPDATE: 'UPDATE' }, afterCommit: () => undefined });
     });
   }
 
@@ -120,12 +120,13 @@ describe('UsersService.deleteOwnAccount', () => {
     mock.method(Order, 'count', async () => 0);
     await usersService.deleteOwnAccount('c-clear');
 
-    stubUser({ id: 'v-clear', vendorId: 'vendor-clear', role: { name: ROLES.VENDOR_STAFF } });
+    stubUser({ id: 'v-clear', vendorId: 'vendor-clear', role: { name: ROLES.VENDOR_OWNER } });
     mock.method(SubOrder, 'count', async () => 0);
     mock.method(CommissionLedger, 'count', async () => 0);
     await usersService.deleteOwnAccount('v-clear');
 
-    stubUser({ id: 'admin-clear', role: { name: ROLES.ADMIN_ORDER_MANAGER } });
+    stubUser({ id: 'admin-clear', role: { name: ROLES.SUPER_ADMIN } });
+    mock.method(sequelize, 'query', async () => [{ count: '1' }]);
     await usersService.deleteOwnAccount('admin-clear');
   });
 });

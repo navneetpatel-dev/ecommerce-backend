@@ -1,7 +1,7 @@
 /**
  * Fields that set what a product costs the customer or how it is taxed and paid for (the category
- * sets the GST rate and commission). Vendor staff keep editing everything else (name, description, images, stock, tags…); changing these is
- * owner-only (and platform-admin).
+ * sets the GST rate and commission). A platform admin changing these on a vendor's live product
+ * must pass `productChangePolicy`.
  */
 export const PRICING_PRODUCT_FIELDS = ['basePrice', 'compareAtPrice', 'categoryId', 'hsnCode', 'codEnabled'] as const;
 
@@ -27,7 +27,7 @@ function sameValue(field: PricingField, next: unknown, current: unknown): boolea
 
 /**
  * The pricing fields an update would actually change. A field sent back unchanged (an edit form
- * submitting the whole product) is not a change, so staff can still save the other fields.
+ * submitting the whole product) is not a change.
  */
 export function changedPricingFields(
   current: Partial<Record<PricingField, unknown>>,

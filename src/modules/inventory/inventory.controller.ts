@@ -12,7 +12,7 @@ import { LowStockQuerySchema } from './inventory.dto';
 
 export const getLowStock = asyncHandler(async (req: Request, res: Response) => {
   const query = LowStockQuerySchema.parse(req.query);
-  // A vendor (vendorId on the session) only ever sees its own stock. Staff without a store see
+  // A vendor (vendorId on the session) only ever sees its own stock. The platform (no store) sees
   // the whole platform, or one vendor's with ?vendorId=.
   const vendorId = req.user!.vendorId ?? query.vendorId;
   const { rows, pagination } = await inventoryService.getLowStock({ ...query, vendorId });

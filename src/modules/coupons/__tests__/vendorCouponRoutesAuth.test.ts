@@ -46,8 +46,8 @@ describe('vendor store coupons are owner-only (reads and writes)', () => {
       assert.equal(guard(method, path, ROLES.VENDOR_OWNER), undefined);
     });
 
-    it(`${method.toUpperCase()} /coupons${path}: staff, managers and customers get 403`, () => {
-      for (const role of [ROLES.VENDOR_STAFF, ROLES.ADMIN_ORDER_MANAGER, ROLES.ADMIN_CATALOG_MANAGER, ROLES.CUSTOMER]) {
+    it(`${method.toUpperCase()} /coupons${path}: customers get 403`, () => {
+      for (const role of [ROLES.CUSTOMER]) {
         assert.ok(forbidden(guard(method, path, role)), `${role} should get 403 on ${method} ${path}`);
       }
     });

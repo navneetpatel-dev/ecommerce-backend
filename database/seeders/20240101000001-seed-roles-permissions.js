@@ -11,15 +11,7 @@ const { assertSeedingAllowed } = require('../seedGuard');
 
 const { randomUUID: uuidv4 } = require('node:crypto');
 
-const ROLE_NAMES = [
-  'SUPER_ADMIN',
-  'ADMIN_ORDER_MANAGER',
-  'ADMIN_CATALOG_MANAGER',
-  'ADMIN_FINANCE_MANAGER',
-  'VENDOR_OWNER',
-  'VENDOR_STAFF',
-  'CUSTOMER',
-];
+const ROLE_NAMES = ['SUPER_ADMIN', 'VENDOR_OWNER', 'CUSTOMER'];
 
 const PERMISSION_KEYS = [
   'user.manage', 'vendor.manage', 'vendor.approve', 'product.manage', 'product.approve',
@@ -29,26 +21,12 @@ const PERMISSION_KEYS = [
   'audit.view', 'analytics.view', 'product.create', 'product.update', 'product.delete',
   'suborder.manage', 'payout.view', 'review.respond',
   'ticket.manage', 'bug_report.manage', 'wallet.adjust', 'gift_card.manage',
-  'role.manage', 'user.impersonate', 'team.manage', 'cashback.manage', 'webvitals.view',
-  'analytics.revenue', 'coupon.unlimited', 'product.pricing',
+  'user.impersonate', 'cashback.manage', 'webvitals.view', 'product.pricing',
 ];
 
 const ROLE_PERMISSIONS = {
   SUPER_ADMIN: PERMISSION_KEYS,
-  ADMIN_ORDER_MANAGER: [
-    'order.manage', 'suborder.manage', 'order.refund', 'shipping.manage', 'analytics.view',
-    'ticket.manage',
-  ],
-  ADMIN_CATALOG_MANAGER: [
-    'product.manage', 'product.create', 'product.approve', 'category.manage', 'coupon.manage', 'banner.manage',
-    'review.moderate', 'analytics.view',
-  ],
-  ADMIN_FINANCE_MANAGER: [
-    'payout.manage', 'commission.view', 'analytics.view', 'analytics.revenue', 'wallet.adjust', 'cashback.manage',
-    'gift_card.manage',
-  ],
-  VENDOR_OWNER: ['product.create', 'product.update', 'product.delete', 'suborder.manage', 'payout.view', 'review.respond', 'team.manage'],
-  VENDOR_STAFF: ['product.update', 'suborder.manage'],
+  VENDOR_OWNER: ['product.create', 'product.update', 'product.delete', 'suborder.manage', 'payout.view', 'review.respond'],
   CUSTOMER: [],
 };
 

@@ -1195,7 +1195,7 @@ export const adminFinanceGapReports: ReportDefinition[] = [
     type: 'customer-analytics',
     labelKey: 'reportCustomerAnalytics',
     audience: 'admin_finance',
-    permissions: [PERMISSIONS.ANALYTICS_REVENUE],
+    permissions: [PERMISSIONS.ANALYTICS_VIEW],
     vendorScoped: false,
     financial: false,
     columns: [

@@ -85,25 +85,11 @@ describe('report engine', () => {
       'vendor-return-refund',
       'vendor-inventory',
       'vendor-fulfillment-sla',
-      'staff-orders',
-      'staff-inventory',
       'customer-order-history',
     ];
     for (const type of required) {
       assert.ok(getReportDefinition(type), `missing ${type}`);
     }
-  });
-
-  it('vendor staff catalog excludes financial reports', () => {
-    const staff: ReportActor = {
-      id: randomUUID(),
-      vendorId: randomUUID(),
-      roleName: ROLES.VENDOR_STAFF,
-      permissions: [PERM_KEYS.PRODUCT_UPDATE, PERM_KEYS.SUBORDER_MANAGE],
-    };
-    const catalog = reportEngine.catalog(staff);
-    assert.ok(catalog.every((d) => !d.financial));
-    assert.ok(catalog.some((d) => d.type === 'staff-orders' || d.type === 'staff-inventory'));
   });
 
   it('vendor owner never sees or runs admin reports, even with a shared permission key', async () => {
@@ -123,13 +109,13 @@ describe('report engine', () => {
   });
 
   it('wallet reports need commission.view, not analytics.view alone', async () => {
-    const catalogManager: ReportActor = {
+    const analyst: ReportActor = {
       id: randomUUID(),
       vendorId: null,
-      roleName: ROLES.ADMIN_CATALOG_MANAGER,
+      roleName: 'ANALYST',
       permissions: [PERM_KEYS.ANALYTICS_VIEW],
     };
-    const types = reportEngine.catalog(catalogManager).map((d) => d.type);
+    const types = reportEngine.catalog(analyst).map((d) => d.type);
     for (const type of ['wallet-liability', 'wallet-recharge', 'cashback-write-offs']) {
       assert.equal(types.includes(type), false, type);
     }
@@ -176,16 +162,16 @@ describe('report engine', () => {
     );
   });
 
-  it('staff is forbidden from financial report types', async () => {
-    const staff: ReportActor = {
+  it('a customer is forbidden from vendor report types', async () => {
+    const customer: ReportActor = {
       id: randomUUID(),
-      vendorId: randomUUID(),
-      roleName: ROLES.VENDOR_STAFF,
-      permissions: [PERM_KEYS.PRODUCT_UPDATE, PERM_KEYS.SUBORDER_MANAGE],
+      vendorId: null,
+      roleName: ROLES.CUSTOMER,
+      permissions: [],
     };
     await assert.rejects(
       () =>
-        reportEngine.runJson(staff, 'vendor-sales', {
+        reportEngine.runJson(customer, 'vendor-sales', {
           from: new Date('2025-01-01'),
           to: new Date('2025-12-31'),
           page: 1,

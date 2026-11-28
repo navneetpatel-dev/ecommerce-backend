@@ -23,9 +23,9 @@ async function guardResult(method: string, path: string, role: string): Promise<
   return runGuard(method, path, role, [...(ROLE_PERMISSIONS[role] ?? [])]);
 }
 
-/** Same, for a custom role holding exactly `permissions`. */
+/** Same, for someone holding exactly `permissions`. */
 async function guardResultWith(method: string, path: string, permissions: string[]): Promise<unknown> {
-  return runGuard(method, path, 'CUSTOM_ROLE', permissions);
+  return runGuard(method, path, 'PERMISSION_PROBE', permissions);
 }
 
 async function runGuard(method: string, path: string, role: string, permissions: string[]): Promise<unknown> {
@@ -46,74 +46,40 @@ async function runGuard(method: string, path: string, role: string, permissions:
 const forbidden = (outcome: unknown) =>
   (outcome as { statusCode?: number } | undefined)?.statusCode === 403;
 
-describe('vendor store-profile writes are owner-only', () => {
+describe('vendor store-profile writes', () => {
   for (const [method, path] of [
     ['patch', '/me'],
     ['post', '/me/documents'],
   ] as const) {
-    it(`${method.toUpperCase()} ${path}: owner and super admin pass`, async () => {
+    it(`${method.toUpperCase()} ${path}: the vendor and the Super Admin pass, customers do not`, async () => {
       assert.equal(await guardResult(method, path, ROLES.VENDOR_OWNER), undefined);
       assert.equal(await guardResult(method, path, ROLES.SUPER_ADMIN), undefined);
-    });
-
-    it(`${method.toUpperCase()} ${path}: staff, admin managers and customers are forbidden`, async () => {
-      for (const role of [
-        ROLES.VENDOR_STAFF,
-        ROLES.ADMIN_ORDER_MANAGER,
-        ROLES.ADMIN_CATALOG_MANAGER,
-        ROLES.CUSTOMER,
-      ]) {
-        assert.ok(forbidden(await guardResult(method, path, role)), `${role} should get 403 on ${method} ${path}`);
-      }
+      assert.ok(forbidden(await guardResult(method, path, ROLES.CUSTOMER)));
     });
   }
 });
 
-describe('vendor store reads: staff keep the dashboard, owners keep KYC', () => {
-  for (const path of ['/me', '/dashboard/summary']) {
-    it(`GET ${path}: owner and staff pass (no regression)`, async () => {
-      assert.equal(await guardResult('get', path, ROLES.VENDOR_OWNER), undefined);
-      assert.equal(await guardResult('get', path, ROLES.VENDOR_STAFF), undefined);
-    });
-  }
-
-  for (const path of ['/me/documents', '/me/kyc-checklist']) {
-    it(`GET ${path}: owner and super admin pass`, async () => {
+describe('vendor store reads', () => {
+  for (const path of ['/me', '/dashboard/summary', '/dashboard/analytics', '/me/documents', '/me/kyc-checklist']) {
+    it(`GET ${path}: the vendor and the Super Admin pass, customers do not`, async () => {
       assert.equal(await guardResult('get', path, ROLES.VENDOR_OWNER), undefined);
       assert.equal(await guardResult('get', path, ROLES.SUPER_ADMIN), undefined);
-    });
-
-    it(`GET ${path}: staff, admin managers and customers are forbidden`, async () => {
-      for (const role of [
-        ROLES.VENDOR_STAFF,
-        ROLES.ADMIN_ORDER_MANAGER,
-        ROLES.ADMIN_CATALOG_MANAGER,
-        ROLES.CUSTOMER,
-      ]) {
-        assert.ok(forbidden(await guardResult('get', path, role)), `${role} should get 403 on GET ${path}`);
-      }
+      assert.ok(forbidden(await guardResult('get', path, ROLES.CUSTOMER)));
     });
   }
-
-  it('GET /dashboard/analytics stays owner-only', async () => {
-    assert.equal(await guardResult('get', '/dashboard/analytics', ROLES.VENDOR_OWNER), undefined);
-    assert.ok(forbidden(await guardResult('get', '/dashboard/analytics', ROLES.VENDOR_STAFF)));
-  });
 });
 
 describe('KYC document view-url', () => {
   const path = '/documents/:documentId/view-url';
 
-  it('owner and admins with vendor.manage / vendor.approve pass', async () => {
+  it('the vendor, and anyone holding vendor.manage / vendor.approve, passes', async () => {
     assert.equal(await guardResult('get', path, ROLES.VENDOR_OWNER), undefined);
     assert.equal(await guardResultWith('get', path, ['vendor.manage']), undefined);
     assert.equal(await guardResultWith('get', path, ['vendor.approve']), undefined);
   });
 
-  it('staff (product.update) and managers without vendor permissions are forbidden', async () => {
-    for (const role of [ROLES.VENDOR_STAFF, ROLES.ADMIN_ORDER_MANAGER, ROLES.ADMIN_CATALOG_MANAGER, ROLES.CUSTOMER]) {
-      assert.ok(forbidden(await guardResult('get', path, role)), `${role} should get 403`);
-    }
+  it('customers are forbidden', async () => {
+    assert.ok(forbidden(await guardResult('get', path, ROLES.CUSTOMER)));
   });
 });
 
@@ -126,9 +92,6 @@ describe('every /vendors/me* and vendor-dashboard route requires a store (requir
     ['get', '/me/documents'],
     ['post', '/me/documents'],
     ['get', '/me/kyc-checklist'],
-    ['get', '/me/staff'],
-    ['post', '/me/staff'],
-    ['delete', '/me/staff/:userId'],
   ];
 
   for (const [method, path] of routes) {
@@ -157,36 +120,4 @@ describe('every /vendors/me* and vendor-dashboard route requires a store (requir
     }
     assert.equal(run({ vendorId: 'v1' }), undefined);
   });
-});
-
-describe('vendor staff management requires team.manage', () => {
-  for (const [method, path] of [
-    ['get', '/me/staff'],
-    ['post', '/me/staff'],
-    ['delete', '/me/staff/:userId'],
-  ] as const) {
-    it(`${method.toUpperCase()} ${path}: owner and super admin pass`, async () => {
-      assert.equal(await guardResult(method, path, ROLES.VENDOR_OWNER), undefined);
-      assert.equal(await guardResult(method, path, ROLES.SUPER_ADMIN), undefined);
-    });
-
-    it(`${method.toUpperCase()} ${path}: staff, admin managers and customers are forbidden`, async () => {
-      for (const role of [
-        ROLES.VENDOR_STAFF,
-        ROLES.ADMIN_ORDER_MANAGER,
-        ROLES.ADMIN_CATALOG_MANAGER,
-        ROLES.CUSTOMER,
-      ]) {
-        assert.ok(forbidden(await guardResult(method, path, role)), `${role} should get 403 on ${method} ${path}`);
-      }
-    });
-
-    it(`${method.toUpperCase()} ${path}: payout.view alone no longer grants team access`, async () => {
-      assert.ok(forbidden(await guardResultWith(method, path, ['payout.view'])));
-    });
-
-    it(`${method.toUpperCase()} ${path}: team.manage alone is enough`, async () => {
-      assert.equal(await guardResultWith(method, path, ['team.manage']), undefined);
-    });
-  }
 });

@@ -25,14 +25,14 @@ describe("one vendor never sees another's private data", { skip: SKIP_ON_DEV_DB 
   });
 
   it("another vendor's draft is not found, by id or by slug", async () => {
-    for (const who of [world.b.owner, world.b.staff, world.customer, world.orders, null]) {
+    for (const who of [world.b.owner, world.customer, null]) {
       assert.equal((await world.call('GET', `/products/${draft.id}`, who)).status, 404);
       assert.equal((await world.call('GET', `/products/slug/${draft.slug}`, who)).status, 404);
     }
   });
 
-  it('the owning store and catalog admins still see the draft with the team fields', async () => {
-    for (const who of [world.a.owner, world.a.staff, world.catalog, world.admin]) {
+  it('the owning store and the platform still see the draft with the team fields', async () => {
+    for (const who of [world.a.owner, world.admin]) {
       const byId = await world.call('GET', `/products/${draft.id}`, who);
       assert.equal(byId.status, 200, byId.text);
       assert.equal(byId.data.status, 'DRAFT');
@@ -50,7 +50,7 @@ describe("one vendor never sees another's private data", { skip: SKIP_ON_DEV_DB 
 
   it('no product, order, sub-order, cart or wishlist response carries bank details', async () => {
     await world.call('POST', '/wishlist/items', world.customer, { productId: live.id });
-    const everyone = [world.a.owner, world.a.staff, world.b.owner, world.b.staff, world.admin, world.catalog, world.orders, world.customer, null];
+    const everyone = [world.a.owner, world.b.owner, world.admin, world.customer, null];
     const paths = [
       `/products?vendorId=${world.a.id}&limit=5`, `/products/${live.id}`, `/products/slug/${live.slug}`,
       `/products/${draft.id}`, '/suborders?limit=5', `/suborders?vendorId=${world.a.id}`, '/orders?limit=5', '/cart', '/wishlist',
@@ -70,7 +70,7 @@ describe("one vendor never sees another's private data", { skip: SKIP_ON_DEV_DB 
     const list = await world.call('GET', '/suborders?limit=1', world.a.owner);
     const part = list.data[0] ?? list.data.suborders?.[0];
     assert.ok(part, list.text.slice(0, 200));
-    const reply = await world.call('PATCH', `/suborders/${part.id}/status`, world.a.staff, { status: 'CONFIRMED' });
+    const reply = await world.call('PATCH', `/suborders/${part.id}/status`, world.a.owner, { status: 'CONFIRMED' });
     assert.doesNotMatch(reply.text, BANK);
   });
 });

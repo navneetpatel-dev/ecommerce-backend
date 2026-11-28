@@ -13,7 +13,6 @@ import { generateReportExport, type DirectExportResult } from './generateReportE
 import {
   actorCanSeeAudience,
   assertActorMayRunReport,
-  isVendorStaff,
   resolveFiltersForActor,
 } from './reportEngine.helpers';
 import type { ReportActor } from './reportEngine.types';
@@ -29,11 +28,9 @@ export class ReportEngine {
   }
 
   catalog(actor: ReportActor) {
-    const staff = isVendorStaff(actor.permissions, actor.roleName);
-    return listReportDefinitionsForPermissions(actor.permissions, actor.roleName).filter((d) => {
-      if (staff && d.financial) return false;
-      return actorCanSeeAudience(actor, d.audience);
-    });
+    return listReportDefinitionsForPermissions(actor.permissions, actor.roleName).filter((d) =>
+      actorCanSeeAudience(actor, d.audience),
+    );
   }
 
   async runJson(actor: ReportActor, reportType: string, rawFilters: ReportFilters) {

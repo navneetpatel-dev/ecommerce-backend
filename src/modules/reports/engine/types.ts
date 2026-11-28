@@ -5,7 +5,6 @@ export type ReportAudience =
   | 'admin_ops'
   | 'admin_catalog'
   | 'vendor_owner'
-  | 'vendor_staff'
   | 'customer';
 
 export type ReportColumnFormat = 'string' | 'number' | 'currency' | 'points' | 'date' | 'percent';
@@ -54,7 +53,7 @@ export type ReportDefinition = {
   permissions: PermissionKey[];
   /** When true, engine forces filters.vendorId = scopedVendorId. */
   vendorScoped: boolean;
-  /** Financial reports — blocked for vendor staff even if they somehow get a type. */
+  /** Money reports (grouped separately in the scheduled digest settings). */
   financial: boolean;
   columns: ReportColumn[];
   query: (filters: ReportFilters) => Promise<ReportQueryResult>;

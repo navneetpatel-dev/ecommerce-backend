@@ -34,7 +34,7 @@ describe('canSeeShipmentDetails', () => {
   });
 });
 
-describe('canSeeShipmentDetails by staff permission, not by admin role', () => {
+describe('canSeeShipmentDetails for the platform, by permission', () => {
   afterEach(() => clearPermissionCache());
 
   const staffViewer = (role: string, permissions?: string[]) => {
@@ -43,18 +43,11 @@ describe('canSeeShipmentDetails by staff permission, not by admin role', () => {
     return { id: `admin-${role}`, roleId, vendorId: null, role: { name: role } } as never;
   };
 
-  it('Super Admin and the Order Manager (order.manage / shipping.manage) may see any shipment', async () => {
+  it('the Super Admin may see any shipment', async () => {
     assert.equal(await canSeeShipmentDetails(staffViewer(ROLES.SUPER_ADMIN), shipment), true);
-    assert.equal(await canSeeShipmentDetails(staffViewer(ROLES.ADMIN_ORDER_MANAGER), shipment), true);
   });
 
-  it('regression: the Catalog Manager and the Finance Manager are admin roles with no shipping job: refused', async () => {
-    for (const role of [ROLES.ADMIN_CATALOG_MANAGER, ROLES.ADMIN_FINANCE_MANAGER]) {
-      assert.equal(await canSeeShipmentDetails(staffViewer(role), shipment), false, role);
-    }
-  });
-
-  it('a custom role is allowed with shipping.manage or order.manage and refused without', async () => {
+  it('it takes shipping.manage or order.manage', async () => {
     assert.equal(await canSeeShipmentDetails(staffViewer('LOGISTICS_LEAD', ['shipping.manage']), shipment), true);
     assert.equal(await canSeeShipmentDetails(staffViewer('FULFILMENT', ['order.manage']), shipment), true);
     assert.equal(await canSeeShipmentDetails(staffViewer('ANALYST', ['analytics.view']), shipment), false);

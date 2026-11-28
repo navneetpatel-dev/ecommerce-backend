@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { afterEach, describe, it, mock } from 'node:test';
 import { sequelize } from '@database/models';
 import { AuditLog } from '@database/models/auditLog.model';
-import { Role } from '@database/models/role.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { ShippingRate } from '@database/models/shippingRate.model';
 import { User } from '@database/models/user.model';
@@ -34,55 +33,15 @@ function stubInfrastructure(): AuditRow[] {
   return audit;
 }
 
-const admin = { id: 'admin-1', role: { name: ROLES.ADMIN_ORDER_MANAGER } };
+/** Someone acting on accounts who is not the super admin. */
+const admin = { id: 'admin-1', role: { name: ROLES.CUSTOMER } };
 
 describe('Admin gap fixes', () => {
   afterEach(() => {
     mock.restoreAll();
   });
 
-  describe('super admin guards on user role and status', () => {
-    it('rejects changing a SUPER_ADMIN role from a non-super-admin', async () => {
-      stubInfrastructure();
-      mock.method(usersRepository, 'findById', async () => ({
-        id: 'superadmin-1',
-        role: { name: ROLES.SUPER_ADMIN },
-      }) as never);
-      mock.method(Role, 'findByPk', async () => ({ id: 'role-new', name: ROLES.CUSTOMER }) as never);
-
-      await assert.rejects(
-        () => usersService.updateUserRole('superadmin-1', { roleId: 'role-new' }, admin),
-        (err: unknown) => err instanceof ForbiddenError && /super administrator/i.test(err.message),
-      );
-    });
-
-    it('updates a role, revokes refresh tokens, and audits it', async () => {
-      const audit = stubInfrastructure();
-      let tokensRevokedFor: string | null = null;
-      mock.method(usersRepository, 'findById', async () => ({
-        id: 'user-1',
-        roleId: 'role-old',
-        vendorId: null,
-        role: { name: ROLES.CUSTOMER },
-      }) as never);
-      mock.method(Role, 'findByPk', async () => ({ id: 'role-new', name: ROLES.CUSTOMER }) as never);
-      mock.method(usersRepository, 'update', async () => [1] as never);
-      mock.method(authRepository, 'deleteRefreshTokensByUser', async (userId: string) => {
-        tokensRevokedFor = userId;
-        return 1 as never;
-      });
-      mock.method(usersService, 'getUserById', async () => ({ id: 'user-1' }) as never);
-
-      const updated = await usersService.updateUserRole('user-1', { roleId: 'role-new' }, admin);
-
-      assert.deepEqual(updated, { id: 'user-1' });
-      assert.equal(tokensRevokedFor, 'user-1');
-      assert.deepEqual(
-        audit.map((row) => [row.action, row.entityId]),
-        [['USER_ROLE_UPDATED', 'user-1']],
-      );
-    });
-
+  describe('super admin guards on user status', () => {
     it('rejects blocking a SUPER_ADMIN from a non-super-admin', async () => {
       stubInfrastructure();
       mock.method(usersRepository, 'findById', async () => ({
@@ -120,19 +79,17 @@ describe('Admin gap fixes', () => {
   });
 
   describe('impersonation privilege escalation guard', () => {
-    it('only a super admin can impersonate an admin account', async () => {
+    it('only a super admin can impersonate', async () => {
       mock.method(User, 'findByPk', async () => ({
-        id: 'admin-target',
-        email: 'staff@example.com',
-        roleId: 'role-admin',
-        role: { name: ROLES.ADMIN_CATALOG_MANAGER },
+        id: 'target-1',
+        email: 'target@example.com',
+        roleId: 'role-customer',
+        role: { name: ROLES.CUSTOMER },
       }) as never);
 
       await assert.rejects(
-        () => authService.impersonateUser(admin, 'admin-target'),
-        (err: unknown) =>
-          err instanceof ForbiddenError &&
-          /Only super administrators can impersonate administrative/i.test(err.message),
+        () => authService.impersonateUser(admin, 'target-1'),
+        (err: unknown) => err instanceof ForbiddenError && /Only the super admin/i.test(err.message),
       );
     });
   });

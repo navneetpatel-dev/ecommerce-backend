@@ -3,7 +3,7 @@ import { ensureAddress, clearCart, addToCart, checkout, getOrder } from '../lib/
 import { assertClose, assertEqual, assertTrue, check } from '../lib/assert';
 import { recomputeSubOrder } from '../lib/pricingRecompute';
 import { runReport, findRowBy } from '../lib/reportClient';
-import { CUSTOMERS, CUSTOMER_PASSWORD, PRODUCTS, VENDORS } from '../lib/testData';
+import { CUSTOMERS, CUSTOMER_PASSWORD, VENDOR_PASSWORD, PRODUCTS, VENDORS } from '../lib/testData';
 import type { Preconditions } from './00-preconditions';
 
 const SCENARIO = '01-cod-sweep';
@@ -100,7 +100,7 @@ export async function runCodFullReportSweep(ctx: Preconditions) {
   check(SCENARIO, 'cod-remittance reachable', codRemit.status === 200, `status=${codRemit.status} rows=${codRemit.rows?.length}`);
 
   // ---- Vendor report sweep ----
-  const vendorToken = await loginAs(VENDORS.techworld.email, CUSTOMER_PASSWORD);
+  const vendorToken = await loginAs(VENDORS.techworld.email, VENDOR_PASSWORD);
   const vendorSales = await runReport(vendorToken, 'vendor-sales', win);
   check(SCENARIO, 'vendor-sales reachable', vendorSales.status === 200, `status=${vendorSales.status} rows=${vendorSales.rows?.length}`);
   const vendorSalesRow = findRowBy(vendorSales.rows ?? [], (r: any) => r.subOrderId === subOrder.id);

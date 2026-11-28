@@ -5,7 +5,7 @@ import { Product } from '@database/models/product.model';
 import { Vendor } from '@database/models/vendor.model';
 import { User } from '@database/models/user.model';
 import { notificationsService } from '../notifications.service';
-import { findVendorStaffUserId } from '../orderNotifications';
+import { findVendorOwnerUserId } from '../orderNotifications';
 
 const productUrl = (slug?: string | null, tail = '') =>
   `${env.CLIENT_URL.replace(/\/$/, '')}/products${slug ? `/${slug}${tail}` : ''}`;
@@ -66,7 +66,7 @@ export async function notifyVendorNewReview(reviewId: string): Promise<void> {
     const vendorId = review?.product?.vendorId;
     if (!review || !vendorId) return;
     const author = await User.findByPk(review.userId, { attributes: ['name'] });
-    const recipient = await findVendorStaffUserId(vendorId);
+    const recipient = await findVendorOwnerUserId(vendorId);
     if (!recipient) return;
     await notificationsService.enqueue({
       userId: recipient,

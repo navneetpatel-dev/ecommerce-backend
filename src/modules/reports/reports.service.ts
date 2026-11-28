@@ -123,7 +123,7 @@ export class ReportsService {
       // Mirrors reportEngine.helpers.ts's resolveFiltersForActor: a vendor-scoped report
       // requires either a matching vendorId on the actor or SUPER_ADMIN — never silently allow
       // an actor with neither (e.g. a future role/permission misconfiguration, or a bug leaving
-      // a vendor-staff account's vendorId unset) to view an arbitrary vendor's financial summary.
+      // a vendor account's vendorId unset) to view an arbitrary vendor's financial summary.
       throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_VENDOR_REPORT);
     }
     assertRange(query);

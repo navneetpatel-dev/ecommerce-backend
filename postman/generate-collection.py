@@ -104,8 +104,8 @@ Complete production-ready API collection with all endpoints, tests, and document
 - ✅ Collection Runner ready
 
 ## Admin Credentials
-- Email: admin@ecommerce.com
-- Password: Admin@123
+- Email: SUPER_ADMIN_EMAIL@yopmail.com
+- Password: SUPER_ADMIN_PASSWORD
 
 ## Execution Flow
 The collection is designed to run sequentially:
@@ -287,8 +287,8 @@ auth_items = [
 - Refresh token (stored automatically)
 
 **Admin Credentials (after seeding):**
-- Email: admin@ecommerce.com
-- Password: Admin@123
+- Email: SUPER_ADMIN_EMAIL@yopmail.com
+- Password: SUPER_ADMIN_PASSWORD
 
 **Use this to:**
 - Get admin access for testing
@@ -297,8 +297,8 @@ auth_items = [
         body={
             "mode": "raw",
             "raw": json.dumps({
-                "email": "admin@ecommerce.com",
-                "password": "Admin@123"
+                "email": "SUPER_ADMIN_EMAIL@yopmail.com",
+                "password": "SUPER_ADMIN_PASSWORD"
             }, indent=2),
             "options": {"raw": {"language": "json"}}
         },

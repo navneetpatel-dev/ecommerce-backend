@@ -1,17 +1,14 @@
 import { Op } from 'sequelize';
-import { env } from '@config/env';
 import { logger } from '@core/logger';
 import { Vendor } from '@database/models/vendor.model';
 import { VendorDocument } from '@database/models/vendorDocument.model';
 import { ProductQuestion } from '@database/models/productQuestion.model';
 import { Product } from '@database/models/product.model';
-import { User } from '@database/models/user.model';
 import { CommissionInvoice } from '@database/models/commissionInvoice.model';
 import type { Payout } from '@database/models/payout.model';
 import { VENDOR_STATUS } from '@core/constants/statuses';
-import { signPasswordResetToken } from '@modules/auth/passwordResetToken';
 import { notificationsService } from '../notifications.service';
-import { findVendorOwnerUserId, findVendorStaffUserId } from '../orderNotifications';
+import { findVendorOwnerUserId } from '../orderNotifications';
 import { inr } from '../templates/blocks';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -95,13 +92,13 @@ export async function processKycReminders(now: Date = new Date()): Promise<numbe
   return queued;
 }
 
-/** A shopper's question on a seller's product is live: the seller team can answer it. */
+/** A shopper's question on a seller's product is live: the seller can answer it. */
 export async function notifyVendorNewQuestion(questionId: string): Promise<void> {
   try {
     const question = await ProductQuestion.findByPk(questionId);
     if (!question || question.status !== 'PUBLISHED') return;
     const product = await Product.findByPk(question.productId, { attributes: ['id', 'name', 'vendorId'] });
-    const recipient = product?.vendorId ? await findVendorStaffUserId(product.vendorId) : null;
+    const recipient = product?.vendorId ? await findVendorOwnerUserId(product.vendorId) : null;
     if (!product || !recipient) return;
     await notificationsService.enqueue({
       userId: recipient,
@@ -140,50 +137,6 @@ export async function notifyCommissionInvoiceReady(invoiceId: string): Promise<v
     });
   } catch (error) {
     warn('Commission invoice', invoiceId, error);
-  }
-}
-
-/** A seller team member was added: the email carries the link where they set their own password. */
-export async function notifyVendorStaffInvite(userId: string, invitedBy: string): Promise<void> {
-  try {
-    const user = await User.findByPk(userId, { attributes: ['id', 'email', 'name', 'vendorId', 'passwordHash'] });
-    const vendor = user?.vendorId ? await Vendor.findByPk(user.vendorId, { attributes: ['businessName'] }) : null;
-    if (!user || !vendor) return;
-    const inviter = await User.findByPk(invitedBy, { attributes: ['name'] });
-    const token = signPasswordResetToken(user);
-    await notificationsService.enqueue({
-      userId: user.id,
-      type: 'VENDOR_STAFF_INVITE',
-      referenceType: 'VendorStaff',
-      referenceId: `${user.id}-${Date.now()}`,
-      templateData: {
-        businessName: vendor.businessName,
-        inviterName: inviter?.name ?? 'The shop owner',
-        roleName: 'team member',
-        actionUrl: `${env.CLIENT_URL.replace(/\/$/, '')}/reset-password?token=${encodeURIComponent(token)}`,
-        details: [{ label: 'Sign in with', value: user.email }],
-        callout: { tone: 'info', text: 'Use the button below to choose your password. The link expires soon.' },
-      },
-    });
-  } catch (error) {
-    warn('Staff invite', userId, error);
-  }
-}
-
-/** An existing account was moved onto a seller team. */
-export async function notifyVendorStaffRoleChanged(userId: string, vendorId: string): Promise<void> {
-  try {
-    const vendor = await Vendor.findByPk(vendorId, { attributes: ['businessName'] });
-    if (!vendor) return;
-    await notificationsService.enqueue({
-      userId,
-      type: 'VENDOR_STAFF_ROLE_CHANGED',
-      referenceType: 'VendorStaff',
-      referenceId: `${userId}-${Date.now()}`,
-      templateData: { businessName: vendor.businessName, roleName: 'team member' },
-    });
-  } catch (error) {
-    warn('Staff role changed', userId, error);
   }
 }
 

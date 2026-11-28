@@ -59,7 +59,6 @@ export const ERROR_MESSAGES = {
   PRODUCT_SPEC_DUPLICATE_KEY: 'Specification labels must be unique',
   PRODUCT_VARIANT_INVALID: 'Variant does not belong to this product',
   PRODUCT_NOT_DRAFT: 'Only a draft or rejected product can be submitted',
-  PRODUCT_PRICING_OWNER_ONLY: 'Only the store owner can change prices, the category, tax codes or payment options, or add variants',
   PRODUCT_PRICING_RESTRICTED: 'Only a Super Admin can change prices, the category, tax details or variants of a live product, or of one the platform did not list',
   CATEGORY_COMMISSION_RESTRICTED: 'Only a Super Admin (product pricing) can set or change a category\'s commission rate',
   CATEGORY_RATE_CHANGE_RESTRICTED: 'This changes the GST or commission on vendor products that are live or awaiting approval. Only a Super Admin (product pricing) can do it, with a written reason',

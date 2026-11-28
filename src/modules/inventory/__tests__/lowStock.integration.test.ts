@@ -33,7 +33,7 @@ describe('the low-stock list', { skip: SKIP_ON_DEV_DB }, () => {
     const archived = await productAt(1, 5);
     await world.call('DELETE', `/products/${deleted.id}`, world.a.owner);
     await world.call('POST', `/products/${archived.id}/archive`, world.admin);
-    const reply = await world.call('GET', `/inventory/low-stock?limit=100&vendorId=${world.a.id}`, world.catalog);
+    const reply = await world.call('GET', `/inventory/low-stock?limit=100&vendorId=${world.a.id}`, world.admin);
     assert.ok(!ids(reply).includes(deleted.variantId));
     assert.ok(!ids(reply).includes(archived.variantId));
     assert.ok(reply.data.every((row: any) => row.product));

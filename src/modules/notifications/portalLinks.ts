@@ -44,7 +44,6 @@ const VENDOR_PAGE_BY_TYPE: Record<string, string> = {
   KYC_DOCUMENT_APPROVED: 'shop-settings',
   KYC_DOCUMENT_REJECTED: 'shop-settings',
   KYC_PENDING_REMINDER: 'shop-settings',
-  VENDOR_STAFF_ROLE_CHANGED: 'overview',
   VENDOR_RETURN_REQUESTED: 'returns',
   VENDOR_NEW_QUESTION: 'qna',
   VENDOR_NEW_REVIEW: 'reviews',
@@ -68,8 +67,7 @@ export function walletUrl(): string {
 export function bugReportPortalUrl(bugReportId: string, reporterRole: string): string {
   const base = clientBase();
   if (
-    reporterRole === BUG_REPORTER_ROLE.VENDOR ||
-    reporterRole === BUG_REPORTER_ROLE.VENDOR_STAFF
+    reporterRole === BUG_REPORTER_ROLE.VENDOR
   ) {
     return `${base}/vendor/dashboard/bug-reports/${bugReportId}`;
   }

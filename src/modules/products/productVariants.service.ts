@@ -1,6 +1,5 @@
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
-import { ForbiddenError } from '@core/errors/ForbiddenError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { sequelize } from '@database/models';
 import { Product } from '@database/models/product.model';
@@ -9,16 +8,13 @@ import { inventoryService } from '@modules/inventory/inventory.service';
 import { lockedStockEdit } from '@modules/inventory/applyStockEdit';
 import { productsRepository } from './products.repository';
 import { assertMrpCoversGstPrices, syncProductBasePrice } from './productPricingState';
-import { variantPriceChanged } from './productPricingRules';
 import { assertNotLastOfListing } from './listingRules';
 import { canonicalAttributeKeys } from '@modules/categories/attributeKeys';
 import type { AddVariantRequest, UpdateVariantRequest } from './products.dto';
 
 /** Adding, changing and removing a product's variants (`productsService` exposes these). */
 
-/** Adding a variant sets a price, so `canEditPricing: false` (vendor staff) refuses it. */
-export async function addVariant(productId: string, data: AddVariantRequest, opts: { canEditPricing?: boolean } = {}) {
-  if (opts.canEditPricing === false) throw new ForbiddenError(ERROR_MESSAGES.PRODUCT_PRICING_OWNER_ONLY);
+export async function addVariant(productId: string, data: AddVariantRequest) {
   return sequelize.transaction(async (t) => {
     const product = await productsRepository.findById(productId, { transaction: t });
     if (!product) throw new NotFoundError('Product');
@@ -52,7 +48,7 @@ export async function addVariant(productId: string, data: AddVariantRequest, opt
   });
 }
 
-export async function updateVariant(variantId: string, data: UpdateVariantRequest, opts: { canEditPricing?: boolean } = {}) {
+export async function updateVariant(variantId: string, data: UpdateVariantRequest) {
   let shouldNotifyRestock = false;
   let notifyProductId = '';
   const variant = await sequelize.transaction(async (t) => {
@@ -64,10 +60,6 @@ export async function updateVariant(variantId: string, data: UpdateVariantReques
     if (edit) fields.stock = edit.next;
     const row = await ProductVariant.findByPk(variantId, { transaction: t });
     if (!row) throw new NotFoundError('ProductVariant');
-
-    if (opts.canEditPricing === false && variantPriceChanged(row.price, data.price)) {
-      throw new ForbiddenError(ERROR_MESSAGES.PRODUCT_PRICING_OWNER_ONLY);
-    }
 
     const previousStock = edit?.previous ?? Number(row.stock ?? 0);
 

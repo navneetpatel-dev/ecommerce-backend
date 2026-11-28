@@ -5,9 +5,8 @@ const { assertSeedingAllowed } = require('../seedGuard');
 const { randomUUID: uuidv4 } = require('node:crypto');
 
 /**
- * Seeds DocumentRequirement rows.
- * Food / regulated categories are resolved by slug so UUIDs stay stable across environments.
- * Food is ensured (created if missing) the same way as liquor/pharma/fireworks.
+ * Seeds DocumentRequirement rows: what every vendor uploads, what each legal entity adds, and
+ * the FSSAI licence for the Food category (created here if it does not exist yet).
  */
 
 const UNIVERSAL_TYPES = [
@@ -19,28 +18,16 @@ const UNIVERSAL_TYPES = [
   'AUTHORIZED_SIGNATORY_ID',
 ];
 
-async function ensureCategoryBySlug(queryInterface, slug, now) {
-  let [cats] = await queryInterface.sequelize.query(
-    `SELECT id FROM categories WHERE slug = :slug AND "deletedAt" IS NULL LIMIT 1`,
-    { replacements: { slug } },
+async function ensureFoodCategory(queryInterface, now) {
+  const [found] = await queryInterface.sequelize.query(
+    `SELECT id FROM categories WHERE slug = 'food' AND "deletedAt" IS NULL LIMIT 1`,
   );
-  if (cats.length === 0) {
-    const id = uuidv4();
-    await queryInterface.bulkInsert('categories', [
-      {
-        id,
-        name: slug.charAt(0).toUpperCase() + slug.slice(1),
-        slug,
-        parentId: null,
-        status: 'ACTIVE',
-        displayOrder: slug === 'food' ? 100 : 900,
-        createdAt: now,
-        updatedAt: now,
-      },
-    ]);
-    cats = [{ id }];
-  }
-  return cats[0].id;
+  if (found.length > 0) return found[0].id;
+  const id = uuidv4();
+  await queryInterface.bulkInsert('categories', [
+    { id, name: 'Food', slug: 'food', parentId: null, status: 'ACTIVE', displayOrder: 100, createdAt: now, updatedAt: now },
+  ]);
+  return id;
 }
 
 module.exports = {
@@ -83,29 +70,15 @@ module.exports = {
       updatedAt: now,
     });
 
-    const foodId = await ensureCategoryBySlug(queryInterface, 'food', now);
     rows.push({
       id: uuidv4(),
       entityType: null,
-      categoryId: foodId,
+      categoryId: await ensureFoodCategory(queryInterface, now),
       documentType: 'FSSAI_LICENSE',
       isMandatory: true,
       createdAt: now,
       updatedAt: now,
     });
-
-    for (const slug of ['liquor', 'pharma', 'fireworks']) {
-      const categoryId = await ensureCategoryBySlug(queryInterface, slug, now);
-      rows.push({
-        id: uuidv4(),
-        entityType: null,
-        categoryId,
-        documentType: 'CATEGORY_TRADE_LICENSE',
-        isMandatory: true,
-        createdAt: now,
-        updatedAt: now,
-      });
-    }
 
     if (rows.length > 0) {
       await queryInterface.bulkInsert('document_requirements', rows);

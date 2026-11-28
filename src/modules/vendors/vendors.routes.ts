@@ -1,7 +1,5 @@
 import { Router } from 'express';
 import * as vendorsController from './vendors.controller';
-import * as vendorStaffController from './vendorStaff.controller';
-import { AddStaffSchema } from './vendorStaff.dto';
 import { authenticate } from '@middleware/auth.middleware';
 import { authorize } from '@middleware/rbac.middleware';
 import { validate } from '@middleware/validate.middleware';
@@ -29,9 +27,7 @@ const vendorDashAuth = authorize(
   PERMISSIONS.PAYOUT_VIEW,
 );
 
-// Owner-only access to the store profile writes and KYC. PAYOUT_VIEW is held by VENDOR_OWNER and
-// not by VENDOR_STAFF; staff keep read access to the store profile (bank details masked) through
-// vendorDashAuth.
+// Store profile writes and KYC.
 const vendorOwnerAuth = authorize(PERMISSIONS.PAYOUT_VIEW);
 
 // Public storefront — APPROVED vendors only (404 otherwise)
@@ -103,30 +99,6 @@ router.get(
   vendorOwnerAuth,
   requireVendorContext,
   vendorsController.getMyKycChecklist,
-);
-
-// Vendor staff management (Vendor Owner only)
-router.get(
-  '/me/staff',
-  authenticate,
-  authorize(PERMISSIONS.TEAM_MANAGE),
-  requireVendorContext,
-  vendorStaffController.listStaff,
-);
-router.post(
-  '/me/staff',
-  authenticate,
-  authorize(PERMISSIONS.TEAM_MANAGE),
-  requireVendorContext,
-  validate(AddStaffSchema),
-  vendorStaffController.addStaff,
-);
-router.delete(
-  '/me/staff/:userId',
-  authenticate,
-  authorize(PERMISSIONS.TEAM_MANAGE),
-  requireVendorContext,
-  vendorStaffController.removeStaff,
 );
 
 // Admin vendor management (static admin document routes before /:id)

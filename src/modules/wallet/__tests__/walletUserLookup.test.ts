@@ -43,14 +43,12 @@ describe('GET /admin/wallet/users guard', () => {
   }
   const forbidden = (o: unknown) => (o as { statusCode?: number } | undefined)?.statusCode === 403;
 
-  it('is open to Super Admin and the Finance Manager (wallet.adjust) and a custom role granted it', async () => {
+  it('is open to the Super Admin (wallet.adjust)', async () => {
     assert.equal(await guard(ROLES.SUPER_ADMIN, [...ROLE_PERMISSIONS[ROLES.SUPER_ADMIN]!]), undefined);
-    assert.equal(await guard(ROLES.ADMIN_FINANCE_MANAGER, [...ROLE_PERMISSIONS[ROLES.ADMIN_FINANCE_MANAGER]!]), undefined);
-    assert.equal(await guard('GIFT_CARD_DESK', ['wallet.adjust']), undefined);
   });
 
-  it('refuses everyone else, including the managers and anyone with only user.manage-less permissions', async () => {
-    for (const role of [ROLES.ADMIN_ORDER_MANAGER, ROLES.ADMIN_CATALOG_MANAGER, ROLES.VENDOR_OWNER, ROLES.VENDOR_STAFF, ROLES.CUSTOMER]) {
+  it('refuses vendors, customers and anyone without wallet.adjust', async () => {
+    for (const role of [ROLES.VENDOR_OWNER, ROLES.CUSTOMER]) {
       assert.ok(forbidden(await guard(role, [...ROLE_PERMISSIONS[role]!])), role);
     }
     assert.ok(forbidden(await guard('ANALYST', ['analytics.view', 'gift_card.manage'])));

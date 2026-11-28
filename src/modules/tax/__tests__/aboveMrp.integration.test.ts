@@ -72,8 +72,8 @@ describe('nothing sells above its MRP (bug 10)', { skip: SKIP_ON_DEV_DB }, () =>
     assert.equal(add.error?.code, 'ITEM_ABOVE_MRP', add.text);
     assert.equal((await world.call('POST', '/cart/items', world.customer, { variantId: product.variantId, quantity: 1 })).status, 201);
 
-    const told = sent.filter((entry) => entry.type === 'PRODUCT_ABOVE_MRP' && [world.a.owner.id, world.a.staff.id].includes(entry.userId!));
-    assert.equal(told.length, 2, 'one email to each user of the store');
+    const told = sent.filter((entry) => entry.type === 'PRODUCT_ABOVE_MRP' && entry.userId === world.a.owner.id);
+    assert.equal(told.length, 1, 'one email to the vendor');
     await refreshAllProductDisplayPrices();
     assert.equal(sent.filter((entry) => entry.type === 'PRODUCT_ABOVE_MRP' && entry.userId === world.a.owner.id).length, 1);
   });

@@ -1,6 +1,9 @@
 'use strict';
 
-const { productSeedFromId } = require('./professional-catalog');
+/** Stable numeric seed from product UUID — the same product always gets the same pictures. */
+function productSeedFromId(productId) {
+  return parseInt(String(productId).replace(/-/g, '').slice(0, 8), 16) % 2147483647;
+}
 
 /** Minimum gallery images every seeded product should expose on the PDP. */
 const MIN_PRODUCT_GALLERY_IMAGES = 12;

@@ -39,7 +39,7 @@ describe('creating and changing products over HTTP', { skip: SKIP_ON_DEV_DB }, (
   });
 
   it('a caller without a store cannot create a product (M8)', async () => {
-    for (const who of [world.catalog, world.admin]) {
+    for (const who of [world.admin, world.customer]) {
       const reply = await world.call('POST', '/products', who, await body(`Vendorless ${unique()}`));
       assert.equal(reply.status, 403, reply.text);
     }

@@ -114,7 +114,6 @@ function assertTransition(from: BugReportStatus, to: BugReportStatus) {
 function toReporterRole(roleName: string): BugReporterRole {
   if (roleName === ROLES.CUSTOMER) return BUG_REPORTER_ROLE.CUSTOMER;
   if (roleName === ROLES.VENDOR_OWNER) return BUG_REPORTER_ROLE.VENDOR;
-  if (roleName === ROLES.VENDOR_STAFF) return BUG_REPORTER_ROLE.VENDOR_STAFF;
   throw new AppError(
     ERROR_MESSAGES.BUG_REPORTER_ROLE_INVALID,
     403,

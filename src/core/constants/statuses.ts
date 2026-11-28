@@ -406,11 +406,8 @@ export const TICKET_ATTACHMENT_TYPE_VALUES = Object.values(TICKET_ATTACHMENT_TYP
 export const TICKET_SENDER_ROLE = {
   CUSTOMER: 'CUSTOMER',
   VENDOR: 'VENDOR',
-  VENDOR_STAFF: 'VENDOR_STAFF',
   ADMIN: 'ADMIN',
   SUPER_ADMIN: 'SUPER_ADMIN',
-  ADMIN_ORDER_MANAGER: 'ADMIN_ORDER_MANAGER',
-  ADMIN_CATALOG_MANAGER: 'ADMIN_CATALOG_MANAGER',
 } as const;
 export type TicketSenderRole = (typeof TICKET_SENDER_ROLE)[keyof typeof TICKET_SENDER_ROLE];
 export const TICKET_SENDER_ROLE_VALUES = Object.values(TICKET_SENDER_ROLE) as [
@@ -465,7 +462,6 @@ export const BUG_AFFECTED_MODULE_VALUES = Object.values(BUG_AFFECTED_MODULE) as 
 export const BUG_REPORTER_ROLE = {
   CUSTOMER: 'CUSTOMER',
   VENDOR: 'VENDOR',
-  VENDOR_STAFF: 'VENDOR_STAFF',
 } as const;
 export type BugReporterRole = (typeof BUG_REPORTER_ROLE)[keyof typeof BUG_REPORTER_ROLE];
 export const BUG_REPORTER_ROLE_VALUES = Object.values(BUG_REPORTER_ROLE) as [
@@ -535,11 +531,7 @@ export const NOTIFICATION_STATUS = {
 
 export const ROLES = {
   SUPER_ADMIN: 'SUPER_ADMIN',
-  ADMIN_ORDER_MANAGER: 'ADMIN_ORDER_MANAGER',
-  ADMIN_CATALOG_MANAGER: 'ADMIN_CATALOG_MANAGER',
-  ADMIN_FINANCE_MANAGER: 'ADMIN_FINANCE_MANAGER',
   VENDOR_OWNER: 'VENDOR_OWNER',
-  VENDOR_STAFF: 'VENDOR_STAFF',
   CUSTOMER: 'CUSTOMER',
 } as const;
 export type RoleName = (typeof ROLES)[keyof typeof ROLES];
@@ -548,17 +540,13 @@ export const ROLE_VALUES = Object.values(ROLES) as [RoleName, ...RoleName[]];
 /** Human-readable role names for login account picker. */
 export const ROLE_LABELS: Record<RoleName, string> = {
   [ROLES.SUPER_ADMIN]: 'Super Admin',
-  [ROLES.ADMIN_ORDER_MANAGER]: 'Order Manager',
-  [ROLES.ADMIN_CATALOG_MANAGER]: 'Catalog Manager',
-  [ROLES.ADMIN_FINANCE_MANAGER]: 'Finance Manager',
-  [ROLES.VENDOR_OWNER]: 'Vendor Owner',
-  [ROLES.VENDOR_STAFF]: 'Vendor Staff',
+  [ROLES.VENDOR_OWNER]: 'Vendor',
   [ROLES.CUSTOMER]: 'Customer',
 };
 
-export const ADMIN_ROLES = [ROLES.SUPER_ADMIN, ROLES.ADMIN_ORDER_MANAGER, ROLES.ADMIN_CATALOG_MANAGER, ROLES.ADMIN_FINANCE_MANAGER] as const;
+export const ADMIN_ROLES = [ROLES.SUPER_ADMIN] as const;
 
-export const VENDOR_ROLES = [ROLES.VENDOR_OWNER, ROLES.VENDOR_STAFF] as const;
+export const VENDOR_ROLES = [ROLES.VENDOR_OWNER] as const;
 
 export const GIFT_CARD_STATUS = {
   PENDING: 'PENDING',

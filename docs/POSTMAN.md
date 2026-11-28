@@ -119,8 +119,8 @@ Expected response:
 Credentials (after seeding):
 
 ```
-Email: admin@ecommerce.com
-Password: Admin@123
+Email:    the super admin in backend/seed-accounts.local.csv
+Password: its password in the same file
 ```
 
 Tokens are **automatically stored**! 🎉

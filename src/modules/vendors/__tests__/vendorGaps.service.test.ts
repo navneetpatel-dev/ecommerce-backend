@@ -20,7 +20,6 @@ import { subordersService } from '@modules/suborders/suborders.service';
 import { payoutsService } from '@modules/payouts/payouts.service';
 import { vendorsService } from '../vendors.service';
 import { vendorsRepository } from '../vendors.repository';
-import { vendorStaffService } from '../vendorStaff.service';
 import { authService } from '@modules/auth/auth.service';
 import { productsService } from '@modules/products/products.service';
 import { productsRepository } from '@modules/products/products.repository';
@@ -375,95 +374,4 @@ describe('Vendor Modules Gap Fixes Verification', () => {
     });
   });
 
-  describe('6. Vendor Staff Permissions and Protections', () => {
-    it('blocks VENDOR_STAFF from updating businessName and gstNumber', async () => {
-      const staffActor = {
-        id: 'staff-1',
-        role: { name: ROLES.VENDOR_STAFF },
-        roleId: 'role-staff-1',
-      };
-
-      await assert.rejects(
-        async () =>
-          vendorsService.updateMyVendor(
-            'vendor-1',
-            { businessName: 'Malicious Change' },
-            staffActor,
-          ),
-        /Only vendor owners can update store bank details, legal settings, and financials/,
-      );
-
-      await assert.rejects(
-        async () =>
-          vendorsService.updateMyVendor(
-            'vendor-1',
-            { gstNumber: '29ABCDE1234F1Z5' },
-            staffActor,
-          ),
-        /Only vendor owners can update store bank details, legal settings, and financials/,
-      );
-    });
-
-    it('blocks VENDOR_STAFF from uploading KYC documents', async () => {
-      const staffActor = {
-        id: 'staff-1',
-        role: { name: ROLES.VENDOR_STAFF },
-        roleId: 'role-staff-1',
-      };
-
-      await assert.rejects(
-        async () =>
-          vendorsService.uploadMyDocument(
-            'vendor-1',
-            { type: 'GST_CERT', url: 'https://example.com/doc.pdf' },
-            staffActor,
-          ),
-        /Only vendor owners can upload KYC verification documents/,
-      );
-    });
-
-    it('queues an invite email (not a password-reset email) when a new staff user is added', async () => {
-      mock.method(sequelize, 'transaction', async (callback: (t: any) => Promise<any>) => {
-        return callback({ afterCommit: (fn: () => void) => fn() });
-      });
-
-      mock.method(Role, 'findOne', async () => ({ id: 'staff-role-id' } as any));
-      mock.method(User, 'findOne', async () => null);
-
-      let createdUserPayload: any = null;
-      mock.method(User, 'create', async (payload: any) => {
-        createdUserPayload = payload;
-        return { id: 'new-user-1', email: payload.email, name: payload.name } as any;
-      });
-      mock.method(AuditLog, 'create', async () => ({} as any));
-
-      let forgotPasswordCalled = false;
-      mock.method(authService, 'forgotPassword', async () => {
-        forgotPasswordCalled = true;
-      });
-      // The invite email looks up who was added and which shop they joined.
-      mock.method(User, 'findByPk', async () => ({ id: 'new-user-1', email: 'staff@example.com', name: 'John Staff', vendorId: 'vendor-1', passwordHash: 'hash' }) as any);
-      mock.method(Vendor, 'findByPk', async () => ({ businessName: 'Acme Store' }) as any);
-      const invites: Array<Record<string, any>> = [];
-      mock.method(notificationsService, 'enqueue', async (params: Record<string, any>) => {
-        invites.push(params);
-        return null as any;
-      });
-
-      const res = await vendorStaffService.addStaff(
-        'vendor-1',
-        { name: 'John Staff', email: 'staff@example.com' },
-        'owner-1',
-      );
-      await new Promise((resolve) => setImmediate(resolve));
-
-      assert.equal(res.email, 'staff@example.com');
-      assert.equal(createdUserPayload?.email, 'staff@example.com');
-      assert.equal(forgotPasswordCalled, false, 'a new team member gets an invite, not a "reset your password" email');
-      assert.equal(invites[0]?.type, 'VENDOR_STAFF_INVITE');
-      assert.equal(invites[0]?.userId, 'new-user-1');
-      assert.match(String(invites[0]?.templateData?.actionUrl), /\/reset-password\?token=/);
-      assert.equal(invites[0]?.templateData?.businessName, 'Acme Store');
-    });
-  });
 });

@@ -15,7 +15,7 @@ export type ShipmentAccessFacts = {
 };
 
 /**
- * Who may see a shipment's details: staff who manage shipping or orders, the customer who
+ * Who may see a shipment's details: whoever manages shipping or orders, the customer who
  * ordered it, or the vendor who shipped it. Never an anonymous viewer: the tracking number alone gets only the
  * carrier's public status.
  */
@@ -24,7 +24,7 @@ export async function canSeeShipmentDetails(
   shipment: ShipmentAccessFacts,
 ): Promise<boolean> {
   if (!viewer) return false;
-  // By permission, not by "is an admin role": the Catalog and Finance managers have no shipping job.
+  // By permission, not by role name.
   if (await userHasPermission(viewer as never, PERMISSIONS.SHIPPING_MANAGE, PERMISSIONS.ORDER_MANAGE)) return true;
   if (viewer.role.name === ROLES.CUSTOMER && shipment.subOrder?.order?.userId === viewer.id) return true;
   return viewer.vendorId != null && shipment.subOrder?.vendorId === viewer.vendorId;

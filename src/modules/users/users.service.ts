@@ -39,7 +39,6 @@ import { recipientFor } from './addressRecipient';
 import type {
   UpdateUserProfileRequest,
   UpdateUserStatusRequest,
-  UpdateUserRoleRequest,
   GetUsersQuery,
   CreateAddressRequest,
   UpdateAddressRequest,
@@ -88,11 +87,6 @@ async function assertSelfDeletionAllowed(
     if (others === 0) {
       throw new ForbiddenError('Cannot delete the sole Super Administrator account');
     }
-    return;
-  }
-
-  if (roleName === ROLES.VENDOR_STAFF) {
-    // A staff member can delete their account without blocking the store's operations.
     return;
   }
 
@@ -520,7 +514,7 @@ export class UsersService {
           OR (
             :includeVendorMembers
             AND u."vendorId" = :vendorId
-            AND r.name IN (:vendorOwner, :vendorStaff)
+            AND r.name = :vendorOwner
           )
         )
         AND (
@@ -538,7 +532,6 @@ export class UsersService {
       includeVendorMembers,
       vendorId: params.vendorId ?? null,
       vendorOwner: ROLES.VENDOR_OWNER,
-      vendorStaff: ROLES.VENDOR_STAFF,
       limit: params.limit,
       offset: params.offset,
     };
@@ -606,7 +599,7 @@ export class UsersService {
 
   /**
    * Ticket reassignment: allow TICKET_MANAGE holders, or active vendor
-   * owner/staff belonging to the ticket's related vendor.
+   * accounts belonging to the ticket's related vendor.
    */
   async assertTicketAssignee(
     userId: string,
@@ -631,7 +624,7 @@ export class UsersService {
            OR (
              :relatedVendorId::uuid IS NOT NULL
              AND u."vendorId" = :relatedVendorId
-             AND r.name IN (:vendorOwner, :vendorStaff)
+             AND r.name = :vendorOwner
            )
          )
        LIMIT 1`,
@@ -643,7 +636,6 @@ export class UsersService {
           permission: PERMISSIONS.TICKET_MANAGE,
           relatedVendorId,
           vendorOwner: ROLES.VENDOR_OWNER,
-          vendorStaff: ROLES.VENDOR_STAFF,
         },
         type: QueryTypes.SELECT,
         transaction,
@@ -703,78 +695,6 @@ export class UsersService {
           transaction: t,
         });
       }
-
-    });
-    return this.getUserById(userId);
-  }
-
-  async updateUserRole(
-    userId: string,
-    data: UpdateUserRoleRequest,
-    actor: { id: string; role: { name: string } },
-  ) {
-    await sequelize.transaction(async (t: Transaction) => {
-      if (actor.id === userId) {
-        throw new ForbiddenError('Cannot change your own role — ask another administrator');
-      }
-
-      const user = await usersRepository.findById(userId, {
-        include: [{ model: Role, as: 'role' }],
-        transaction: t,
-      });
-      if (!user) throw new NotFoundError('User');
-
-      const newRole = await Role.findByPk(data.roleId, { transaction: t });
-      if (!newRole) throw new NotFoundError('Role');
-
-      const targetRoleName = (user as any).role?.name;
-      const isActorSuperAdmin = actor.role.name === ROLES.SUPER_ADMIN;
-
-      if (targetRoleName === ROLES.SUPER_ADMIN && !isActorSuperAdmin) {
-        throw new ForbiddenError('Only super administrators can modify a super administrator');
-      }
-      if (newRole.name === ROLES.SUPER_ADMIN && !isActorSuperAdmin) {
-        throw new ForbiddenError('Only super administrators can assign the super administrator role');
-      }
-
-      const isVendorRole = newRole.name === ROLES.VENDOR_OWNER || newRole.name === ROLES.VENDOR_STAFF;
-      let newVendorId = user.vendorId;
-
-      if (isVendorRole) {
-        if (data.vendorId !== undefined) {
-          newVendorId = data.vendorId;
-        }
-        if (!newVendorId) {
-          throw new ValidationError('A vendor store must be selected for vendor roles');
-        }
-      } else {
-        newVendorId = null;
-      }
-
-      const previousRoleId = user.roleId;
-      const previousVendorId = user.vendorId;
-      await usersRepository.update(
-        userId,
-        { roleId: newRole.id, vendorId: newVendorId } as any,
-        { transaction: t },
-      );
-      await authRepository.deleteRefreshTokensByUser(userId);
-
-      await logAudit({
-        actorId: actor.id,
-        action: 'USER_ROLE_UPDATED',
-        entityType: 'User',
-        entityId: userId,
-        metadata: {
-          previousRoleId,
-          previousRoleName: targetRoleName,
-          previousVendorId,
-          newRoleId: newRole.id,
-          newRoleName: newRole.name,
-          newVendorId,
-        },
-        transaction: t,
-      });
 
     });
     return this.getUserById(userId);

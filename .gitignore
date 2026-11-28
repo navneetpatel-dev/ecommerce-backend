@@ -5,6 +5,8 @@ logs/
 /uploads/
 /storage/
 .env
+# Seeded logins (random addresses and passwords): never committed.
+seed-accounts.local.*
 *.log
 .DS_Store
 # AI/tooling artifacts must not enter the repo

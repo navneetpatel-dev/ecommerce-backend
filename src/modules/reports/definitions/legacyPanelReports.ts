@@ -730,7 +730,7 @@ export const legacyPanelReports: ReportDefinition[] = [
     type: 'platform-analytics',
     labelKey: 'reportPlatformAnalytics',
     audience: 'admin_ops',
-    permissions: [PERMISSIONS.ANALYTICS_REVENUE],
+    permissions: [PERMISSIONS.ANALYTICS_VIEW],
     vendorScoped: false,
     financial: false,
     columns: [

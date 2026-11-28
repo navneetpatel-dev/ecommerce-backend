@@ -42,7 +42,7 @@
  *   npx tsx scripts/backfill-seeded-order-money.ts --apply --force --order-id <uuid>[,<uuid>...]
  *   npx tsx scripts/backfill-seeded-order-money.ts --apply --force --order-id <uuid> --discount-paise 24000
  *
- * Large seeds (`npm run db:seed:demo`) add:
+ * The demo seed (`scripts/seed/pricing.ts`) runs it with:
  *   --shard <i>/<n>   only orders whose id hashes to shard i of n, so n processes can run at once
  *   --tcs-rate <pct>  price section 52 TCS at this rate (default 0, see the deviations above);
  *                     dispatch then records the GSTR-8 collection row as it does for a sale

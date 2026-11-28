@@ -3,7 +3,7 @@
 /**
  * Production safety gate shared by every seeder.
  *
- * Seeding creates the documented demo/test accounts (admin@ecommerce.com,
+ * Seeding creates demo/test accounts (a super admin,
  * vendors, customers — see docs/TEST_CREDENTIALS.md). Those must never be created
  * on a production database, so each seeder calls this before writing anything.
  *

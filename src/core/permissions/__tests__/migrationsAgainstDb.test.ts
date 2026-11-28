@@ -494,3 +494,47 @@ describe('20261128000001-tax-rule-integrity (real SQL, rolled back)', () => {
     });
   });
 });
+
+describe('20261130000001-three-roles (real SQL, rolled back)', () => {
+  const migration = load('20261130000001-three-roles.js');
+
+  it('turns every other role into a customer and leaves three roles; safe to run twice; down restores the roles', async (t) => {
+    if (!dbUp) return t.skip('database not reachable');
+    await inRolledBackTransaction(async (tx, qi) => {
+      const staffRole = await ensureRole(tx, 'VENDOR_STAFF');
+      const customRole = await ensureRole(tx, `ZZ_CUSTOM_${randomUUID().slice(0, 8)}`);
+      await ensureRole(tx, 'CUSTOMER');
+      await grant(tx, customRole, await ensurePermission(tx, 'wallet.adjust'));
+      const [vendor] = await select<{ id: string }>(tx, `SELECT id FROM vendors WHERE "deletedAt" IS NULL LIMIT 1`);
+      const people = [staffRole, customRole].map((roleId) => ({ id: randomUUID(), roleId }));
+      for (const person of people) {
+        await sequelize.query(
+          `INSERT INTO users (id, email, name, status, "roleId", "vendorId", "emailVerified", "emailMarketingConsent", "emailSuppressed", "createdAt", "updatedAt")
+           VALUES (:id, :email, 'Migration Test', 'ACTIVE', :roleId, :vendorId, true, false, false, NOW(), NOW())`,
+          { transaction: tx, replacements: { ...person, email: `mig-${person.id}@example.invalid`, vendorId: vendor?.id ?? null } },
+        );
+      }
+
+      await migration.up(qi);
+      await migration.up(qi); // idempotent
+
+      const roles = await select<{ name: string }>(tx, 'SELECT name FROM roles ORDER BY name');
+      assert.deepEqual(roles.map((r) => r.name), ['CUSTOMER', 'SUPER_ADMIN', 'VENDOR_OWNER']);
+      const moved = await select<{ name: string; vendorId: string | null }>(
+        tx,
+        `SELECT r.name, u."vendorId" FROM users u JOIN roles r ON r.id = u."roleId" WHERE u.id IN (:ids)`,
+        { ids: people.map((p) => p.id) },
+      );
+      assert.deepEqual(moved, [{ name: 'CUSTOMER', vendorId: null }, { name: 'CUSTOMER', vendorId: null }]);
+      for (const key of ['role.manage', 'team.manage', 'coupon.unlimited', 'analytics.revenue']) {
+        assert.equal(await countPermission(tx, key), 0, key);
+      }
+      assert.deepEqual(await rolesHolding(tx, 'wallet.adjust'), ['SUPER_ADMIN']);
+
+      await migration.down(qi);
+      const restored = await select<{ name: string }>(tx, 'SELECT name FROM roles ORDER BY name');
+      assert.equal(restored.length, 7);
+      assert.equal(await countPermission(tx, 'team.manage'), 1);
+    });
+  });
+});

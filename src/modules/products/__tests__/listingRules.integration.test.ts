@@ -57,7 +57,7 @@ describe('what a listing must keep, and what a deletion frees', { skip: SKIP_ON_
   it('platform stock edits and deletions are audited for the vendor (L4, E9)', async () => {
     const product = await world.liveProduct(world.a);
     const extra = await addVariant(product.id, `AUD-${unique()}`);
-    await world.call('PATCH', `/inventory/variants/${product.variantId}/stock`, world.catalog, { stock: 4, expectedStock: 10 });
+    await world.call('PATCH', `/inventory/variants/${product.variantId}/stock`, world.admin, { stock: 4, expectedStock: 10 });
     await world.call('DELETE', `/products/variants/${extra.data.id}`, world.admin);
     await world.call('DELETE', `/products/${product.id}`, world.admin);
     const actions = (

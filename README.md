@@ -63,8 +63,7 @@ cd ../web && npm run dev
 cp .env.example .env
 docker compose up -d
 npm run db:migrate
-npm run db:seed
-npm run seed:orders:money   # GST money + tax invoices for the seeded demo orders
+npm run db:seed             # reference data, then the demo accounts and catalog
 npm run dev
 ```
 
@@ -103,12 +102,9 @@ createdb ecommerce_dev
 # Run migrations
 npm run db:migrate
 
-# Seed initial data
+# Seed an empty database: reference data, then the demo accounts and catalog.
+# `npm run db:reset` drops the database and does all of this from scratch.
 npm run db:seed
-
-# Give the seeded demo orders real GST money + tax invoices (their pages and
-# invoice downloads need it; `npm run db:reset` runs this for you)
-npm run seed:orders:money
 ```
 
 4. **Start Redis**:
@@ -143,8 +139,8 @@ npm start              # Run production server
 ### Database
 ```bash
 npm run db:migrate      # Run migrations
-npm run db:seed        # Seed initial data
-npm run seed:orders:money  # Price the seeded demo orders (GST) and issue their invoices
+npm run db:seed        # Seed an empty database
+npm run db:reset       # Drop, migrate and seed from scratch (development only)
 ```
 
 ### Docker (PostgreSQL + Redis)
@@ -258,9 +254,7 @@ See the source code for complete API endpoints.
 
 After seeding, you can login with:
 
-- **Admin**: admin@ecommerce.com / Admin@123
-- **Vendor**: (created via registration)
-- **Customer**: (created via registration)
+the accounts listed in `seed-accounts.local.csv` (1 super admin, 100 vendors, 100 customers; see `docs/TEST_CREDENTIALS.md`).
 
 ## Development
 

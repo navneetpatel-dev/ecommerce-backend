@@ -272,11 +272,19 @@ describe('GMV agreement across surfaces', () => {
   it('platform surfaces agree with the settlement reconciliation', async (t) => {
     if (!dbReady) return t.skip('database unavailable');
     const allTime = { from: new Date(0), to: new Date(now.getTime() + DAY_MS) };
-    const recon = await computeReconciliationSummary(allTime);
-    const analytics = await adminService.getPlatformAnalytics();
+    // Other test files write orders to the same database meanwhile, so the three platform
+    // figures are compared only once they were read with nothing changing in between.
+    const readPlatform = async () => {
+      for (let attempt = 1; ; attempt += 1) {
+        const recon = await computeReconciliationSummary(allTime);
+        const analytics = await adminService.getPlatformAnalytics();
+        const metrics = await adminService.getDashboardMetrics();
+        const after = await computeReconciliationSummary(allTime);
+        if (recon.gmvPaise === after.gmvPaise || attempt === 10) return { recon, analytics, metrics };
+      }
+    };
+    const { recon, analytics, metrics } = await readPlatform();
     assert.equal(analytics.gmv, fromPaise(recon.gmvPaise), 'admin dashboard GMV');
-
-    const metrics = await adminService.getDashboardMetrics();
     assert.equal(metrics.totalRevenue, analytics.gmv, 'admin dashboard metrics revenue');
 
     const window = { from: new Date(now.getTime() - 365 * DAY_MS), to: allTime.to };

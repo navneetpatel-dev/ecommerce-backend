@@ -35,7 +35,7 @@ import { nextPaddedDocumentNumber } from '@modules/pricing/documentSequence';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import {
   findSuperAdminUserIds,
-  findVendorStaffUserId,
+  findVendorOwnerUserId,
 } from '@modules/notifications/orderNotifications';
 import { ticketPortalUrlForGroup, ticketPortalGroupForUser } from '@modules/notifications/portalLinks';
 import { settingsService } from '@modules/settings/settings.service';
@@ -86,12 +86,8 @@ function assertTransition(from: SupportTicketStatus, to: SupportTicketStatus) {
 async function toTicketSenderRole(actor: Actor): Promise<TicketSenderRole> {
   const roleName = actor.role.name;
   if (roleName === ROLES.VENDOR_OWNER) return TICKET_SENDER_ROLE.VENDOR;
-  if (roleName === ROLES.VENDOR_STAFF) return TICKET_SENDER_ROLE.VENDOR_STAFF;
   if (roleName === ROLES.CUSTOMER) return TICKET_SENDER_ROLE.CUSTOMER;
   if (roleName === ROLES.SUPER_ADMIN) return TICKET_SENDER_ROLE.SUPER_ADMIN;
-  if (roleName === ROLES.ADMIN_ORDER_MANAGER) return TICKET_SENDER_ROLE.ADMIN_ORDER_MANAGER;
-  if (roleName === ROLES.ADMIN_CATALOG_MANAGER) return TICKET_SENDER_ROLE.ADMIN_CATALOG_MANAGER;
-  if ((ADMIN_ROLES as readonly string[]).includes(roleName)) return TICKET_SENDER_ROLE.ADMIN;
   if (await userHasPermission(actor, PERMISSIONS.TICKET_MANAGE)) {
     return TICKET_SENDER_ROLE.ADMIN;
   }
@@ -362,7 +358,7 @@ export class SupportTicketsService {
         }
 
         assignedToId = relatedVendorId
-          ? await findVendorStaffUserId(relatedVendorId)
+          ? await findVendorOwnerUserId(relatedVendorId)
           : null;
       }
 
@@ -774,8 +770,8 @@ export class SupportTicketsService {
       if (locked.assignedToId && locked.assignedToId !== actor.id) {
         notifyRecipients.set(locked.assignedToId, 'lookup');
       } else if (locked.relatedVendorId) {
-        const staffId = await findVendorStaffUserId(locked.relatedVendorId);
-        if (staffId && staffId !== actor.id) notifyRecipients.set(staffId, 'vendor');
+        const sellerId = await findVendorOwnerUserId(locked.relatedVendorId);
+        if (sellerId && sellerId !== actor.id) notifyRecipients.set(sellerId, 'vendor');
       } else if (senderRole === TICKET_SENDER_ROLE.CUSTOMER) {
         for (const adminId of await findTicketManagerUserIds()) {
           if (adminId !== actor.id) notifyRecipients.set(adminId, 'admin');
@@ -897,8 +893,8 @@ export class SupportTicketsService {
       const notifyRecipients = new Map<string, 'vendor' | 'admin' | 'lookup'>();
       if (locked.assignedToId) notifyRecipients.set(locked.assignedToId, 'lookup');
       else if (locked.relatedVendorId) {
-        const staffId = await findVendorStaffUserId(locked.relatedVendorId);
-        if (staffId) notifyRecipients.set(staffId, 'vendor');
+        const sellerId = await findVendorOwnerUserId(locked.relatedVendorId);
+        if (sellerId) notifyRecipients.set(sellerId, 'vendor');
       } else {
         for (const adminId of await findTicketManagerUserIds()) {
           notifyRecipients.set(adminId, 'admin');
