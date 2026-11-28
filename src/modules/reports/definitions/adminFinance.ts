@@ -7,12 +7,8 @@ import {
   GMV_SUB_ORDER_SQL,
   PAID_OR_COD_ORDER_SQL,
   sqlLedgerOnPaidOrder,
-  sqlLedgerPlatformDiscountPaise,
-  sqlLedgerPlatformGstPaise,
-  sqlLedgerVendorDiscountPaise,
   sqlLineSubtotalPaise,
 } from '@modules/pricing/frozenMoneySql';
-import { COMMISSION_REFERENCE_TYPE } from '@core/constants/statuses';
 import { IST_TIME_ZONE } from '@modules/pricing/istCalendar';
 import { roundMoney } from '@modules/pricing/money';
 import { vendorPayablePaise } from '../engine/vendorPayable';
@@ -26,21 +22,9 @@ import { User } from '@database/models/user.model';
 import type { ReportDefinition, ReportFilters } from '../engine/types';
 import { createSingleShotExportQuery } from '../engine/export/createOffsetExportQuery';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
+import { resolveVendorId, sqlReplacements } from './adminFinanceFilters';
+import { couponDiscountCost, couponDiscountCostExport } from './couponDiscountCostReport';
 import { sequelize } from '@database/models';
-
-function resolveVendorId(filters: ReportFilters): string | null {
-  return filters.scopedVendorId ?? filters.vendorId ?? null;
-}
-
-function sqlReplacements(filters: ReportFilters): Record<string, unknown> {
-  return {
-    from: filters.from,
-    to: filters.to,
-    vendorId: resolveVendorId(filters),
-    categoryId: filters.categoryId ?? null,
-    status: filters.status ?? null,
-  };
-}
 
 async function gstTcsSummary(filters: ReportFilters) {
   assertReportRange(filters);
@@ -775,88 +759,6 @@ async function commissionRevenueExport(
   return { rows: page.rows, nextCursor: page.nextCursor };
 }
 
-async function couponDiscountCost(filters: ReportFilters) {
-  assertReportRange(filters);
-  return pagedSqlQuery({
-    selectSql: couponDiscountSelectSql(),
-    orderBySql: `"vendorName" ASC, "vendorId" ASC`,
-    replacements: sqlReplacements(filters),
-    filters,
-    mapRow: mapCouponDiscountRow,
-  });
-}
-
-/**
- * What coupons cost, per vendor, for ledgers created in the range on sales that count:
- * each ledger's discount split between the vendor and the platform (a stacked order
- * carries both, whatever the ledger's single bearer), the GST the platform pays on its
- * share, and the shipping the coupons waived (the platform's cost). Discounts exclude
- * GST; shipping is as charged. Returns after payout take their share back.
- */
-function couponDiscountSelectSql(): string {
-  const saleOrReturn = `(cl."referenceType" IS NULL OR cl."referenceType" = '${COMMISSION_REFERENCE_TYPE.RETURN_CLAWBACK}')`;
-  return `
-    SELECT
-      cl."vendorId"::text AS "vendorId",
-      MAX(v."businessName") AS "vendorName",
-      SUM(${sqlLedgerVendorDiscountPaise('cl')})::bigint AS "vendorDiscountPaise",
-      SUM(${sqlLedgerPlatformDiscountPaise('cl')})::bigint AS "platformDiscountPaise",
-      SUM(${sqlLedgerPlatformGstPaise('cl')})::bigint AS "platformGstPaise",
-      SUM(CASE WHEN cl."referenceType" IS NULL
-        THEN COALESCE(s."shippingDiscountAmountPaise", 0) ELSE 0 END)::bigint AS "freeShippingPaise"
-    FROM commission_ledgers cl
-    INNER JOIN vendors v ON v.id = cl."vendorId"
-    LEFT JOIN sub_orders s ON s.id = cl."subOrderId"
-    WHERE cl."deletedAt" IS NULL
-      AND cl."createdAt" BETWEEN :from AND :to
-      AND cl.status <> '${COMMISSION_STATUS.CLAWED_BACK}'
-      AND ${saleOrReturn}
-      AND ${sqlLedgerOnPaidOrder('cl')}
-      AND (:vendorId::uuid IS NULL OR cl."vendorId" = :vendorId)
-    GROUP BY cl."vendorId"
-    HAVING SUM(cl."discountAmountPaise") <> 0
-      OR SUM(CASE WHEN cl."referenceType" IS NULL
-        THEN COALESCE(s."shippingDiscountAmountPaise", 0) ELSE 0 END) <> 0
-  `;
-}
-
-function mapCouponDiscountRow(row: Record<string, unknown>) {
-  const platformPaise = Number(row.platformDiscountPaise ?? 0);
-  const platformGstPaise = Number(row.platformGstPaise ?? 0);
-  const freeShippingPaise = Number(row.freeShippingPaise ?? 0);
-  return {
-    vendorId: String(row.vendorId ?? ''),
-    vendorName: String(row.vendorName ?? ''),
-    vendorDiscount: fromPaise(Number(row.vendorDiscountPaise ?? 0)),
-    platformDiscount: fromPaise(platformPaise),
-    platformDiscountGst: fromPaise(platformGstPaise),
-    freeShippingCost: fromPaise(freeShippingPaise),
-    platformCouponCost: fromPaise(platformPaise + platformGstPaise + freeShippingPaise),
-  };
-}
-
-const COUPON_DISCOUNT_KEYSET: KeysetOrderCol[] = [
-  { column: 'vendorName', direction: 'ASC' },
-  { column: 'vendorId', direction: 'ASC' },
-];
-
-async function couponDiscountCostExport(
-  filters: ReportFilters,
-  cursor: { values: unknown[] } | null,
-  limit: number,
-) {
-  assertReportRange(filters);
-  const page = await keysetSqlQuery({
-    selectSql: couponDiscountSelectSql(),
-    order: COUPON_DISCOUNT_KEYSET,
-    replacements: sqlReplacements(filters),
-    limit,
-    cursor,
-    mapRow: mapCouponDiscountRow,
-  });
-  return { rows: page.rows, nextCursor: page.nextCursor };
-}
-
 async function gmvSales(filters: ReportFilters) {
   assertReportRange(filters);
   const replacements = sqlReplacements(filters);
@@ -1279,6 +1181,9 @@ export const adminFinanceReports: ReportDefinition[] = [
       { key: 'platformDiscount', labelKey: 'platformDiscount', format: 'currency' },
       { key: 'platformDiscountGst', labelKey: 'platformDiscountGst', format: 'currency' },
       { key: 'freeShippingCost', labelKey: 'freeShippingCost', format: 'currency' },
+      { key: 'vendorFreeShippingCost', labelKey: 'vendorFreeShippingCost', format: 'currency' },
+      { key: 'platformRecoveredOnReturns', labelKey: 'platformRecoveredOnReturns', format: 'currency' },
+      { key: 'vendorRecoveredOnReturns', labelKey: 'vendorRecoveredOnReturns', format: 'currency' },
       { key: 'platformCouponCost', labelKey: 'platformCouponCost', format: 'currency' },
     ],
     query: couponDiscountCost,

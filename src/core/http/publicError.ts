@@ -39,6 +39,10 @@ Object.assign(CODE_TO_PUBLIC_MESSAGE, {
   [ERROR_CODES.REFRESH_TOKEN_EXPIRED]: ERROR_MESSAGES.TOKEN_EXPIRED,
 });
 
+// A minimum-order refusal says how much more to add ("Add ₹820.00 more…"), worked out per
+// cart, so its own message goes out rather than the generic one for its code.
+delete CODE_TO_PUBLIC_MESSAGE[ERROR_CODES.COUPON_MIN_ORDER];
+
 const KNOWN_SAFE_MESSAGES = new Set<string>(Object.values(ERROR_MESSAGES));
 
 function isKnownSafeMessage(message: string): boolean {

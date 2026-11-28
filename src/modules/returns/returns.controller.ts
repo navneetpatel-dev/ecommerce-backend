@@ -9,6 +9,7 @@ import { returnsService } from './returns.service';
 import { cancelReturnByCustomer, notifyReturnRequested } from './returnCustomerActions';
 import { withoutSellerFigures } from '@modules/orders/sellerFigures';
 import { ListReturnsQuerySchema } from './returns.dto';
+import { ReturnEstimateQuerySchema, estimateReturnRefund } from './returnEstimate';
 
 export const create = asyncHandler(async (req: Request, res: Response) => {
   const created = await returnsService.create(req.user!.id, req.body);
@@ -18,6 +19,12 @@ export const create = asyncHandler(async (req: Request, res: Response) => {
 
 export const cancelByCustomer = asyncHandler(async (req: Request, res: Response) => {
   res.json(ok(await cancelReturnByCustomer(req.params.id!, req.user!.id)));
+});
+
+/** What a return would refund, shown before the customer asks for it. */
+export const estimate = asyncHandler(async (req: Request, res: Response) => {
+  const query = ReturnEstimateQuerySchema.parse(req.query);
+  res.json(ok(await estimateReturnRefund(req.user!.id, query)));
 });
 
 export const list = asyncHandler(async (req: Request, res: Response) => {

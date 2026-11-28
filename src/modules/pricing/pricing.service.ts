@@ -19,6 +19,9 @@ export type QuoteVendorPricingInput = {
     gstPercentage?: number;
     gstPriceBand?: GstPriceBand | null;
     commissionRatePercent?: number;
+    /** This line's own part of the discount (see PricingLineInput). */
+    discountPaise?: number;
+    vendorBorneDiscountPaise?: number;
   }>;
   merchandiseDiscount: number;
   /** Vendor-borne portion of merchandise discount (mixed platform+vendor coupons). */
@@ -61,6 +64,8 @@ export class PricingService {
         gstPercentage: line.gstPercentage,
         gstPriceBand: line.gstPriceBand,
         commissionRatePercent: line.commissionRatePercent,
+        discountPaise: line.discountPaise,
+        vendorBorneDiscountPaise: line.vendorBorneDiscountPaise,
       })),
       merchandiseDiscountPaise,
       vendorBorneMerchandiseDiscountPaise: vendorBorne,

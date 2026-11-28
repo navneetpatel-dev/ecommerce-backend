@@ -38,6 +38,8 @@ const VENDOR_PAGE_BY_TYPE: Record<string, string> = {
   PAYOUT_PROCESSED: 'payouts',
   PAYOUT_PAID: 'payouts',
   PAYOUT_FAILED: 'payouts',
+  COUPON_APPROVED: 'coupons',
+  COUPON_REJECTED: 'coupons',
   COUPON_USAGE_LIMIT: 'coupons',
   COUPON_EXPIRING: 'coupons',
   KYC_DOCUMENT_RECEIVED: 'shop-settings',

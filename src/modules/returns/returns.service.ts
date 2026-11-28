@@ -83,6 +83,9 @@ import { isReversedPart } from '@modules/pricing/partReversal';
 import { retryReturnCardRefund, sendReturnCardRefund, type PendingReturnCardRefund } from './returnCardRefund';
 import { serializeReturn, serializeReturnSummary } from './returnSerializer';
 import { withoutSellerFigures } from '@modules/orders/sellerFigures';
+import { cashbackClawbacksFor } from './returnCashbackClawback';
+import { reverseReturnLine } from './returnReversal';
+import { holdBackForBrokenOffers } from './returnOfferAdjustment';
 import { isWithinReturnWindow, returnWindowFor } from './returnWindow';
 import {
   getCreditNotePdfForActor,
@@ -416,18 +419,6 @@ async function handOverExchangeReplacement(row: ReturnRequest, actorId: string, 
   await variant.update({ stock: Number(variant.stock) - quantity, updatedBy: actorId }, { transaction: t });
 }
 
-async function resolveReturnShippingFeePaise(vendorId: string | null | undefined): Promise<number> {
-  const settings = await settingsService.getPlatformSettings();
-  let fee = Number(settings.returnShippingFee ?? 0);
-  if (vendorId) {
-    const vendor = await Vendor.findByPk(vendorId);
-    if (vendor?.returnShippingFee != null && Number.isFinite(Number(vendor.returnShippingFee))) {
-      fee = Number(vendor.returnShippingFee);
-    }
-  }
-  return toPaise(fee);
-}
-
 async function refundSlaDays(): Promise<number> {
   const settings = await settingsService.getPlatformSettings();
   return settings.refundSlaBusinessDays;
@@ -484,7 +475,10 @@ export class ReturnsService {
       where: { userId }, include: returnListInclude, order: [['createdAt', 'DESC'], ['id', 'ASC']],
       limit: query.limit, offset: (query.page - 1) * query.limit, distinct: true,
     });
-    const returns = rows.map((row) => serializeReturnSummary(row as ReturnRequest & { orderItem?: OrderItem }, slaDays));
+    const clawbacks = await cashbackClawbacksFor(rows.map((row) => String(row.id)));
+    const returns = rows.map((row) =>
+      serializeReturnSummary(row as ReturnRequest & { orderItem?: OrderItem }, slaDays, clawbacks.get(String(row.id))),
+    );
     return { returns, pagination: buildPaginationMeta(count, query.page, query.limit) };
   }
 
@@ -530,7 +524,8 @@ export class ReturnsService {
     if (!row) throw new NotFoundError('ReturnRequest');
 
     if (row.userId === requester.id) {
-      return withoutSellerFigures(serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }, slaDays));
+      const clawback = (await cashbackClawbacksFor([String(row.id)])).get(String(row.id));
+      return withoutSellerFigures(serializeReturn(row as ReturnRequest & { orderItem?: OrderItem }, slaDays, clawback));
     }
 
     const subOrder = (row as ReturnRequest & { subOrder?: { vendorId?: string } }).subOrder;
@@ -847,63 +842,27 @@ export class ReturnsService {
     const order = await Order.findByPk(orderItem.subOrder.orderId, { transaction: t });
     if (!order) throw new NotFoundError('Order');
 
-    // This part's earlier returns: the shipping they refunded and whether the return fee
-    // (charged once per parcel) was already taken.
-    const priorReturns = await ReturnRequest.findAll({
-      where: {
-        subOrderId: orderItem.subOrderId,
-        id: { [Op.ne]: row.id },
-        status: { [Op.ne]: RETURN_STATUS.REJECTED },
-      },
-      attributes: ['shippingRefundAmount', 'returnShippingFeeAmount'],
+    const { reversal, frozen, lineQty, returnQty, isFullReturn } = await reverseReturnLine({
+      orderItem,
+      returnId: row.id,
+      requestedQuantity: row.returnQuantity,
+      reasonCode: row.reasonCode,
       transaction: t,
     });
-    const shippingRefundedPaise = priorReturns.reduce(
-      (sum, prior) => sum + toPaise(Number(prior.shippingRefundAmount ?? 0)),
-      0,
-    );
-    const returnFeeAlreadyCharged = priorReturns.some(
-      (prior) => toPaise(Number(prior.returnShippingFeeAmount ?? 0)) > 0,
-    );
 
-    const shippingChargedPaise = Math.max(
-      0,
-      frozenPaise(orderItem.subOrder.shippingCostPaise) -
-        frozenPaise(orderItem.subOrder.shippingDiscountAmountPaise),
-    );
-    const returnShippingFeePaise = await resolveReturnShippingFeePaise(orderItem.subOrder.vendorId);
-
-    const lineQty = Math.trunc(Number(orderItem.quantity)) || 0;
-    const returnQty = Math.min(
-      Math.max(1, Math.floor(Number(row.returnQuantity ?? lineQty))),
-      lineQty,
-    );
-    const isFullReturn = returnQty >= lineQty;
-
-    const frozen = pricingService.frozenLineFromOrderItem({
-      id: orderItem.id,
-      quantity: Number(orderItem.quantity),
-      taxBreakdown: (orderItem.taxBreakdown as any) ?? null,
-      unitPricePaise: frozenPaise(orderItem.unitPricePaise),
-      discountAmountPaise: frozenPaise(orderItem.discountAmountPaise),
-      taxableAmountPaise: frozenPaise(orderItem.taxableAmountPaise),
-      taxAmountPaise: frozenPaise(orderItem.taxAmountPaise),
-      commissionAmountPaise: frozenPaise(orderItem.commissionAmountPaise),
-      tcsAmountPaise: frozenPaise(orderItem.tcsAmountPaise),
-      netPayoutAmountPaise: frozenPaise(orderItem.netPayoutAmountPaise),
-      supplyTaxablePaise: orderItem.supplyTaxablePaise,
-      supplyTaxPaise: orderItem.supplyTaxPaise,
+    // The items kept may no longer qualify for the offer: the refund is cut by what they lost.
+    const heldBackPaise = await holdBackForBrokenOffers({
+      order,
+      returnId: row.id,
+      variantId: orderItem.variantId,
+      returnQuantity: returnQty,
+      refundPaise: reversal.customerRefundPaise,
+      subOrderId: orderItem.subOrderId,
+      actorId,
+      transaction: t,
     });
-
-    const reversal = pricingService.reverseLineFromFrozen(frozen, returnQty, {
-      reasonCode: row.reasonCode,
-      shippingChargedPaise,
-      returnShippingFeePaise,
-      shippingRefundedPaise,
-      // The part's goods still standing (reduced in place by earlier returns).
-      standingTaxablePaise: frozenPaise(orderItem.subOrder.taxableAmountPaise),
-      returnFeeAlreadyCharged,
-    });
+    reversal.customerRefundPaise -= heldBackPaise;
+    if (heldBackPaise !== 0) await row.update({ offerAdjustmentPaise: heldBackPaise }, { transaction: t });
 
     const vendorId = orderItem.subOrder.vendorId;
     if (vendorId) {
@@ -1212,6 +1171,8 @@ export class ReturnsService {
       refundMerchandisePaise: reversal.refundMerchandisePaise,
       orderMerchandiseBeforePaise:
         frozenPaise(orderItem.subOrder.taxableAmountPaise) + reversal.refundMerchandisePaise,
+      variantId: orderItem.variantId,
+      returnQuantity: Number(row.returnQuantity),
     });
 
     return { reversal, order, orderItem };

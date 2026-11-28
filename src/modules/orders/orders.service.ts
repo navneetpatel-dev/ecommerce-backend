@@ -16,6 +16,7 @@ import { ProductVariant } from '@database/models/productVariant.model';
 import { Product } from '@database/models/product.model';
 import { mapOrderResponse, mapOrderSummaryResponse } from './orderDisplayMappers';
 import { withoutSellerFigures } from './sellerFigures';
+import { appliedCouponsForOrder } from '@modules/coupons/couponUsage';
 import { cancelPaidOrder } from './ordersCancel.service';
 import type { GetOrdersQuery } from './orders.dto';
 import { ReturnRequest } from '@database/models/returnRequest.model';
@@ -122,7 +123,11 @@ export class OrdersService {
     if (userId && order.userId !== userId) {
       throw new ForbiddenError(ERROR_MESSAGES.NO_ACCESS_TO_ORDER);
     }
-    const mapped = mapOrderResponse(order as unknown as Record<string, unknown>);
+    const mapped = {
+      ...mapOrderResponse(order as unknown as Record<string, unknown>),
+      // Most orders use no coupon, and have nothing to look up.
+      appliedCoupons: order.couponId || order.appliedCouponIds?.length ? await appliedCouponsForOrder(id) : [],
+    };
     const { linesWithReturns, ...summary } = await this.orderReturnSummary(
       mapped.subOrders as unknown as Array<{ id: string }>,
     );

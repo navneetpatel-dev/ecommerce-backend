@@ -7,6 +7,8 @@ import { orderReference } from '@modules/orders/orderReference';
 export function serializeReturn(
   row: ReturnRequest | (ReturnRequest & { orderItem?: OrderItem }),
   slaDays: number,
+  /** Cashback taken back from the wallet for this return (rupees), when looked up. */
+  cashbackClawback?: number,
 ) {
   const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
   const creditNote = plain.CreditNote ?? plain.creditNote ?? null;
@@ -55,6 +57,9 @@ export function serializeReturn(
     refundStatus,
     refundCustomerMessage,
     refundAmount: plain.refundAmount != null ? Number(plain.refundAmount) : null,
+    /** Held back because the items kept no longer qualify for the offer (rupees). */
+    offerAdjustment: plain.offerAdjustmentPaise != null ? Number(plain.offerAdjustmentPaise) / 100 : null,
+    cashbackClawback: cashbackClawback ?? null,
     refundTaxAmount: plain.refundTaxAmount != null ? Number(plain.refundTaxAmount) : null,
     refundMerchandiseAmount:
       plain.refundMerchandiseAmount != null ? Number(plain.refundMerchandiseAmount) : null,
@@ -93,6 +98,7 @@ export function serializeReturn(
 export function serializeReturnSummary(
   row: ReturnRequest | (ReturnRequest & { orderItem?: OrderItem }),
   _slaDays?: number,
+  cashbackClawback?: number,
 ) {
   const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
   const creditNote = plain.CreditNote ?? plain.creditNote ?? null;
@@ -121,6 +127,9 @@ export function serializeReturnSummary(
     status: plain.status,
     refundStatus,
     refundAmount: plain.refundAmount != null ? Number(plain.refundAmount) : null,
+    /** Held back because the items kept no longer qualify for the offer (rupees). */
+    offerAdjustment: plain.offerAdjustmentPaise != null ? Number(plain.offerAdjustmentPaise) / 100 : null,
+    cashbackClawback: cashbackClawback ?? null,
     photoCount: Array.isArray(plain.photoUrls) ? plain.photoUrls.length : 0,
     disputeStatus: plain.disputeStatus ?? null,
     productName: plain.orderItem?.productName ?? null,

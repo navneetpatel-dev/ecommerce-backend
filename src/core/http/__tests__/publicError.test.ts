@@ -73,3 +73,10 @@ describe('looksLikeInternalErrorMessage', () => {
     assert.equal(looksLikeInternalErrorMessage('Error at src/app.ts:1:1'), true);
   });
 });
+
+describe('U13: minimum-order refusals keep their own message', () => {
+  it('says how much more to add instead of the generic text', () => {
+    const message = 'Add ₹820.00 more to use this coupon (minimum order ₹2,000.00)';
+    assert.equal(publicErrorMessage('COUPON_MIN_ORDER', message), message);
+  });
+});

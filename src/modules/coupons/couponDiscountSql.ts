@@ -10,9 +10,10 @@ import { ORDER_STATUS, RETURN_STATUS } from '@core/constants/statuses';
  * (merchandise, reduced in place by returns, + shipping) over every part's at checkout
  * (now + what their refunded returns took back: returned value before discount less
  * after), or their merchandise likewise when the parts carry no discount. A vendor
- * coupon only discounted that vendor's parts, so only those count.
+ * coupon only discounted that vendor's parts, so only those count. What a return held
+ * back because the kept items lost the offer is taken off too (`sqlCouponHeldBackPaise`).
  */
-export function sqlKeptCouponDiscountPaise(): string {
+export function sqlKeptCouponDiscountPaise(amountSql = 'cu."discountApplied"'): string {
   const kept = `s."status" NOT IN ('${ORDER_STATUS.CANCELLED}', '${ORDER_STATUS.RETURNED}')`;
   const returned = (pick: string) => `COALESCE((
       SELECT SUM(${pick})
@@ -25,7 +26,11 @@ export function sqlKeptCouponDiscountPaise(): string {
     ), 0)`;
   const returnedDiscount = returned(`GREATEST(0, oi."unitPricePaise" * rr."returnQuantity" - rr."refundMerchandiseAmountPaise")`);
   const returnedSubtotal = returned(`oi."unitPricePaise" * rr."returnQuantity"`);
-  return `ROUND(ROUND(cu."discountApplied"::numeric * 100) * COALESCE((
+  // What returns held back from this coupon because the kept items no longer qualified
+  // (GST-inclusive paise, from the order's offer snapshot), in `amountSql`'s own terms.
+  const heldBack = `ROUND(${sqlCouponHeldBackPaise()} * COALESCE(
+      (${amountSql})::numeric / NULLIF(COALESCE(cu."customerDiscountApplied", cu."discountApplied"), 0), 1))`;
+  return `GREATEST(0, ROUND(ROUND((${amountSql})::numeric * 100) * COALESCE((
     SELECT CASE
       WHEN SUM(s."discountAmountPaise" + s."shippingDiscountAmountPaise" + ${returnedDiscount}) > 0
         THEN SUM(CASE WHEN ${kept} THEN s."discountAmountPaise" + s."shippingDiscountAmountPaise" ELSE 0 END)::numeric
@@ -39,5 +44,18 @@ export function sqlKeptCouponDiscountPaise(): string {
     WHERE s."orderId" = cu."orderId"
       AND s."deletedAt" IS NULL
       AND (c."vendorId" IS NULL OR s."vendorId" = c."vendorId")
-  ), 1))::bigint`;
+  ), 1)) - ${heldBack})::bigint`;
+}
+
+/**
+ * GST-inclusive paise held back from one redemption's coupon on returns (aliases: `cu`,
+ * `c`): a return that broke a BOGO, bundle, tier or minimum took the lost discount back,
+ * so the customer didn't really save it. 0 for orders placed before the offer snapshot.
+ */
+export function sqlCouponHeldBackPaise(): string {
+  return `COALESCE((
+    SELECT SUM((entry->>'takenPaise')::numeric)
+    FROM orders held_order, jsonb_array_elements(COALESCE(held_order."couponLineBreakdown", '[]'::jsonb)) entry
+    WHERE held_order.id = cu."orderId" AND entry->>'couponId' = c.id::text
+  ), 0)`;
 }

@@ -1,6 +1,6 @@
 import type { CartItem } from '@database/models/cartItem.model';
 import type { ProductVariant } from '@database/models/productVariant.model';
-import { resolveCartCouponCodes, type CartLineForCoupon } from '@modules/coupons/couponEngine';
+import type { CartLineForCoupon } from '@modules/coupons/couponEngine';
 import { PLATFORM_VENDOR_ID, type PricedLine } from './vendorPricingPlan';
 import { withGstInclusiveLineValues } from './gstInclusiveLines';
 
@@ -39,23 +39,11 @@ export function toCouponLines(
   return withGstInclusiveLineValues(lines, shippingStateCode);
 }
 
-export function resolveCheckoutCouponCodes(
-  data: { couponCode?: string | null; couponCodes?: string[] },
-  cart: { couponCode?: string | null; couponCodes?: string[] | null },
-): string[] {
-  if (data.couponCodes && data.couponCodes.length > 0) {
-    return [...new Set(data.couponCodes.map((c) => c.trim().toUpperCase()).filter(Boolean))];
-  }
-  if (data.couponCode?.trim()) {
-    return [data.couponCode.trim().toUpperCase()];
-  }
-  return resolveCartCouponCodes(cart);
-}
-
 /** Map cart rows into the normalized shape `vendorPricingPlan` prices. */
 export function toPricedLines(items: CheckoutCartItem[]): PricedLine[] {
   return items.map((item) => ({
     key: String(item.id),
+    variantId: String(item.variantId),
     vendorId: item.variant.product.vendorId || PLATFORM_VENDOR_ID,
     unitPrice: Number(item.variant.price),
     quantity: Number(item.quantity),

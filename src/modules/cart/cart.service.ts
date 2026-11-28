@@ -3,13 +3,14 @@ import { NotFoundError } from '@core/errors/NotFoundError';
 import { loadAddableVariant } from './assertAddable';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
-import { type UnavailableReason } from '@core/constants/statuses';
 import { isRemoved, resolveItemAvailability } from '@core/catalog/customerVisibility';
 import { lineSubtotal } from '@modules/pricing/displayMoney';
 import { fromPaise, roundMoney, sumRupees } from '@modules/pricing/money';
 import { computeVendorShippingWeightsByVendor } from '@modules/shipping/shippingWeight';
 import { resolveShippingDisplayKey } from '@modules/checkout/checkoutOrderTotals';
+import type { LineDiscountShares } from '@modules/coupons/couponLineShares';
 import { cartRepository } from './cart.repository';
+import type { CartView, CartViewItem } from './cart.types';
 import { MAX_CART_LINE_QUANTITY } from './cart.constants';
 import { Cart } from '@database/models/cart.model';
 import { CartItem } from '@database/models/cartItem.model';
@@ -20,92 +21,10 @@ import { markAboveMrp } from '@modules/tax/markAboveMrp';
 import { sequelize } from '@database/models';
 import type { AddToCartRequest, UpdateCartItemRequest } from './cart.dto';
 import { gstRuleResolver, priceWithRuleGst } from '@modules/tax/gstPricing';
-import { priceChangeFor, type CartPriceChange } from './cartPriceChange';
+import { priceChangeFor } from './cartPriceChange';
+import { withActualSavings } from '@modules/checkout/actualCouponSavings';
 
-export type CartViewItem = {
-  id: string;
-  variantId: string;
-  quantity: number;
-  /** Server cap for this line (stock vs cart policy); the API clamps to it, so the client must not offer more. */
-  maxQuantity: number;
-  /** Set when the price moved since the line was added (B-55). */
-  priceChange?: CartPriceChange | null;
-  /** Before GST (what the pricing engine works on). */
-  lineSubtotal: number;
-  /** The line as the customer sees it: price per piece with GST × quantity, before any coupon. */
-  lineDisplaySubtotal: number;
-  isAvailable: boolean;
-  unavailableReason: UnavailableReason | null;
-  product: {
-    id: string;
-    name: string;
-    slug: string;
-    imageUrl: string;
-    categoryId: string | null;
-    /** Price per piece before GST. */
-    price: number;
-    /** Price per piece as the customer sees it, GST included. */
-    displayPrice: number;
-    vendor: {
-      id: string;
-      businessName: string;
-      slug: string;
-      logoUrl: string | null;
-    };
-  };
-  variant: {
-    sku: string;
-    attributes: Record<string, string>;
-    weightGrams: number;
-  };
-};
-
-export type CartView = {
-  id: string | null;
-  items: CartViewItem[];
-  /** Merchandise subtotal (available lines). */
-  merchandiseSubtotal: number;
-  /** Customer-facing total from PricingEngine preview (tax + est. shipping − discount). */
-  total: number;
-  pricingPreview?: {
-    merchandiseSubtotal: number;
-    discount: number;
-    taxTotal: number;
-    shippingTotal: number;
-    shippingDisplayKey: 'FREE' | 'PAID';
-    grandTotal: number;
-    /**
-     * The bill as the customer sees it, all GST-inclusive: items − couponSavings +
-     * shippingTotal = grandTotal exactly; taxTotal is the GST inside that total.
-     */
-    itemsTotal: number;
-    /** What coupons take off the items, GST included (a free-shipping coupon shows in shipping). */
-    couponSavings: number;
-    /**
-     * What the preview's tax and shipping were based on. The cart has no chosen
-     * address or shipping method, so anything but EXACT is an estimate the FE
-     * should label as such — checkout re-quotes against the real selection.
-     *
-     * NO_SHIPPING_RATE means no rate matched the default address, so shipping is
-     * shown as zero here but checkout will reject that address.
-     */
-    basisKey: 'EXACT' | 'DEFAULT_ADDRESS' | 'NO_SHIPPING_RATE' | 'NO_ADDRESS';
-  };
-  appliedCoupon?: {
-    code: string;
-    discount: number;
-    cashbackAmount: number;
-    type: string;
-    vendorDiscountShares?: Record<string, number>;
-    vendorShippingDiscountShares?: Record<string, number>;
-    vendorBorneDiscountShares?: Record<string, number>;
-    payNowGrandTotal?: number;
-  } | null;
-  appliedCoupons?: Array<{ code: string; discount: number; cashbackAmount: number; type: string }>;
-  removedCouponReason?: string | null;
-  /** Diagnostic/read-only weights; shipping APIs always recompute them server-side. */
-  vendorShippingWeights?: Record<string, number>;
-};
+export type { CartView, CartViewItem } from './cart.types';
 
 function mapCartItem(item: CartItem & { variant?: ProductVariant & { product?: any } }): CartViewItem {
   const variant = item.variant;
@@ -240,6 +159,8 @@ export class CartService {
     let vendorDiscountShares: Record<string, number> = {};
     let vendorShippingDiscountShares: Record<string, number> = {};
     let vendorBorneDiscountShares: Record<string, number> = {};
+    let lineDiscountShares: LineDiscountShares = {};
+    let inactiveCoupons: CartView['inactiveCoupons'] = [];
     if (userId) {
       const { couponsService } = await import('@modules/coupons/coupons.service');
       const revalidated = await couponsService.revalidateCartCoupon(userId);
@@ -249,14 +170,17 @@ export class CartService {
       vendorDiscountShares = revalidated.appliedCoupon?.vendorDiscountShares ?? {};
       vendorShippingDiscountShares = revalidated.appliedCoupon?.vendorShippingDiscountShares ?? {};
       vendorBorneDiscountShares = revalidated.appliedCoupon?.vendorBorneDiscountShares ?? {};
+      lineDiscountShares = revalidated.appliedCoupon?.lineDiscountShares ?? {};
+      inactiveCoupons = revalidated.inactiveCoupons;
     }
 
-    const { preview: pricingPreview, inclusiveLines } = await this.buildPricingPreview({
+    const { preview: pricingPreview, inclusiveLines, actualLineDiscountPaise } = await this.buildPricingPreview({
       userId,
       items: available,
       vendorDiscountShares,
       vendorShippingDiscountShares,
       vendorBorneDiscountShares,
+      lineDiscountShares,
       merchandiseDiscountTotal: appliedCoupon?.discount ?? 0,
     });
     // The priced lines' GST-inclusive totals come from the engine, so they add up to the bill.
@@ -269,10 +193,7 @@ export class CartService {
     }
 
     if (appliedCoupon && appliedCoupon.cashbackAmount > 0) {
-      appliedCoupon = {
-        ...appliedCoupon,
-        payNowGrandTotal: pricingPreview.grandTotal,
-      };
+      appliedCoupon = { ...appliedCoupon, payNowGrandTotal: pricingPreview.grandTotal };
     }
 
     const vendorShippingWeights = computeVendorShippingWeightsByVendor(
@@ -291,8 +212,9 @@ export class CartService {
       pricingPreview,
       vendorShippingWeights,
       appliedCoupon,
-      appliedCoupons,
+      appliedCoupons: withActualSavings(appliedCoupons ?? [], actualLineDiscountPaise ?? {}),
       removedCouponReason,
+      inactiveCoupons,
     };
   }
 
@@ -302,10 +224,12 @@ export class CartService {
     vendorDiscountShares: Record<string, number>;
     vendorShippingDiscountShares: Record<string, number>;
     vendorBorneDiscountShares: Record<string, number>;
+    lineDiscountShares: LineDiscountShares;
     merchandiseDiscountTotal: number;
   }): Promise<{
     preview: NonNullable<CartView['pricingPreview']>;
     inclusiveLines: Record<string, { lineTotal: number; unitPrice: number }>;
+    actualLineDiscountPaise?: Record<string, number>;
   }> {
     const merchandiseSubtotal = sumRupees(input.items.map((item) => item.lineSubtotal));
     if (input.items.length === 0) {
@@ -362,6 +286,7 @@ export class CartService {
     const plan = await buildVendorPricingRows({
       lines: input.items.map((item) => ({
         key: item.id,
+        variantId: item.variantId,
         vendorId: item.product.vendor.id || PLATFORM_VENDOR_ID,
         unitPrice: item.product.price,
         quantity: item.quantity,
@@ -375,12 +300,13 @@ export class CartService {
       onMissingRate: 'estimate',
     });
 
-    const { pricedByVendor, inclusiveByVendor } = priceVendorRows({
+    const { pricedByVendor, inclusiveByVendor, actualLineDiscountPaise } = priceVendorRows({
       rows: plan.rows,
       shares: {
         vendorDiscountShares: input.vendorDiscountShares,
         vendorShippingDiscountShares: input.vendorShippingDiscountShares,
         vendorBorneDiscountShares: input.vendorBorneDiscountShares,
+        lineDiscountShares: input.lineDiscountShares,
       },
       shippingStateCode: shippingAddress?.state ?? '',
       settings,
@@ -413,9 +339,7 @@ export class CartService {
       }
     }
     let discount = fromPaise(discountPaise);
-    const taxTotal = fromPaise(taxPaise);
-    const shippingTotal = fromPaise(shippingPaise);
-    const grandTotal = fromPaise(grandTotalPaise);
+    const [taxTotal, shippingTotal, grandTotal] = [fromPaise(taxPaise), fromPaise(shippingPaise), fromPaise(grandTotalPaise)];
 
     if (discount === 0 && input.merchandiseDiscountTotal > 0) {
       discount = input.merchandiseDiscountTotal;
@@ -436,6 +360,7 @@ export class CartService {
         basisKey: !shippingAddress ? 'NO_ADDRESS' : plan.hasEstimatedShipping ? 'NO_SHIPPING_RATE' : 'DEFAULT_ADDRESS',
       },
       inclusiveLines,
+      actualLineDiscountPaise,
     };
   }
 
@@ -561,6 +486,7 @@ export class CartService {
     if (!cart) return;
 
     await CartItem.destroy({ where: { cartId: cart.id } });
+    await cart.update({ couponCode: null, couponCodes: [] });
   }
 
   async mergeGuestCartIntoUserCart(sessionId: string, userId: string): Promise<{ merged: boolean }> {

@@ -103,6 +103,7 @@ export async function loadCartLines(userId: string): Promise<{
 export async function loadProductPreviewLines(
   productId: string,
   userId: string | null,
+  variantId?: string,
 ): Promise<CartLineForCoupon[]> {
   const product = await Product.findByPk(productId, {
     include: [
@@ -116,7 +117,8 @@ export async function loadProductPreviewLines(
 
   const variants = ((product as Product & { variants?: ProductVariant[] }).variants ?? []).slice();
   variants.sort((a, b) => Number(a.price ?? 0) - Number(b.price ?? 0));
-  const variant = variants[0];
+  // The variant being looked at; before one is chosen, the lowest price.
+  const variant = variants.find((row) => row.id === variantId) ?? variants[0];
   if (!variant) return [];
   await markAboveMrp([variant], () => product);
 

@@ -34,14 +34,14 @@ describe('coupon edit rules', () => {
     await assertCouponEditAllowed(coupon(), { code: 'save15', type: 'FLAT', value: 150 }, { vendorScoped: false });
   });
 
-  it('locks code, type, bearer and owner once the coupon has been used', async () => {
+  it('locks code, type and owner (and so who pays) once the coupon has been used', async () => {
     const used = coupon({ usedCount: 3 });
     const err = await assertCouponEditAllowed(
       used,
-      { code: 'OTHER', type: 'FLAT', discountBearer: 'VENDOR', vendorId: '11111111-1111-4111-8111-111111111111' },
+      { code: 'OTHER', type: 'FLAT', vendorId: '11111111-1111-4111-8111-111111111111' },
       { vendorScoped: false },
     ).catch((e: unknown) => e);
-    assert.deepEqual(Object.keys(fieldErrors(err)).sort(), ['code', 'discountBearer', 'type', 'vendorId']);
+    assert.deepEqual(Object.keys(fieldErrors(err)).sort(), ['code', 'type', 'vendorId']);
   });
 
   it('still lets a used coupon change its limits, dates and value', async () => {

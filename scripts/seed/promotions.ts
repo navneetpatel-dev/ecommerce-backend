@@ -57,17 +57,32 @@ function couponFields(type: string) {
   }
 }
 
+/** Bulk, specific-customer and segment coupons are never advertised. */
+function listedInOffers(restrictionType: string, batchId: unknown): boolean {
+  return !batchId && restrictionType !== 'segment' && restrictionType !== 'specific';
+}
+
+/** Only a vendor's coupon waits for approval or is rejected, and a rejected one says why. */
+function moderation(status: string, vendorId: unknown) {
+  if (status !== 'REJECTED') return { status, rejectionNote: null };
+  return vendorId
+    ? { status, rejectionNote: pick(['The discount is larger than the margin allows.', 'Please narrow the products it applies to.']) }
+    : { status: 'ARCHIVED', rejectionNote: null };
+}
+
 function couponRow(code: string, type: string, base: Record<string, unknown>) {
   const window = couponWindow();
   const fields = couponFields(type) as Record<string, unknown>;
+  const restriction = pick([{ type: 'all' }, { type: 'all' }, { type: 'firstOrder' }, { type: 'segment', value: pick(['new', 'returning', 'loyal']) }]);
   return {
     id: id(), code, type, minOrderValue: pick([0, 299, 499, 999]), minQuantity: (fields.minQuantity as number | undefined) ?? null,
     applicableScope: json({ type: 'all', ids: [] }), excludedItems: json({ productIds: [], categoryIds: [] }),
-    userRestriction: json(pick([{ type: 'all' }, { type: 'all' }, { type: 'firstOrder' }, { type: 'segment', value: pick(['new', 'returning', 'loyal']) }])),
+    userRestriction: json(restriction),
+    showInOffers: listedInOffers(restriction.type, base.batchId),
     usageLimitTotal: pick([500, 1000, 5000, null]), usageLimitPerUser: pick([1, 2, 3, 5]), usedCount: 0,
     stackable: chance(0.2), priority: int(0, 10), discountBearer: 'PLATFORM', vendorId: null,
     value: fields.value ?? null, maxDiscountCap: fields.maxDiscountCap ?? null, config: json(fields.config ?? {}),
-    ...window, createdAt: window.startDate < daysAgo(0) ? addDays(window.startDate, -int(1, 10)) : daysAgo(1), updatedAt: window.startDate,
+    ...window, ...moderation(window.status, base.vendorId), createdAt: window.startDate < daysAgo(0) ? addDays(window.startDate, -int(1, 10)) : daysAgo(1), updatedAt: window.startDate,
     ...base,
   };
 }
@@ -107,14 +122,17 @@ async function seedCoupons(accounts: Accounts, catalog: Catalog) {
 
   // Vendor coupons: on the vendor's own products, funded by the vendor.
   const vendorTypes = ['PERCENTAGE', 'FLAT', 'CASHBACK', 'FREE_SHIPPING', 'BOGO', 'TIERED'];
-  for (const vendor of accounts.sellingVendors) {
+  for (const [vendorIndex, vendor] of accounts.sellingVendors.entries()) {
     const stem = vendor.slug.replace(/-/g, '').slice(0, 6).toUpperCase();
     for (let i = 0; i < VENDOR_COUPONS_PER_VENDOR; i += 1) {
       const type = vendorTypes[i % vendorTypes.length]!;
-      rows.push(couponRow(unique(`${stem}${i + 1}`), type, {
+      const row = couponRow(unique(`${stem}${i + 1}`), type, {
         createdById: vendor.ownerId, vendorId: vendor.id, discountBearer: 'VENDOR',
         applicableScope: json({ type: 'vendor', ids: [vendor.id] }),
-      }));
+      });
+      // Every tenth vendor has a coupon still waiting for an admin.
+      if (i === 0 && vendorIndex % 10 === 0) Object.assign(row, { status: 'PENDING_APPROVAL', rejectionNote: null, endDate: daysAgo(-int(20, 90)) });
+      rows.push(row);
     }
   }
   await insert('coupon_batches', batches);
