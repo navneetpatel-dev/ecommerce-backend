@@ -49,6 +49,7 @@ import {
   mapSubOrderRow,
   suborderListIncludes,
 } from './suborderInclude';
+import { orderItemMatchesSql } from '@modules/orders/orderItemSearchSql';
 
 export class SubordersService {
   async list(vendorId?: string | null, query?: GetSubOrdersQuery) {
@@ -72,7 +73,7 @@ export class SubordersService {
       const searchConditions = [
         `"SubOrder"."id"::text ILIKE ${esc}`,
         `"SubOrder"."taxInvoiceNumber" ILIKE ${esc}`,
-        `EXISTS (SELECT 1 FROM order_items oi WHERE oi."subOrderId" = "SubOrder"."id" AND (oi."productName" ILIKE ${esc} OR oi."sku" ILIKE ${esc}))`,
+        `EXISTS (SELECT 1 FROM order_items oi WHERE oi."subOrderId" = "SubOrder"."id" AND ${orderItemMatchesSql('oi', esc)})`,
         `EXISTS (SELECT 1 FROM shipments sh WHERE sh."subOrderId" = "SubOrder"."id" AND sh."trackingNumber" ILIKE ${esc})`,
         `EXISTS (SELECT 1 FROM orders o WHERE o."id" = "SubOrder"."orderId" AND o."id"::text ILIKE ${esc})`,
       ];

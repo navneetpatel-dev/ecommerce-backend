@@ -93,6 +93,7 @@ import {
 } from '@modules/reports/notePdf.service';
 import { orderReference } from '@modules/orders/orderReference';
 import { notifyReturnEscalated, notifyReturnStatus } from '@modules/notifications/events/returnEvents';
+import { orderItemMatchesSql } from '@modules/orders/orderItemSearchSql';
 
 const returnListInclude = [
   { model: OrderItem, as: 'orderItem', required: false, attributes: ['id', 'productName'] },
@@ -494,7 +495,7 @@ export class ReturnsService {
       const esc = sequelize.escape(q);
       (where as any)[Op.and] = [
         sequelize.literal(
-          `("ReturnRequest"."id"::text ILIKE ${esc} OR "ReturnRequest"."reasonCode"::text ILIKE ${esc} OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.id = "ReturnRequest"."orderItemId" AND (oi."productName" ILIKE ${esc} OR oi."sku" ILIKE ${esc})) OR EXISTS (SELECT 1 FROM users u WHERE u.id = "ReturnRequest"."userId" AND u.name ILIKE ${esc}))`,
+          `("ReturnRequest"."id"::text ILIKE ${esc} OR "ReturnRequest"."reasonCode"::text ILIKE ${esc} OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.id = "ReturnRequest"."orderItemId" AND ${orderItemMatchesSql('oi', esc)}) OR EXISTS (SELECT 1 FROM users u WHERE u.id = "ReturnRequest"."userId" AND u.name ILIKE ${esc}))`,
         ),
       ];
     }
@@ -685,7 +686,7 @@ export class ReturnsService {
       const esc = sequelize.escape(q);
       (where as any)[Op.and] = [
         sequelize.literal(
-          `("ReturnRequest"."id"::text ILIKE ${esc} OR "ReturnRequest"."reasonCode"::text ILIKE ${esc} OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.id = "ReturnRequest"."orderItemId" AND (oi."productName" ILIKE ${esc} OR oi."sku" ILIKE ${esc})) OR EXISTS (SELECT 1 FROM users u WHERE u.id = "ReturnRequest"."userId" AND u.name ILIKE ${esc}))`,
+          `("ReturnRequest"."id"::text ILIKE ${esc} OR "ReturnRequest"."reasonCode"::text ILIKE ${esc} OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.id = "ReturnRequest"."orderItemId" AND ${orderItemMatchesSql('oi', esc)}) OR EXISTS (SELECT 1 FROM users u WHERE u.id = "ReturnRequest"."userId" AND u.name ILIKE ${esc}))`,
         ),
       ];
     }

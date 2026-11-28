@@ -480,11 +480,9 @@ export class CouponsService {
     if (query.type) where.type = query.type;
     if (query.batchId) where.batchId = query.batchId;
     else if (query.excludeBatches) where.batchId = null;
-    if (query.search?.trim()) {
-      // What is typed is matched literally, in the code or the name.
-      const term = `%${query.search.trim().replace(/[\\%_]/g, '\\$&')}%`;
-      Object.assign(where, { [Op.or]: [{ code: { [Op.iLike]: term } }, { name: { [Op.iLike]: term } }] });
-    }
+    // What is typed is matched literally; a coupon is found by its code.
+    const search = query.search?.trim();
+    if (search) where.code = { [Op.iLike]: `%${search.replace(/[\\%_]/g, '\\$&')}%` };
     if (opts.forceVendorId) where.vendorId = opts.forceVendorId;
     else if (query.vendorId) where.vendorId = query.vendorId;
     else if (query.vendorScoped === true) where.vendorId = { [Op.ne]: null };
