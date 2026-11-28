@@ -1,15 +1,13 @@
 import { Op } from 'sequelize';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
-import { assertPartPaidFor, assertSubOrderTransition, VENDOR_VISIBLE_ORDER_WHERE } from './subOrderTransitions';
+import { assertPartPaidFor, assertSubOrderTransition } from './subOrderTransitions';
 import { recordPartShipment } from './partShipment';
 import { User } from '@database/models/user.model';
 import { SubOrder } from '@database/models/subOrder.model';
-import { Vendor } from '@database/models/vendor.model';
 import { Order } from '@database/models/order.model';
 import { OrderItem } from '@database/models/orderItem.model';
 import { Shipment } from '@database/models/shipment.model';
-import { ReturnRequest } from '@database/models/returnRequest.model';
 import { restoreStock } from '@modules/inventory/restoreStock';
 import { CommissionLedger } from '@database/models/commissionLedger.model';
 import { TcsLedger } from '@database/models/tcsLedger.model';
@@ -24,11 +22,9 @@ import {
 } from '@core/constants/statuses';
 import { fromPaise, roundMoney, sumRupees, toPaise } from '@modules/pricing/money';
 import {
-  isWalletFundedOrder,
   orderRazorpayPaidPaise,
   walletShareOfRefundPaise,
 } from '@modules/pricing/refundSplit';
-import { mapSubOrder } from '@modules/orders/orderDisplayMappers';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { settleCodPaymentIfComplete } from '@modules/shipping/codSettlement';
 import { rollUpOrderStatus } from '@modules/orders/orderStatusRollup';
@@ -48,7 +44,6 @@ import { orderReference } from '@modules/orders/orderReference';
 import { buildOrderEmailData } from '@modules/notifications/orderEmailData';
 import { notifySubOrderDelivered } from '@modules/notifications/events/orderEvents';
 import {
-  shipmentInclude,
   returnRequestInclude,
   suborderCancelCashShare,
   mapSubOrderRow,

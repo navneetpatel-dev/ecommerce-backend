@@ -11,24 +11,24 @@ import {
   applyRevisionUpdate,
   discardRevisionUpdate,
   editableMediaBase,
-  serializePendingReview,
   reviewEditUpdate,
   withoutRevision,
 } from './reviewRevisions';
 import { castReviewVote, clearReviewVote, findViewerVotes, type ReviewVoteValue } from './reviewVotes';
 import { Review } from '@database/models/review.model';
 import { OrderItem } from '@database/models/orderItem.model';
+import type { Order } from '@database/models/order.model';
 import { SubOrder } from '@database/models/subOrder.model';
 import { Product } from '@database/models/product.model';
-import { User } from '@database/models/user.model';
 import { notifyReviewApproved, notifyReviewCreated, notifyReviewDecision, notifyReviewReplied } from '@modules/notifications/events/reviewEvents';
 import { settingsService } from '@modules/settings/settings.service';
 import { evaluateReviewModeration } from './reviewModerationDecision';
 import { logAudit } from '@modules/audit/audit.service';
 import { sequelize } from '@database/models';
-import { Op, QueryTypes } from 'sequelize';
+import type { Transaction } from 'sequelize';
+import { listPendingReviews } from './reviewModerationQueue';
+import { recalculateProductRating } from './productRating';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
-
 
 export class ReviewsService {
   async createReview(userId: string, data: CreateReviewRequest) {
@@ -47,7 +47,7 @@ export class ReviewsService {
       if (!orderItemResult) throw new NotFoundError('OrderItem');
 
       // Type assertion after null check
-      const orderItem = orderItemResult as OrderItem & { subOrder: SubOrder & { order: any } };
+      const orderItem = orderItemResult as OrderItem & { subOrder: SubOrder & { order: Order } };
 
       if (orderItem.subOrder.order.userId !== userId) {
         throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_ORDER);
@@ -258,7 +258,7 @@ export class ReviewsService {
   async respondToReview(reviewId: string, vendorId: string | null, response: string, isAdmin: boolean = false) {
     const review = await Review.findByPk(reviewId, { include: [{ model: Product, as: 'product' }] });
     if (!review) throw new NotFoundError('Review');
-    if (!isAdmin && (!vendorId || (review as any).product?.vendorId !== vendorId)) {
+    if (!isAdmin && (!vendorId || (review as Review & { product?: Product }).product?.vendorId !== vendorId)) {
       throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_PRODUCT_REVIEW);
     }
     const cleanResponse = response.trim();
@@ -293,47 +293,11 @@ export class ReviewsService {
   }
 
   async listPending(query: { page: number; limit: number }) {
-    const offset = paginationOffset(query.page, query.limit);
-    const { rows, count } = await Review.findAndCountAll({
-      // New reviews, edits of approved ones, and reviews flagged by merchants/users, oldest first.
-      where: {
-        [Op.or]: [
-          { status: REVIEW_STATUS.PENDING },
-          { pendingRevision: { [Op.ne]: null } },
-          { flaggedReason: { [Op.ne]: null } },
-        ],
-      },
-      include: [
-        { model: Product, as: 'product', attributes: ['id', 'name'] },
-        { model: User, as: 'user', attributes: ['id', 'name'] },
-      ],
-      order: [['createdAt', 'ASC']],
-      limit: query.limit,
-      offset,
-      distinct: true,
-      col: 'id',
-    });
-    return {
-      reviews: rows.map((row) => serializePendingReview(row)),
-      pagination: buildPaginationMeta(count, query.page, query.limit),
-    };
+    return listPendingReviews(query);
   }
 
-  private async recalculateProductRating(productId: string, transaction: any) {
-    const [result] = await sequelize.query<{ avg: string; count: string }>(
-      `SELECT AVG(rating)::numeric(3,2) as avg, COUNT(*) as count 
-       FROM reviews WHERE "productId" = :productId AND status = :status AND "deletedAt" IS NULL`,
-      {
-        replacements: { productId, status: REVIEW_STATUS.APPROVED },
-        type: QueryTypes.SELECT,
-        transaction,
-      }
-    );
-
-    await Product.update(
-      { avgRating: Number(result?.avg ?? 0) },
-      { where: { id: productId }, transaction }
-    );
+  private async recalculateProductRating(productId: string, transaction: Transaction) {
+    await recalculateProductRating(productId, transaction);
   }
 }
 

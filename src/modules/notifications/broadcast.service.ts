@@ -1,24 +1,21 @@
-import { Op, fn, col } from 'sequelize';
+import { Op } from 'sequelize';
 import { logger } from '@core/logger';
 import { AppError } from '@core/errors';
 import { ERROR_CODES } from '@core/constants/errors';
-import { CATEGORY_STATUS } from '@core/constants/statuses';
 import {
   AdminBroadcast,
   type BroadcastChannel,
   type BroadcastClassification,
   type BroadcastPriority,
 } from '@database/models/adminBroadcast.model';
-import { Address } from '@database/models/address.model';
-import { Category } from '@database/models/category.model';
-import { NotificationLog } from '@database/models/notificationLog.model';
 import { Role } from '@database/models/role.model';
 import { User } from '@database/models/user.model';
-import { Vendor } from '@database/models/vendor.model';
 import { bulkResendNotifications } from './emailRecovery';
-import { enqueueNotification } from './notificationDelivery';
-import { pushService } from './push.service';
-import { renderNotificationEmail, type EmailTemplateData } from './templates/registry';
+import { renderNotificationEmail } from './templates/registry';
+import { dispatchBroadcastBatch } from './broadcastDispatch';
+import { listBroadcasts } from './broadcastHistory';
+import { searchCategories, searchLocations, searchTargetUsers } from './broadcastPickers';
+import type { BroadcastInput, BroadcastSendResult } from './broadcast.types';
 import {
   interpolateBroadcastText,
   previewBroadcastTargetsQuery,
@@ -26,40 +23,12 @@ import {
   type BroadcastTargetConfig,
   type ResolvedRecipient,
 } from './broadcastTargeting.service';
-import { inAppNotificationsService } from './inAppNotifications.service';
 
-export interface BroadcastSendResult {
-  broadcastId: string;
-  status: string;
-  scheduledAt?: Date | null;
-  targeted: number;
-  queued: number;
-}
-
-export interface BroadcastInput extends BroadcastTargetConfig {
-  subject: string;
-  message: string;
-  ctaLabel?: string;
-  ctaUrl?: string;
-  classification?: BroadcastClassification;
-  priority?: BroadcastPriority;
-  channels?: BroadcastChannel[];
-  scheduledAt?: string | null;
-}
+export type { BroadcastInput, BroadcastSendResult } from './broadcast.types';
 
 const BATCH_SIZE = 200;
-const CHUNK_CONCURRENCY = 20;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function filterEmailEligible(
-  recipients: ResolvedRecipient[],
-  classification: BroadcastClassification,
-): ResolvedRecipient[] {
-  return recipients.filter(
-    (r) => !r.emailSuppressed && (classification !== 'marketing' || r.emailMarketingConsent),
-  );
-}
 
 export class BroadcastService {
   async previewTargets(params: {
@@ -132,7 +101,7 @@ export class BroadcastService {
       emailSuppressed: false,
       hasPush: true,
     };
-    const sent = await this.dispatchBatch(null, [recipient], {
+    const sent = await dispatchBroadcastBatch(null, [recipient], {
       ...params,
       subject: `[Test] ${params.subject}`,
       channels,
@@ -226,12 +195,12 @@ export class BroadcastService {
     let totalTargeted = 0;
     let totalQueued = 0;
 
-    while (true) {
+    for (;;) {
       const batch = await resolveBroadcastBatch(targetConfig, { afterId, limit: BATCH_SIZE });
       if (batch.length === 0) break;
 
       totalTargeted += batch.length;
-      const queued = await this.dispatchBatch(
+      const queued = await dispatchBroadcastBatch(
         record.id,
         batch,
         {
@@ -291,51 +260,10 @@ export class BroadcastService {
     return processed;
   }
 
-  async listBroadcasts(limit = 50) {
-    const broadcasts = await AdminBroadcast.findAll({
-      order: [['createdAt', 'DESC']],
-      limit: Math.min(Math.max(limit, 1), 100),
-      include: [{ model: User, as: 'actor', attributes: ['id', 'name', 'email'] }],
-    });
-    const ids = broadcasts.map((b) => b.id);
-    if (!ids.length) return [];
-
-    const statRows = (await NotificationLog.findAll({
-      where: { referenceType: 'AdminBroadcast', referenceId: { [Op.in]: ids } },
-      attributes: ['referenceId', 'status', [fn('COUNT', col('id')), 'count']],
-      group: ['referenceId', 'status'],
-      raw: true,
-    })) as unknown as Array<{ referenceId: string; status: string; count: string | number }>;
-
-    const statsMap = new Map<
-      string,
-      { sentCount: number; failedCount: number; bouncedCount: number; pendingCount: number }
-    >();
-    for (const row of statRows) {
-      const cur = statsMap.get(row.referenceId) ?? {
-        sentCount: 0,
-        failedCount: 0,
-        bouncedCount: 0,
-        pendingCount: 0,
-      };
-      const n = Number(row.count) || 0;
-      if (row.status === 'SENT') cur.sentCount += n;
-      else if (row.status === 'FAILED') cur.failedCount += n;
-      else if (row.status === 'BOUNCED' || row.status === 'COMPLAINED') cur.bouncedCount += n;
-      else if (row.status === 'PENDING') cur.pendingCount += n;
-      statsMap.set(row.referenceId, cur);
-    }
-
-    return broadcasts.map((b) => ({
-      ...b.get({ plain: true }),
-      stats: statsMap.get(b.id) ?? {
-        sentCount: 0,
-        failedCount: 0,
-        bouncedCount: 0,
-        pendingCount: 0,
-      },
-    }));
-  }
+  listBroadcasts = listBroadcasts;
+  searchTargetUsers = searchTargetUsers;
+  searchCategories = searchCategories;
+  searchLocations = searchLocations;
 
   async retryFailedForBroadcast(id: string, actorId: string) {
     const record = await AdminBroadcast.findByPk(id, { attributes: ['id'] });
@@ -367,203 +295,6 @@ export class BroadcastService {
     return record;
   }
 
-  async searchTargetUsers(
-    q: string,
-    page = 1,
-    limit = 20,
-  ): Promise<{
-    items: Array<{ id: string; name: string; email: string; role: string }>;
-    total: number;
-    page: number;
-    hasMore: boolean;
-  }> {
-    const safePage = Math.max(page, 1);
-    const safeLimit = Math.min(Math.max(limit, 1), 50);
-    const trimmed = q.trim();
-    const where: Record<string | symbol, unknown> = { status: 'ACTIVE' };
-    if (trimmed) {
-      where[Op.or] = [
-        { name: { [Op.iLike]: `%${trimmed}%` } },
-        { email: { [Op.iLike]: `%${trimmed}%` } },
-      ];
-    }
-    const { count, rows } = await User.findAndCountAll({
-      where: where as Record<string, unknown>,
-      attributes: ['id', 'name', 'email'],
-      include: [{ model: Role, as: 'role', attributes: ['name'] }],
-      limit: safeLimit,
-      offset: (safePage - 1) * safeLimit,
-      order: [['createdAt', 'DESC'], ['id', 'ASC']],
-    });
-    return {
-      items: rows.map((u) => ({
-        id: u.id,
-        name: u.name,
-        email: u.email,
-        role: u.role?.name ?? 'CUSTOMER',
-      })),
-      total: count,
-      page: safePage,
-      hasMore: safePage * safeLimit < count,
-    };
-  }
-
-  async searchCategories(
-    q: string,
-    page = 1,
-    limit = 20,
-  ): Promise<{
-    items: Array<{ id: string; name: string; slug: string }>;
-    total: number;
-    page: number;
-    hasMore: boolean;
-  }> {
-    const safePage = Math.max(page, 1);
-    const safeLimit = Math.min(Math.max(limit, 1), 50);
-    const trimmed = q.trim();
-    const where: Record<string, unknown> = { status: CATEGORY_STATUS.ACTIVE };
-    if (trimmed) where.name = { [Op.iLike]: `%${trimmed}%` };
-    const { count, rows } = await Category.findAndCountAll({
-      where,
-      attributes: ['id', 'name', 'slug'],
-      limit: safeLimit,
-      offset: (safePage - 1) * safeLimit,
-      order: [['name', 'ASC']],
-    });
-    return {
-      items: rows.map((c) => ({ id: c.id, name: c.name, slug: c.slug })),
-      total: count,
-      page: safePage,
-      hasMore: safePage * safeLimit < count,
-    };
-  }
-
-  async searchLocations(field: 'state' | 'city', q: string, page = 1, limit = 20) {
-    const safePage = Math.max(page, 1);
-    const safeLimit = Math.min(Math.max(limit, 1), 50);
-    const trimmed = q.trim();
-    const locWhere = trimmed
-      ? { [field]: { [Op.and]: [{ [Op.ne]: null }, { [Op.iLike]: `%${trimmed}%` }] } }
-      : { [field]: { [Op.ne]: null } };
-
-    const [addrRows, vendorRows] = await Promise.all([
-      Address.findAll({ where: locWhere, attributes: [[fn('DISTINCT', col(field)), field]], raw: true }),
-      Vendor.findAll({ where: locWhere, attributes: [[fn('DISTINCT', col(field)), field]], raw: true }),
-    ]);
-
-    const merged = [
-      ...new Set(
-        [...addrRows, ...vendorRows]
-          .map((r) => String((r as unknown as Record<string, unknown>)[field] ?? '').trim())
-          .filter(Boolean),
-      ),
-    ].sort((a, b) => a.localeCompare(b));
-
-    const start = (safePage - 1) * safeLimit;
-    return {
-      items: merged.slice(start, start + safeLimit),
-      total: merged.length,
-      page: safePage,
-      hasMore: start + safeLimit < merged.length,
-    };
-  }
-
-  private async dispatchBatch(
-    broadcastId: string | null,
-    recipients: ResolvedRecipient[],
-    params: {
-      subject: string;
-      message: string;
-      ctaLabel?: string;
-      ctaUrl?: string;
-      classification?: BroadcastClassification;
-      priority?: BroadcastPriority;
-      channels: BroadcastChannel[];
-      isolateMarketingQueue: boolean;
-    },
-    actorId?: string,
-  ): Promise<number> {
-    if (!recipients.length) return 0;
-    const channels = new Set(params.channels);
-    const classification = params.classification ?? 'operational';
-    const refId = broadcastId ?? `test-${Date.now()}`;
-    let queued = 0;
-
-    if (channels.has('EMAIL')) {
-      const emailTargets = filterEmailEligible(recipients, classification);
-      const urgency =
-        classification === 'marketing' || params.isolateMarketingQueue
-          ? 'marketing'
-          : 'transactional';
-      for (let i = 0; i < emailTargets.length; i += CHUNK_CONCURRENCY) {
-        const chunk = emailTargets.slice(i, i + CHUNK_CONCURRENCY);
-        const results = await Promise.allSettled(
-          chunk.map((user) => {
-            const templateData: EmailTemplateData = {
-              customerName: user.name,
-              subject: interpolateBroadcastText(params.subject, user),
-              message: interpolateBroadcastText(params.message, user),
-              ctaLabel: params.ctaLabel,
-              ctaUrl: params.ctaUrl,
-              actionUrl: params.ctaUrl,
-              isMarketing: classification === 'marketing',
-            };
-            return enqueueNotification({
-              userId: user.id,
-              type: 'ADMIN_BROADCAST',
-              referenceType: 'AdminBroadcast',
-              referenceId: refId,
-              templateData,
-              actorId,
-              urgency,
-            });
-          }),
-        );
-        queued += results.filter((r) => r.status === 'fulfilled' && r.value != null).length;
-      }
-    }
-
-    if (channels.has('PUSH')) {
-      const pushTargets = recipients.filter((r) => r.hasPush);
-      for (let i = 0; i < pushTargets.length; i += CHUNK_CONCURRENCY) {
-        const chunk = pushTargets.slice(i, i + CHUNK_CONCURRENCY);
-        await Promise.allSettled(
-          chunk.map((user) =>
-            pushService.sendForNotification({
-              userId: user.id,
-              type: 'ADMIN_BROADCAST',
-              referenceType: 'AdminBroadcast',
-              referenceId: refId,
-              templateData: {
-                customerName: user.name,
-                subject: interpolateBroadcastText(params.subject, user),
-                message: interpolateBroadcastText(params.message, user),
-                actionUrl: params.ctaUrl,
-              },
-            }),
-          ),
-        );
-        queued += chunk.length;
-      }
-    }
-
-    if (channels.has('IN_APP')) {
-      const inAppCount = await inAppNotificationsService.bulkCreate(
-        recipients.map((user) => ({
-          userId: user.id,
-          broadcastId,
-          title: interpolateBroadcastText(params.subject, user),
-          message: interpolateBroadcastText(params.message, user),
-          ctaLabel: params.ctaLabel ?? null,
-          ctaUrl: params.ctaUrl ?? null,
-          category: classification === 'marketing' ? 'PROMOTION' : 'ANNOUNCEMENT',
-        })),
-      );
-      queued += inAppCount;
-    }
-
-    return queued;
-  }
 }
 
 export const broadcastService = new BroadcastService();

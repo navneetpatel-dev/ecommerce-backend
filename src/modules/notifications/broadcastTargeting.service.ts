@@ -1,5 +1,4 @@
 import { Op, fn, col, literal } from 'sequelize';
-import type { RoleName } from '@core/constants/statuses';
 import { Address } from '@database/models/address.model';
 import { Cart } from '@database/models/cart.model';
 import { Order } from '@database/models/order.model';
@@ -9,54 +8,9 @@ import { User } from '@database/models/user.model';
 import { Vendor } from '@database/models/vendor.model';
 import { VendorCategory } from '@database/models/vendorCategory.model';
 import type { BroadcastChannel, BroadcastClassification } from '@database/models/adminBroadcast.model';
+import type { BroadcastTargetConfig, ResolvedRecipient, UserActivityFilter } from './broadcastTargeting.types';
 
-export type UserActivityFilter =
-  | 'ordered_last_30d'
-  | 'inactive_30d'
-  | 'inactive_90d'
-  | 'repeat_buyers'
-  | 'abandoned_cart';
-
-export interface BroadcastTargetConfig {
-  mode?: 'roles' | 'users' | 'user_segment' | 'vendor_segment';
-  allUsers?: boolean;
-  role?: RoleName;
-  roles?: RoleName[];
-  userIds?: string[];
-  emails?: string[];
-  userSegment?: {
-    status?: 'ACTIVE' | 'BLOCKED' | 'ALL';
-    emailVerified?: boolean;
-    emailMarketingConsent?: boolean;
-    signedUpWithinDays?: number;
-    activity?: UserActivityFilter;
-    state?: string;
-    city?: string;
-  };
-  vendorSegment?: {
-    vendorStatus?: 'APPROVED' | 'PENDING' | 'SUSPENDED';
-    kycVerified?: boolean;
-    categoryIds?: string[];
-    state?: string;
-    minPerformanceScore?: number;
-    maxPerformanceScore?: number;
-  };
-  excludeUserIds?: string[];
-  excludeRoles?: RoleName[];
-}
-
-export interface ResolvedRecipient {
-  id: string;
-  email: string;
-  name: string;
-  role: string;
-  businessName: string | null;
-  city: string | null;
-  emailVerified: boolean;
-  emailMarketingConsent: boolean;
-  emailSuppressed: boolean;
-  hasPush: boolean;
-}
+export type { BroadcastTargetConfig, ResolvedRecipient, UserActivityFilter } from './broadcastTargeting.types';
 
 export function interpolateBroadcastText(text: string, recipient: ResolvedRecipient): string {
   const firstName = recipient.name.trim().split(/\s+/)[0] || 'there';

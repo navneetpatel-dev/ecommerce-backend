@@ -21,6 +21,7 @@ import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { userHasPermission } from '@middleware/rbac.middleware';
 import { productQnaRepository } from './productQna.repository';
 import { serializeAnswer, type AnswerRow } from './productAnswerThreads';
+import { serializeQuestion } from './productQuestionSerialize';
 import { findMyAnswers, findMyQuestions, findViewerAnswers } from './productQnaViewer';
 import { moderateAnswerUpdate, moderateQuestionUpdate, ownerRevisionFields } from './productQnaRevisions';
 
@@ -33,41 +34,6 @@ import { Product } from '@database/models/product.model';
 import { sequelize } from '@database/models';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { notifyVendorNewQuestion } from '@modules/notifications/events/vendorEvents';
-
-function serializeQuestion(
-  row: ProductQuestion,
-  opts?: { publishedAnswersOnly?: boolean; previewAnswers?: AnswerRow[] },
-) {
-  const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
-  const answers = ((plain.answers ?? []) as Array<Record<string, unknown>>).filter((answer) =>
-    opts?.publishedAnswersOnly ? answer.status === PRODUCT_ANSWER_STATUS.PUBLISHED : true,
-  );
-  return {
-    id: plain.id,
-    productId: plain.productId,
-    userId: plain.userId,
-    question: plain.question,
-    status: plain.status,
-    createdAt: plain.createdAt,
-    editedAt: plain.editedAt ?? null,
-    customerName: plain.user?.name ?? null,
-    productName: plain.product?.name ?? null,
-    // Public list: only the best answer(s) ride along; the thread pages in separately.
-    answerCount: plain.answerCount !== undefined ? Number(plain.answerCount) : answers.length,
-    answers: opts?.previewAnswers
-      ? opts.previewAnswers.map(serializeAnswer)
-      : answers.map((a: any) => ({
-        id: a.id,
-        answer: a.answer,
-        authorId: a.authorId,
-        authorType: a.authorType,
-        authorName: a.author?.name ?? null,
-        status: a.status,
-        createdAt: a.createdAt,
-        editedAt: a.editedAt ?? null,
-      })),
-  };
-}
 
 export class ProductQnaService {
   /**
@@ -204,7 +170,7 @@ export class ProductQnaService {
       const already = await ProductAnswer.count({ where: { questionId, authorId: userId }, transaction: t });
       if (already > 0) throw new ValidationError({ answer: [ERROR_MESSAGES.ANSWER_ALREADY_EXISTS] });
 
-      const product = (question as any).product as Product | undefined;
+      const product = (question as ProductQuestion & { product?: Product & { vendor?: Vendor } }).product;
       const authorType =
         vendorId && product?.vendorId === vendorId
           ? PRODUCT_ANSWER_AUTHOR_TYPE.VENDOR
@@ -228,8 +194,8 @@ export class ProductQnaService {
       let answerStatus: ProductAnswerStatus = PRODUCT_ANSWER_STATUS.PENDING;
       if (authorType === PRODUCT_ANSWER_AUTHOR_TYPE.VENDOR && product?.vendorId) {
         const vendor =
-          (product as any).vendor ??
-          ((t as any)?.LOCK
+          product.vendor ??
+          (t?.LOCK
             ? await Vendor.findByPk(product.vendorId, {
               attributes: ['id', 'status', 'kycVerified', 'businessName'],
               transaction: t,

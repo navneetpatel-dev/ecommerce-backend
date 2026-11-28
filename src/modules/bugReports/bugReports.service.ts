@@ -33,13 +33,11 @@ import { logAudit } from '@modules/audit/audit.service';
 import { usersService } from '@modules/users/users.service';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { resolvePermissionsForUser } from '@middleware/rbac.middleware';
-import { extractS3KeyFromUrl, signedGetObjectUrlMap } from '@config/s3';
 import { rebaseAttachmentUrlsToEntity, S3_ENTITY_TYPES } from '@core/s3';
 import {
   assertAttachmentLimits,
 } from '@core/media';
 import { assertRemoteVideoBackstop } from '@core/media';
-import { AuditLog } from '@database/models/auditLog.model';
 import type {
   AdminBugListQuery,
   BugCommentRequest,
@@ -52,6 +50,7 @@ import type {
   WontFixBugReportRequest,
 } from './bugReports.dto';
 import { BUG_ALLOWED_TRANSITIONS } from './bugReports.lifecycle';
+import { serializeAttachments, serializeComment, serializeBugReport, loadBugTimeline } from './bugReportSerialize';
 import { notifyAdminsOfNewBugReport } from '@modules/notifications/events/supportEvents';
 
 /** Statuses where triage fields (severity/module/assignee) may be updated without a status change. */
@@ -61,25 +60,10 @@ const ASSIGNMENT_EDITABLE_STATUSES: BugReportStatus[] = [
   BUG_REPORT_STATUS.FIXED,
 ];
 
-/** Public timeline actions visible to reporters (excludes internal comments). */
-const PUBLIC_BUG_TIMELINE_ACTIONS = new Set([
-  'BUG_REPORT_CREATED',
-  'BUG_REPORT_TRIAGED',
-  'BUG_REPORT_STATUS',
-  'BUG_REPORT_DUPLICATE',
-  'BUG_REPORT_WONT_FIX',
-  'BUG_REPORT_VERIFIED',
-  'BUG_REPORT_AUTO_VERIFIED',
-  'BUG_REPORT_AUTO_CLOSED',
-]);
-
-const ADMIN_BUG_TIMELINE_ACTIONS = new Set([
-  ...PUBLIC_BUG_TIMELINE_ACTIONS,
-  'BUG_REPORT_ASSIGNMENT_UPDATED',
-]);
-
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+type WithAttachments = BugReport & { attachments?: BugReportAttachment[] };
 
 type Actor = {
   id: string;
@@ -140,85 +124,6 @@ async function assertBugManagePermission(actor: Actor): Promise<void> {
   }
 }
 
-async function serializeAttachments(rows: BugReportAttachment[]) {
-  const plains = rows.map((row) =>
-    typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row,
-  );
-  const keyByIndex = plains.map((plain) => extractS3KeyFromUrl(plain.url));
-  const signedByKey = await signedGetObjectUrlMap(keyByIndex);
-  return plains.map((plain, index) => {
-    const key = keyByIndex[index];
-    return {
-      id: plain.id,
-      bugReportId: plain.bugReportId,
-      url: (key && signedByKey.get(key)) || plain.url,
-      type: plain.type,
-      durationSeconds: plain.durationSeconds ?? null,
-      createdAt: plain.createdAt,
-    };
-  });
-}
-
-function serializeComment(row: BugReportComment & { author?: User }) {
-  const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
-  return {
-    id: plain.id,
-    bugReportId: plain.bugReportId,
-    authorId: plain.authorId,
-    authorName: plain.author?.name ?? null,
-    body: plain.body,
-    createdAt: plain.createdAt,
-  };
-}
-
-type SerializedAttachment = Awaited<ReturnType<typeof serializeAttachments>>[number];
-
-type TimelineEntry = {
-  action: string;
-  createdAt: string | Date;
-  status: string | null;
-  from: string | null;
-  to: string | null;
-  automated: boolean;
-  duplicateOfReportNumber: string | null;
-};
-
-async function loadBugTimeline(
-  bugReportId: string,
-  includeInternal: boolean,
-  transaction?: Transaction,
-): Promise<TimelineEntry[]> {
-  const allowed = includeInternal ? ADMIN_BUG_TIMELINE_ACTIONS : PUBLIC_BUG_TIMELINE_ACTIONS;
-  const rows = await AuditLog.findAll({
-    where: {
-      entityType: 'BugReport',
-      entityId: bugReportId,
-      action: { [Op.in]: [...allowed] },
-    },
-    order: [['createdAt', 'ASC']],
-    limit: 100,
-    attributes: ['action', 'metadata', 'createdAt'],
-    transaction,
-  });
-
-  return rows.map((row) => {
-    const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
-    const metadata = (plain.metadata ?? {}) as Record<string, unknown>;
-    return {
-      action: plain.action,
-      createdAt: plain.createdAt,
-      status: typeof metadata.status === 'string' ? metadata.status : null,
-      from: typeof metadata.from === 'string' ? metadata.from : null,
-      to: typeof metadata.to === 'string' ? metadata.to : null,
-      automated: metadata.automated === true,
-      duplicateOfReportNumber:
-        typeof metadata.duplicateOfReportNumber === 'string'
-          ? metadata.duplicateOfReportNumber
-          : null,
-    };
-  });
-}
-
 function normalizeDuplicateRef(raw: string): { id?: string; reportNumber?: string } {
   const value = raw.trim();
   if (UUID_RE.test(value)) return { id: value };
@@ -226,58 +131,6 @@ function normalizeDuplicateRef(raw: string): { id?: string; reportNumber?: strin
   if (/^BUG-\d+$/.test(upper)) return { reportNumber: upper };
   if (/^\d+$/.test(upper)) return { reportNumber: `BUG-${upper.padStart(6, '0')}` };
   return { reportNumber: upper };
-}
-
-function serializeBugReport(
-  row: BugReport,
-  extras: {
-    attachments?: SerializedAttachment[];
-    comments?: ReturnType<typeof serializeComment>[];
-    timeline?: TimelineEntry[];
-    includeInternal?: boolean;
-  } = {},
-) {
-  const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
-  const base = {
-    id: plain.id,
-    reportNumber: plain.reportNumber,
-    reporterId: plain.reporterId,
-    reporterName: plain.reporter?.name ?? null,
-    reporterRole: plain.reporterRole,
-    title: plain.title,
-    description: plain.description,
-    stepsToReproduce: plain.stepsToReproduce ?? null,
-    severity: plain.severity,
-    status: plain.status,
-    duplicateOfId: plain.duplicateOfId ?? plain.duplicateOf?.id ?? null,
-    duplicateOfReportNumber: plain.duplicateOf?.reportNumber ?? null,
-    assignedToId: plain.assignedToId ?? null,
-    assignedToName: plain.assignedTo?.name ?? null,
-    affectedModule: plain.affectedModule,
-    pageUrl: plain.pageUrl ?? null,
-    userAgent: plain.userAgent ?? null,
-    browserName: plain.browserName ?? null,
-    osName: plain.osName ?? null,
-    deviceType: plain.deviceType ?? null,
-    appVersion: plain.appVersion ?? null,
-    userId: plain.userId,
-    userRole: plain.userRole,
-    occurredAt: plain.occurredAt,
-    triagedAt: plain.triagedAt ?? null,
-    inProgressAt: plain.inProgressAt ?? null,
-    resolvedAt: plain.resolvedAt ?? null,
-    verifiedAt: plain.verifiedAt ?? null,
-    wontFixReason: plain.wontFixReason ?? null,
-    createdAt: plain.createdAt,
-    updatedAt: plain.updatedAt,
-    attachments: extras.attachments,
-    timeline: extras.timeline ?? [],
-  };
-
-  if (extras.includeInternal) {
-    return { ...base, comments: extras.comments ?? [] };
-  }
-  return base;
 }
 
 function assertBugAccess(bug: BugReport, actor: Actor, hasManagePermission: boolean): void {
@@ -381,7 +234,7 @@ export class BugReportsService {
         transaction: t,
       });
       return serializeBugReport(created!, {
-        attachments: await serializeAttachments((created as any)?.attachments ?? []),
+        attachments: await serializeAttachments((created as WithAttachments | null)?.attachments ?? []),
       });
     });
   }
@@ -411,7 +264,7 @@ export class BugReportsService {
     if (query.severity) where.severity = query.severity;
     if (query.search?.trim()) {
       const q = `%${query.search.trim()}%`;
-      (where as any)[Op.or] = [
+      (where as Record<symbol, unknown>)[Op.or] = [
         { title: { [Op.iLike]: q } },
         { reportNumber: { [Op.iLike]: q } },
       ];
@@ -427,7 +280,7 @@ export class BugReportsService {
     if (query.reporterRole) where.reporterRole = query.reporterRole;
     if (query.search?.trim()) {
       const q = `%${query.search.trim()}%`;
-      (where as any)[Op.or] = [
+      (where as Record<symbol, unknown>)[Op.or] = [
         { title: { [Op.iLike]: q } },
         { reportNumber: { [Op.iLike]: q } },
       ];
@@ -460,7 +313,7 @@ export class BugReportsService {
 
     const includeInternal = hasManagePermission;
     const [attachments, timeline] = await Promise.all([
-      serializeAttachments((bug as any).attachments ?? []),
+      serializeAttachments((bug as WithAttachments).attachments ?? []),
       loadBugTimeline(bug.id, includeInternal, transaction),
     ]);
 

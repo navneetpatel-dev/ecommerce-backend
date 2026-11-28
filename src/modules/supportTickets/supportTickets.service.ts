@@ -44,7 +44,6 @@ import { usersService } from '@modules/users/users.service';
 import { PERMISSIONS } from '@core/permissions/permissionKeys';
 import { resolvePermissionsForUser, userHasPermission } from '@middleware/rbac.middleware';
 import { rebaseAttachmentUrlsToEntity, S3_ENTITY_TYPES } from '@core/s3';
-import { extractS3KeyFromUrl, signedGetObjectUrlMap } from '@config/s3';
 import { assertAttachmentLimits, assertCombinedAttachmentLimits } from '@core/media';
 import { assertRemoteVideoBackstop } from '@core/media';
 import type {
@@ -57,6 +56,8 @@ import type {
   VendorTicketListQuery,
 } from './supportTickets.dto';
 import { SUPPORT_TICKET_SLA_HOURS, TICKET_ALLOWED_TRANSITIONS } from './supportTickets.lifecycle';
+import { toPlain } from '@core/repository/toPlain';
+import { serializeAttachments, serializeMessages, serializeTicket } from './ticketSerialize';
 import { notifyTicketAutoClosed } from '@modules/notifications/events/supportEvents';
 
 type Actor = {
@@ -107,106 +108,6 @@ async function isAdminActor(actor: Actor): Promise<boolean> {
 
 function isVendorActor(actor: Actor): boolean {
   return (VENDOR_ROLES as readonly string[]).includes(actor.role.name) && Boolean(actor.vendorId);
-}
-
-async function serializeAttachments(rows: TicketAttachment[]) {
-  const plains = rows.map((row) =>
-    typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row,
-  );
-  const keyByIndex = plains.map((plain) => extractS3KeyFromUrl(plain.url));
-  const signedByKey = await signedGetObjectUrlMap(keyByIndex);
-  return plains.map((plain, index) => {
-    const key = keyByIndex[index];
-    return {
-      id: plain.id,
-      ticketId: plain.ticketId,
-      messageId: plain.messageId ?? null,
-      url: (key && signedByKey.get(key)) || plain.url,
-      type: plain.type,
-      durationSeconds: plain.durationSeconds ?? null,
-      createdAt: plain.createdAt,
-    };
-  });
-}
-
-type SerializedAttachment = Awaited<ReturnType<typeof serializeAttachments>>[number];
-
-async function serializeMessages(
-  rows: Array<TicketMessage & { sender?: User; attachments?: TicketAttachment[] }>,
-) {
-  const plains = rows.map((row) =>
-    typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row,
-  );
-  const allAttachments = plains.flatMap((plain) =>
-    Array.isArray(plain.attachments) ? (plain.attachments as TicketAttachment[]) : [],
-  );
-  const signedAttachments = await serializeAttachments(allAttachments);
-  const byId = new Map(signedAttachments.map((item) => [item.id, item]));
-
-  return plains.map((plain) => ({
-    id: plain.id,
-    ticketId: plain.ticketId,
-    senderId: plain.senderId,
-    senderRole: plain.senderRole,
-    senderName: plain.sender?.name ?? null,
-    body: plain.body,
-    createdAt: plain.createdAt,
-    attachments: Array.isArray(plain.attachments)
-      ? (plain.attachments as TicketAttachment[])
-          .map((row) => {
-            const id =
-              typeof (row as any).get === 'function'
-                ? (row as any).get({ plain: true }).id
-                : (row as any).id;
-            return byId.get(id);
-          })
-          .filter(Boolean)
-      : [],
-  }));
-}
-
-type SerializedMessage = Awaited<ReturnType<typeof serializeMessages>>[number];
-
-function serializeTicket(
-  row: SupportTicket,
-  extras: {
-    latestMessagePreview?: string | null;
-    hasUnread?: boolean;
-    messages?: SerializedMessage[];
-    attachments?: SerializedAttachment[];
-    imageAttachmentCount?: number;
-    videoAttachmentCount?: number;
-  } = {},
-) {
-  const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
-  return {
-    id: plain.id,
-    ticketNumber: plain.ticketNumber,
-    customerId: plain.customerId,
-    customerName: plain.customer?.name ?? null,
-    subject: plain.subject,
-    description: plain.description,
-    category: plain.category,
-    relatedOrderId: plain.relatedOrderId ?? null,
-    relatedVendorId: plain.relatedVendorId ?? null,
-    vendorName: plain.relatedVendor?.businessName ?? null,
-    priority: plain.priority,
-    status: plain.status,
-    assignedToId: plain.assignedToId ?? null,
-    assignedToName: plain.assignedTo?.name ?? null,
-    firstResponseAt: plain.firstResponseAt ?? null,
-    resolvedAt: plain.resolvedAt ?? null,
-    closedAt: plain.closedAt ?? null,
-    customerSatisfactionRating: plain.customerSatisfactionRating ?? null,
-    createdAt: plain.createdAt,
-    updatedAt: plain.updatedAt,
-    latestMessagePreview: extras.latestMessagePreview ?? null,
-    hasUnread: extras.hasUnread ?? false,
-    messages: extras.messages,
-    attachments: extras.attachments,
-    imageAttachmentCount: extras.imageAttachmentCount ?? 0,
-    videoAttachmentCount: extras.videoAttachmentCount ?? 0,
-  };
 }
 
 async function findTicketManagerUserIds(limit = 50): Promise<string[]> {
@@ -517,9 +418,8 @@ export class SupportTicketsService {
     const page = buildKeysetPage(rows, query.limit);
     return {
       items: page.items.map((row) => {
-        const plain: any =
-          typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
-        const metaRaw = plain.latestMessageMeta ?? (row as any).get?.('latestMessageMeta') ?? null;
+        const plain = toPlain<{ latestMessageMeta?: unknown; lastReadAt?: Date | string | null }>(row);
+        const metaRaw = plain.latestMessageMeta ?? null;
         const meta =
           typeof metaRaw === 'string'
             ? (JSON.parse(metaRaw) as {
@@ -533,7 +433,7 @@ export class SupportTicketsService {
         const previewRaw = meta?.body ?? null;
         const previewSenderId = meta?.senderId ?? null;
         const latestAt = meta?.createdAt ?? null;
-        const lastReadAt = plain.lastReadAt ?? (row as any).get?.('lastReadAt') ?? null;
+        const lastReadAt = plain.lastReadAt ?? null;
         const hasUnread = Boolean(
           previewSenderId &&
             previewSenderId !== actor.id &&
@@ -556,7 +456,7 @@ export class SupportTicketsService {
     if (query.category) where.category = query.category;
     if (query.search?.trim()) {
       const q = `%${query.search.trim()}%`;
-      (where as any)[Op.or] = [
+      (where as Record<symbol, unknown>)[Op.or] = [
         { subject: { [Op.iLike]: q } },
         { ticketNumber: { [Op.iLike]: q } },
       ];
@@ -577,7 +477,7 @@ export class SupportTicketsService {
     if (query.category) extras.category = query.category;
     if (query.search?.trim()) {
       const q = `%${query.search.trim()}%`;
-      (extras as any)[Op.or] = [
+      (extras as Record<symbol, unknown>)[Op.or] = [
         { subject: { [Op.iLike]: q } },
         { ticketNumber: { [Op.iLike]: q } },
       ];
@@ -595,7 +495,7 @@ export class SupportTicketsService {
     if (query.vendorId) where.relatedVendorId = query.vendorId;
     if (query.search?.trim()) {
       const q = `%${query.search.trim()}%`;
-      (where as any)[Op.or] = [
+      (where as Record<symbol, unknown>)[Op.or] = [
         { subject: { [Op.iLike]: q } },
         { ticketNumber: { [Op.iLike]: q } },
       ];
