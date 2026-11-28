@@ -102,8 +102,11 @@ async function seedCoupons(accounts: Accounts, catalog: Catalog) {
     const type = platformTypes[i % platformTypes.length]!;
     const row = couponRow(unique(`${pick(words)}${int(10, 99)}`), type, { createdById: pick(accounts.adminIds) });
     if (type === 'BUNDLE') {
+      // A bundle applies to its own products, as the coupon form saves it.
+      const bundleProductIds = sample(catalog.liveProductIds, 3);
       row.value = 10;
-      row.config = json({ bundleProductIds: sample(catalog.liveProductIds, 3) });
+      row.config = json({ bundleProductIds });
+      row.applicableScope = json({ type: 'product', ids: bundleProductIds });
     }
     rows.push(row);
   }
