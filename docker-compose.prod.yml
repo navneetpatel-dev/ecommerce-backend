@@ -1,5 +1,5 @@
 # Single-host production data stores (e.g. one EC2 box). The AWS setup in
-# infra/terraform uses RDS + ElastiCache instead and does not need this file.
+# docs/DEPLOYMENT.md uses RDS + ElastiCache instead and does not need this file.
 #
 # Ports bind to 127.0.0.1 only: the API on the same host reaches them, the
 # internet does not. Set in .env before `docker compose -f docker-compose.prod.yml up -d`:

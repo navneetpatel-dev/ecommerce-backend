@@ -5,7 +5,7 @@ name: Deploy
 # Re-running an older successful run redeploys that commit (its image is reused
 # from ECR, migrations are a no-op), which is the rollback path.
 # Run manually (Actions → Deploy → Run workflow) to roll out env/secret changes
-# made in Terraform without a code change.
+# made to the ECS task definitions without a code change.
 
 on:
   push:

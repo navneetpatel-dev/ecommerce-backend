@@ -3,7 +3,7 @@
 # ECS_CLUSTER in the environment. Identical copy in ecommerce-web.
 #
 #   ecs-deploy.sh register <task-family> <image>
-#       Copy the family's latest revision (env/secrets/sizing owned by Terraform),
+#       Copy the family's latest revision (env, secrets and sizing live there),
 #       swap every container's image, register it. Prints the new revision ARN.
 #
 #   ecs-deploy.sh run-task <task-def-arn> <subnets-csv> <security-group>

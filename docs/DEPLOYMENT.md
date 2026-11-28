@@ -1,30 +1,29 @@
 # Deployment (GitHub Actions → AWS)
 
 Both apps ship the same way: **push to `main` → CI → Docker image → ECR → ECS Fargate**.
-Infrastructure is Terraform in [`infra/terraform`](../infra/terraform).
+The AWS resources are created by hand (console or CLI); this page lists what the pipelines
+and the apps expect of them.
 
 ```
-                         ┌──────────── VPC (eu-north-1, 2 AZs) ──────────────┐
+                         ┌──────────────── VPC (2 AZs) ──────────────────────┐
   https://<app_domain> ─┐│ public subnets      private subnets                │
                         ├┼▶ ALB ──host──▶ web   (Next.js, :3000)             │
   https://<api_domain> ─┘│     └─host──▶ api   (Express + Socket.IO, :9000) ─┼─▶ RDS Postgres 16 (TLS)
-                         │               worker (BullMQ, schedulers)        ─┼─▶ ElastiCache Redis 7 (TLS + auth)
+                         │               worker (BullMQ, schedulers)        ─┼─▶ ElastiCache Redis 7
                          │               migrate (one-off per deploy)        │
                          └───────────────────────────────────────────────────┘
-  S3 media bucket (existing) is reached through the backend task's IAM role — no AWS keys.
+  The S3 media bucket is reached through the backend task's IAM role — no AWS keys.
 ```
 
 | Piece | Where |
 | --- | --- |
 | Backend CI (PRs) | `ecommerce-backend/.github/workflows/ci.yml` |
 | Backend deploy (`main`) | `ecommerce-backend/.github/workflows/deploy.yml` — CI → image → migrations → API + worker |
-| Terraform checks | `ecommerce-backend/.github/workflows/infra.yml` — fmt, validate, offline plan tests |
 | Web CI (PRs) | `ecommerce-web/.github/workflows/ci.yml` |
 | Web deploy (`main`) | `ecommerce-web/.github/workflows/deploy.yml` — CI → image → web service |
 | ECS helper | `.github/scripts/ecs-deploy.sh` (same file in both repos) |
-| Infrastructure | `ecommerce-backend/infra/terraform` |
 
-Until step 6 below is done, the deploy jobs are **skipped** (they check for the
+Until step 4 below is done, the deploy jobs are **skipped** (they check for the
 `AWS_DEPLOY_ROLE_ARN` variable), so pushes to `main` still run CI and nothing else.
 
 ---
@@ -34,118 +33,99 @@ Until step 6 below is done, the deploy jobs are **skipped** (they check for the
 ### 1. Prerequisites
 
 - AWS CLI v2, logged in as an admin of the target account (`aws sts get-caller-identity`).
-- Terraform ≥ 1.7 (≥ 1.10 to use the remote state lock below).
-- An SMTP server and login for outgoing email.
 - A domain for the storefront and one for the API, e.g. `shop.example.com` and
-  `api.shop.example.com`. Easiest if the zone is in Route 53 (Terraform then issues
-  the certificate and DNS records).
+  `api.shop.example.com`, with a TLS certificate (ACM) covering both.
+- An SMTP server and login for outgoing email.
+- The S3 uploads bucket ([`infra/s3/README.md`](../infra/s3/README.md)); its CORS rules must
+  allow `https://<app_domain>`.
 
-### 2. (Recommended) Remote Terraform state
+### 2. AWS resources
 
-```bash
-ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-aws s3api create-bucket --bucket ecommerce-terraform-state-$ACCOUNT \
-  --region eu-north-1 --create-bucket-configuration LocationConstraint=eu-north-1
-aws s3api put-bucket-versioning --bucket ecommerce-terraform-state-$ACCOUNT \
-  --versioning-configuration Status=Enabled
-```
+| Resource | Requirements |
+| --- | --- |
+| Network | VPC with public subnets (load balancer, NAT) and private subnets (tasks, database, Redis). Only the load balancer is reachable from outside; the database and Redis accept the API and worker only. |
+| Load balancer | HTTPS, HTTP redirected. `<api_domain>` → API tasks on 9000, health check `/health/live`, sticky sessions. `<app_domain>` → web tasks on 3000, health check `/healthz`. Idle timeout 300 s. |
+| RDS Postgres 16 | Private, encrypted, backups on, TLS required (`rds.force_ssl=1`). |
+| ElastiCache Redis 7 | Private, TLS and auth token, eviction policy `noeviction` (the job queues must not lose keys). |
+| ECR | One repository per app. |
+| ECS cluster | Services for API, worker and web with the deployment circuit breaker and rollback on. The worker must never run twice (minimum healthy 0 %, maximum 100 %): it runs the schedulers. |
+| Task definitions | `api` (`node dist/src/server.js`), `worker` (`node dist/src/worker.js`), `migrate` (`npx --no-install sequelize-cli db:migrate`), all from the backend image; `web` from the web image. Container names match these. Logs go to CloudWatch (`awslogs` driver). |
+| IAM | A task execution role that may read the secrets; a backend task role with `s3:ListBucket` on the bucket and `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` on its objects ([`iam-policy.json`](../infra/s3/iam-policy.json)). |
+| GitHub deploy role | Assumed through GitHub's OIDC provider, limited to the `production` environment of the two repositories. May push to ECR, register and run task definitions, update services, pass the task roles and read the migration logs. |
 
-Then uncomment the `backend "s3"` block in `infra/terraform/versions.tf` and fill in the bucket name.
+### 3. Settings of the backend tasks (API, worker, migrate)
 
-### 3. Create the infrastructure
+Plain environment variables:
 
-```bash
-cd infra/terraform
-cp terraform.tfvars.example terraform.tfvars   # fill in domains, bucket, SMTP server and mail sender
-terraform init
-terraform plan
-terraform apply                                 # ~15–20 min, mostly RDS + ElastiCache
-```
+| Name | Value |
+| --- | --- |
+| `NODE_ENV` | `production` |
+| `PORT` | `9000` |
+| `TRUST_PROXY_HOPS` | `1` |
+| `START_WORKERS_IN_API` | `false` |
+| `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER` | from RDS |
+| `DB_SSL` | `true` |
+| `AWS_REGION`, `S3_BUCKET` | the media bucket |
+| `AWS_USE_DEFAULT_CREDENTIALS` | `true` (use the task role) |
+| `CLIENT_URL` | `https://<app_domain>` |
+| `GOOGLE_CALLBACK_URL` | `https://<api_domain>/api/auth/google/callback` |
+| `SMTP_HOST` | required: the API does not start without it |
+| `SMTP_PORT`, `SMTP_SECURE` | `587` and `false` (STARTTLS), or `465` and `true`. AWS restricts outbound port 25. |
+| `MAIL_FROM_EMAIL`, `MAIL_FROM_NAME` | the sender customers see |
+| `MAIL_RATE_PER_MINUTE` | optional; keep it low for Gmail |
 
-ECS services start right away and **fail to pull the `:initial` image until the
-first deploy** (step 7). That is expected.
+From Secrets Manager: `DB_PASSWORD`, `JWT_SECRET`, `JWT_REFRESH_SECRET` (long random values,
+different from each other), `REDIS_URL` (`rediss://:<auth token>@<endpoint>:6379`),
+`RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`, `SMTP_USER` and
+`SMTP_PASS`. Add `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`, `SENTRY_DSN` or `VAPID_*` only
+with real values.
 
-Not using Route 53? Leave `route53_zone_id` empty, request a certificate for both
-names in ACM (eu-north-1) yourself, set `acm_certificate_arn`, and point both
-domains at the `alb_dns_name` output (CNAME/ALIAS).
+Email is sent over **SMTP only**; there is no other mail service or driver switch. Bad addresses
+are handled from the server's reply at send time (hard bounces are not retried and go on a
+30-day suppression list, visible in the admin Notifications page). There is no bounce/complaint
+webhook.
 
-### 4. Fill in third-party secrets
+The web task needs `NODE_ENV=production`, `PORT=3000`, `HOSTNAME=0.0.0.0`,
+`NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_SITE_URL`.
 
-Terraform generates the DB password, JWT keys and Redis URL itself
-(`ecommerce/production/backend-generated` — don't edit it). Your own credentials go in
-`ecommerce/production/backend-app` (Secrets Manager console → *Retrieve secret value* → *Edit*):
-
-```json
-{
-  "RAZORPAY_KEY_ID": "rzp_live_…",
-  "RAZORPAY_KEY_SECRET": "…",
-  "RAZORPAY_WEBHOOK_SECRET": "…",
-  "SMTP_USER": "…",
-  "SMTP_PASS": "…"
-}
-```
-
-Keep all five keys: a task fails to start if a listed key is missing from the secret.
-
-To add more (e.g. `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`, `SENTRY_DSN`, `VAPID_*`):
-put the key in this secret **with a real value**, add its name to
-`backend_app_secret_keys` in `terraform.tfvars`, `terraform apply`, then redeploy.
-Plain non-secret settings go in `backend_extra_env` instead.
-
-### 5. Email (SMTP)
-
-Email is sent over **SMTP only**; there is no other mail service or driver switch. The login
-goes in the secret from step 4 (leave both values empty for a server without login). The rest
-is set in `terraform.tfvars`:
-
-| Variable | Default | Notes |
-| --- | --- | --- |
-| `smtp_host` | none, required | The API refuses to boot in production without it. |
-| `smtp_port` | `587` | AWS restricts outbound port 25. |
-| `smtp_secure` | `false` | `false` for STARTTLS on 587, `true` for 465. |
-| `mail_from_email`, `mail_from_name` | placeholders | The sender customers see. |
-| `mail_rate_per_minute` | `20` | Keep it low for Gmail; raise it for a server with higher limits. |
-
-Bad addresses are handled from the server's reply at send time (hard bounces are not retried and
-go on a 30-day suppression list, visible in the admin Notifications page). There is no
-bounce/complaint webhook.
-
-### 6. Wire up GitHub
+### 4. Wire up GitHub
 
 In **each** repository:
 
 1. *Settings → Environments → New environment* → `production`. Optionally add
    required reviewers to gate every deploy behind an approval.
-2. *Settings → Secrets and variables → Actions → **Variables*** → add every key from
-   the matching Terraform output as a **repository** variable:
+2. *Settings → Secrets and variables → Actions → **Variables*** → add these **repository** variables:
 
-   ```bash
-   cd infra/terraform
-   terraform output -json github_variables_backend \
-     | jq -r 'to_entries[] | "\(.key) \(.value)"' \
-     | while read -r k v; do gh variable set "$k" --body "$v" -R navneetpatel-dev/ecommerce-backend; done
+   | Backend | Web |
+   | --- | --- |
+   | `AWS_REGION` | `AWS_REGION` |
+   | `AWS_DEPLOY_ROLE_ARN` | `AWS_DEPLOY_ROLE_ARN` |
+   | `ECR_REPOSITORY` | `ECR_REPOSITORY` |
+   | `ECS_CLUSTER` | `ECS_CLUSTER` |
+   | `ECS_API_SERVICE`, `ECS_WORKER_SERVICE` | `ECS_WEB_SERVICE` |
+   | `ECS_MIGRATE_TASK` (task family) | `NEXT_PUBLIC_API_URL` |
+   | `ECS_PRIVATE_SUBNETS` (comma separated) | `NEXT_PUBLIC_SITE_URL` |
+   | `ECS_TASK_SECURITY_GRP` (the worker's) | |
+   | `API_URL` | |
 
-   terraform output -json github_variables_web \
-     | jq -r 'to_entries[] | "\(.key) \(.value)"' \
-     | while read -r k v; do gh variable set "$k" --body "$v" -R navneetpatel-dev/ecommerce-web; done
-   ```
+   Each service name must equal its task definition family: the deploy copies the family's
+   latest revision and swaps the image.
 
    Web only, optional: `NEXT_PUBLIC_RAZORPAY_KEY_ID`, `NEXT_PUBLIC_RAZORPAY_CHECKOUT_CONFIG_ID`,
    `GOOGLE_SITE_VERIFICATION` (public values baked into the web image).
 
-   No AWS keys go into GitHub: the workflows assume `AWS_DEPLOY_ROLE_ARN` via OIDC,
-   and only jobs in the `production` environment of these two repos may do so.
+   No AWS keys go into GitHub: the workflows assume `AWS_DEPLOY_ROLE_ARN` via OIDC.
 
 3. *Settings → Branches → Add rule* for `main`: require a pull request and the status
    check **Typecheck, lint, build, test** (backend) / **Typecheck, lint, test, build** (web).
 
-### 7. First deploy
+### 5. First deploy
 
 Deploy the **backend first** (it creates the schema), then the web app:
 *Actions → Deploy → Run workflow* in `ecommerce-backend`, wait for it to go green, then
 the same in `ecommerce-web`.
 
-### 8. Bootstrap production data (once)
+### 6. Bootstrap production data (once)
 
 Demo seeders refuse to run in production. Seed only the reference data, with an
 explicit opt-in. Pick a strong admin password and change it after the first login:
@@ -178,20 +158,20 @@ and add `https://<api_domain>/api/auth/google/callback` to the Google OAuth clie
 
 ## Day to day
 
+The commands below assume the cluster, services and log groups are named `ecommerce-production…`.
+
 **Deploy:** merge to `main`. Each repo's Deploy workflow runs CI, then deploys.
 The backend runs migrations as a one-off task *before* rolling the API and worker;
 a failed migration stops the deploy with nothing rolled out.
 
-**Rollback:** open the last good run of *Deploy* and click **Re-run all jobs**. Its image
-is still in ECR (the last 30 are kept), so it redeploys in a couple of minutes. ECS
-also rolls back by itself if new tasks fail health checks (circuit breaker), and the
-workflow then fails rather than reporting success.
+**Rollback:** open the last good run of *Deploy* and click **Re-run all jobs**. It redeploys
+that commit's image if ECR still holds it. ECS also rolls back by itself if new tasks fail
+health checks (circuit breaker), and the workflow then fails rather than reporting success.
 Migrations are not reversed. Keep them backwards-compatible with the previous release.
 
-**Change env vars / secrets:** edit `terraform.tfvars` (or the `backend-app` secret),
-`terraform apply`, then *Run workflow* on Deploy. Terraform owns env and sizing.
-The deploy only swaps the image, so the next deploy picks the change up.
-Changing a `NEXT_PUBLIC_*` variable needs a web redeploy, which rebuilds the image.
+**Change env vars / secrets:** register a new revision of the task definition (or edit the
+secret), then *Run workflow* on Deploy: the deploy copies the latest revision and swaps only
+the image. Changing a `NEXT_PUBLIC_*` variable needs a web redeploy, which rebuilds the image.
 
 **Logs:**
 ```bash
@@ -200,13 +180,11 @@ aws logs tail /ecs/ecommerce-production/backend --follow --log-stream-names-pref
 aws logs tail /ecs/ecommerce-production/web --follow
 ```
 
-**Shell into a running task:**
+**Shell into a running task** (needs ECS Exec enabled on the service):
 ```bash
 TASK=$(aws ecs list-tasks --cluster ecommerce-production --service-name ecommerce-production-api --query 'taskArns[0]' --output text)
 aws ecs execute-command --cluster ecommerce-production --task $TASK --container api --interactive --command sh
 ```
-
-**Scale:** `api_desired_count`, `web_desired_count`, `*_cpu`, `*_memory` in `terraform.tfvars`.
 
 ---
 
@@ -214,15 +192,15 @@ aws ecs execute-command --cluster ecommerce-production --task $TASK --container 
 
 - **Keep the API at one task for now.** Socket.IO rooms live in process memory; with
   two API tasks a delivery-tracking subscriber may sit on a different task than the
-  emitter. Add `@socket.io/redis-adapter` before raising `api_desired_count`
-  (the ALB already uses sticky sessions for the long-polling handshake).
-- **Database TLS** is required (`rds.force_ssl=1`). The app encrypts but doesn't verify
-  the RDS certificate (`rejectUnauthorized: false`, same as the migration config).
-  Bundling the RDS CA and verifying is a later hardening step.
-- **Old IAM user keys** for S3 are no longer needed on AWS (`AWS_USE_DEFAULT_CREDENTIALS=true`
+  emitter. Add `@socket.io/redis-adapter` before running more
+  (use sticky sessions for the long-polling handshake).
+- **Database TLS:** the app encrypts but doesn't verify the RDS certificate
+  (`rejectUnauthorized: false`, same as the migration config). Bundling the RDS CA and
+  verifying is a later hardening step.
+- **Old IAM user keys** for S3 are not needed on AWS (`AWS_USE_DEFAULT_CREDENTIALS=true`
   uses the task role). Once production runs, consider deactivating that IAM user's keys
   if nothing else uses them.
-- **Always-on cost** comes from the NAT gateway, ALB, RDS and ElastiCache. Fargate tasks
-  are the variable part. `single_nat_gateway = true` (default) keeps NAT to one.
+- **Always-on cost** comes from the NAT gateway, load balancer, RDS and ElastiCache. Fargate
+  tasks are the variable part.
 - **Single-host alternative:** `docker-compose.prod.yml` runs Postgres + Redis on one
   machine (localhost-only ports, Redis password). It is not used by the AWS setup.

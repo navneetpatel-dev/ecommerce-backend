@@ -1,8 +1,9 @@
 # S3 bucket setup for media uploads
 
-> **On AWS (ECS)** the backend uses its task IAM role instead of an IAM user's keys, and
-> Terraform manages the bucket CORS — see [`../terraform`](../terraform) and
-> [`docs/DEPLOYMENT.md`](../../docs/DEPLOYMENT.md). The steps below are for local/dev keys.
+> **On AWS (ECS)** the backend uses its task IAM role instead of an IAM user's keys — see
+> [`docs/DEPLOYMENT.md`](../../docs/DEPLOYMENT.md). The bucket CORS and policy steps below
+> still apply there (add the storefront domain to the CORS origins); the IAM user is for
+> local/dev keys.
 
 Three pieces must be configured: **IAM user permissions** (backend uploads), **bucket CORS** (browser → S3 PUT), and **bucket policy** (public read for catalog images).
 
