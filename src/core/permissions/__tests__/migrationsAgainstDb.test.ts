@@ -358,6 +358,8 @@ describe('20261126000007-finance-role-and-revenue-permissions (real SQL, rolled 
         await sequelize.query(`DELETE FROM permissions WHERE key = :key`, { transaction: tx, replacements: { key } });
       }
       await sequelize.query(`DELETE FROM "RolePermissions" WHERE "roleId" IN (SELECT id FROM roles WHERE name = 'ADMIN_FINANCE_MANAGER')`, { transaction: tx });
+      // The seeds include a Finance Manager: move them off, so the role is empty as before the migration.
+      await sequelize.query(`UPDATE users SET "roleId" = :orderMgr WHERE "roleId" IN (SELECT id FROM roles WHERE name = 'ADMIN_FINANCE_MANAGER')`, { transaction: tx, replacements: { orderMgr } });
       await sequelize.query(`DELETE FROM roles WHERE name = 'ADMIN_FINANCE_MANAGER' AND NOT EXISTS (SELECT 1 FROM users u WHERE u."roleId" = roles.id)`, { transaction: tx });
       const gift = await ensurePermission(tx, 'gift_card.manage');
       await grant(tx, orderMgr, gift);

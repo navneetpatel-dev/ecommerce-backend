@@ -111,6 +111,21 @@ function randomInt(min, max) { return Math.floor(Math.random() * (max - min + 1)
 function randomPrice(min, max) { return parseFloat((Math.random() * (max - min) + min).toFixed(2)); }
 function slugify(str) { return str.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); }
 
+/** The 500 products by index: mostly on sale, with each other status to work through. */
+const PRODUCT_STATUS_MIX = [
+  [440, 'LIVE'],
+  [464, 'PENDING_APPROVAL'],
+  [476, 'DRAFT'],
+  [488, 'REJECTED'],
+  [500, 'ARCHIVED'],
+];
+
+/** The HSN chapter heading typical of each department (4 digits, as the tax form requires). */
+const DEPARTMENT_HSN = {
+  electronics: '8517', fashion: '6109', home: '9403', sports: '9506', beauty: '3304',
+  books: '4901', toys: '9503', food: '2106', automotive: '8708', jewelry: '7117',
+};
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface) {
@@ -179,14 +194,21 @@ module.exports = {
       'PageTurner', 'PlayZone', 'GourmetGrove', 'CarCare', 'GemGallery',
       'ElectroShop', 'TrendyThreads', 'CozyCorner', 'ActiveLife', 'PureBeauty',
     ];
+    const vendorPlaces = [
+      { state: 'Karnataka', city: 'Bengaluru', pincode: '560001' },
+      { state: 'Maharashtra', city: 'Mumbai', pincode: '400001' },
+      { state: 'Delhi', city: 'New Delhi', pincode: '110001' },
+      { state: 'Tamil Nadu', city: 'Chennai', pincode: '600001' },
+      { state: 'Gujarat', city: 'Ahmedabad', pincode: '380001' },
+    ];
     for (let i = 0; i < 25; i++) {
       const vendorId = uuidv4();
       const approved = i < 22;
-      const vendorStates = ['Karnataka', 'Maharashtra', 'Delhi', 'Tamil Nadu', 'Gujarat'];
+      const place = vendorPlaces[i % vendorPlaces.length];
       vendors.push({
         id: vendorId, businessName: vendorNames[i], slug: slugify(vendorNames[i]),
         gstNumber: `29AABC${String(i).padStart(4, '0')}N1Z${i + 1}`,
-        state: vendorStates[i % vendorStates.length],
+        state: place.state, city: place.city, pincode: place.pincode, addressLine1: `${i + 1} Market Road`,
         bankDetails: JSON.stringify({ accountNumber: `000${String(i).padStart(12, '0')}`, ifscCode: `SBIN00${String(i).padStart(4, '0')}`, accountHolderName: vendorNames[i], bankName: 'State Bank of India' }),
         logoUrl: VENDOR_LOGOS[i % VENDOR_LOGOS.length], bannerUrl: null,
         description: `${vendorNames[i]} — premium quality products with fast shipping.`,
@@ -323,20 +345,31 @@ module.exports = {
     const categoryParentMap = {};
     for (const c of allLeaves) categoryParentMap[c.id] = Object.keys(categoryNames).find(k => categories.find(pc => pc.id === c.parentId && pc.slug === k)) || 'electronics';
 
+    const [superAdmin] = await queryInterface.sequelize.query(
+      `SELECT u.id FROM users u INNER JOIN roles r ON r.id = u."roleId" WHERE r.name = 'SUPER_ADMIN' ORDER BY u."createdAt" LIMIT 1`,
+      { type: queryInterface.sequelize.QueryTypes.SELECT },
+    );
+    const rejectionNotes = [
+      'Images do not show the product clearly; please upload photos on a plain background.',
+      'The description does not match the pictures. Please correct it and resubmit.',
+      'Please add the material and size details before resubmitting.',
+    ];
     for (let i = 0; i < 500; i++) {
       const productId = uuidv4();
       const leafCat = randomElement(allLeaves);
       const vendor = randomElement(approvedVendors);
       const basePrice = randomPrice(49, 2999);
-      const isLive = i < 470;
-      const status = isLive ? 'LIVE' : 'PENDING_APPROVAL';
+      const status = PRODUCT_STATUS_MIX.find(([upTo]) => i < upTo)[1];
+      const isLive = status === 'LIVE';
+      const wasApproved = isLive || status === 'ARCHIVED';
 
       products.push({
         id: productId, vendorId: vendor.id, categoryId: leafCat.id,
         name: `${leafCat.name} ${randomElement(['Pro', 'Elite', 'Max', 'Ultra', 'Classic', 'Premium', 'Essential', 'Plus'])} ${i + 1}`,
         slug: `product-${i + 1}-${slugify(leafCat.name)}`, description: `Premium ${leafCat.name.toLowerCase()} crafted with the finest materials. Designed for durability and everyday use. Perfect for gifting or personal use.`,
-        basePrice, status, approvedById: isLive ? roleMap.SUPER_ADMIN : null, rejectionNote: null,
-        tags: [leafCat.name, 'Featured', 'In Stock'], avgRating: parseFloat((Math.random() * 2 + 3).toFixed(2)),
+        basePrice, status, approvedById: wasApproved ? superAdmin?.id ?? null : null,
+        rejectionNote: status === 'REJECTED' ? rejectionNotes[i % rejectionNotes.length] : null,
+        tags: [leafCat.name, 'Featured', 'In Stock'], avgRating: isLive ? parseFloat((Math.random() * 2 + 3).toFixed(2)) : 0,
         createdAt: now, updatedAt: now,
       });
 
@@ -344,13 +377,15 @@ module.exports = {
       const numVariants = randomInt(1, 3);
       const attrTypes = ['Size', 'Color', 'Material'];
       const attrValues = [['S', 'M', 'L', 'XL'], ['Red', 'Blue', 'Black', 'White', 'Green'], ['Cotton', 'Leather', 'Metal', 'Plastic']];
+      // One kind of option per product, a different value on each variant.
+      const optionKind = i % attrTypes.length;
       for (let v = 0; v < numVariants; v++) {
         const variantPrice = Math.round((basePrice + v * randomInt(50, 300)) * 100) / 100;
         productVariants.push({
           id: uuidv4(), productId,
           sku: `SKU-${String(i + 1).padStart(5, '0')}-V${v + 1}`,
-          price: variantPrice, stock: randomInt(isLive ? 10 : 0, isLive ? 500 : 0), lowStockAt: 5,
-          attributes: JSON.stringify({ [attrTypes[v % 3]]: randomElement(attrValues[v % 3]) }),
+          price: variantPrice, stock: randomInt(isLive ? 10 : 1, isLive ? 500 : 60), lowStockAt: 5,
+          attributes: JSON.stringify({ [attrTypes[optionKind]]: attrValues[optionKind][(i + v) % attrValues[optionKind].length] }),
           createdAt: now, updatedAt: now,
         });
       }
@@ -697,7 +732,7 @@ module.exports = {
     const gstRates = [5, 12, 18, 28];
     for (const cat of taxCategories) {
       taxRules.push({
-        id: uuidv4(), categoryId: cat.id, hsnCode: `HSN${String(randomInt(1000, 9999)).padStart(8, '0')}`,
+        id: uuidv4(), categoryId: cat.id, hsnCode: DEPARTMENT_HSN[cat.slug.split('-')[0]] ?? null,
         gstPercentage: randomElement(gstRates),
         createdAt: now, updatedAt: now,
       });
@@ -705,7 +740,7 @@ module.exports = {
     // One platform-wide default rule (no category): 18%, the standard GST rate. The app
     // allows only one — with several, which rate applied was arbitrary.
     taxRules.push({
-      id: uuidv4(), categoryId: null, hsnCode: 'DEFAULT-18',
+      id: uuidv4(), categoryId: null, hsnCode: null,
       gstPercentage: 18,
       createdAt: now, updatedAt: now,
     });

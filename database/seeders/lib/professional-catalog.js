@@ -322,7 +322,8 @@ function buildVariantMatrix(product, enrichment) {
     if (!fullyOut) {
       const oosChance = 0.38;
       if (seededUnit(seed) >= oosChance) {
-        stock = seededInt(seed + 3, 8, 140);
+        // About one option in ten is running low (at or under its alert level of 5).
+        stock = seededUnit(seed + 7) < 0.1 ? seededInt(seed + 9, 1, 5) : seededInt(seed + 3, 8, 140);
       }
     }
 

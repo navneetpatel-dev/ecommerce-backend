@@ -42,7 +42,7 @@ module.exports = {
             {
               id: keepId,
               categoryId: null,
-              hsnCode: `DEFAULT-${DEFAULT_GST_PERCENTAGE}`,
+              hsnCode: null,
               gstPercentage: DEFAULT_GST_PERCENTAGE,
               createdAt: now,
               updatedAt: now,

@@ -25,7 +25,10 @@ export async function seedPayouts(accounts: Accounts): Promise<void> {
   const actor = accounts.superAdminId;
 
   // Hold every unpaid sale and release them window by window.
-  await exec(`CREATE TEMP TABLE seed_held AS SELECT id, "createdAt" FROM commission_ledgers WHERE status = 'PENDING' AND "payoutId" IS NULL`);
+  // A real (unlogged) table, dropped at the end: a temporary one lives on a single pooled
+  // connection, and is gone for the queries that land on another.
+  await exec('DROP TABLE IF EXISTS seed_held');
+  await exec(`CREATE UNLOGGED TABLE seed_held AS SELECT id, "createdAt" FROM commission_ledgers WHERE status = 'PENDING' AND "payoutId" IS NULL`);
   await exec(`UPDATE commission_ledgers SET status = 'SETTLED' WHERE id IN (SELECT id FROM seed_held)`);
 
   const end = daysAgo(UNPAID_DAYS);

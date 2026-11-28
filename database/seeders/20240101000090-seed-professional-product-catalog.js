@@ -27,13 +27,13 @@ module.exports = {
 
     console.log('Enriching catalog with professional product data & variant matrices...');
 
-    await sequelize.query('DELETE FROM cart_items');
-
-    const orderVariantRows = await sequelize.query(
-      `SELECT DISTINCT oi."variantId" AS id FROM order_items oi`,
+    // Variants that an order or a cart points at are kept (seeded carts stay filled).
+    const referencedVariantRows = await sequelize.query(
+      `SELECT "variantId" AS id FROM order_items
+       UNION SELECT "variantId" AS id FROM cart_items`,
       { type: QueryTypes.SELECT },
     );
-    const protectedVariantIds = new Set(orderVariantRows.map((row) => row.id));
+    const protectedVariantIds = new Set(referencedVariantRows.map((row) => row.id));
 
     // Remove legacy index-based SKUs (P00001-…) from prior seeder runs.
     if (protectedVariantIds.size) {
@@ -55,7 +55,10 @@ module.exports = {
          p."basePrice",
          p.status,
          c.name AS category_name,
-         c.slug AS category_slug
+         c.slug AS category_slug,
+         EXISTS (
+           SELECT 1 FROM category_attributes a WHERE a."categoryId" = c.id AND a."deletedAt" IS NULL
+         ) AS has_filters
        FROM products p
        INNER JOIN categories c ON c.id = p."categoryId"
        WHERE p."deletedAt" IS NULL
@@ -102,6 +105,10 @@ module.exports = {
       );
       updatedProducts += 1;
 
+      // A category with its own filters already has variants spelling those attributes:
+      // replacing them with generic ones would empty the filters.
+      if (product.has_filters) continue;
+
       const existingVariants = await sequelize.query(
         `SELECT id, sku FROM product_variants WHERE "productId" = :productId AND "deletedAt" IS NULL`,
         { replacements: { productId: product.id }, type: QueryTypes.SELECT },
@@ -119,14 +126,22 @@ module.exports = {
       }
 
       const matrix = buildVariantMatrix(product, enrichment);
-      const reservedSkus = new Set(
-        existingVariants
-          .filter((variant) => protectedVariantIds.has(variant.id))
-          .map((variant) => variant.sku),
-      );
+      const kept = existingVariants
+        .filter((variant) => protectedVariantIds.has(variant.id))
+        .sort((a, b) => a.sku.localeCompare(b.sku));
+      const reservedSkus = new Set(kept.map((variant) => variant.sku));
+
+      // Referenced variants keep their id, SKU, price and stock, but take the first option
+      // combinations of the matrix, so every option of a product names the same attributes.
+      for (let k = 0; k < kept.length && k < matrix.length; k++) {
+        await sequelize.query(
+          `UPDATE product_variants SET attributes = :attributes::jsonb, "updatedAt" = :updatedAt WHERE id = :id`,
+          { replacements: { id: kept[k].id, attributes: JSON.stringify(matrix[k].attributes), updatedAt: now } },
+        );
+      }
 
       const rows = [];
-      for (const variant of matrix) {
+      for (const variant of matrix.slice(kept.length)) {
         if (reservedSkus.has(variant.sku)) continue;
         reservedSkus.add(variant.sku);
         rows.push({

@@ -72,7 +72,11 @@ describe('upload authorization', () => {
        ORDER BY rr.id LIMIT 1`,
       { type: QueryTypes.SELECT },
     );
-    const owner = await actorFor(`r.name = 'VENDOR_OWNER' AND u."vendorId" IS NOT NULL`);
+    // An owner whose store lists something: some seeded stores (pending ones) have no products yet.
+    const owner = await actorFor(
+      `r.name = 'VENDOR_OWNER' AND u."vendorId" IS NOT NULL
+       AND EXISTS (SELECT 1 FROM products p WHERE p."vendorId" = u."vendorId" AND p."deletedAt" IS NULL)`,
+    );
     if (!ret || !owner) return;
 
     customerReturnId = ret.id;

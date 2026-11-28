@@ -18,6 +18,32 @@ async function hasRow(queryInterface, sql) {
   return rows.length > 0;
 }
 
+/** Every listed product has an option and a picture; added only where one is missing. */
+async function ensureListing(queryInterface, product, now) {
+  const [[row]] = await queryInterface.sequelize.query(
+    `SELECT id FROM products WHERE slug = :slug LIMIT 1`,
+    { replacements: { slug: product.slug } },
+  );
+  if (!row) return;
+  const has = async (table) => {
+    const [found] = await queryInterface.sequelize.query(
+      `SELECT 1 FROM ${table} WHERE "productId" = :id AND "deletedAt" IS NULL LIMIT 1`,
+      { replacements: { id: row.id } },
+    );
+    return found.length > 0;
+  };
+  if (!(await has('product_variants'))) {
+    await queryInterface.bulkInsert('product_variants', [
+      { id: randomUUID(), productId: row.id, sku: `${product.slug}-default`, price: product.basePrice, stock: 20, lowStockAt: 5, attributes: JSON.stringify({ Size: 'Standard' }), createdAt: now, updatedAt: now },
+    ]);
+  }
+  if (!(await has('product_images'))) {
+    await queryInterface.bulkInsert('product_images', [
+      { id: randomUUID(), productId: row.id, url: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600&fit=crop', isPrimary: true, createdAt: now, updatedAt: now },
+    ]);
+  }
+}
+
 /**
  * Cross-role visibility scenarios (see docs/archive/cross-role-visibility-implementation-doc.md §7 / §15).
  * Idempotent: each piece is inserted only if its marker slug is missing.
@@ -50,6 +76,10 @@ module.exports = {
           bannerUrl: null,
           description: 'Suspended vendor — products must stay hidden from customers.',
           status: 'SUSPENDED',
+          entityType: 'SOLE_PROPRIETORSHIP',
+          addressLine1: '1 Market Road',
+          city: 'Bengaluru',
+          pincode: '560001',
           commissionRate: 10,
           performanceScore: 0,
           createdAt: now,
@@ -77,6 +107,10 @@ module.exports = {
           bannerUrl: null,
           description: 'Approved vendor used for pending-product and archived-category cases.',
           status: 'APPROVED',
+          entityType: 'SOLE_PROPRIETORSHIP',
+          addressLine1: '1 Market Road',
+          city: 'Bengaluru',
+          pincode: '560001',
           commissionRate: 10,
           performanceScore: 4.2,
           createdAt: now,
@@ -146,7 +180,7 @@ module.exports = {
         categoryId: archivedCategoryId,
         name: 'Live Product In Archived Category',
         slug: 'live-in-archived-category',
-        description: 'Visible via search/direct link; not via archived category browse.',
+        description: 'Hidden from the shop and cannot be bought, because its category is archived.',
         basePrice: 199,
         status: 'LIVE',
         tags: ['visibility', 'seed'],
@@ -164,6 +198,7 @@ module.exports = {
       if (!exists) {
         await queryInterface.bulkInsert('products', [product]);
       }
+      await ensureListing(queryInterface, product, now);
     }
   },
 

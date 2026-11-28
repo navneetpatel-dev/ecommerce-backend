@@ -217,7 +217,7 @@ Other customers are random `firstname.lastname{n}@example.com` addresses from th
 
 - ✅ View all dashboard analytics
 - ✅ Approve/reject pending vendors (CozyCorner, ActiveLife, PureBeauty)
-- ✅ Approve/reject pending products (20 products with PENDING status)
+- ✅ Approve/reject pending products (about 25 awaiting approval)
 - ✅ Manage all users, roles, and permissions
 - ✅ View commission ledgers and process payouts
 - ✅ Manage coupons (20 active/inactive coupons available)
@@ -264,7 +264,7 @@ Other customers are random `firstname.lastname{n}@example.com` addresses from th
 
 ### Customer Testing (e.g., `amit.gupta54@example.com`)
 
-- ✅ Browse products (500 products across 50+ categories)
+- ✅ Browse products (about 455 on sale across 80+ categories)
 - ✅ Search and filter products
 - ✅ Add items to cart
 - ✅ Add items to wishlist
@@ -279,12 +279,31 @@ Other customers are random `firstname.lastname{n}@example.com` addresses from th
 
 ---
 
+## Catalog scenarios (`npm run db:seed`)
+
+One example of each catalog rule, all under **TechWorld** (`owner@techworld.com`,
+`staff@techworld.com`). The shopper is `amit.gupta54@example.com`. Product names start with
+"Scenario".
+
+| Product | What to try |
+|---|---|
+| Low Stock Headphones | Vendor and admin low-stock lists; vendor live-edit entry in the audit trail |
+| Sold Out Sneakers | On the shopper's wishlist ("Choose option"); pending stock alerts for the shopper and `guest.alert@example.com` |
+| Banded GST Jacket | 5% GST up to ₹2,500 a piece, 18% above |
+| Above MRP Speaker | The Gold option is above its MRP and not on sale (on purpose, so the integrity audit reports it) |
+| Rejected Desk Lamp | Rejection reason and resubmit |
+| Draft Keyboard / Pending Fitness Tracker / Archived Charger | Submit, approve, restore |
+| Platform Listed Webcam | Prepared by the Catalog Manager; the Super Admin approves it |
+| Two Category Earbuds | Listed under Audio and Prepaid Only Gadgets |
+| Prepaid Only Drone | No cash on delivery; the category's own commission |
+| Removed Option Mouse | The shopper's cart holds an option that was removed |
+
 ## Data Statistics
 
 - **Categories**: 50 (8 parent categories with subcategories)
 - **Vendors**: 25 (22 approved, 3 pending)
-- **Products**: 500 (480 approved, 20 pending moderation)
-- **Product Variants**: ~1000
+- **Products**: about 520 (455 on sale; the rest pending, draft, rejected and archived)
+- **Product Variants**: ~6,600 (about one in ten running low, many sold out)
 - **Product Images**: ~1500
 - **Orders**: 200 (various statuses: pending, confirmed, shipped, delivered, cancelled)
 - **Sub-Orders**: ~400

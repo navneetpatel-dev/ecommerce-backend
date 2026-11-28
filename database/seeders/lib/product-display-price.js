@@ -94,6 +94,8 @@ async function alignMrpWithGstPrices(queryInterface) {
     WHERE n.id = p.id
       AND p."compareAtPrice" IS NOT NULL
       AND ROUND(p."compareAtPrice" * 100) < n.paise
+      -- The catalog scenarios hold one listing above its MRP on purpose.
+      AND NOT COALESCE('scenario' = ANY (p.tags), false)
   `);
   return result?.rowCount ?? 0;
 }

@@ -10,7 +10,7 @@ const { randomUUID } = require('crypto');
  * - CategoryAttributes on leaf (Material ENUM, Capacity RANGE, InStock BOOLEAN)
  * - Products + variants with matching attribute keys
  * - TaxRules on parent + leaf (fallback proof)
- * - One ARCHIVED category with a LIVE product (nav hidden, PDP still works)
+ * - One ARCHIVED category with a LIVE product (hidden from the shop and not on sale)
  */
 
 const SEED_PRODUCT_SLUGS = [
@@ -340,7 +340,7 @@ module.exports = {
       status: 'ARCHIVED',
       displayOrder: 99,
       seoTitle: 'Archived Cookware Promo',
-      seoDescription: 'Hidden from nav; products remain reachable.',
+      seoDescription: 'Archived: hidden from the shop, together with its products.',
       commissionRate: null,
       createdAt: stamp,
       updatedAt: stamp,

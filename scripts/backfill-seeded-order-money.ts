@@ -708,8 +708,12 @@ async function main() {
   await sequelize.close();
 }
 
-main().catch(async (error) => {
-  console.error(error);
-  await sequelize.close().catch(() => undefined);
-  process.exitCode = 1;
-});
+// Importing the pricing and invoice modules opens queue connections that would keep the
+// process alive (and `npm run db:reset` waiting), so it exits once the work is done.
+main()
+  .catch(async (error) => {
+    console.error(error);
+    await sequelize.close().catch(() => undefined);
+    process.exitCode = 1;
+  })
+  .finally(() => process.exit());
