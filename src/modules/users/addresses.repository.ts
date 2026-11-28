@@ -9,7 +9,7 @@ export class AddressesRepository extends BaseRepository<Address> {
 
   findByUserId(userId: string, options?: RepositoryOptions) {
     return this.model.findAll({
-      where: { userId } as any,
+      where: { userId },
       order: [
         ['isDefault', 'DESC'],
         ['createdAt', 'DESC'],
@@ -20,9 +20,9 @@ export class AddressesRepository extends BaseRepository<Address> {
 
   clearDefaultsForUser(userId: string, options?: RepositoryOptions) {
     return this.model.update(
-      { isDefault: false } as any,
+      { isDefault: false },
       {
-        where: { userId, isDefault: true } as any,
+        where: { userId, isDefault: true },
         transaction: options?.transaction,
       },
     );

@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export class ShortLink extends Model<InferAttributes<ShortLink>, InferCreationAttributes<ShortLink>> {
   declare id: CreationOptional<string>;
@@ -6,12 +7,12 @@ export class ShortLink extends Model<InferAttributes<ShortLink>, InferCreationAt
   declare targetUrl: string;
   declare resourceType: CreationOptional<string>;
   declare resourceId: string | null;
-  declare metadata: CreationOptional<Record<string, any> | null>;
+  declare metadata: CreationOptional<Record<string, unknown> | null>;
   declare clicks: CreationOptional<number>;
   declare readonly createdAt: CreationOptional<Date>;
   declare readonly updatedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     ShortLink.belongsTo(models.Product, { as: 'product', foreignKey: 'resourceId', constraints: false });
   }
 }

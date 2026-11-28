@@ -16,6 +16,7 @@ import {
   type ReturnStatus,
   type ReturnType,
 } from '@core/constants/statuses';
+import type { ModelRegistry } from './index';
 
 export class ReturnRequest extends Model<InferAttributes<ReturnRequest>, InferCreationAttributes<ReturnRequest>> {
   declare id: CreationOptional<string>;
@@ -78,7 +79,7 @@ export class ReturnRequest extends Model<InferAttributes<ReturnRequest>, InferCr
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     ReturnRequest.belongsTo(models.SubOrder, { foreignKey: 'subOrderId', as: 'subOrder' });
     ReturnRequest.belongsTo(models.OrderItem, { foreignKey: 'orderItemId', as: 'orderItem' });
     ReturnRequest.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });

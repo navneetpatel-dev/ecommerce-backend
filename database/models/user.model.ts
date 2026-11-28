@@ -1,6 +1,7 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional, NonAttribute } from 'sequelize';
 import type { Role } from './role.model';
 import type { Vendor } from './vendor.model';
+import type { ModelRegistry } from './index';
 
 export class User extends Model<InferAttributes<User>, InferCreationAttributes<User>> {
   declare id: CreationOptional<string>;
@@ -27,7 +28,7 @@ export class User extends Model<InferAttributes<User>, InferCreationAttributes<U
   declare role?: NonAttribute<Role>;
   declare vendor?: NonAttribute<Vendor>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     User.belongsTo(models.Role, { foreignKey: 'roleId', as: 'role' });
     User.belongsTo(models.Vendor, { foreignKey: 'vendorId', as: 'vendor' });
     User.hasMany(models.Address, { foreignKey: 'userId' });

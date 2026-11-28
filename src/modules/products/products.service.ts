@@ -54,6 +54,8 @@ import type {
   AddImageRequest,
   BulkImportRowResult,
 } from './products.dto';
+import { toPlain } from '@core/repository/toPlain';
+import type { PlainProduct } from '@core/catalog/productRelations';
 
 /** Cap on how many recently-viewed products a caller can fetch at once. */
 const RECENTLY_VIEWED_LIMIT = 12;
@@ -69,18 +71,18 @@ function generateSlug(name: string): string {
 }
 
 export function mapProductResponse(product: Product, reviewCount = 0) {
-  const plain: any = typeof product.get === 'function' ? product.get({ plain: true }) : product;
+  const plain = toPlain<PlainProduct>(product);
   const primaryImage =
-    plain.images?.find((img: any) => img.isPrimary)?.url || plain.images?.[0]?.url || plain.imageUrl || '';
+    plain.images?.find((img) => img.isPrimary)?.url || plain.images?.[0]?.url || plain.imageUrl || '';
   // Each variant's GST-inclusive price and "% off" need its tax rule, so the product page
   // (mapDetailResponse) adds them.
-  const variants = (plain.variants ?? []).map((variant: any) => ({
+  const variants = (plain.variants ?? []).map((variant) => ({
     ...variant,
     price: Number(variant.price ?? 0),
     stock: Number(variant.stock ?? 0),
   }));
   const stockFromVariants = variants.reduce((sum: number, variant: { stock: number }) => sum + variant.stock, 0);
-  const secondaryCategories = (plain.secondaryCategories ?? []).map((category: any) => ({
+  const secondaryCategories = (plain.secondaryCategories ?? []).map((category) => ({
     id: category.id,
     name: category.name,
     slug: category.slug,

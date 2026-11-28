@@ -17,6 +17,7 @@ import {
   type SupportTicketPriority,
   type SupportTicketStatus,
 } from '@core/constants/statuses';
+import type { ModelRegistry } from './index';
 
 export class SupportTicket extends Model<
   InferAttributes<SupportTicket>,
@@ -50,7 +51,7 @@ export class SupportTicket extends Model<
   declare messages?: NonAttribute<unknown[]>;
   declare attachments?: NonAttribute<unknown[]>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     SupportTicket.belongsTo(models.User, { foreignKey: 'customerId', as: 'customer' });
     SupportTicket.belongsTo(models.User, { foreignKey: 'assignedToId', as: 'assignedTo' });
     SupportTicket.belongsTo(models.Vendor, { foreignKey: 'relatedVendorId', as: 'relatedVendor' });

@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export class ProductVariant extends Model<InferAttributes<ProductVariant>, InferCreationAttributes<ProductVariant>> {
   declare id: CreationOptional<string>;
@@ -18,7 +19,7 @@ export class ProductVariant extends Model<InferAttributes<ProductVariant>, Infer
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     ProductVariant.belongsTo(models.Product, { as: 'product', foreignKey: 'productId' });
   }
 }

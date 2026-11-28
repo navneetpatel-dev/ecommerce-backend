@@ -2,6 +2,7 @@ import { Model, DataTypes, Op, Sequelize, InferAttributes, InferCreationAttribut
 import type { ProductVariant } from './productVariant.model';
 import type { ProductImage } from './productImage.model';
 import { PRODUCT_STATUS, VENDOR_STATUS, type ProductStatus } from '@core/constants/statuses';
+import type { ModelRegistry } from './index';
 
 export class Product extends Model<InferAttributes<Product>, InferCreationAttributes<Product>> {
   declare id: CreationOptional<string>;
@@ -48,7 +49,7 @@ export class Product extends Model<InferAttributes<Product>, InferCreationAttrib
   declare variants?: NonAttribute<ProductVariant[]>;
   declare images?: NonAttribute<ProductImage[]>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     Product.belongsTo(models.Vendor, { as: 'vendor', foreignKey: 'vendorId' });
     Product.belongsTo(models.Category, { foreignKey: 'categoryId' });
     Product.hasMany(models.ProductVariant, { foreignKey: 'productId', as: 'variants' });

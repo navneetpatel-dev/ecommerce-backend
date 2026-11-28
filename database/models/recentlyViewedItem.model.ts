@@ -6,6 +6,7 @@ import {
   InferCreationAttributes,
   CreationOptional,
 } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export class RecentlyViewedItem extends Model<
   InferAttributes<RecentlyViewedItem>,
@@ -18,7 +19,7 @@ export class RecentlyViewedItem extends Model<
   declare readonly createdAt: CreationOptional<Date>;
   declare readonly updatedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     RecentlyViewedItem.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
     RecentlyViewedItem.belongsTo(models.Product, { foreignKey: 'productId', as: 'product' });
   }

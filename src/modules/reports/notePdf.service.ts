@@ -102,9 +102,9 @@ export async function getCreditNotePdfForActor(input: {
     ],
   });
   if (!note) throw new NotFoundError('CreditNote');
-  const ret = (note as any).ReturnRequest as ReturnRequest | undefined;
-  const vendor = (note as any).Vendor as Vendor | undefined;
-  const user = (note as any).User as User | undefined;
+  const ret = (note as CreditNote & { ReturnRequest?: ReturnRequest }).ReturnRequest;
+  const vendor = (note as CreditNote & { Vendor?: Vendor }).Vendor;
+  const user = (note as CreditNote & { User?: User }).User;
   const isOwner = ret?.userId === input.userId || note.userId === input.userId;
   const isVendor = Boolean(input.vendorId && note.vendorId === input.vendorId);
   if (!input.isAdmin && !isOwner && !isVendor) {
@@ -130,7 +130,7 @@ export async function getDebitNotePdfForActor(input: {
     include: [{ model: Vendor, as: 'Vendor', attributes: ['id', 'businessName', 'gstNumber'] }],
   });
   if (!note) throw new NotFoundError('DebitNote');
-  const vendor = (note as any).Vendor as Vendor | undefined;
+  const vendor = (note as DebitNote & { Vendor?: Vendor }).Vendor;
   const isVendor = Boolean(input.vendorId && note.vendorId === input.vendorId);
   if (!input.isAdmin && !isVendor) {
     throw new ForbiddenError(ERROR_MESSAGES.DEBIT_NOTE_FORBIDDEN);

@@ -30,7 +30,7 @@ function rangeFromQuery(req: Request) {
 
 async function actorFromReq(req: Request): Promise<ReportActor> {
   const user = req.user!;
-  const roleName = user.role?.name ?? roleNameOf(user as any);
+  const roleName = user.role?.name ?? roleNameOf(user);
   const permissions = (await resolvePermissionsForUser({
     roleId: user.roleId,
     role: { name: roleName },
@@ -128,7 +128,7 @@ export const vendorSummary = asyncHandler(async (req: Request, res: Response) =>
     vendorId,
     query,
     req.user?.vendorId ?? null,
-    req.user?.role?.name ?? roleNameOf(req.user as any),
+    req.user?.role?.name ?? roleNameOf(req.user),
   );
   res.json(ok(data));
 });

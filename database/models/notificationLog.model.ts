@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export type NotificationType =
   | 'EMAIL_VERIFICATION' | 'PASSWORD_RESET' | 'LOGIN_OTP' | 'WELCOME'
@@ -64,7 +65,7 @@ export class NotificationLog extends Model<InferAttributes<NotificationLog>, Inf
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     NotificationLog.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
   }
 }

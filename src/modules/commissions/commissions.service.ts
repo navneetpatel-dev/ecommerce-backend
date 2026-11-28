@@ -13,6 +13,7 @@ import {
   type SubOrderGstBreakdown,
 } from '@modules/reports/definitions/vendorOwner';
 import { renderCommissionInvoicePdf } from './commissionInvoice.service';
+import { toPlain, type PlainRow } from '@core/repository/toPlain';
 
 interface SubOrderTdsInfo {
   tdsAmount: number;
@@ -49,7 +50,7 @@ function serializeCommission(
   tdsBySubOrder: Map<string, SubOrderTdsInfo>,
   gstBySubOrder: Map<string, SubOrderGstBreakdown>,
 ) {
-  const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
+  const plain = toPlain<PlainRow<CommissionLedger, { Vendor?: { businessName?: string | null } | null }>>(row);
   const { Vendor: vendorAssoc } = plain;
   const tds = tdsBySubOrder.get(plain.id);
   // The goods' GST belongs to the sale row only, not its clawbacks and cashback costs.
@@ -133,7 +134,7 @@ export class CommissionsService {
     if (requesterVendorId && requesterVendorId !== invoice.vendorId) {
       throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_COMMISSION_INVOICE);
     }
-    const vendor = (invoice as any).vendor as Vendor | undefined;
+    const vendor = (invoice as CommissionInvoice & { vendor?: Vendor }).vendor;
     const buffer = await renderCommissionInvoicePdf(invoice, {
       businessName: vendor?.businessName,
       gstNumber: vendor?.gstNumber,
@@ -168,7 +169,7 @@ export class CommissionsService {
     });
     return {
       invoices: rows.map((row) => {
-        const plain: any = row.get({ plain: true });
+        const plain = toPlain<PlainRow<CommissionInvoice, { vendor?: { businessName?: string | null } | null }>>(row);
         return {
           id: plain.id,
           number: plain.number,

@@ -27,6 +27,7 @@ import { assertSiblingNameFree } from './categoryNames';
 import { TaxRule } from '@database/models/taxRule.model';
 import { logAudit } from '@modules/audit/audit.service';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
+import { toPlain, type PlainRow } from '@core/repository/toPlain';
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -57,8 +58,20 @@ function escapeSqlString(value: string): string {
 const inCategories = (ids: string[]) =>
   Sequelize.literal(inCategoriesSql('"Product"', ids.map((id) => sequelize.escape(id)).join(', ')));
 
-function serializeCategory(row: Category | Record<string, unknown>) {
-  const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
+type PlainCategory = PlainRow<Category, { children?: Category[]; attributes?: Array<PlainRow<CategoryAttribute>> }>;
+
+/** A category as the API sends it: numbers as numbers, subcategories and filter keys alike. */
+export type SerializedCategory = Omit<PlainCategory, 'children' | 'attributes' | 'commissionRate' | 'returnWindowDays' | 'defaultWarrantyMonths' | 'codEnabled'> & {
+  commissionRate: number | null;
+  returnWindowDays: number | null;
+  defaultWarrantyMonths: number | null;
+  codEnabled: boolean;
+  children?: SerializedCategory[];
+  attributes?: Array<PlainRow<CategoryAttribute> & { filterKey: string }>;
+};
+
+function serializeCategory(row: Category | Record<string, unknown>): SerializedCategory {
+  const plain = toPlain<PlainCategory>(row);
   return {
     ...plain,
     commissionRate: plain.commissionRate != null ? Number(plain.commissionRate) : null,
@@ -70,7 +83,7 @@ function serializeCategory(row: Category | Record<string, unknown>) {
       ? plain.children.map((child: Category) => serializeCategory(child))
       : plain.children,
     attributes: Array.isArray(plain.attributes)
-      ? plain.attributes.map((attr: any) => ({
+      ? plain.attributes.map((attr) => ({
           ...attr,
           filterKey: attributeFilterKey(attr.name),
         }))
@@ -211,7 +224,7 @@ export class CategoriesService {
   }
 
   /** `publicView`: what shoppers may see (active only, no internal fields); the admin screens see all. */
-  async getCategoryById(id: string, options: { publicView?: boolean } = {}) {
+  async getCategoryById(id: string, options: { publicView?: boolean } = {}): Promise<SerializedCategory> {
     const category = await categoriesRepository.findWithChildren(id, { activeChildrenOnly: options.publicView });
     if (!category) throw new NotFoundError('Category');
     if (options.publicView) {
@@ -222,7 +235,9 @@ export class CategoriesService {
   }
 
   /** Resolve hierarchical slug path (ACTIVE only for browse). */
-  async resolveByPath(slugs: string[]) {
+  async resolveByPath(
+    slugs: string[],
+  ): Promise<SerializedCategory & { path: string; breadcrumb: Array<Pick<Category, 'id' | 'name' | 'slug'>> }> {
     if (!slugs.length) throw new NotFoundError('Category');
 
     let parentId: string | null = null;

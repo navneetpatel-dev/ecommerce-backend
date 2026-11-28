@@ -21,7 +21,7 @@ export class VendorsRepository extends BaseRepository<Vendor> {
     limit: number;
     offset: number;
   }) {
-    const where: any = {};
+    const where: Record<string | symbol, unknown> = {};
 
     if (filters.id) {
       where.id = filters.id;

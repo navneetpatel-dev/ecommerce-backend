@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export class TcsLedger extends Model<InferAttributes<TcsLedger>, InferCreationAttributes<TcsLedger>> {
   declare id: CreationOptional<string>;
@@ -27,7 +28,7 @@ export class TcsLedger extends Model<InferAttributes<TcsLedger>, InferCreationAt
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     TcsLedger.belongsTo(models.Order, { foreignKey: 'orderId' });
     TcsLedger.belongsTo(models.SubOrder, { foreignKey: 'subOrderId' });
     TcsLedger.belongsTo(models.Vendor, { foreignKey: 'vendorId' });

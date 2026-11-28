@@ -225,7 +225,7 @@ export class PaymentsService {
     }
   }
 
-  private async applyCouponOnPaymentCaptured(order: Order, transaction: any) {
+  private async applyCouponOnPaymentCaptured(order: Order, transaction: import('sequelize').Transaction) {
     const couponIds = [
       ...new Set(
         [

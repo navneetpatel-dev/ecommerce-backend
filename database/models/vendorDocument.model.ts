@@ -3,6 +3,7 @@ import {
   VENDOR_DOCUMENT_TYPE_VALUES,
   type VendorDocumentType,
 } from '@core/constants/statuses';
+import type { ModelRegistry } from './index';
 
 export class VendorDocument extends Model<InferAttributes<VendorDocument>, InferCreationAttributes<VendorDocument>> {
   declare id: CreationOptional<string>;
@@ -20,7 +21,7 @@ export class VendorDocument extends Model<InferAttributes<VendorDocument>, Infer
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     VendorDocument.belongsTo(models.Vendor, { foreignKey: 'vendorId' });
     VendorDocument.belongsTo(models.User, { foreignKey: 'verifiedById', as: 'verifiedBy' });
   }

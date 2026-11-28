@@ -8,6 +8,7 @@ import {
   NonAttribute,
 } from 'sequelize';
 import type { User } from './user.model';
+import type { ModelRegistry } from './index';
 
 /**
  * A Razorpay-tokenized card/UPI instrument saved against a customer.
@@ -31,7 +32,7 @@ export class SavedPaymentMethod extends Model<
 
   declare user?: NonAttribute<User>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     SavedPaymentMethod.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
   }
 }

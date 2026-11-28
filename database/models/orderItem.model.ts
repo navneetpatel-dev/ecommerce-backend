@@ -1,5 +1,6 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
 import { paiseBackedRupees } from '@modules/pricing/paiseBackedRupees';
+import type { ModelRegistry } from './index';
 
 export class OrderItem extends Model<InferAttributes<OrderItem>, InferCreationAttributes<OrderItem>> {
   declare id: CreationOptional<string>;
@@ -39,7 +40,7 @@ export class OrderItem extends Model<InferAttributes<OrderItem>, InferCreationAt
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     OrderItem.belongsTo(models.SubOrder, { foreignKey: 'subOrderId', as: 'subOrder' });
     OrderItem.belongsTo(models.ProductVariant, { foreignKey: 'variantId', as: 'variant' });
   }

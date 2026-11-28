@@ -8,6 +8,7 @@ import { resolveItemAvailability, isProductCustomerVisible } from '@core/catalog
 import { PURCHASABLE_PRODUCT_INCLUDE } from '@core/catalog/purchasableInclude';
 import { markAboveMrp } from '@modules/tax/markAboveMrp';
 import type { CartLineForCoupon } from './couponEngine';
+import type { CartItemWithProduct } from '@core/catalog/productRelations';
 
 /** The lines a coupon is judged against: the customer's cart, or one product on its page. */
 
@@ -63,8 +64,9 @@ export async function loadCartLines(userId: string): Promise<{
     ],
   });
 
-  await markAboveMrp(((cart as any)?.items ?? []).map((item: any) => item.variant));
-  const availabilityOf = (item: any) => {
+  const cartItems = (cart as (Cart & { items?: CartItemWithProduct[] }) | null)?.items ?? [];
+  await markAboveMrp(cartItems.map((item) => item.variant));
+  const availabilityOf = (item: CartItemWithProduct) => {
     const product = item.variant?.product;
     return resolveItemAvailability({
       product,
@@ -74,9 +76,9 @@ export async function loadCartLines(userId: string): Promise<{
       aboveMrp: item.variant?.aboveMrp,
     });
   };
-  const items = ((cart as any)?.items ?? []).filter((item: any) => availabilityOf(item).isAvailable);
+  const items = cartItems.filter((item) => availabilityOf(item).isAvailable);
 
-  const lines: CartLineForCoupon[] = items.map((item: any) => {
+  const lines: CartLineForCoupon[] = items.map((item) => {
     const product = item.variant?.product;
     return {
       productId: String(product?.id ?? ''),
@@ -95,7 +97,7 @@ export async function loadCartLines(userId: string): Promise<{
   return {
     cart,
     lines: await gstInclusiveCouponLines(lines, await defaultShippingState(userId)),
-    hasUnavailable: items.length < ((cart as any)?.items ?? []).length,
+    hasUnavailable: items.length < cartItems.length,
   };
 }
 

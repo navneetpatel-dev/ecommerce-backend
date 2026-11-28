@@ -170,7 +170,7 @@ export async function createBanner(data: CreatePromoBannerRequest) {
     endDate: data.endDate ?? null,
     status: data.status ?? PROMO_BANNER_STATUS.DRAFT,
     priority: data.priority ?? 0,
-  } as any);
+  });
   return serializeBanner(banner);
 }
 
@@ -205,7 +205,7 @@ export async function updateBanner(id: string, data: UpdatePromoBannerRequest) {
     ...(data.endDate !== undefined ? { endDate: data.endDate } : {}),
     ...(data.status !== undefined ? { status: data.status } : {}),
     ...(data.priority !== undefined ? { priority: data.priority } : {}),
-  } as any);
+  });
 
   if (data.imageUrl !== undefined) {
     await deleteS3ObjectIfReplaced(previousImageUrl, data.imageUrl);

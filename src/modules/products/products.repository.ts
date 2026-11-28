@@ -3,7 +3,7 @@ import { Product } from '@database/models/product.model';
 import { Category } from '@database/models/category.model';
 import { Vendor } from '@database/models/vendor.model';
 import { sequelize } from '@database/models';
-import { Op } from 'sequelize';
+import { Op, type Includeable, type Order } from 'sequelize';
 import { REVIEW_STATUS, type ProductStatus } from '@core/constants/statuses';
 import { TEAM_VENDOR_ATTRIBUTES } from './productPublicFields';
 import { inCategoriesSql } from '@modules/categories/categoryMembership';
@@ -41,7 +41,7 @@ type ProductListFilters = {
   offset: number;
 };
 
-const categoryWithAncestors = {
+const categoryWithAncestors: Includeable = {
   model: Category,
   include: [
     {
@@ -55,17 +55,21 @@ const categoryWithAncestors = {
       ],
     },
   ],
-} as const;
+};
 
-const secondaryCategoriesInclude = {
+const secondaryCategoriesInclude: Includeable = {
   association: 'secondaryCategories',
   attributes: ['id', 'name', 'slug', 'status'],
   through: { attributes: [] },
   required: false,
-} as const;
+};
 
 function buildListWhere(filters: ProductListFilters) {
-  const where: any = {};
+  const where: Record<string | symbol, unknown> = {};
+  /** Adds a condition that must hold besides the others. */
+  const also = (condition: unknown) => {
+    where[Op.and] = [...((where[Op.and] as unknown[] | undefined) ?? []), condition];
+  };
 
   if (filters.productIds?.length) {
     where.id = { [Op.in]: filters.productIds };
@@ -75,7 +79,7 @@ function buildListWhere(filters: ProductListFilters) {
     // Shoppers find secondary tags too. A condition of its own, so the shop's rule that the
     // primary category is active still applies (a `categoryId` filter would replace it).
     const ids = categoryIds.map((id) => sequelize.escape(id)).join(', ');
-    where[Op.and] = [sequelize.literal(inCategoriesSql('"Product"', ids))];
+    also(sequelize.literal(inCategoriesSql('"Product"', ids)));
   } else if (categoryIds.length) {
     where.categoryId = { [Op.in]: categoryIds };
   }
@@ -99,7 +103,7 @@ function buildListWhere(filters: ProductListFilters) {
     const range: Record<symbol, number> = {};
     if (filters.minPrice !== undefined) range[Op.gte] = filters.minPrice;
     if (filters.maxPrice !== undefined) range[Op.lte] = filters.maxPrice;
-    where[Op.and] = [...(where[Op.and] ?? []), sequelize.where(displayPriceColumn, range)];
+    also(sequelize.where(displayPriceColumn, range));
   }
 
   if (filters.rating !== undefined) {
@@ -107,14 +111,13 @@ function buildListWhere(filters: ProductListFilters) {
   }
 
   if (filters.inStock) {
-    where[Op.and] = [
-      ...(where[Op.and] ?? []),
+    also(
       sequelize.literal(
         `EXISTS (SELECT 1 FROM product_variants pv WHERE pv."productId" = "Product"."id" AND pv."deletedAt" IS NULL AND pv.stock > 0${
           filters.sellableOnly ? ' AND pv."aboveMrp" = false' : ''
         })`,
       ),
-    ];
+    );
   }
 
   return where;
@@ -150,13 +153,13 @@ export class ProductsRepository extends BaseRepository<Product> {
       col: 'id',
       attributes: { include: [reviewCountLiteral] },
       include: [
-        categoryWithAncestors as any,
-        secondaryCategoriesInclude as any,
+        categoryWithAncestors,
+        secondaryCategoriesInclude,
         { model: Vendor, as: 'vendor', attributes: TEAM_VENDOR_ATTRIBUTES },
         'variants',
         'images',
       ],
-      order: buildListOrder(filters.sort) as any,
+      order: buildListOrder(filters.sort) as Order,
     });
   }
 
@@ -177,12 +180,12 @@ export class ProductsRepository extends BaseRepository<Product> {
       col: 'id',
       attributes: { include: [reviewCountLiteral] },
       include: [
-        categoryWithAncestors as any,
-        secondaryCategoriesInclude as any,
+        categoryWithAncestors,
+        secondaryCategoriesInclude,
         'variants',
         'images',
       ],
-      order: buildListOrder(filters.sort) as any,
+      order: buildListOrder(filters.sort) as Order,
     });
   }
 
@@ -197,8 +200,8 @@ export class ProductsRepository extends BaseRepository<Product> {
       where: { slug },
       attributes: { include: [reviewCountLiteral] },
       include: [
-        categoryWithAncestors as any,
-        secondaryCategoriesInclude as any,
+        categoryWithAncestors,
+        secondaryCategoriesInclude,
         { model: Vendor, as: 'vendor', attributes: TEAM_VENDOR_ATTRIBUTES },
         'variants',
         'images',
@@ -210,8 +213,8 @@ export class ProductsRepository extends BaseRepository<Product> {
     return Product.scope('customerVisible').findByPk(id, {
       attributes: { include: [reviewCountLiteral] },
       include: [
-        categoryWithAncestors as any,
-        secondaryCategoriesInclude as any,
+        categoryWithAncestors,
+        secondaryCategoriesInclude,
         'variants',
         'images',
       ],
@@ -223,8 +226,8 @@ export class ProductsRepository extends BaseRepository<Product> {
       where: { slug },
       attributes: { include: [reviewCountLiteral] },
       include: [
-        categoryWithAncestors as any,
-        secondaryCategoriesInclude as any,
+        categoryWithAncestors,
+        secondaryCategoriesInclude,
         'variants',
         'images',
       ],
@@ -238,8 +241,8 @@ export class ProductsRepository extends BaseRepository<Product> {
       where: { id: { [Op.in]: ids } },
       attributes: { include: [reviewCountLiteral] },
       include: [
-        categoryWithAncestors as any,
-        secondaryCategoriesInclude as any,
+        categoryWithAncestors,
+        secondaryCategoriesInclude,
         'variants',
         'images',
       ],

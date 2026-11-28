@@ -16,6 +16,7 @@ import { sendApiError } from '@core/http/sendApiError';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { buildPaginationMeta, pageLimitQuerySchema } from '@core/http/pagination';
 import { env } from '@config/env';
+import type { LoginRequest, RegisterRequest } from './auth.dto';
 
 const OAUTH_STATE_COOKIE = 'oauth_state';
 const OAUTH_REDIRECT_COOKIE = 'oauth_redirect';
@@ -130,7 +131,8 @@ export const googleCallback = asyncHandler(async (req: Request, res: Response) =
     }
 
     res.redirect(clientAuthCallbackUrl(params));
-  } catch (err: any) {
+  } catch (error) {
+    const err = error as { details?: unknown; message?: unknown; code?: string } | null | undefined;
     const details = err?.details;
     let message: string = ERROR_MESSAGES.OAUTH_GOOGLE_FAILED;
     if (typeof err?.message === 'string' && err.message !== 'Validation failed') {
@@ -146,12 +148,12 @@ export const googleCallback = asyncHandler(async (req: Request, res: Response) =
 });
 
 export const register = asyncHandler(async (req: Request, res: Response) => {
-  const result = await authService.register(req.body as any);
+  const result = await authService.register(req.body as RegisterRequest);
   res.status(201).json(ok(result));
 });
 
 export const login = asyncHandler(async (req: Request, res: Response) => {
-  const result = await authService.login(req.body as any, deviceMeta(req));
+  const result = await authService.login(req.body as LoginRequest, deviceMeta(req));
   res.cookie(COOKIES.REFRESH_TOKEN, result.refreshToken, COOKIE_OPTIONS);
   res.status(200).json(ok({ user: result.user, accessToken: result.accessToken }));
 });

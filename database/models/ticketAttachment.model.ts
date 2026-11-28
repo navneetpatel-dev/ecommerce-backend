@@ -10,6 +10,7 @@ import {
   TICKET_ATTACHMENT_TYPE_VALUES,
   type TicketAttachmentType,
 } from '@core/constants/statuses';
+import type { ModelRegistry } from './index';
 
 export class TicketAttachment extends Model<
   InferAttributes<TicketAttachment>,
@@ -28,7 +29,7 @@ export class TicketAttachment extends Model<
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     TicketAttachment.belongsTo(models.SupportTicket, { foreignKey: 'ticketId', as: 'ticket' });
     TicketAttachment.belongsTo(models.TicketMessage, { foreignKey: 'messageId', as: 'message' });
   }

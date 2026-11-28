@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 /** A proposed edit of the published text (shown only to its author and moderators). */
 export type QuestionRevision = { question: string; submittedAt: string };
@@ -21,7 +22,7 @@ export class ProductQuestion extends Model<InferAttributes<ProductQuestion>, Inf
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     ProductQuestion.belongsTo(models.Product, { as: 'product', foreignKey: 'productId' });
     ProductQuestion.belongsTo(models.User, { as: 'user', foreignKey: 'userId' });
     ProductQuestion.hasMany(models.ProductAnswer, { as: 'answers', foreignKey: 'questionId' });

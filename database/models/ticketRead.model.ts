@@ -6,6 +6,7 @@ import {
   InferCreationAttributes,
   CreationOptional,
 } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export class TicketRead extends Model<
   InferAttributes<TicketRead>,
@@ -18,7 +19,7 @@ export class TicketRead extends Model<
   declare readonly createdAt: CreationOptional<Date>;
   declare readonly updatedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     TicketRead.belongsTo(models.SupportTicket, { foreignKey: 'ticketId', as: 'ticket' });
     TicketRead.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
   }

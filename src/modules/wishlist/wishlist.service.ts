@@ -14,13 +14,16 @@ import { productDiscountPercent, productShowMrp, wishlistPriceDrop } from '@modu
 import { roundMoney } from '@modules/pricing/money';
 import { MAX_CART_LINE_QUANTITY } from '@modules/cart/cart.constants';
 import { gstRuleResolver, priceWithRuleGst } from '@modules/products/products.service';
+import { toPlain, type PlainRow } from '@core/repository/toPlain';
+import type { PlainProduct, ProductWithRelations } from '@core/catalog/productRelations';
+import type { ProductVariant } from '@database/models/productVariant.model';
 
 function mapWishlistProduct(product: Product | null | undefined) {
   if (!product) return null;
-  const plain: any = typeof product.get === 'function' ? product.get({ plain: true }) : product;
+  const plain = toPlain<PlainProduct>(product);
   const primaryImage =
-    plain.images?.find((img: any) => img.isPrimary)?.url || plain.images?.[0]?.url || '';
-  const variants = (plain.variants ?? []).map((variant: any) => ({
+    plain.images?.find((img) => img.isPrimary)?.url || plain.images?.[0]?.url || '';
+  const variants = (plain.variants ?? []).map((variant) => ({
     ...variant,
     price: Number(variant.price ?? 0),
     stock: Number(variant.stock ?? 0),
@@ -91,7 +94,7 @@ export class WishlistService {
     const ruleFor = gstRuleResolver();
     return {
       items: await Promise.all(items.map(async (item) => {
-        const plain = item.get({ plain: true }) as any;
+        const plain = toPlain<PlainRow<WishlistItem, { product?: Product | null }>>(item);
         const product = mapWishlistProduct(plain.product);
         const priceAtAdd = roundMoney(plain.priceAtAdd);
         // The saved price is before GST; the drop is shown in the GST-inclusive prices
@@ -122,7 +125,7 @@ export class WishlistService {
         transaction: t,
       });
       if (!product) throw new NotFoundError('Product');
-      const vendor = (product as any).vendor;
+      const vendor = (product as ProductWithRelations).vendor;
       if (!isProductCustomerVisible(product, vendor)) {
         throw new NotFoundError('Product');
       }
@@ -189,7 +192,7 @@ export class WishlistService {
 
       if (!wishlistItemResult) throw new NotFoundError('Wishlist item');
 
-      const wishlistItem = wishlistItemResult as WishlistItem & { product: Product & { variants: any[] } };
+      const wishlistItem = wishlistItemResult as WishlistItem & { product: Product & { variants: ProductVariant[] } };
 
       // The wishlist shows (and tracks price drops on) the product's listed price, its
       // lowest variant price: add the cheapest in-stock variant, oldest first on a tie,

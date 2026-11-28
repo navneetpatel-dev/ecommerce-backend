@@ -6,6 +6,7 @@ import {
   InferCreationAttributes,
   CreationOptional,
 } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export class CommissionInvoice extends Model<
   InferAttributes<CommissionInvoice>,
@@ -34,7 +35,7 @@ export class CommissionInvoice extends Model<
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     CommissionInvoice.belongsTo(models.Vendor, { foreignKey: 'vendorId', as: 'vendor' });
     CommissionInvoice.belongsTo(models.Payout, { foreignKey: 'payoutId', as: 'payout' });
   }

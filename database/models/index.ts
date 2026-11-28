@@ -164,10 +164,12 @@ const models = {
   InAppNotification: initInAppNotificationModel(sequelize),
 };
 
-Object.values(models).forEach((model: any) => {
-  if (typeof model.associate === 'function') {
-    model.associate(models);
-  }
+/** Every model by name, as each model's `associate` receives them. */
+export type ModelRegistry = typeof models;
+
+Object.values(models).forEach((model) => {
+  const { associate } = model as { associate?: (registry: ModelRegistry) => void };
+  associate?.call(model, models);
 });
 
 export { sequelize };

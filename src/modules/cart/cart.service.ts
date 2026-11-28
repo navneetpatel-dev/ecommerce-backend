@@ -23,14 +23,15 @@ import type { AddToCartRequest, UpdateCartItemRequest } from './cart.dto';
 import { gstRuleResolver, priceWithRuleGst } from '@modules/tax/gstPricing';
 import { priceChangeFor } from './cartPriceChange';
 import { withActualSavings } from '@modules/checkout/actualCouponSavings';
+import type { CartItemWithProduct, ProductWithRelations } from '@core/catalog/productRelations';
 
 export type { CartView, CartViewItem } from './cart.types';
 
-function mapCartItem(item: CartItem & { variant?: ProductVariant & { product?: any } }): CartViewItem {
+function mapCartItem(item: CartItem & { variant?: ProductVariant & { product?: ProductWithRelations } }): CartViewItem {
   const variant = item.variant;
   const product = variant?.product;
   const images = product?.images ?? [];
-  const primaryImage = images.find((img: any) => img.isPrimary)?.url || images[0]?.url || '';
+  const primaryImage = images.find((img) => img.isPrimary)?.url || images[0]?.url || '';
   const vendor = product?.vendor ?? product?.Vendor ?? null;
   const quantity = Number(item.quantity);
   const price = roundMoney(variant?.price ?? product?.basePrice ?? 0);
@@ -132,7 +133,7 @@ export class CartService {
           ],
         },
       ],
-    })) as (CartItem & { variant: ProductVariant & { product: any } })[];
+    })) as CartItemWithProduct[];
 
     await markAboveMrp(items.map((item) => item.variant));
     // Prices as the customer sees them (GST included) — the cart shows the same figures

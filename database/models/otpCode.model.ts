@@ -6,6 +6,7 @@ import {
   InferCreationAttributes,
   CreationOptional,
 } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export type OtpPurpose = 'LOGIN';
 
@@ -21,7 +22,7 @@ export class OtpCode extends Model<InferAttributes<OtpCode>, InferCreationAttrib
   declare readonly createdAt: CreationOptional<Date>;
   declare readonly updatedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     OtpCode.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
   }
 }

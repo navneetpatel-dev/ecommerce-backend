@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export class WishlistItem extends Model<InferAttributes<WishlistItem>, InferCreationAttributes<WishlistItem>> {
   declare id: CreationOptional<string>;
@@ -12,7 +13,7 @@ export class WishlistItem extends Model<InferAttributes<WishlistItem>, InferCrea
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     WishlistItem.belongsTo(models.Wishlist, { foreignKey: 'wishlistId' });
     WishlistItem.belongsTo(models.Product, { as: 'product', foreignKey: 'productId' });
   }

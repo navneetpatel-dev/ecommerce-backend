@@ -9,6 +9,7 @@ import { Product } from '@database/models/product.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { markAboveMrp } from '@modules/tax/markAboveMrp';
 import { assertStockFor } from './cartStock';
+import type { ProductWithRelations } from '@core/catalog/productRelations';
 
 /** The variant being added, once it may be bought in that quantity. */
 export async function loadAddableVariant(variantId: string, quantity: number, transaction: Transaction) {
@@ -18,7 +19,7 @@ export async function loadAddableVariant(variantId: string, quantity: number, tr
   });
   if (!variant) throw new NotFoundError('ProductVariant');
 
-  const product = (variant as any).product;
+  const product = (variant as ProductVariant & { product?: ProductWithRelations }).product;
   const vendor = product?.vendor ?? product?.Vendor ?? null;
   await markAboveMrp([variant], () => product);
   const stock = Number(variant.stock);

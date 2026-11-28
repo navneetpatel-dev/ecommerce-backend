@@ -6,6 +6,7 @@ import {
   InferCreationAttributes,
   CreationOptional,
 } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 /**
  * Precomputed "frequently bought together" pairs — nightly-refreshed by
@@ -29,7 +30,7 @@ export class ProductAffinity extends Model<
   declare readonly createdAt: CreationOptional<Date>;
   declare readonly updatedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     ProductAffinity.belongsTo(models.Product, { foreignKey: 'productId', as: 'product' });
     ProductAffinity.belongsTo(models.Product, { foreignKey: 'relatedProductId', as: 'relatedProduct' });
   }

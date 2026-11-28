@@ -19,6 +19,7 @@ import {
   type BugReportSeverity,
   type BugReportStatus,
 } from '@core/constants/statuses';
+import type { ModelRegistry } from './index';
 
 export class BugReport extends Model<InferAttributes<BugReport>, InferCreationAttributes<BugReport>> {
   declare id: CreationOptional<string>;
@@ -60,7 +61,7 @@ export class BugReport extends Model<InferAttributes<BugReport>, InferCreationAt
   declare attachments?: NonAttribute<unknown[]>;
   declare comments?: NonAttribute<unknown[]>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     BugReport.belongsTo(models.User, { foreignKey: 'reporterId', as: 'reporter' });
     BugReport.belongsTo(models.User, { foreignKey: 'assignedToId', as: 'assignedTo' });
     BugReport.belongsTo(models.BugReport, { foreignKey: 'duplicateOfId', as: 'duplicateOf' });

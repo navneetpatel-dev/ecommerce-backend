@@ -20,7 +20,7 @@ export const getPlatformAnalytics = asyncHandler(async (_req: Request, res: Resp
 
 async function analyticsActor(req: Request): Promise<ReportActor> {
   const user = req.user!;
-  const roleName = user.role?.name ?? roleNameOf(user as any);
+  const roleName = user.role?.name ?? roleNameOf(user);
   const permissions = (await resolvePermissionsForUser({
     roleId: user.roleId,
     role: { name: roleName },

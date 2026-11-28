@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export class Address extends Model<InferAttributes<Address>, InferCreationAttributes<Address>> {
   declare id: CreationOptional<string>;
@@ -27,7 +28,7 @@ export class Address extends Model<InferAttributes<Address>, InferCreationAttrib
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     Address.belongsTo(models.User, { foreignKey: 'userId' });
   }
 }

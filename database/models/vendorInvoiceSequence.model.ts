@@ -6,6 +6,7 @@ import {
   InferCreationAttributes,
   CreationOptional,
 } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export class VendorInvoiceSequence extends Model<
   InferAttributes<VendorInvoiceSequence>,
@@ -21,7 +22,7 @@ export class VendorInvoiceSequence extends Model<
   declare readonly createdAt: CreationOptional<Date>;
   declare readonly updatedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     VendorInvoiceSequence.belongsTo(models.Vendor, {
       foreignKey: 'vendorId',
       as: 'vendor',

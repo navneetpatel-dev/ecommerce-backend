@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export type ReviewMediaItem = {
   url: string;
@@ -45,7 +46,7 @@ export class Review extends Model<InferAttributes<Review>, InferCreationAttribut
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     Review.belongsTo(models.Product, { as: 'product', foreignKey: 'productId' });
     Review.belongsTo(models.User, { as: 'user', foreignKey: 'userId' });
     Review.belongsTo(models.OrderItem, { foreignKey: 'orderItemId' });

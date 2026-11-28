@@ -8,9 +8,10 @@ import { Cart } from '@database/models/cart.model';
 import { CartItem } from '@database/models/cartItem.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { markAboveMrp } from '@modules/tax/markAboveMrp';
+import type { CartItemWithProduct } from '@core/catalog/productRelations';
 
 export type CartWithItems = Cart & {
-  items: (CartItem & { variant: ProductVariant & { product: any } })[];
+  items: CartItemWithProduct[];
 };
 
 /** The customer's cart as checkout reads it, each variant marked against its MRP as of now. */

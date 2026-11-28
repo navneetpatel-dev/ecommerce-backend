@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export class WalletLedger extends Model<InferAttributes<WalletLedger>, InferCreationAttributes<WalletLedger>> {
   declare id: CreationOptional<string>;
@@ -19,7 +20,7 @@ export class WalletLedger extends Model<InferAttributes<WalletLedger>, InferCrea
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     WalletLedger.belongsTo(models.User, { foreignKey: 'userId' });
   }
 }

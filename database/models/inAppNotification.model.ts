@@ -6,6 +6,7 @@ import {
   InferCreationAttributes,
   CreationOptional,
 } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export class InAppNotification extends Model<
   InferAttributes<InAppNotification>,
@@ -24,7 +25,7 @@ export class InAppNotification extends Model<
   declare readonly createdAt: CreationOptional<Date>;
   declare readonly updatedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     InAppNotification.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
     InAppNotification.belongsTo(models.AdminBroadcast, {
       foreignKey: 'broadcastId',

@@ -9,6 +9,7 @@ import {
 } from 'sequelize';
 import type { TicketSenderRole } from '@core/constants/statuses';
 import { TICKET_SENDER_ROLE_VALUES } from '@core/constants/statuses';
+import type { ModelRegistry } from './index';
 
 export class TicketMessage extends Model<
   InferAttributes<TicketMessage>,
@@ -29,7 +30,7 @@ export class TicketMessage extends Model<
   declare sender?: NonAttribute<{ id: string; name: string }>;
   declare attachments?: NonAttribute<unknown[]>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     TicketMessage.belongsTo(models.SupportTicket, { foreignKey: 'ticketId', as: 'ticket' });
     TicketMessage.belongsTo(models.User, { foreignKey: 'senderId', as: 'sender' });
     TicketMessage.hasMany(models.TicketAttachment, { foreignKey: 'messageId', as: 'attachments' });

@@ -242,7 +242,7 @@ export class AuthService {
           status: USER_STATUS.ACTIVE,
           emailVerified: false,
           deletedBy: null,
-        } as any,
+        },
         { transaction: t },
       );
       await repo.deleteRefreshTokensByUser(deleted.id);
@@ -451,7 +451,7 @@ export class AuthService {
     if (!user) throw new NotFoundError('User');
 
     if (!user.emailVerified) {
-      await repo.update(user.id, { emailVerified: true } as any);
+      await repo.update(user.id, { emailVerified: true });
       void notifyWelcome(user.id, user.name);
     }
 
@@ -494,7 +494,7 @@ export class AuthService {
     assertResetTokenCurrent(fingerprint, user.passwordHash);
 
     const passwordHash = await bcrypt.hash(newPassword, 12);
-    await repo.update(user.id, { passwordHash } as any);
+    await repo.update(user.id, { passwordHash });
     await repo.deleteRefreshTokensByUser(user.id);
     void notifyPasswordChanged(user.id, 'reset');
   }
@@ -515,7 +515,7 @@ export class AuthService {
     }
 
     const passwordHash = await bcrypt.hash(newPassword, 12);
-    await repo.update(userId, { passwordHash } as any);
+    await repo.update(userId, { passwordHash });
     await repo.deleteRefreshTokensByUser(userId);
     void notifyPasswordChanged(userId, 'changed');
   }

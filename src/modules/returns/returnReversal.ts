@@ -65,7 +65,7 @@ export async function reverseReturnLine(input: {
   const frozen = pricingService.frozenLineFromOrderItem({
     id: orderItem.id,
     quantity: Number(orderItem.quantity),
-    taxBreakdown: (orderItem.taxBreakdown as any) ?? null,
+    taxBreakdown: (orderItem.taxBreakdown as Parameters<typeof pricingService.frozenLineFromOrderItem>[0]['taxBreakdown']) ?? null,
     unitPricePaise: frozenPaise(orderItem.unitPricePaise),
     discountAmountPaise: frozenPaise(orderItem.discountAmountPaise),
     taxableAmountPaise: frozenPaise(orderItem.taxableAmountPaise),

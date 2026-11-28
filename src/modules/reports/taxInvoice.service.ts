@@ -53,9 +53,14 @@ const orderInvoiceInclude = [
   },
 ];
 
-async function loadOrder(orderId: string) {
+/** An order as the invoices read it. */
+type InvoiceItem = OrderItem & { variant?: { product?: { hsnCode?: string | null; categoryId?: string | null } } };
+type InvoiceSubOrder = SubOrder & { items?: InvoiceItem[]; vendor?: { slug?: string | null } };
+type InvoiceOrder = Order & { subOrders?: InvoiceSubOrder[] };
+
+async function loadOrder(orderId: string): Promise<InvoiceOrder> {
   const order = await Order.findByPk(orderId, {
-    include: orderInvoiceInclude as any,
+    include: orderInvoiceInclude,
   });
   if (!order) throw new NotFoundError('Order');
   return order;
@@ -66,14 +71,12 @@ async function loadOrder(orderId: string) {
  * code, else its category rule's (nearest up the tree). Invoices issued with a frozen
  * HSN on the snapshot line use that instead; this covers lines written before it.
  */
-async function hsnMapForOrder(order: Order): Promise<Map<string, string>> {
+async function hsnMapForOrder(order: InvoiceOrder): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   const byCategory = new Map<string, string | null>();
-  for (const sub of (order as any).subOrders ?? []) {
+  for (const sub of order.subOrders ?? []) {
     for (const item of sub.items ?? []) {
-      const product = item.variant?.product as
-        | { hsnCode?: string | null; categoryId?: string | null }
-        | undefined;
+      const product = item.variant?.product;
       if (!product) continue;
       let hsn = product.hsnCode?.trim() || null;
       if (!hsn) {
@@ -105,12 +108,12 @@ export async function buildSubOrderInvoicePdf(
 ): Promise<{ source: TaxInvoiceSource; pdf: Buffer; filename: string }> {
   assertInvoiceAllocated(subOrder);
   const source = toTaxInvoiceSourceFromSubOrder(
-    order as any,
-    subOrder as any,
+    order as unknown as TaxInvoiceOrderInput,
+    subOrder as unknown as Parameters<typeof toTaxInvoiceSourceFromSubOrder>[1],
     hsnByItem,
   );
   const pdf = await renderTaxInvoicePdf(source);
-  const vendorSlug = (subOrder as any).vendor?.slug ?? null;
+  const vendorSlug = (subOrder as InvoiceSubOrder).vendor?.slug ?? null;
   const filename = buildTaxInvoicePdfFilename(source.invoiceNo, vendorSlug);
   return { source, pdf, filename };
 }
@@ -138,7 +141,7 @@ async function buildPlatformInvoicePdf(
 /** The invoice PDF for an email attachment: the same document the customer downloads, built by the platform. */
 export async function buildSubOrderInvoiceForEmail(orderId: string, subOrderId: string) {
   const order = await loadOrder(orderId);
-  const sub = (((order as any).subOrders ?? []) as SubOrder[]).find((row) => row.id === subOrderId);
+  const sub = (order.subOrders ?? []).find((row) => row.id === subOrderId);
   if (!sub) throw new NotFoundError('SubOrder');
   return buildSubOrderInvoicePdf(order, sub, await hsnMapForOrder(order));
 }
@@ -152,7 +155,7 @@ export async function getCustomerSubOrderInvoice(input: {
   if (order.userId !== input.userId) {
     throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_ORDER);
   }
-  const subOrders = ((order as any).subOrders ?? []) as SubOrder[];
+  const subOrders = order.subOrders ?? [];
   const sub = subOrders.find((row) => row.id === input.subOrderId);
   if (!sub) throw new NotFoundError('SubOrder');
   const hsnByItem = await hsnMapForOrder(order);
@@ -170,7 +173,7 @@ export async function getCustomerOrderInvoices(input: {
   if (order.userId !== input.userId) {
     throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_ORDER);
   }
-  const subOrders = ((order as any).subOrders ?? []) as SubOrder[];
+  const subOrders = order.subOrders ?? [];
   if (subOrders.length === 0) throw new NotFoundError('SubOrder');
 
   const hsnByItem = await hsnMapForOrder(order);
@@ -248,11 +251,11 @@ export async function getVendorSubOrderInvoice(input: {
   if (sub.vendorId !== input.vendorId) {
     throw new ForbiddenError(ERROR_MESSAGES.NOT_YOUR_VENDOR_REPORT);
   }
-  const order = (sub as any).order as Order;
+  const order = (sub as SubOrder & { order?: InvoiceOrder }).order;
   if (!order) throw new NotFoundError('Order');
 
   // Attach this single sub-order under order for mapper consistency.
-  (order as any).subOrders = [sub];
+  order.subOrders = [sub as InvoiceSubOrder];
   const hsnByItem = await hsnMapForOrder(order);
   return buildSubOrderInvoicePdf(order, sub, hsnByItem);
 }

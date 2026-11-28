@@ -5,6 +5,7 @@ import {
   type VendorDocumentType,
   type VendorEntityType,
 } from '@core/constants/statuses';
+import type { ModelRegistry } from './index';
 
 export class DocumentRequirement extends Model<
   InferAttributes<DocumentRequirement>,
@@ -21,7 +22,7 @@ export class DocumentRequirement extends Model<
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     DocumentRequirement.belongsTo(models.Category, { foreignKey: 'categoryId', as: 'category' });
   }
 }

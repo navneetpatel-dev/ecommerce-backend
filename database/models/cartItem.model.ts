@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export class CartItem extends Model<InferAttributes<CartItem>, InferCreationAttributes<CartItem>> {
   declare id: CreationOptional<string>;
@@ -14,7 +15,7 @@ export class CartItem extends Model<InferAttributes<CartItem>, InferCreationAttr
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     CartItem.belongsTo(models.Cart, { foreignKey: 'cartId' });
     CartItem.belongsTo(models.ProductVariant, { as: 'variant', foreignKey: 'variantId' });
   }

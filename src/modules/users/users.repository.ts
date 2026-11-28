@@ -15,7 +15,7 @@ export class UsersRepository extends BaseRepository<User> {
     limit: number;
     offset: number;
   }) {
-    const where: any = {};
+    const where: Record<string | symbol, unknown> = {};
 
     if (filters.roleId) {
       where.roleId = filters.roleId;

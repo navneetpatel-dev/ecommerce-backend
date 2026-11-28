@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { ShortLink, Product, ProductImage, Category } from '@database/models';
 import { NotFoundError } from '@core/errors/NotFoundError';
 import { env } from '@config/env';
+import type { ProductWithRelations } from '@core/catalog/productRelations';
 
 const BASE62_CHARS = '23456789abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ';
 
@@ -37,7 +38,7 @@ export interface ShortLinkResponse {
   shortUrl: string;
   resourceType: string;
   resourceId: string | null;
-  metadata: Record<string, any> | null;
+  metadata: Record<string, unknown> | null;
   clicks: number;
   createdAt: Date;
 }
@@ -120,7 +121,7 @@ export class ShortLinksService {
       price: product.displayPrice ? Number(product.displayPrice) : Number(product.basePrice),
       currency: 'INR',
       brand: product.brand || undefined,
-      category: (product as any).Category?.name || undefined,
+      category: (product as ProductWithRelations).Category?.name || undefined,
     };
   }
 

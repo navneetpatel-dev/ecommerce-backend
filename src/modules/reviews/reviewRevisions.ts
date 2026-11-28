@@ -105,6 +105,10 @@ interface ModerationRow {
   media: ReviewMediaItem[] | null;
   createdAt: Date;
   pendingRevision: ReviewRevision | null;
+  vendorResponse?: string | null;
+  vendorRespondedAt?: Date | null;
+  flaggedReason?: string | null;
+  flaggedAt?: Date | null;
   product?: { name: string } | null;
   user?: { name: string } | null;
 }
@@ -131,9 +135,9 @@ export function serializePendingReview(row: Review) {
     previousRating: revision ? plain.rating : null,
     previousTitle: revision ? plain.title : null,
     previousBody: revision ? plain.body : null,
-    vendorResponse: (plain as any).vendorResponse ?? null,
-    vendorRespondedAt: (plain as any).vendorRespondedAt ?? null,
-    flaggedReason: (plain as any).flaggedReason ?? null,
-    flaggedAt: (plain as any).flaggedAt ?? null,
+    vendorResponse: plain.vendorResponse ?? null,
+    vendorRespondedAt: plain.vendorRespondedAt ?? null,
+    flaggedReason: plain.flaggedReason ?? null,
+    flaggedAt: plain.flaggedAt ?? null,
   };
 }

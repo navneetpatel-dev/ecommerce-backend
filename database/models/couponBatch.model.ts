@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export class CouponBatch extends Model<InferAttributes<CouponBatch>, InferCreationAttributes<CouponBatch>> {
   declare id: CreationOptional<string>;
@@ -13,7 +14,7 @@ export class CouponBatch extends Model<InferAttributes<CouponBatch>, InferCreati
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     CouponBatch.belongsTo(models.User, { as: 'creator', foreignKey: 'createdById' });
     CouponBatch.hasMany(models.Coupon, { foreignKey: 'batchId', as: 'coupons' });
   }

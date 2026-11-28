@@ -6,6 +6,7 @@ import {
   InferCreationAttributes,
   CreationOptional,
 } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export type BroadcastChannel = 'EMAIL' | 'PUSH' | 'IN_APP';
 export type BroadcastClassification = 'operational' | 'marketing';
@@ -35,7 +36,7 @@ export class AdminBroadcast extends Model<
   declare readonly createdAt: CreationOptional<Date>;
   declare readonly updatedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     AdminBroadcast.belongsTo(models.User, { foreignKey: 'actorId', as: 'actor' });
   }
 }

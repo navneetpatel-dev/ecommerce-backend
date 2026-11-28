@@ -3,6 +3,7 @@ import {
   CATEGORY_ATTRIBUTE_TYPE_VALUES,
   type CategoryAttributeType,
 } from '@core/constants/statuses';
+import type { ModelRegistry } from './index';
 
 export class CategoryAttribute extends Model<
   InferAttributes<CategoryAttribute>,
@@ -21,7 +22,7 @@ export class CategoryAttribute extends Model<
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     CategoryAttribute.belongsTo(models.Category, { as: 'category', foreignKey: 'categoryId' });
   }
 }

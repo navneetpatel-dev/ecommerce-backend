@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export class AuditLog extends Model<InferAttributes<AuditLog>, InferCreationAttributes<AuditLog>> {
   declare id: CreationOptional<string>;
@@ -14,7 +15,7 @@ export class AuditLog extends Model<InferAttributes<AuditLog>, InferCreationAttr
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     AuditLog.belongsTo(models.User, { as: 'actor', foreignKey: 'actorId' });
   }
 }

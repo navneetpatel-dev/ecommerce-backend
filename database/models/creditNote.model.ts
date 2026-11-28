@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export class CreditNote extends Model<InferAttributes<CreditNote>, InferCreationAttributes<CreditNote>> {
   declare id: CreationOptional<string>;
@@ -26,7 +27,7 @@ export class CreditNote extends Model<InferAttributes<CreditNote>, InferCreation
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     CreditNote.belongsTo(models.ReturnRequest, { foreignKey: 'returnRequestId', as: 'ReturnRequest' });
     CreditNote.belongsTo(models.Order, { foreignKey: 'orderId' });
     CreditNote.belongsTo(models.OrderItem, { foreignKey: 'orderItemId' });

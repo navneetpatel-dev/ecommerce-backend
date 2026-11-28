@@ -10,6 +10,7 @@ import { Op, type Transaction, type WhereOptions } from 'sequelize';
 import { escapeLikePattern } from '@modules/search/search.utils';
 import { loadCategoryRules } from './taxRuleResolution';
 import type { TaxRuleListQuery } from './tax.dto';
+import { toPlain, type PlainRow } from '@core/repository/toPlain';
 
 /** What an audit entry records of a rule. */
 function ruleSnapshot(rule: TaxRule) {
@@ -28,7 +29,7 @@ async function categoryName(categoryId: string | null | undefined, transaction: 
 }
 
 function serializeTaxRule(row: TaxRule) {
-  const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
+  const plain = toPlain<PlainRow<TaxRule, { category?: { name?: string | null } | null }>>(row);
   return {
     id: plain.id,
     hsnCode: plain.hsnCode,

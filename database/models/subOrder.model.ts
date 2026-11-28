@@ -3,6 +3,7 @@ import { ORDER_STATUS } from '@core/constants/statuses';
 import { paiseBackedRupees } from '@modules/pricing/paiseBackedRupees';
 import type { TaxInvoiceSnapshot } from '@modules/pricing/taxInvoiceSnapshot';
 import type { PlatformInvoiceSnapshot } from '@modules/pricing/platformFeeInvoice';
+import type { ModelRegistry } from './index';
 
 export class SubOrder extends Model<InferAttributes<SubOrder>, InferCreationAttributes<SubOrder>> {
   declare id: CreationOptional<string>;
@@ -64,7 +65,7 @@ export class SubOrder extends Model<InferAttributes<SubOrder>, InferCreationAttr
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     SubOrder.belongsTo(models.Order, { as: 'order', foreignKey: 'orderId' });
     SubOrder.belongsTo(models.Vendor, { as: 'vendor', foreignKey: 'vendorId' });
     SubOrder.hasMany(models.OrderItem, { foreignKey: 'subOrderId', as: 'items' });

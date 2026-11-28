@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export class StockAlert extends Model<InferAttributes<StockAlert>, InferCreationAttributes<StockAlert>> {
   declare id: CreationOptional<string>;
@@ -9,7 +10,7 @@ export class StockAlert extends Model<InferAttributes<StockAlert>, InferCreation
   declare readonly createdAt: CreationOptional<Date>;
   declare readonly updatedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     StockAlert.belongsTo(models.User, { as: 'user', foreignKey: 'userId' });
     StockAlert.belongsTo(models.ProductVariant, { as: 'variant', foreignKey: 'variantId' });
   }

@@ -24,6 +24,7 @@ import { Op } from 'sequelize';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import { ORDER_STATUS, REFUND_STATUS, RETURN_STATUS } from '@core/constants/statuses';
 import { logAudit } from '@modules/audit/audit.service';
+import type { Order } from '@database/models/order.model';
 
 /**
  * Transitions reachable through this manual, admin-facing endpoint.
@@ -217,7 +218,7 @@ export class OrdersService {
       assertPartPaidFor(order);
       await ordersRepository.update(
         id,
-        { status: status as never, updatedBy: actorId ?? null } as any,
+        { status: status as Order['status'], updatedBy: actorId ?? null },
         { transaction: t },
       );
 

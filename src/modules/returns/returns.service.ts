@@ -486,14 +486,14 @@ export class ReturnsService {
   async listAll(query: { page: number; limit: number; status?: string; search?: string }) {
     const slaDays = await refundSlaDays();
     const offset = paginationOffset(query.page, query.limit);
-    const where: Record<string, unknown> = {};
+    const where: Record<string | symbol, unknown> = {};
     if (query.status) {
       where.status = query.status;
     }
     if (query.search?.trim()) {
       const q = `%${query.search.trim()}%`;
       const esc = sequelize.escape(q);
-      (where as any)[Op.and] = [
+      where[Op.and] = [
         sequelize.literal(
           `("ReturnRequest"."id"::text ILIKE ${esc} OR "ReturnRequest"."reasonCode"::text ILIKE ${esc} OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.id = "ReturnRequest"."orderItemId" AND ${orderItemMatchesSql('oi', esc)}) OR EXISTS (SELECT 1 FROM users u WHERE u.id = "ReturnRequest"."userId" AND u.name ILIKE ${esc}))`,
         ),
@@ -677,14 +677,14 @@ export class ReturnsService {
   async listForVendor(vendorId: string, query: { page: number; limit: number; status?: string; search?: string }) {
     const slaDays = await refundSlaDays();
     const offset = paginationOffset(query.page, query.limit);
-    const where: Record<string, unknown> = {};
+    const where: Record<string | symbol, unknown> = {};
     if (query.status) {
       where.status = query.status;
     }
     if (query.search?.trim()) {
       const q = `%${query.search.trim()}%`;
       const esc = sequelize.escape(q);
-      (where as any)[Op.and] = [
+      where[Op.and] = [
         sequelize.literal(
           `("ReturnRequest"."id"::text ILIKE ${esc} OR "ReturnRequest"."reasonCode"::text ILIKE ${esc} OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.id = "ReturnRequest"."orderItemId" AND ${orderItemMatchesSql('oi', esc)}) OR EXISTS (SELECT 1 FROM users u WHERE u.id = "ReturnRequest"."userId" AND u.name ILIKE ${esc}))`,
         ),
@@ -833,7 +833,7 @@ export class ReturnsService {
     order: Order;
     orderItem: OrderItem & { subOrder: SubOrder & { orderId: string; vendorId: string | null } };
   }> {
-    const orderItem = (row as any).orderItem as OrderItem & {
+    const orderItem = (row as ReturnRequest & { orderItem?: unknown }).orderItem as OrderItem & {
       subOrder: SubOrder & { items?: OrderItem[]; orderId: string; vendorId: string | null };
     };
     if (!orderItem?.subOrder) {
@@ -1281,7 +1281,7 @@ export class ReturnsService {
       const row = await findReturnForUpdate(returnRequestId, t);
       if (!row) return;
 
-      const orderItem = (row as any).orderItem as OrderItem & { subOrder: SubOrder };
+      const orderItem = (row as ReturnRequest & { orderItem?: unknown }).orderItem as OrderItem & { subOrder: SubOrder };
       if (!orderItem?.subOrder) return;
       const order = await Order.findByPk(orderItem.subOrder.orderId, { transaction: t });
       if (!order) return;

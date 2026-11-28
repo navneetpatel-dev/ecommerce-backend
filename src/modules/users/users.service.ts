@@ -45,6 +45,8 @@ import type {
   ListAssigneesQuery,
 } from './users.dto';
 import { notifyAccountStatusChange } from '@modules/notifications/events/accountEvents';
+import { toPlain, type PlainRow } from '@core/repository/toPlain';
+import type { User } from '@database/models/user.model';
 
 const ASSIGNEE_PERMISSIONS = [PERMISSIONS.TICKET_MANAGE, PERMISSIONS.BUG_REPORT_MANAGE] as const;
 
@@ -176,8 +178,10 @@ function serializeAddress(address: {
   };
 }
 
-function serializeProfile(user: any) {
-  const plain = typeof user.get === 'function' ? user.get({ plain: true }) : user;
+type RoleRef = { name?: string | null } | null;
+
+function serializeProfile(user: User) {
+  const plain = toPlain<PlainRow<User, { role?: RoleRef; Role?: RoleRef }>>(user);
   const roleName = plain.role?.name ?? plain.Role?.name ?? null;
 
   return {
@@ -225,7 +229,7 @@ export class UsersService {
         patch.avatarUrl = data.avatarUrl;
       }
 
-      await usersRepository.update(userId, patch as any, { transaction: t });
+      await usersRepository.update(userId, patch, { transaction: t });
 
       if (data.avatarUrl !== undefined) {
         await deleteS3ObjectIfReplaced(user.avatarUrl, data.avatarUrl);
@@ -300,7 +304,7 @@ export class UsersService {
           ...(await recipientFor(userId, data)),
           lat: data.lat,
           lng: data.lng,
-        } as any,
+        },
         { transaction: t },
       );
 
@@ -338,7 +342,7 @@ export class UsersService {
           ...(data.lat !== undefined ? { lat: data.lat } : {}),
           ...(data.lng !== undefined ? { lng: data.lng } : {}),
           ...(data.isDefault !== undefined ? { isDefault: nextIsDefault } : {}),
-        } as any,
+        },
         { transaction: t },
       );
 
@@ -346,11 +350,11 @@ export class UsersService {
         const remaining = await addressesRepository.findByUserId(userId, { transaction: t });
         const next = remaining.find((row) => row.id !== addressId);
         if (next) {
-          await addressesRepository.update(next.id, { isDefault: true } as any, {
+          await addressesRepository.update(next.id, { isDefault: true }, {
             transaction: t,
           });
         } else {
-          await addressesRepository.update(addressId, { isDefault: true } as any, {
+          await addressesRepository.update(addressId, { isDefault: true }, {
             transaction: t,
           });
         }
@@ -373,7 +377,7 @@ export class UsersService {
         const remaining = await addressesRepository.findByUserId(userId, { transaction: t });
         const next = remaining.find((row) => row.id !== addressId);
         if (next) {
-          await addressesRepository.update(next.id, { isDefault: true } as any, {
+          await addressesRepository.update(next.id, { isDefault: true }, {
             transaction: t,
           });
         }
@@ -387,7 +391,7 @@ export class UsersService {
       if (!address || address.userId !== userId) throw new NotFoundError('Address');
 
       await addressesRepository.clearDefaultsForUser(userId, { transaction: t });
-      await addressesRepository.update(addressId, { isDefault: true } as any, { transaction: t });
+      await addressesRepository.update(addressId, { isDefault: true }, { transaction: t });
 
       const updated = await addressesRepository.findById(addressId, { transaction: t });
       return serializeAddress(updated!);
@@ -668,7 +672,7 @@ export class UsersService {
       });
       if (!user) throw new NotFoundError('User');
 
-      const targetRoleName = (user as any).role?.name;
+      const targetRoleName = (user as User & { role?: { name?: string } }).role?.name;
       const actorRoleName = actor?.role?.name;
 
       if (targetRoleName === ROLES.SUPER_ADMIN && actorRoleName !== ROLES.SUPER_ADMIN) {
@@ -712,7 +716,7 @@ export class UsersService {
       });
       if (!user) throw new NotFoundError('User');
 
-      const targetRoleName = (user as any).role?.name;
+      const targetRoleName = (user as User & { role?: { name?: string } }).role?.name;
       if (targetRoleName === ROLES.SUPER_ADMIN) {
         throw new ForbiddenError('Cannot delete a super administrator');
       }

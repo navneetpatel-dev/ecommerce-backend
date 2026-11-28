@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export type ExportJobStatus = 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
 export type ExportJobFormat = 'csv' | 'xlsx' | 'pdf';
@@ -26,7 +27,7 @@ export class ExportJob extends Model<InferAttributes<ExportJob>, InferCreationAt
   declare readonly createdAt: CreationOptional<Date>;
   declare readonly updatedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     ExportJob.belongsTo(models.User, { as: 'owner', foreignKey: 'ownerId' });
   }
 }

@@ -57,7 +57,7 @@ export class SubordersService {
     const limit = query?.limit ?? 50;
     const offset = (page - 1) * limit;
 
-    const where: Record<string, unknown> = {};
+    const where: Record<string | symbol, unknown> = {};
     if (vendorId) {
       where.vendorId = vendorId;
     } else if (query?.vendorId) {
@@ -77,7 +77,7 @@ export class SubordersService {
         `EXISTS (SELECT 1 FROM shipments sh WHERE sh."subOrderId" = "SubOrder"."id" AND sh."trackingNumber" ILIKE ${esc})`,
         `EXISTS (SELECT 1 FROM orders o WHERE o."id" = "SubOrder"."orderId" AND o."id"::text ILIKE ${esc})`,
       ];
-      (where as any)[Op.and] = [sequelize.literal(`(${searchConditions.join(' OR ')})`)];
+      where[Op.and] = [sequelize.literal(`(${searchConditions.join(' OR ')})`)];
     }
 
     const effectiveVendorId = vendorId || query?.vendorId;
@@ -179,7 +179,7 @@ export class SubordersService {
           transaction,
         })) as (SubOrder & { items?: OrderItem[] }) | null;
         for (const item of subOrderWithItems?.items ?? []) {
-          const variantId = (item as any).variantId ?? (item as any).productVariantId;
+          const variantId = item.variantId;
           if (variantId) {
             await restoreStock(variantId, item.quantity, transaction);
           }

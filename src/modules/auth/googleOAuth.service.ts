@@ -159,7 +159,7 @@ async function findOrCreateGoogleUser(profile: GoogleUserInfo): Promise<User> {
       emailVerified: profile.email_verified ?? existing.emailVerified,
       avatarUrl: existing.avatarUrl || profile.picture || null,
       name: existing.name || profile.name || email.split('@')[0] || 'User',
-    } as any);
+    });
     const linked = await repo.findByEmail(email);
     if (!linked) {
       throw new AppError(ERROR_MESSAGES.INTERNAL_ERROR, 500, ERROR_CODES.INTERNAL_ERROR);

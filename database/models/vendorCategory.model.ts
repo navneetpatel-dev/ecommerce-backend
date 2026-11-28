@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export class VendorCategory extends Model<
   InferAttributes<VendorCategory>,
@@ -14,7 +15,7 @@ export class VendorCategory extends Model<
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     VendorCategory.belongsTo(models.Vendor, { foreignKey: 'vendorId', as: 'vendor' });
     VendorCategory.belongsTo(models.Category, { foreignKey: 'categoryId', as: 'category' });
   }

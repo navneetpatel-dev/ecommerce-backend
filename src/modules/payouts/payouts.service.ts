@@ -39,6 +39,7 @@ import { subOrdersInReturnWindow, type DeliveredSubOrder } from './returnWindowH
 import { ledgersDeliveredBeforeCycle, vendorStatesFor } from './payoutVendorStates';
 import { undoFailedPayout } from './payoutFailure';
 import { notifyPayoutPaid } from '@modules/notifications/events/vendorEvents';
+import { toPlain, type PlainRow } from '@core/repository/toPlain';
 
 async function notifyPayoutFailed(params: {
   vendorId: string;
@@ -64,7 +65,7 @@ async function notifyPayoutFailed(params: {
 }
 
 function serializePayout(row: Payout) {
-  const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
+  const plain = toPlain<PlainRow<Payout, { Vendor?: Pick<Vendor, 'businessName' | 'bankDetails'> | null }>>(row);
   const { Vendor: vendorAssoc, ...rest } = plain;
   return {
     ...rest,
@@ -291,7 +292,7 @@ export class PayoutsService {
           }> = [];
           locked.forEach((row, index) => {
             const { tdsBasePaise, tdsRatePercent, tdsPaise } = breakdown.rows[index]!;
-            const subOrder = (row as any).SubOrder as SubOrder | undefined;
+            const subOrder = (row as CommissionLedger & { SubOrder?: SubOrder }).SubOrder;
             // A deduction on a sale, or a (negative) reversal for a return after payout.
             if (tdsPaise !== 0 && subOrder?.orderId) {
               tdsRows.push({

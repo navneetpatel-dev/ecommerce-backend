@@ -4,6 +4,7 @@ import { Op, type Transaction } from 'sequelize';
 import { sequelize } from '@database/models';
 import { buildPaginationMeta, paginationOffset } from '@core/http/pagination';
 import { getRequestContext } from '@core/context/requestContext';
+import { toPlain, type PlainRow } from '@core/repository/toPlain';
 
 export async function logAudit(input: {
   actorId: string;
@@ -28,7 +29,7 @@ export async function logAudit(input: {
 }
 
 function serializeAuditLog(row: AuditLog) {
-  const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
+  const plain = toPlain<PlainRow<AuditLog, { actor?: { name?: string | null } | null }>>(row);
   return {
     id: plain.id,
     action: plain.action,

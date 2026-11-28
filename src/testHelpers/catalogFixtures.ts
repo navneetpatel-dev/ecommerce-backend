@@ -18,10 +18,12 @@ export const SKIP_ON_DEV_DB: false | string =
 
 export type Actor = { id: string; email: string; token: string; vendorId: string | null };
 export type TestVendor = { id: string; owner: Actor };
-export type Reply = { status: number; data: any; error: any; text: string };
+/** A response body or database row: whatever was sent back; each test reads what it asserts on. */
+export type Json = ReturnType<typeof JSON.parse>;
+export type Reply = { status: number; data: Json; error: Json; text: string };
 export type TestCategory = { id: string; name: string; slug: string };
 
-export const rows = <T = any>(sql: string, replacements: Record<string, unknown> = {}) =>
+export const rows = <T = Json>(sql: string, replacements: Record<string, unknown> = {}) =>
   sequelize.query(sql, { type: QueryTypes.SELECT, replacements }) as Promise<T[]>;
 
 let sequence = 0;
@@ -82,7 +84,7 @@ export async function startCatalogWorld() {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const text = await res.text();
-    let json: any = null;
+    let json: Json = null;
     try {
       json = JSON.parse(text);
     } catch {

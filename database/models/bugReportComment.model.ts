@@ -7,6 +7,7 @@ import {
   CreationOptional,
   NonAttribute,
 } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export class BugReportComment extends Model<
   InferAttributes<BugReportComment>,
@@ -25,7 +26,7 @@ export class BugReportComment extends Model<
 
   declare author?: NonAttribute<{ id: string; name: string }>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     BugReportComment.belongsTo(models.BugReport, { foreignKey: 'bugReportId', as: 'bugReport' });
     BugReportComment.belongsTo(models.User, { foreignKey: 'authorId', as: 'author' });
   }

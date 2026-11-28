@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export class CouponUsage extends Model<InferAttributes<CouponUsage>, InferCreationAttributes<CouponUsage>> {
   declare id: CreationOptional<string>;
@@ -16,7 +17,7 @@ export class CouponUsage extends Model<InferAttributes<CouponUsage>, InferCreati
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     CouponUsage.belongsTo(models.Coupon, { foreignKey: 'couponId' });
     CouponUsage.belongsTo(models.User, { foreignKey: 'userId' });
     CouponUsage.belongsTo(models.Order, { foreignKey: 'orderId' });

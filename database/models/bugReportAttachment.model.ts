@@ -10,6 +10,7 @@ import {
   BUG_ATTACHMENT_TYPE_VALUES,
   type BugAttachmentType,
 } from '@core/constants/statuses';
+import type { ModelRegistry } from './index';
 
 export class BugReportAttachment extends Model<
   InferAttributes<BugReportAttachment>,
@@ -27,7 +28,7 @@ export class BugReportAttachment extends Model<
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     BugReportAttachment.belongsTo(models.BugReport, { foreignKey: 'bugReportId', as: 'bugReport' });
   }
 }

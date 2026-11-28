@@ -77,7 +77,7 @@ export class AuthRepository extends BaseRepository<User> {
       userAgent: data.userAgent ?? null,
       ipAddress: data.ipAddress ?? null,
       lastUsedAt: data.lastUsedAt ?? new Date(),
-    } as any);
+    });
   }
 
   async deleteRefreshToken(hash: string) {

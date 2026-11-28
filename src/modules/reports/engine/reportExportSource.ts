@@ -10,6 +10,7 @@ import { NotFoundError } from '@core/errors/NotFoundError';
 import { ValidationError } from '@core/errors/ValidationError';
 import { ERROR_MESSAGES } from '@core/constants/errors';
 import type { ReportFilters } from './types';
+import type { ReportActor } from './reportEngine.types';
 
 /**
  * `POST /api/exports`'s body schema (Step 10) deliberately accepts
@@ -58,11 +59,11 @@ export async function resolveReportExportSource(
 ): Promise<ExportSource> {
   const def = getReportDefinition(reportType);
   if (!def) throw new NotFoundError(ERROR_MESSAGES.REPORT_NOT_FOUND);
-  assertActorMayRunReport(actor as any, def);
+  assertActorMayRunReport(actor as ReportActor, def);
 
   const parsed = toReportFilters(rawFilters);
   assertReportRange(parsed);
-  const filters = resolveFiltersForActor(actor as any, parsed, def.vendorScoped);
+  const filters = resolveFiltersForActor(actor as ReportActor, parsed, def.vendorScoped);
   if (def.audience === 'customer') filters.userId = actor.id;
 
   return {

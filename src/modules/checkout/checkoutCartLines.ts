@@ -1,11 +1,10 @@
-import type { CartItem } from '@database/models/cartItem.model';
-import type { ProductVariant } from '@database/models/productVariant.model';
 import type { CartLineForCoupon } from '@modules/coupons/couponEngine';
 import { PLATFORM_VENDOR_ID, type PricedLine } from './vendorPricingPlan';
 import { withGstInclusiveLineValues } from './gstInclusiveLines';
+import type { CartItemWithProduct } from '@core/catalog/productRelations';
 
 /** Cart rows as checkout loads them: each with its variant and product. */
-type CheckoutCartItem = CartItem & { variant: ProductVariant & { product: any } };
+type CheckoutCartItem = CartItemWithProduct;
 
 export function catalogItemsForCod(items: CheckoutCartItem[]) {
   return items.map((item) => {

@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 /** Full per-attempt failure history — Shipment only ever kept the latest note/count. */
 export class ShipmentAttempt extends Model<
@@ -15,7 +16,7 @@ export class ShipmentAttempt extends Model<
   declare readonly createdAt: CreationOptional<Date>;
   declare readonly updatedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     ShipmentAttempt.belongsTo(models.Shipment, { foreignKey: 'shipmentId', as: 'shipment' });
   }
 }

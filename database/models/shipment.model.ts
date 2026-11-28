@@ -1,5 +1,6 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
 import { coerceRupees } from '@modules/pricing/money';
+import type { ModelRegistry } from './index';
 
 export class Shipment extends Model<InferAttributes<Shipment>, InferCreationAttributes<Shipment>> {
   declare id: CreationOptional<string>;
@@ -39,7 +40,7 @@ export class Shipment extends Model<InferAttributes<Shipment>, InferCreationAttr
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     Shipment.belongsTo(models.SubOrder, { foreignKey: 'subOrderId', as: 'subOrder' });
     Shipment.hasMany(models.ShipmentAttempt, { foreignKey: 'shipmentId', as: 'attempts' });
   }

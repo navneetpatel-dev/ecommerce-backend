@@ -8,6 +8,7 @@ import {
   type VendorStatus,
   type PayoutFrequency,
 } from '@core/constants/statuses';
+import type { ModelRegistry } from './index';
 
 export class Vendor extends Model<InferAttributes<Vendor>, InferCreationAttributes<Vendor>> {
   declare id: CreationOptional<string>;
@@ -46,7 +47,7 @@ export class Vendor extends Model<InferAttributes<Vendor>, InferCreationAttribut
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     Vendor.hasMany(models.User, { foreignKey: 'vendorId', as: 'users' });
     Vendor.hasMany(models.Product, { foreignKey: 'vendorId' });
     Vendor.hasMany(models.VendorDocument, { foreignKey: 'vendorId' });

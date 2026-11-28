@@ -6,6 +6,7 @@ import { env } from '@config/env';
 import { AppError } from '@core/errors/AppError';
 import { ERROR_CODES, ERROR_MESSAGES } from '@core/constants/errors';
 import { sendApiError } from '@core/http/sendApiError';
+import type { RedisReply } from 'rate-limit-redis';
 
 const isDev = env.NODE_ENV === 'development';
 const rateLimitRedisClient = new Redis(env.REDIS_URL, {
@@ -20,7 +21,7 @@ rateLimitRedisClient.on('error', () => {});
 function redisRateLimitStore(prefix: string) {
   return new RedisStore({
     prefix: `rate-limit:${prefix}:`,
-    sendCommand: (...args: string[]) => rateLimitRedisClient.call(args[0]!, ...args.slice(1)) as Promise<any>,
+    sendCommand: (...args: string[]) => rateLimitRedisClient.call(args[0]!, ...args.slice(1)) as Promise<RedisReply>,
   });
 }
 

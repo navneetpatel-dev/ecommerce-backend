@@ -1,5 +1,6 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
 import type { PlatformInvoiceSnapshot } from '@modules/pricing/platformFeeInvoice';
+import type { ModelRegistry } from './index';
 
 /** A conditional coupon as placed: enough to work out what it gives the items kept after a return. */
 export type CouponLineSnapshot = {
@@ -102,7 +103,7 @@ export class Order extends Model<InferAttributes<Order>, InferCreationAttributes
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     Order.belongsTo(models.User, { as: 'user', foreignKey: 'userId' });
     Order.belongsTo(models.Coupon, { as: 'coupon', foreignKey: 'couponId' });
     Order.belongsTo(models.Address, { as: 'shippingAddress', foreignKey: 'shippingAddressId' });

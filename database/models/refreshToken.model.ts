@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export class RefreshToken extends Model<InferAttributes<RefreshToken>, InferCreationAttributes<RefreshToken>> {
   declare id: CreationOptional<string>;
@@ -16,7 +17,7 @@ export class RefreshToken extends Model<InferAttributes<RefreshToken>, InferCrea
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     RefreshToken.belongsTo(models.User, { foreignKey: 'userId' });
   }
 }

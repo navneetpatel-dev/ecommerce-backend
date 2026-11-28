@@ -93,5 +93,5 @@ export async function ticketPortalUrlForUser(ticketId: string, userId: string): 
 /** Portal group for a user id (customer / vendor / admin). */
 export async function ticketPortalGroupForUser(userId: string): Promise<PortalGroup> {
   const user = await User.findByPk(userId, { include: [{ model: Role, as: 'role' }] });
-  return groupForRoleName(roleNameOf(user as any));
+  return groupForRoleName(roleNameOf(user));
 }

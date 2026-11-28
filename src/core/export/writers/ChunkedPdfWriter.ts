@@ -40,7 +40,7 @@ export class ChunkedPdfWriter implements ExportWriter {
   ) {
     this.primaryKey = columns[0]?.key ?? 'col0';
     this.doc = createBrandedPdfDocument({ title: this.title });
-    this.doc.pipe(this.sink as NodeJS.WritableStream & { write: any });
+    this.doc.pipe(this.sink);
     this.layout = new PdfPageLayout(this.doc, this.title, this.title);
   }
 

@@ -180,7 +180,7 @@ async function cascadeRtoDeliveredAndSettle(subOrderId: string, transaction: Tra
 
   // 1. Restock items
   for (const item of subOrder.items ?? []) {
-    const variantId = (item as any).variantId ?? (item as any).productVariantId;
+    const variantId = item.variantId;
     if (variantId) {
       await restoreStock(variantId, item.quantity, transaction);
     }
@@ -307,7 +307,7 @@ export const shippingService = {
       zoneId: { [Op.in]: zoneIds },
       minWeightGrams: { [Op.lte]: params.weightGrams },
       ...methodFilter,
-    } as any;
+    };
 
     // Every slab that starts at or below this weight; per method, the cheapest slab that
     // covers it, else — heavier than that method's highest slab — the highest slab

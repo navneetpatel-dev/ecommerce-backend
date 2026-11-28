@@ -1,4 +1,5 @@
 import { Model, DataTypes, Sequelize, InferAttributes, InferCreationAttributes, CreationOptional } from 'sequelize';
+import type { ModelRegistry } from './index';
 
 export class ProductCategory extends Model<
   InferAttributes<ProductCategory>,
@@ -14,7 +15,7 @@ export class ProductCategory extends Model<
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     ProductCategory.belongsTo(models.Product, { as: 'product', foreignKey: 'productId' });
     ProductCategory.belongsTo(models.Category, { as: 'category', foreignKey: 'categoryId' });
   }

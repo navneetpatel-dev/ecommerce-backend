@@ -2,6 +2,24 @@ import { REFUND_STATUS, RETURN_STATUS, RETURN_TYPE } from '@core/constants/statu
 import type { ReturnRequest } from '@database/models/returnRequest.model';
 import type { OrderItem } from '@database/models/orderItem.model';
 import { orderReference } from '@modules/orders/orderReference';
+import { toPlain, type PlainRow } from '@core/repository/toPlain';
+
+type NoteRef = { id: string; number: string; againstInvoiceNumber?: string | null };
+
+/** A return row with the order, customer and note relations its queries include. */
+type PlainReturn = PlainRow<
+  ReturnRequest,
+  {
+    orderReference?: string | null;
+    CreditNote?: NoteRef | null;
+    creditNote?: NoteRef | null;
+    DebitNote?: NoteRef | null;
+    debitNote?: NoteRef | null;
+    subOrder?: { orderId?: string | null } | null;
+    orderItem?: { productName?: string | null } | null;
+    user?: { name?: string | null } | null;
+  }
+>;
 
 /** A return as the API sends it, with the customer-facing refund message. */
 export function serializeReturn(
@@ -10,7 +28,7 @@ export function serializeReturn(
   /** Cashback taken back from the wallet for this return (rupees), when looked up. */
   cashbackClawback?: number,
 ) {
-  const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
+  const plain = toPlain<PlainReturn>(row);
   const creditNote = plain.CreditNote ?? plain.creditNote ?? null;
   const debitNote = plain.DebitNote ?? plain.debitNote ?? null;
   const rawRefundStatus = plain.refundStatus ?? REFUND_STATUS.NONE;
@@ -100,7 +118,7 @@ export function serializeReturnSummary(
   _slaDays?: number,
   cashbackClawback?: number,
 ) {
-  const plain: any = typeof (row as any).get === 'function' ? (row as any).get({ plain: true }) : row;
+  const plain = toPlain<PlainReturn>(row);
   const creditNote = plain.CreditNote ?? plain.creditNote ?? null;
   const debitNote = plain.DebitNote ?? plain.debitNote ?? null;
   const rawRefundStatus = plain.refundStatus ?? REFUND_STATUS.NONE;

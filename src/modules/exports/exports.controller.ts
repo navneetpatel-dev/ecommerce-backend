@@ -10,7 +10,7 @@ import type { PermissionKey } from '@core/permissions/permissionKeys';
 
 async function actorFromReq(req: Request): Promise<ExportActor> {
   const user = req.user!;
-  const roleName = user.role?.name ?? roleNameOf(user as any);
+  const roleName = user.role?.name ?? roleNameOf(user);
   const permissions = (await resolvePermissionsForUser({
     roleId: user.roleId,
     role: { name: roleName },

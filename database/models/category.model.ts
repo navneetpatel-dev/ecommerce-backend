@@ -4,6 +4,7 @@ import {
   CATEGORY_STATUS_VALUES,
   type CategoryStatus,
 } from '@core/constants/statuses';
+import type { ModelRegistry } from './index';
 
 export class Category extends Model<InferAttributes<Category>, InferCreationAttributes<Category>> {
   declare id: CreationOptional<string>;
@@ -27,7 +28,7 @@ export class Category extends Model<InferAttributes<Category>, InferCreationAttr
   declare readonly updatedAt: CreationOptional<Date>;
   declare readonly deletedAt: CreationOptional<Date>;
 
-  static associate(models: Record<string, any>) {
+  static associate(models: ModelRegistry) {
     Category.belongsTo(models.Category, { as: 'parent', foreignKey: 'parentId' });
     Category.hasMany(models.Category, { as: 'children', foreignKey: 'parentId' });
     Category.hasMany(models.Product, { foreignKey: 'categoryId' });

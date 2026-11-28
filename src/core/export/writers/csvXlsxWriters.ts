@@ -85,7 +85,7 @@ class StreamingXlsxWriter implements ExportWriter {
     // ExcelJS's streaming WorkbookWriter accepts a `stream` target as an
     // alternative to `filename` — this is the one line that actually makes
     // XLSX pipe-able instead of file-based; everything else is unchanged.
-    this.workbook = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: sink as any, useStyles: true });
+    this.workbook = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: sink as unknown as import('stream').Stream, useStyles: true });
     this.workbook.creator = 'ecommerce-exports';
     this.sheet = this.workbook.addWorksheet(sheetName.slice(0, 31));
     this.sheet.columns = columns.map((col) => ({

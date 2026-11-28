@@ -3,19 +3,45 @@ import { ordersService } from '@modules/orders/orders.service';
 import { orderReference } from '@modules/orders/orderReference';
 import { inr, type EmailItem, type EmailRow } from './templates/blocks';
 import type { EmailTemplateData } from './templates/cta';
+import type { CartItemWithProduct } from '@core/catalog/productRelations';
 
-type View = Record<string, any>;
+/** The fields of an order, its parts, lines and address that the emails read. */
+type Amount = number | string | null | undefined;
+type AddressView = Partial<Record<'recipientName' | 'line1' | 'line2' | 'city' | 'state' | 'pincode', string | null>>;
+type ItemView = {
+  productName?: string;
+  variantAttributes?: Record<string, string> | null;
+  quantity?: Amount;
+  lineDisplaySubtotal?: Amount;
+  lineTotal?: Amount;
+  imageUrl?: string | null;
+};
+type PartView = { id?: string; vendor?: { businessName?: string } | null; items?: ItemView[] };
+type OrderView = {
+  id: string;
+  subOrders?: PartView[];
+  itemsTotal?: Amount;
+  merchandiseSubtotal?: Amount;
+  couponSavings?: Amount;
+  shippingTotal?: Amount;
+  giftWrapFeeAmount?: Amount;
+  walletAmountUsed?: Amount;
+  totalAmount?: Amount;
+  paymentMethod?: string | null;
+  paymentStatus?: string | null;
+  shippingAddress?: AddressView | null;
+};
 
 const PAYMENT_LABEL: Record<string, string> = { RAZORPAY: 'Paid online', COD: 'Cash on delivery', WALLET: 'Paid with wallet points' };
 
-function addressText(address: View | null | undefined): string {
+function addressText(address: AddressView | null | undefined): string {
   if (!address) return '';
   const place = [address.city, [address.state, address.pincode].filter(Boolean).join(' ')].filter(Boolean).join(', ');
   return [address.recipientName, address.line1, address.line2, place].filter(Boolean).join('\n');
 }
 
-function itemMeta(item: View, sellerName?: string): string | undefined {
-  const attributes = Object.values((item.variantAttributes ?? {}) as Record<string, string>).filter(Boolean).join(' · ');
+function itemMeta(item: ItemView, sellerName?: string): string | undefined {
+  const attributes = Object.values(item.variantAttributes ?? {}).filter(Boolean).join(' · ');
   return [attributes, sellerName ? `Sold by ${sellerName}` : ''].filter(Boolean).join(' · ') || undefined;
 }
 
@@ -29,11 +55,11 @@ export async function buildOrderEmailData(
   options: { subOrderId?: string; withTotals?: boolean; withAddress?: boolean; withPayment?: boolean } = {},
 ): Promise<EmailTemplateData> {
   try {
-    const order = (await ordersService.getOrderById(orderId)) as View;
-    const parts = ((order.subOrders ?? []) as View[]).filter((part) => !options.subOrderId || part.id === options.subOrderId);
+    const order = (await ordersService.getOrderById(orderId)) as unknown as OrderView;
+    const parts = (order.subOrders ?? []).filter((part) => !options.subOrderId || part.id === options.subOrderId);
 
     const items: EmailItem[] = parts.flatMap((part) =>
-      ((part.items ?? []) as View[]).map((item) => ({
+      (part.items ?? []).map((item) => ({
         name: String(item.productName),
         meta: itemMeta(item, part.vendor?.businessName),
         quantity: Number(item.quantity ?? 1),
@@ -86,9 +112,9 @@ export async function buildCartEmailData(cartId: string): Promise<EmailTemplateD
       limit: 5,
     });
     const items: EmailItem[] = rows.map((row) => {
-      const variant = (row as View).variant as View;
-      const product = variant.product as View;
-      const images = (product.images ?? []) as View[];
+      const { variant } = row as CartItemWithProduct;
+      const product = variant.product;
+      const images = product.images ?? [];
       const image = images.find((img) => img.isPrimary) ?? images[0];
       const unit = Number(variant.price ?? product.displayPrice ?? 0);
       return { name: String(product.name), quantity: Number(row.quantity ?? 1), price: inr(unit * Number(row.quantity ?? 1)), imageUrl: image?.url ?? null };
