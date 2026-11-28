@@ -109,6 +109,8 @@ export function defaultCta(type: NotificationType, data: EmailTemplateData): { l
       return { label: EMAIL_COPY.ctaOpenAdmin, url: action(`${base}/admin/vendors`) };
     case 'ADMIN_RETURN_ESCALATION':
       return { label: EMAIL_COPY.ctaOpenAdmin, url: action(`${base}/admin/returns`) };
+    case 'ADMIN_VENDOR_PRODUCT_EDITED':
+      return { label: EMAIL_COPY.ctaOpenAdmin, url: action(`${base}/admin/products?search=${encodeURIComponent(str(data, 'productName'))}`) };
     case 'ADMIN_NEW_BUG_REPORT':
       return { label: EMAIL_COPY.ctaViewBugReport, url: action(`${base}/admin/bug-reports/${str(data, 'bugReportId')}`) };
     case 'ADMIN_CONTACT_ENQUIRY': {

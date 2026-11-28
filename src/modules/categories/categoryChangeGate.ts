@@ -28,7 +28,13 @@ export function assertRateChangeAllowed(
 }
 
 /** One audit row per affected vendor (the audit page filters by it), and an email to its users. */
-export async function recordRateChange(actorId: string, categoryId: string, impact: CategoryRateImpact, reason: string) {
+export async function recordRateChange(
+  actorId: string,
+  categoryId: string,
+  impact: CategoryRateImpact,
+  reason: string,
+  changes = 'GST rate or commission, because their category was moved',
+) {
   for (const vendor of impact.vendors) {
     const audit = await logAudit({
       actorId,
@@ -41,7 +47,7 @@ export async function recordRateChange(actorId: string, categoryId: string, impa
     for (const user of users) {
       void notificationsService.sendProductUpdatedByPlatform(user.id, audit.id, {
         productName: `${vendor.products} of your products`,
-        changes: 'GST rate or commission, because their category was moved',
+        changes,
         reason: `Reason: ${reason}`,
       });
     }

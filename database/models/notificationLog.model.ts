@@ -34,7 +34,7 @@ export type NotificationType =
   | 'VENDOR_RETURN_REQUESTED' | 'VENDOR_NEW_QUESTION' | 'VENDOR_NEW_REVIEW'
   | 'COMMISSION_INVOICE_READY' | 'VENDOR_WEEKLY_SUMMARY'
   | 'ADMIN_RETURN_ESCALATION' | 'ADMIN_NEW_BUG_REPORT' | 'ADMIN_CONTACT_ENQUIRY'
-  | 'ADMIN_SETTINGS_CHANGED' | 'ADMIN_DAILY_DIGEST';
+  | 'ADMIN_SETTINGS_CHANGED' | 'ADMIN_DAILY_DIGEST' | 'ADMIN_VENDOR_PRODUCT_EDITED';
 
 export class NotificationLog extends Model<InferAttributes<NotificationLog>, InferCreationAttributes<NotificationLog>> {
   declare id: CreationOptional<string>;

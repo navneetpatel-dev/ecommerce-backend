@@ -5,7 +5,7 @@ import { categoriesService } from './categories.service';
 import { logAudit } from '@modules/audit/audit.service';
 import { getCategoryImpact, listCategoriesForAdmin } from './categoryAdmin';
 import { moveCategory } from './categoryMove';
-import { guardRateChange } from './categoryChange.controller';
+import { assertMaySetCommission, guardCategoryEdit, guardRateChange } from './categoryChange.controller';
 import { reassignProducts as reassignProductsBetween } from './categoryReassign';
 import { listCategoriesForPicker } from './categoryPicker';
 import {
@@ -29,6 +29,7 @@ function auditCategory(req: Request, action: string, entityId: string, metadata:
 
 export const createCategory = asyncHandler(async (req: Request, res: Response) => {
   const dto = CreateCategorySchema.parse(req.body);
+  if (dto.commissionRate != null) await assertMaySetCommission(req);
   const category = await categoriesService.createCategory(dto);
   await auditCategory(req, 'CATEGORY_CREATED', category.id, { name: category.name, parentId: dto.parentId ?? null });
   res.status(201).json(ok(category));
@@ -123,9 +124,7 @@ function refreshDisplayPricesAfterCategoryChange(trigger: string): void {
 
 export const updateCategory = asyncHandler(async (req: Request, res: Response) => {
   const { changeReason, ...dto } = UpdateCategorySchema.parse(req.body);
-  const gate = dto.parentId === undefined
-    ? null
-    : await guardRateChange(req, { kind: 'reparent', categoryId: req.params.id!, parentId: dto.parentId }, changeReason);
+  const gate = await guardCategoryEdit(req, req.params.id!, dto, changeReason);
   const category = await categoriesService.updateCategory(req.params.id!, dto);
   await gate?.record();
   // A moved category can fall under another ancestor's tax rule.

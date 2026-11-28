@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { AuditLog } from '@database/models/auditLog.model';
 import { ProductVariant } from '@database/models/productVariant.model';
 import { User } from '@database/models/user.model';
+import { Vendor } from '@database/models/vendor.model';
+import { sequelize } from '@config/db';
 import { notificationsService } from '@modules/notifications/notifications.service';
 import { productsRepository } from '../products.repository';
 import { productsService } from '../products.service';
@@ -44,6 +46,9 @@ describe('edits through the admin change layer', () => {
       return { id: `audit-${audits.length}` } as never;
     });
     mock.method(User, 'findAll', async () => [{ id: 'vu1' }] as never);
+    // The admin notice about a vendor's live edit: no vendor row, no reviewers, nothing queued.
+    mock.method(Vendor, 'findByPk', async () => null as never);
+    mock.method(sequelize, 'query', async () => [] as never);
     mock.method(notificationsService, 'sendProductUpdatedByPlatform', (async (userId: string, changeId: string, data: Record<string, unknown>) => {
       emails.push({ userId, changeId, data });
     }) as never);
@@ -104,8 +109,11 @@ describe('edits through the admin change layer', () => {
       assert.equal(emails.length, 0);
       await assert.rejects(updateProductAs(staff, 'p1', { basePrice: 70 } as never), (e) => status(e) === 403);
       await updateProductAs(staff, 'p1', { description: 'Staff edit' } as never);
+      await flush();
       assert.equal(updateCalls.length, 2);
-      assert.equal(audits.length, 0);
+      // New text on a live listing is recorded as the vendor's own edit; the vendor is not emailed.
+      assert.deepEqual(audits.map((row) => row.action), ['PRODUCT_LIVE_EDITED_BY_VENDOR']);
+      assert.equal(emails.length, 0);
     });
 
     it('the platform’s own product (no vendor) is edited without any vendor audit or email', async () => {

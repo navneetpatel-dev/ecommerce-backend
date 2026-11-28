@@ -131,6 +131,7 @@ const OVERRIDES: Partial<Record<NotificationType, EmailTemplateData>> = {
   PAYOUT_PAID: { details: [{ label: 'Gross sales', value: inr(52000) }, { label: 'TDS', value: `−${inr(52)}` }, { label: 'Commission GST', value: `−${inr(1515.6)}` }, { label: 'Paid out', value: inr(2189.85), strong: true }] },
   ADMIN_RETURN_ESCALATION: { reason: 'Customer disputes the seller\'s rejection.' },
   ADMIN_NEW_BUG_REPORT: {},
+  ADMIN_VENDOR_PRODUCT_EDITED: { vendorName: 'TechWorld', changes: 'name, images' },
   ADMIN_CONTACT_ENQUIRY: { senderName: 'Karan Joshi', senderEmail: 'karan.joshi0@example.com', details: [{ label: 'Topic', value: 'Order help' }, { label: 'Subject', value: 'Where is my order?' }, { label: 'Message', value: 'My order A1B2C3D4 has not moved since Monday.' }] },
   ADMIN_SETTINGS_CHANGED: { actorName: 'Super Admin', details: [{ label: 'Maintenance mode', value: 'Off → On' }, { label: 'Payout cycle', value: 'Weekly → Monthly' }] },
   ADMIN_DAILY_DIGEST: {

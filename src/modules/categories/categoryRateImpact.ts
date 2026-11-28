@@ -10,7 +10,19 @@ import { resolveCategoryRules } from '@modules/tax/taxRuleResolution';
 /** A change to where products or categories sit, which can change what is charged on them. */
 export type CategoryChange =
   | { kind: 'reassign'; fromCategoryId: string; toCategoryId: string }
-  | { kind: 'reparent'; categoryId: string; parentId: string | null };
+  | { kind: 'reparent'; categoryId: string; parentId: string | null }
+  /** A new commission rate on one category; `parentId` is set when the same edit also moves it. */
+  | { kind: 'edit'; categoryId: string; commissionRate: number | null; parentId?: string | null };
+
+/** The tree as it will be once `change` is applied (a reassignment leaves the tree alone). */
+function treeAfterChange(categories: Node[], change: CategoryChange): Node[] {
+  if (change.kind === 'reassign') return categories;
+  const patch = {
+    ...(change.parentId !== undefined && { parentId: change.parentId }),
+    ...(change.kind === 'edit' && { commissionRate: change.commissionRate }),
+  };
+  return categories.map((node) => (node.id === change.categoryId ? { ...node, ...patch } : node));
+}
 
 type Node = { id: string; parentId: string | null; commissionRate: number | string | null };
 
@@ -45,10 +57,7 @@ export function compareCategoryRates(input: {
   defaultCommission: number;
 }): CategoryRateImpact {
   const { products, categories, rules, change, defaultCommission } = input;
-  const after =
-    change.kind === 'reparent'
-      ? categories.map((node) => (node.id === change.categoryId ? { ...node, parentId: change.parentId } : node))
-      : categories;
+  const after = treeAfterChange(categories, change);
   const gstOf = (tree: Node[]) =>
     new Map(
       resolveCategoryRules(rules, tree).map((rule) => [

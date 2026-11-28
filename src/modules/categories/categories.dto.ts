@@ -54,6 +54,14 @@ const changeReason = z.string().trim().min(ADMIN_NOTE_LIMITS.MIN).max(ADMIN_NOTE
 export const RateImpactQuerySchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('reassign'), fromCategoryId: z.string().uuid(), toCategoryId: z.string().uuid() }),
   z.object({ kind: z.literal('reparent'), categoryId: z.string().uuid(), parentId: z.string().uuid().optional() }),
+  z.object({
+    kind: z.literal('edit'),
+    categoryId: z.string().uuid(),
+    /** Absent: the rate is cleared. */
+    commissionRate: z.coerce.number().min(0).max(100).optional(),
+    /** Absent: the parent stays; `none`: it moves to the top level. */
+    parentId: z.union([z.string().uuid(), z.literal('none')]).optional(),
+  }),
 ]);
 
 /** Category and attribute name limits. Keep in sync with the web category form. */

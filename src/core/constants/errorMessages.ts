@@ -61,6 +61,7 @@ export const ERROR_MESSAGES = {
   PRODUCT_NOT_DRAFT: 'Only a draft or rejected product can be submitted',
   PRODUCT_PRICING_OWNER_ONLY: 'Only the store owner can change prices, the category, tax codes or payment options, or add variants',
   PRODUCT_PRICING_RESTRICTED: 'Only a Super Admin can change prices, the category, tax details or variants of a live product, or of one the platform did not list',
+  CATEGORY_COMMISSION_RESTRICTED: 'Only a Super Admin (product pricing) can set or change a category\'s commission rate',
   CATEGORY_RATE_CHANGE_RESTRICTED: 'This changes the GST or commission on vendor products that are live or awaiting approval. Only a Super Admin (product pricing) can do it, with a written reason',
   PRODUCT_CHANGE_REASON_REQUIRED: 'A written reason of 10 to 500 characters is required to change prices or tax details',
   PRODUCT_VENDOR_REQUIRED: 'Every product belongs to a vendor: choose the vendor it is listed for',

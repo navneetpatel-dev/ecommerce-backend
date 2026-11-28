@@ -12,6 +12,7 @@ import {
   notifyUpdated,
   type OnBehalfAction,
 } from './productChangeAudit';
+import { recordVendorLiveEdit } from './vendorLiveEdits';
 import type { AddImageRequest, AddVariantRequest, UpdateProductRequest, UpdateVariantRequest } from './products.dto';
 
 /**
@@ -64,6 +65,7 @@ export async function updateProductAs(actor: ProductActor, id: string, dto: Upda
 
   const updated = await productsService.updateProduct(id, actor.vendorId, changes, { canEditPricing: true, actorId: actor.id });
   if (changedFields.length) {
+    await recordVendorLiveEdit(actor, before.get({ plain: true }) as typeof before, changedFields, changes);
     await record(actor, before, {
       action: pricingFields.length ? 'PRODUCT_PRICING_CHANGED_ON_BEHALF' : 'PRODUCT_UPDATED_ON_BEHALF',
       changedFields,
@@ -110,10 +112,14 @@ export async function updateVariantAs(actor: ProductActor, variantId: string, dt
   return variant;
 }
 
-/** Image changes are content: audited and told to the vendor when the platform makes them. */
+/**
+ * Image changes are content: a platform admin's is told to the vendor, a vendor's on a live listing
+ * is told to the admins.
+ */
 export async function changeImageAs<T>(actor: ProductActor, productId: string, what: string, run: () => Promise<T>) {
   const product = await loadProduct(productId);
   const result = await run();
+  await recordVendorLiveEdit(actor, product.get({ plain: true }) as typeof product, [what]);
   await record(actor, product, { action: 'PRODUCT_IMAGE_CHANGED_ON_BEHALF', changedFields: [what] });
   return result;
 }
